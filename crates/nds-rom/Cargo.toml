@@ -1,0 +1,13 @@
+[package]
+name = "nds-rom"
+description = "Zero-copy reader for Nintendo DS ROM images: header, filesystem, overlays, NARC, LZ/BLZ."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

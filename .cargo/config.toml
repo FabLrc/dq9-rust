@@ -1,0 +1,3 @@
+[alias]
+# `cargo dq9re info`, `cargo dq9re extract`, ...
+dq9re = "run --quiet --release -p dq9re --"

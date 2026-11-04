@@ -1,0 +1,23 @@
+# Rust
+/target/
+
+# Copyrighted game data: never commit the ROM or anything extracted from it.
+*.nds
+/rom/*
+!/rom/README.md
+/build/
+
+# Third-party RE tools installed by scripts/setup-re-tools.ps1
+/tools/
+
+# Ghidra projects (generated from the ROM)
+/re/ghidra/
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

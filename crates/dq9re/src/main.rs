@@ -1,0 +1,268 @@
+//! `dq9re`: command-line tooling for reverse engineering the Dragon Quest IX ROM.
+
+mod extract;
+
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use clap::{Parser, Subcommand};
+use nds_rom::rom::BANNER_LANGUAGES;
+use nds_rom::{Narc, Rom, compress};
+
+#[derive(Parser)]
+#[command(version, about)]
+struct Cli {
+    /// ROM image. Defaults to the only `*.nds` file in `rom/` or the current directory.
+    #[arg(long, global = true, env = "DQ9_ROM")]
+    rom: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Header, banner, binaries and overlay summary.
+    Info,
+    /// List filesystem entries: id, size, leading magic, path.
+    Ls {
+        /// Only paths starting with this prefix (e.g. `data/map/`).
+        prefix: Option<String>,
+    },
+    /// Per-extension file counts, sizes and leading magics.
+    Stats,
+    /// Extract binaries (decompressed), overlays, filesystem and a `layout.json` memory map.
+    Extract {
+        #[arg(long, default_value = "build/rom")]
+        out: PathBuf,
+        /// Skip the 7.5k data files; only binaries, overlays and layout.
+        #[arg(long)]
+        code_only: bool,
+    },
+    /// List (and optionally extract) the members of a NARC file in the ROM.
+    Narc {
+        /// Path inside the ROM filesystem, e.g. `data/map/F01M01.ambl`.
+        path: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Decompress members that start with an LZ10/LZ11 header; members that fail to
+        /// decode are kept raw and flagged `raw`.
+        #[arg(long)]
+        lz: bool,
+    },
+    /// Write one ROM file to disk, LZ-decompressing it if requested.
+    Cat {
+        path: String,
+        #[arg(long)]
+        out: PathBuf,
+        /// Decompress an LZ10/LZ11 stream.
+        #[arg(long)]
+        lz: bool,
+    },
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let rom_path = match cli.rom {
+        Some(path) => path,
+        None => find_rom()?,
+    };
+    let bytes = fs::read(&rom_path).with_context(|| format!("reading {}", rom_path.display()))?;
+    let rom = Rom::parse(&bytes).context("parsing ROM")?;
+    match cli.command {
+        Command::Info => info(&rom),
+        Command::Ls { prefix } => ls(&rom, prefix.as_deref().unwrap_or("")),
+        Command::Stats => stats(&rom),
+        Command::Extract { out, code_only } => extract::run(&rom, &out, code_only),
+        Command::Narc { path, out, lz } => narc(&rom, &path, out.as_deref(), lz),
+        Command::Cat { path, out, lz } => {
+            let data = rom.file_by_path(&path)?;
+            let data = if lz {
+                compress::lz(data)?
+            } else {
+                data.to_vec()
+            };
+            fs::write(&out, data).with_context(|| format!("writing {}", out.display()))
+        }
+    }
+}
+
+fn find_rom() -> Result<PathBuf> {
+    for dir in ["rom", "."] {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        let found: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("nds")))
+            .collect();
+        match found.as_slice() {
+            [] => continue,
+            [one] => return Ok(one.clone()),
+            many => bail!("several ROMs in {dir}/, pick one with --rom: {many:?}"),
+        }
+    }
+    bail!("no *.nds found in rom/ or the current directory; pass --rom or set DQ9_ROM")
+}
+
+/// Leading 4 bytes, printable ASCII kept, others as `.`.
+pub(crate) fn magic(data: &[u8]) -> String {
+    data.iter()
+        .take(4)
+        .map(|&b| {
+            if b.is_ascii_graphic() {
+                char::from(b)
+            } else {
+                '.'
+            }
+        })
+        .collect()
+}
+
+fn info(rom: &Rom) -> Result<()> {
+    let h = &rom.header;
+    println!(
+        "title      {} ({}{}), version {}",
+        h.title, h.game_code, h.maker_code, h.version
+    );
+    println!(
+        "header CRC {:#06x} ({})",
+        h.header_crc,
+        if h.crc_ok() { "ok" } else { "MISMATCH" }
+    );
+    for (lang, title) in BANNER_LANGUAGES.iter().zip(rom.banner_titles()?) {
+        println!("banner     {lang:<9} {}", title.replace('\n', " / "));
+    }
+    let arm9 = rom.arm9()?;
+    let p = &arm9.params;
+    println!(
+        "arm9       load {:#010x} entry {:#010x} rom {:#x} bytes -> {:#x} decompressed (compressed: {})",
+        arm9.load_addr,
+        arm9.entry,
+        h.arm9.size,
+        arm9.data.len(),
+        arm9.compressed
+    );
+    println!(
+        "           sdk {:#010x}, bss {:#010x}..{:#010x}",
+        p.sdk_version, p.static_bss_start, p.static_bss_end
+    );
+    for a in arm9.autoloads()? {
+        println!(
+            "autoload   {:#010x} size {:#x} bss {:#x}",
+            a.ram_addr, a.size, a.bss_size
+        );
+    }
+    println!(
+        "arm7       load {:#010x} entry {:#010x} size {:#x}",
+        h.arm7.load_addr, h.arm7.entry, h.arm7.size
+    );
+    let overlays = rom.overlays()?;
+    println!(
+        "overlays   {} ({} compressed)",
+        overlays.len(),
+        overlays.iter().filter(|o| o.compressed).count()
+    );
+    println!(
+        "files      {} named, {} FAT entries",
+        rom.files.files.len(),
+        rom.file_count()
+    );
+    Ok(())
+}
+
+fn ls(rom: &Rom, prefix: &str) -> Result<()> {
+    for f in rom
+        .files
+        .files
+        .iter()
+        .filter(|f| f.path.starts_with(prefix))
+    {
+        let data = rom.file(f.id)?;
+        println!("{:5} {:>9} {:4} {}", f.id, data.len(), magic(data), f.path);
+    }
+    Ok(())
+}
+
+fn extension(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.rsplit_once('.').map_or("", |(_, ext)| ext)
+}
+
+fn stats(rom: &Rom) -> Result<()> {
+    #[derive(Default)]
+    struct Group {
+        count: usize,
+        bytes: usize,
+        magics: BTreeMap<String, usize>,
+    }
+    let mut groups: BTreeMap<&str, Group> = BTreeMap::new();
+    for f in &rom.files.files {
+        let data = rom.file(f.id)?;
+        let g = groups.entry(extension(&f.path)).or_default();
+        g.count += 1;
+        g.bytes += data.len();
+        *g.magics.entry(magic(data)).or_default() += 1;
+    }
+    let mut groups: Vec<_> = groups.into_iter().collect();
+    groups.sort_by_key(|(_, g)| std::cmp::Reverse(g.bytes));
+    println!("{:<8} {:>6} {:>12}  magics", "ext", "files", "bytes");
+    for (ext, g) in groups {
+        let mut magics: Vec<_> = g.magics.into_iter().collect();
+        magics.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        let shown: Vec<String> = magics
+            .iter()
+            .take(4)
+            .map(|(m, n)| format!("{m:?}x{n}"))
+            .collect();
+        let more = magics.len().saturating_sub(4);
+        let more = if more > 0 {
+            format!(" +{more} more")
+        } else {
+            String::new()
+        };
+        println!(
+            "{ext:<8} {:>6} {:>12}  {}{more}",
+            g.count,
+            g.bytes,
+            shown.join(" ")
+        );
+    }
+    Ok(())
+}
+
+fn narc(rom: &Rom, path: &str, out: Option<&Path>, lz: bool) -> Result<()> {
+    let narc = Narc::parse(rom.file_by_path(path)?).with_context(|| format!("{path} as NARC"))?;
+    if let Some(out) = out {
+        fs::create_dir_all(out)?;
+    }
+    for i in 0..narc.len() {
+        let index = u16::try_from(i)?;
+        let raw = narc.file(index)?;
+        let (data, codec) = match raw.first() {
+            Some(0x10 | 0x11) if lz => match compress::lz(raw) {
+                Ok(d) => (Cow::Owned(d), "lz"),
+                Err(_) => (Cow::Borrowed(raw), "raw"),
+            },
+            _ => (Cow::Borrowed(raw), ""),
+        };
+        let name = narc
+            .name(index)
+            .map_or_else(|| format!("{i:04}.bin"), str::to_owned);
+        println!(
+            "{i:4} {:>9} {:4} {codec:3} {name}",
+            data.len(),
+            magic(&data)
+        );
+        if let Some(out) = out {
+            let dest = out.join(&name);
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dest, &data).with_context(|| format!("writing {}", dest.display()))?;
+        }
+    }
+    Ok(())
+}

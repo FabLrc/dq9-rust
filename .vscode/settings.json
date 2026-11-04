@@ -1,0 +1,11 @@
+{
+  "rust-analyzer.check.command": "clippy",
+  "files.exclude": {
+    "target": true,
+    "tools": true
+  },
+  "search.exclude": {
+    "build": true,
+    "re/ghidra": true
+  }
+}
