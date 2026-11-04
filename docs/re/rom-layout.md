@@ -34,9 +34,65 @@ Les overlays 7, 18 et 22 ne contiennent que 0x20 octets (une entrée de table
 d'initialiseurs statiques) : emplacements « vides » **[hypothèse]**. L'overlay 32 fait aussi
 0x20 octets mais réserve 0xA2000 octets de .bss à `0x02200180` (tampon/tas **[hypothèse]**).
 
-Import Ghidra (`scripts/ghidra-import.ps1`) : 12 874 fonctions détectées par l'analyse
-automatique (5 692 dans le module statique ARM9, 1 790 dans l'overlay 31, 1 068 dans
-l'overlay 17, 622 dans l'overlay 0).
+L'analyse automatique initiale de Ghidra avait détecté 12 874 fonctions (5 692 dans le
+module statique ARM9, 1 790 dans l'overlay 31, 1 068 dans l'overlay 17, 622 dans l'overlay 0).
+Les imports appliquent désormais aussi les bornes et noms de la décompilation :
+voir ci-dessous. Ces chiffres de détection ne mesurent pas le code réimplémenté.
+
+### Noms et bornes dans Ghidra
+
+Ordre de `scripts/ghidra-import.ps1` :
+
+1. `NdsLayout.java` construit les blocs ; Ghidra exécute son analyse automatique.
+2. `ApplyFunctions.java` applique `re/functions.txt` : adresses européennes, taille en
+   octets, catégorie et nom, issus des symboles de la
+   [décompilation USA](https://github.com/DQIX/dqix-decomp) (Unlicense ; correspondance
+   d'adresses dans `../ressources-externes.md`).
+3. `ApplySymbols.java` applique `re/symbols.txt` : **nos noms et commentaires priment**.
+
+L'étape 1 est une première invocation headless, sauvegardée avant les étapes 2 et 3,
+exécutées dans une seconde invocation avec `-noanalysis`. Sans cette séparation,
+Ghidra lance une analyse après les post-scripts et peut élargir à nouveau les corps :
+constaté sur `ov_017::021b9e30` lors d'un import neuf.
+
+Pour un projet existant, `scripts/ghidra-apply-symbols.ps1` exécute les étapes 2 et 3
+sans réanalyse. Les deux lanceurs acceptent `DQ9_GHIDRA_PROJECT`, comme les requêtes,
+pour travailler sur une copie. Fermer le projet dans l'interface avant utilisation.
+Attention : l'import complet utilise `-overwrite` ; il reconstruit `arm9.bin`.
+
+Les tailles décrivent des intervalles `[entrée, entrée + taille)` qui peuvent inclure
+des pools de constantes, pas seulement des instructions. L'importeur valide tout le
+fichier (syntaxe, catégories, adresses uniques, plages dans un bloc initialisé), puis
+applique les corps. Il conserve les métadonnées des fonctions aux entrées connues et
+les fonctions hors des plages importées. Les fonctions déduites par l'analyse dont
+l'entrée est à l'intérieur d'une autre plage importée sont supprimées pour libérer
+cette plage ; leurs instructions ne sont pas supprimées.
+
+Exceptions explicites dans l'inventaire actuel :
+
+- Deux tailles nulles en `ov_016::021909cc` et `ov_016::0219c514` : appliquer le nom sans
+  inventer de corps (label si aucune fonction n'existe déjà).
+- La plage déclarée de `0x020c0eac` finit à `0x020c1140`, après l'entrée suivante
+  `0x020c112c`. Ghidra n'autorise pas de corps de fonctions partagés : l'importeur borne
+  cette plage à `0x020c112c` exclu et le signale. Ce choix d'import ne tranche pas
+  l'origine du chevauchement dans la carte source.
+- Un label local préexistant au même endroit et de même nom qu'une fonction importée
+  est remplacé par le nom de fonction lors de l'application des symboles locaux.
+
+Le fichier n'indique pas ARM/Thumb : **aucun mode n'est deviné, aucun désassemblage
+supplémentaire n'est lancé**. Une donnée définie ou une instruction décodée à cheval sur
+une entrée connue est effacée en tant qu'unité de listing pour permettre la création
+de la fonction, sans changer les octets ni le contexte processeur. La présence d'un
+corps importé n'est donc pas une preuve de désassemblage complet ni de bonne
+décompilation. Les marqueurs `port:` restent réservés aux réimplémentations effectives.
+
+Contrôle sur une copie du projet européen et après un import neuf : 14 778 corps et
+deux noms sans bornes appliqués, puis 332 symboles locaux. Relecture de tous les noms
+et corps sauvegardés, y compris les priorités locales ; deuxième application réussie,
+sans nouvelle suppression de fonction inférée. Un fichier dont la seconde entrée
+sort des blocs mémoire est rejeté avant toute mutation de la première entrée.
+Les lanceurs exigent les bilans de succès et refusent les erreurs Ghidra, qui peuvent
+survenir même avec un code de sortie natif 0.
 
 ## Système de fichiers
 

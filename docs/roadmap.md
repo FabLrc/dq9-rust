@@ -99,13 +99,16 @@ Les overlays 10, 28 et 32 (`pitfall`, `sub_hoge`, `sound`) sont à identifier.
 - [x] Inventaire statique des 228 natives STB employées : arguments, effets établis,
       preuves par adresses et limites (`re/stb-natives.md`) ; noms descriptifs dans
       `dq9re stb` uniquement pour les comportements démontrés.
+- [x] Noms et bornes de `re/functions.txt` appliqués dans Ghidra avant les symboles
+      locaux, à l'import comme sur un projet existant (`re/rom-layout.md`).
 
 ## J0 — Accélérateurs
 
 Petits chantiers qui rendent tous les suivants plus rapides.
 
-- [ ] **Symboles de la décompilation dans Ghidra** : appliquer les noms et les bornes de
-      `re/functions.txt` avant `re/symbols.txt` (nos noms priment).
+- [x] **Symboles de la décompilation dans Ghidra** : appliquer les noms et les bornes de
+      `re/functions.txt` avant `re/symbols.txt` (nos noms priment) ; exceptions de tailles
+      nulles et chevauchement explicites, pas de mode ARM/Thumb inventé.
 - [x] **`dq9re functions` / `dq9re coverage`** : liste des fonctions aux adresses
       européennes, classement, marqueurs `port:`, avancement dans le README par la CI.
 - [ ] **Classement du NitroSDK** de l'ARM9 principal (signatures, noms de pret) pour affiner

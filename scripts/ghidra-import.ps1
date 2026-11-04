@@ -19,7 +19,7 @@ if (-not (Test-Path $LayoutPath)) { throw "$LayoutPath missing; run: cargo run -
 $Layout = Get-Content $LayoutPath -Raw | ConvertFrom-Json
 $Base = '0x{0:x}' -f [int64]$Layout.arm9.load_addr
 
-$Project = Join-Path $Root 're/ghidra'
+$Project = if ($env:DQ9_GHIDRA_PROJECT) { $env:DQ9_GHIDRA_PROJECT } else { Join-Path $Root 're/ghidra' }
 New-Item -ItemType Directory -Force -Path $Project | Out-Null
 
 & $Headless $Project dq9 `
@@ -28,7 +28,12 @@ New-Item -ItemType Directory -Force -Path $Project | Out-Null
     -loader BinaryLoader -loader-baseAddr $Base `
     -scriptPath (Join-Path $Root 're/ghidra_scripts') `
     -preScript NdsLayout.java $LayoutPath `
-    -postScript ApplySymbols.java (Join-Path $Root 're/symbols.txt') `
-    -max-cpu ([Environment]::ProcessorCount)
-if ($LASTEXITCODE -ne 0) { throw "analyzeHeadless failed ($LASTEXITCODE)" }
+    -max-cpu ([Environment]::ProcessorCount) 2>&1 | Tee-Object -Variable ImportOutput
+if ($LASTEXITCODE -ne 0 -or ($ImportOutput -match '(^|\s)ERROR\s') `
+        -or -not ($ImportOutput -match 'REPORT: Import succeeded')) {
+    throw "analyzeHeadless did not import successfully (exit $LASTEXITCODE)"
+}
+# Finish analysis before applying authoritative bounds: headless otherwise performs
+# another analysis pass after post-scripts and can expand their function bodies.
+& (Join-Path $PSScriptRoot 'ghidra-apply-symbols.ps1')
 Write-Host "Open $Project/dq9.gpr with tools/ghidra/ghidraRun.bat"

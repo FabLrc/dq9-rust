@@ -21,6 +21,7 @@ import ghidra.program.model.listing.CodeUnit;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
+import ghidra.program.model.symbol.SymbolType;
 
 public class ApplySymbols extends GhidraScript {
 
@@ -78,6 +79,14 @@ public class ApplySymbols extends GhidraScript {
             f = createFunction(addr, name);
         }
         if (f != null) {
+            // A former local label can coexist with a newly imported function.
+            // Promote its name to the function rather than creating a duplicate.
+            for (Symbol alias : currentProgram.getSymbolTable().getSymbols(addr)) {
+                if (alias.getSymbolType() == SymbolType.LABEL && alias.getName().equals(name)
+                        && alias.getParentNamespace().equals(f.getParentNamespace())) {
+                    alias.delete();
+                }
+            }
             f.setName(name, SourceType.USER_DEFINED);
         } else {
             Symbol s = getSymbolAt(addr);

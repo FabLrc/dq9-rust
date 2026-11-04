@@ -110,6 +110,9 @@ La CI exécute fmt, clippy, les tests sous Linux et la compilation wasm, sans ja
   `scripts/ghidra-query.ps1 decomp|xrefs|calls|disasm <adresse>` (`0x020d91ec` ou
   `ov_017::0218c0f4`) ; une requête verrouille le projet, en lancer plusieurs demande des
   copies de `re/ghidra` désignées par `DQ9_GHIDRA_PROJECT`.
+  Les imports et `scripts/ghidra-apply-symbols.ps1` appliquent les noms et bornes de
+  `re/functions.txt`, puis les surcharges de `re/symbols.txt` ; détails et limites
+  dans [`docs/re/rom-layout.md`](docs/re/rom-layout.md#noms-et-bornes-dans-ghidra).
 - **melonDS** (`tools/melonds`) : référence visuelle et analyse dynamique par son stub GDB.
 - **Avant d'analyser** : symboles et code de la [décompilation USA](https://github.com/DQIX/dqix-decomp)
   (adresses à convertir pour la ROM européenne) et [wiki des formats DQIX](https://github.com/DQIX/wiki),
@@ -118,8 +121,8 @@ La CI exécute fmt, clippy, les tests sous Linux et la compilation wasm, sans ja
 Consigner une découverte :
 
 1. Nommer fonctions et données dans `re/symbols.txt` (`<adresse> <nom> # commentaire`), puis
-   `scripts/ghidra-apply-symbols.ps1` (projet fermé dans l'interface). Le projet Ghidra est
-   jetable, les noms sont versionnés.
+   `scripts/ghidra-apply-symbols.ps1` (projet fermé dans l'interface). Les noms locaux
+   priment sur ceux de la décompilation ; le projet Ghidra est jetable.
 2. Décrire le format ou le comportement dans `docs/re/<sujet>.md` : preuves (adresses,
    contrôles sur données), hypothèses marquées **[hypothèse]**.
 3. Implémenter dans la crate correspondante avec un test sur données synthétiques et, si
