@@ -129,9 +129,9 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       (2 emplacements, 3 CRC-32, relecture/réécriture octet pour octet sur une sauvegarde
       réelle, groupe, personnages, or, temps de jeu, équipement, chapitre/étape/sous-étape) et
       `dq9re save`. Le code ARM de (dé)sérialisation est localisé (`0x020a94f8..0x020ac9bc`,
-      12 fonctions nommées) et sa table de blocs est documentée. Reste : décoder les 820
-      octets de drapeaux d'événements, l'encodage des noms, quêtes, bestiaire, sacs, le
-      protocole d'écriture à 4 états, rôle exact des deux emplacements.
+      12 fonctions nommées) et sa table de blocs est documentée ; pistes de scénario et
+      drapeaux globaux typés (`EventFlags`). Reste : encodage des noms, quêtes, bestiaire,
+      sacs, protocole d'écriture à 4 états, rôle exact des deux emplacements.
 - [ ] **Oracle** : lecture d'une sauvegarde d'état melonDS (format documenté par ndskit, MIT)
       ou script GDB, pour extraire les structures réimplémentées (état des triggers, équipe,
       position). Sert à tous les tests différentiels.

@@ -46,6 +46,16 @@ fn summary(slot: &Slot<'_>, verbose: bool) {
         slot.scenario_substep(),
         slot.area()
     );
+    let ev = slot.event_flags();
+    let set = ev
+        .global_flags()
+        .iter()
+        .map(|b| b.count_ones())
+        .sum::<u32>();
+    println!(
+        "  event: track {}  global flags set: {set}",
+        ev.current_track()
+    );
     println!(
         "  gold: {} (bank {})  mini medals: {}",
         slot.gold_on_hand(),

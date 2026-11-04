@@ -25,6 +25,14 @@ const EXISTS_FLAG: usize = 21;
 const VERSION: usize = 24;
 /// Chapter, step and substep words, then flag data (`Save_Serialize`, block `0x2d30`).
 const PROGRESS: usize = 11568;
+/// Event block: `PROGRESS + 16`, 0x334 bytes (`Save_Serialize`, `func_020a99d0`).
+const EVENT_FLAGS: usize = PROGRESS + 16;
+const EVENT_FLAGS_SIZE: usize = 0x334;
+const TRACK_COUNT: usize = 5;
+const TRACK_SIZE: usize = 0x1c;
+const GLOBAL_FLAGS: usize = TRACK_COUNT * TRACK_SIZE;
+const GLOBAL_FLAGS_SIZE: usize = 0x234;
+const TRACK_SELECTOR: usize = 0x332;
 
 /// Characters stored per slot (hero, standby and party members, 8 at the inn + 4 in party
 /// + 1 spare in the editor's reading).
@@ -269,6 +277,12 @@ impl<'a> Slot<'a> {
     /// Scenario substep, `Save_ScenarioSubstep` (`0x02010814`).
     pub fn scenario_substep(&self) -> u32 {
         u32_at(self.0, PROGRESS + 8)
+    }
+
+    /// Scenario tracks and event flags (`Save_Serialize` block `0x2d30`, minus the four
+    /// leading words), a copy of the quest manager's state (`docs/re/trigger.md`).
+    pub fn event_flags(&self) -> EventFlags<'a> {
+        EventFlags(&self.0[EVENT_FLAGS..EVENT_FLAGS + EVENT_FLAGS_SIZE])
     }
 
     /// Characters kept at the inn (not in the party).
@@ -532,6 +546,87 @@ impl SlotMut<'_> {
     }
 }
 
+/// Event state saved with a slot: five scenario tracks, the global flag array and a few
+/// trailing blocks. `func_020a99d0` copies it in five pieces (`0x8c`, `0x234`, `0xc`,
+/// `0x66` and 1 bytes); the block starts at offset 0 of the quest manager, so the manager's
+/// offsets (`+0x8c` global flags, `+0x332` track selector) apply unchanged.
+#[derive(Clone, Copy)]
+pub struct EventFlags<'a>(&'a [u8]);
+
+impl core::fmt::Debug for EventFlags<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("EventFlags")
+            .field("current_track", &self.current_track())
+            .finish_non_exhaustive()
+    }
+}
+
+/// One scenario track: progress bytes and its two local flag sets.
+#[derive(Clone, Copy, Debug)]
+pub struct Track<'a>(&'a [u8]);
+
+impl<'a> Track<'a> {
+    pub fn chapter(&self) -> u8 {
+        self.0[0]
+    }
+    pub fn step(&self) -> u8 {
+        self.0[1]
+    }
+    pub fn substep(&self) -> u8 {
+        self.0[2]
+    }
+    /// Chapter-local flags (13 bytes), cleared when the chapter changes.
+    pub fn chapter_flags(&self) -> &'a [u8] {
+        &self.0[3..16]
+    }
+    /// Step-local flags (12 bytes), cleared when the step changes.
+    pub fn step_flags(&self) -> &'a [u8] {
+        &self.0[16..28]
+    }
+}
+
+/// Bit `index` of a byte array, least significant bit first (`Flags_Test`, `0x0206dfc0`).
+/// Negative or out-of-range indices read as clear.
+pub fn test_bit(bytes: &[u8], index: i32) -> bool {
+    usize::try_from(index)
+        .ok()
+        .and_then(|i| bytes.get(i >> 3).map(|b| b >> (i & 7) & 1 != 0))
+        .unwrap_or(false)
+}
+
+impl<'a> EventFlags<'a> {
+    /// Index of the current track (byte `+0x332` of the block), 0..5.
+    pub fn current_track(&self) -> usize {
+        usize::from(self.0[TRACK_SELECTOR])
+    }
+
+    /// Track `index` (0..[`TRACK_COUNT`]).
+    pub fn track(&self, index: usize) -> Option<Track<'a>> {
+        (index < TRACK_COUNT).then(|| Track(&self.0[index * TRACK_SIZE..][..TRACK_SIZE]))
+    }
+
+    /// The 564-byte global flag array.
+    pub fn global_flags(&self) -> &'a [u8] {
+        &self.0[GLOBAL_FLAGS..GLOBAL_FLAGS + GLOBAL_FLAGS_SIZE]
+    }
+
+    /// Global flag `index` as the scripts read it (`Flags_Test`).
+    pub fn global_flag(&self, index: i32) -> bool {
+        test_bit(self.global_flags(), index)
+    }
+
+    /// Story flag `index` (`Flags_TestExt`, `0x0206eba8`): indices from `0x400` are shifted
+    /// by `0x6fa`.
+    pub fn story_flag(&self, index: i32) -> bool {
+        let index = if index < 0x400 {
+            index
+        } else {
+            index.saturating_add(0x6fa)
+        };
+        self.global_flag(index)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,6 +709,24 @@ mod tests {
             Some(0),
             "slot data does not depend on the magic"
         );
+    }
+
+    #[test]
+    fn flags_are_lsb_first_and_story_flags_shift_past_0x400() {
+        let mut data = blank();
+        let base = EVENT_FLAGS + GLOBAL_FLAGS;
+        data[base] = 0b0000_0010; // bit 1
+        data[base + (0x400 + 0x6fa) / 8] |= 1 << ((0x400 + 0x6fa) % 8);
+        data[EVENT_FLAGS + TRACK_SELECTOR] = 4;
+        data[EVENT_FLAGS + 4 * TRACK_SIZE + 1] = 7;
+        let save = Save::parse(&data).unwrap();
+        let ev = save.slot(0).unwrap().event_flags();
+        assert!(ev.global_flag(1) && !ev.global_flag(0) && !ev.global_flag(-1));
+        assert!(ev.story_flag(0x400) && !ev.story_flag(0x3ff));
+        assert!(!ev.global_flag(i32::MAX));
+        assert_eq!(ev.current_track(), 4);
+        assert_eq!(ev.track(4).unwrap().step(), 7);
+        assert!(ev.track(5).is_none());
     }
 
     #[test]

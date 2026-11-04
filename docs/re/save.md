@@ -67,7 +67,7 @@ taille, source en mémoire) :
 | 11448 / 11452 | 4 / 4 | or en main / en banque | `+0xf6c` / `+0xf68` |
 | 11460 | 4 | mini-médailles remises | `+0xf74` |
 | 11476 | 2 | zone (`+0x2c94`, mot courant, ou `0x6d` pour le point de départ) | |
-| 11568 | 0x344 | **progression** : chapitre, étape, sous-étape (`Save_Chapter`, `Save_ScenarioStep`, `Save_ScenarioSubstep`), 1 mot (`0x0201081c`), puis les drapeaux d'événements (820 octets, `0x020a99d0`) | `GameState` |
+| 11568 | 0x344 | **progression** : chapitre, étape, sous-étape (`Save_Chapter`, `Save_ScenarioStep`, `Save_ScenarioSubstep`), 1 mot (`0x0201081c`), puis le bloc d'événements (0x334 octets, voir plus bas) | `GameState`, copié par `func_020a99d0` (écriture) / `func_020a9a50` (lecture) |
 | 12404 | 0xa0 | état du journal de quêtes (`QuestLog_Get`) | |
 | 12564 | 0x330 | durées de quêtes (`QuestLog+0x178`) | |
 | 13380 | 0x194 | `GameState+0x5cda` (1 octet) puis `+0x5cdc` (400 octets) | |
@@ -87,6 +87,25 @@ Les lignes sans « Source » viennent du seul éditeur (non revérifiées dans l
 `+0x2c4c` (zone), `+0x2c58..0x2c77` (réglages, position de départ), `+0x2ca2` (drapeau
 d'intermission).
 
+## Bloc d'événements (`slot+11584`, 0x334 octets)
+
+`func_020a99d0` le copie en cinq morceaux (`0x8c`, `0x234`, `0xc`, `0x66` octets, puis 1) ;
+`func_020a9a50` fait l'inverse et fixe d'abord chapitre/étape/sous-étape courants
+(`0x02010774`, `0x020107a8`, `0x020107dc`, `0x02010810`). Le bloc est le début du gestionnaire
+de quêtes de `trigger.md` : ses décalages valent tels quels.
+
+| Décalage | Taille | Contenu |
+|---:|---:|---|
+| `0x000` | 5 × 0x1c | pistes : octets chapitre, étape, sous-étape, 13 octets de drapeaux de chapitre, 12 octets de drapeaux d'étape |
+| `0x08c` | 0x234 | drapeaux globaux (4 512 bits, bit de poids faible d'abord : `Flags_Test`) ; l'indice `>= 0x400` des scripts est décalé de `0x6fa` (`Flags_TestExt`) |
+| `0x2c0` | 0xc | [inconnu] |
+| `0x2cc` | 0x66 | [inconnu] |
+| `0x332` | 1 | piste courante (0..4) |
+
+Vérifié sur la démo : piste courante 0, avec 19 / 2 / 1 = chapitre/étape/sous-étape des mots
+d'en-tête ; 1 618 drapeaux globaux posés. Accesseurs : `Slot::event_flags`, `EventFlags`,
+`Track`, `test_bit`.
+
 ## Champs typés par `dq9_formats::save`
 
 Voir les accesseurs de `Slot` et `Character` ; tous sont vérifiés sur la démo. Personnage
@@ -103,8 +122,9 @@ PV max, PM max), points libres `+244`, maîtrises `+282`, nom `+320` (10 octets)
 - Encodage des noms (`12 2f 30 39…` pour le héros de la démo) : à rapprocher de `text.md`.
 - Numérotation de la zone (`109` sur la démo) ; sens des mots de position.
 - Bits de `lieux visités` (`0xfe77ffff` sur la démo, l'éditeur ne nomme que les bits 1..=18).
-- Contenu des 820 octets de drapeaux (`Save_Serialize` appelle `0x020a99d0` ; l'inverse est
-  `0x020a9a50`) : à décoder pour typer les drapeaux d'événements.
+- Sens des drapeaux eux-mêmes (indices) : le bloc est typé, pas les bits. Les blocs de
+  `+0x2c0` (12 octets), `+0x2cc` (0x66 octets) et l'octet `+0x332` hors sélecteur de piste
+  n'ont pas de rôle établi.
 - Écritures : protocole de `Save_WriteStep` (`0x020aad2c`, 4 états : lecture de l'emplacement
   1, sérialisation, écriture, vérification) et rôle des écritures redirigées vers un tampon
   (`puRam020aaf8c`) ; pas encore porté, donc aucun marqueur `port:`.

@@ -43,6 +43,19 @@ fn real_save_fields_are_coherent() {
         "chapter {}",
         slot.chapter()
     );
+    let ev = slot.event_flags();
+    let t = ev.track(ev.current_track()).expect("selector below 5");
+    eprintln!(
+        "track {} = {}/{}/{}",
+        ev.current_track(),
+        t.chapter(),
+        t.step(),
+        t.substep()
+    );
+    assert_eq!(u32::from(t.chapter()), slot.chapter());
+    assert_eq!(u32::from(t.step()), slot.scenario_step());
+    assert_eq!(u32::from(t.substep()), slot.scenario_substep());
+    assert!(ev.global_flags().iter().any(|&b| b != 0));
     assert!(slot.exists());
     assert!(slot.party_count() >= 1 && slot.party_count() <= 4);
     let used = usize::from(slot.standby_count()) + usize::from(slot.party_count());
