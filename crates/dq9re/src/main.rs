@@ -1,6 +1,7 @@
 //! `dq9re`: command-line tooling for reverse engineering the Dragon Quest IX ROM.
 
 mod extract;
+mod font;
 mod text;
 
 use std::borrow::Cow;
@@ -68,6 +69,19 @@ enum Command {
         #[arg(long, default_value = "build/text")]
         out: PathBuf,
     },
+    /// Render a game font to PNG: the glyph sheet, or one line of text with `--text`.
+    Font {
+        /// `me` (message font) or `s7` (small font).
+        #[arg(default_value = "me")]
+        font: String,
+        /// Markup to lay out, e.g. "Caract<'e>ristiques".
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long, default_value = "build/font.png")]
+        out: PathBuf,
+        #[arg(long, default_value_t = 4)]
+        scale: usize,
+    },
     /// List (and optionally extract) the members of a NARC file in the ROM.
     Narc {
         /// Path inside the ROM filesystem, e.g. `data/map/F01M01.ambl`.
@@ -110,6 +124,19 @@ fn main() -> Result<()> {
         Command::Gp2 { path, out } => gp2(&rom, &path, out.as_deref()),
         Command::Table { archive, member } => text::table(&rom, &archive, &member),
         Command::Text { lang, out } => text::dump(&rom, &lang, &out),
+        Command::Font {
+            font,
+            text,
+            out,
+            scale,
+        } => {
+            let id = match font.as_str() {
+                "me" => dq9_formats::FontId::Message,
+                "s7" => dq9_formats::FontId::Small,
+                other => bail!("unknown font {other:?} (expected me or s7)"),
+            };
+            font::run(&rom, id, text.as_deref(), &out, scale)
+        }
         Command::Narc {
             path,
             out,

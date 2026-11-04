@@ -3,10 +3,12 @@
 //! Like `nds-rom`, everything works on borrowed bytes with no I/O and returns
 //! [`nds_rom::Error`] on malformed input. Format notes live in `docs/re/`.
 
+pub mod font;
 pub mod gpc2;
 pub mod level5;
 pub mod table;
 
+pub use font::{Font, FontId};
 pub use gpc2::Gpc2;
 pub use nds_rom::{Error, Result};
 pub use table::{Record, Table, Value};

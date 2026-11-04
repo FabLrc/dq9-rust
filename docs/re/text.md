@@ -10,9 +10,9 @@ d'enregistrements (`table.md`) et dans les fichiers `.nat`. Une langue par fichi
 ## Caractères
 
 - Pas d'octets non ASCII dans les textes européens : accents et signes spéciaux sont des
-  balises — `<'e>` (é), `<^e>` (ê), `` <`a> `` (à), `<'E>`, `<ss>` (ß), `<1>` (apostrophe),
-  `<,>` (virgule) **[hypothèse : glyphes distincts de la police, ex. typographie]**, `<!>`
-  (espace insécable + `!` en français) **[hypothèse]**.
+  **noms de glyphes** de la police (`font.md`) — `<'e>` (é), `<^e>` (ê), `` <`a> `` (à),
+  `<ss>` (ß), `<1>` (apostrophe typographique), `<,>`, `<heart>`… Le moteur prend le **premier**
+  glyphe, dans l'ordre de la table, dont la chaîne commence à la position courante.
 - Retour à la ligne : les deux caractères `\n` (barre oblique inverse + `n`), ou `\r\n`/`\n`
   réels ; tous deviennent le code `0xFF18`.
 - `//Nom//` en début de réplique : nom de l'orateur **[hypothèse : affiché dans un cadre]** ;
@@ -20,14 +20,50 @@ d'enregistrements (`table.md`) et dans les fichiers `.nat`. Une langue par fichi
 
 ## Pipeline (ARM9)
 
-Deux passes, retrouvées à partir des tables de balises (noms dans `re/symbols.txt`) :
+`Msg_Prepare` (`0x02067ea8`) enchaîne six passes, chacune copiant d'un tampon à l'autre (noms
+dans `re/symbols.txt`) :
 
 ```mermaid
 flowchart LR
-    s[chaîne avec balises] --> e[Msg_ExpandNames<br/>0x02069244] --> c[Msg_Compile<br/>0x02069ffc] --> o[flux de codes 16 bits]
+    s[texte brut] --> v[Msg_ExpandValues<br/>0x0206832c] --> n[Msg_Normalize<br/>0x02068428] --> c[Msg_EvalConditionals<br/>0x02068f50]
+    c --> e[Msg_ExpandNames<br/>0x02069244] --> k[Msg_ApplyCap<br/>0x02069604] --> m[Msg_Compile<br/>0x02069ffc] --> o[flux de codes]
 ```
 
-### 1. `Msg_ExpandNames` : substitutions
+Délimitation d'une balise : de `<` jusqu'au premier `>` **non suivi** d'un autre `>`
+(`Msg_FindTagEnd`, `0x020424bc`), pour que le glyphe `<>>>` (») reste lisible.
+
+### 0. `Msg_ExpandValues` : valeurs numériques
+
+Table `0x020e7e6c` : `<val_n>` / `<VAL_n>` → `MsgSubst_VAL` (`0x02068248`), qui insère la
+n-ième valeur passée au message.
+
+### 1. `Msg_Normalize` : filtrage par la police
+
+Pour chaque position : une chaîne de glyphe est recopiée telle quelle ; sinon une balise
+`<…>` est recopiée **en majuscules** (`<Cap>` → `<CAP>`, `<str_1>` → `<STR_1>`) ; sinon ` `,
+`/`, `\n` sont recopiés ; tout autre octet devient `< >` (glyphe espace).
+
+### 2. `Msg_EvalConditionals` : blocs conditionnels
+
+56 règles (`g_MsgCondRules`, `0x020e834c`), construites à partir de 52 mots-clés
+(`g_MsgCondKeywords`, `0x020e80dc`) joints par `_`. Chaque règle a une balise de début, une ou
+deux balises intermédiaires et une balise de fin, plus une fonction `MsgCond_*` qui renvoie
+l'indice de la branche à garder :
+
+| Forme | Exemple | Branches |
+|---|---|---|
+| si / sinon | `<IF_HERO_MALE>a<ELSE_HERO_NOT_MALE>b<ENDIF_HERO_MALE>` | 0 = `a`, 1 = `b` |
+| genre M/F/N | `<IF_I_NAME_M>a<IF_I_NAME_F>b<IF_I_NAME_N>c<ENDIF_I_NAME_MFN>` | 0, 1, 2 |
+
+La branche choisie est gardée, le reste jusqu'à la balise de fin est supprimé
+(`Msg_SelectBranch`, `0x02068e2c`). Familles de conditions : sexe (`MALE`, `HERO_MALE`,
+`ACTOR_MALE`…), groupe (`SOLO`, `ALONE`, `FEMALE_PARTY`, `TARGET_PARTY`…), nombre
+(`SING VAL_n`, `PLRNOUN`), genre grammatical (`_M/_F/_N`), initiale voyelle (`VOWEL_…`,
+`VOWEL_FR_…` pour l'élision), dernière lettre `s` (`LAST_LETTER_S_…`, génitif allemand).
+Exemple lu : `MsgCond_MALE` renvoie le bit 0 de l'octet `+0x49c` de la structure du héros
+**[hypothèse : 1 = féminin]**.
+
+### 3. `Msg_ExpandNames` : substitutions
 
 - `g_MsgSubstTags` (`0x020e7e9c`) : `<HERO>`, `<LEADER>`, `<ADDRESSEE>`, `<TMAP_SEC…>`,
   `<STR_n>`, `<SIZE=…>` (sans gestionnaire), chacune avec une fonction `MsgSubst_*`. Un chiffre
@@ -46,7 +82,13 @@ flowchart LR
   Le nom fléchi est produit par `FUN_020e4968` **[hypothèse : `Msg_InflectName`]**.
 - `[WPN…]` et `[ACTER…]` : insertion du nom d'arme / de l'acteur courant.
 
-### 2. `Msg_Compile` : codes de contrôle
+### 4. `Msg_ApplyCap` : majuscule
+
+`<CAP>` (écrit `<Cap>` dans les données, mis en majuscules par la passe 1) est supprimé ; si
+le glyphe suivant est marqué minuscule dans la police, sa chaîne est mise en majuscules
+(`a`→`A`, `<'e>`→`<'E>`, conversion ASCII `a-z` uniquement).
+
+### 5. `Msg_Compile` : codes de contrôle
 
 `g_MsgControlTags` (`0x020e7f94`) associe 40 balises à des fonctions `MsgCtl_*` qui écrivent
 un code 16 bits (suivi d'éventuels paramètres pour les balises `=`) :
@@ -75,12 +117,12 @@ commençant par `<INN=`, `<CHURCH=`, `<BANK>`, `<SHOP`, `RENKIN` sont ignorées 
 
 Les plus courantes : `<n>` chiffres (137 696, ex. `<1>` apostrophe), `<,>` (105 096), `<PAGE>`
 (71 542), `<END>` (30 625), `</QUEST>`, `<HERO>`, `<CLOSE>`, `<PAD_WAIT_NOCUR>`, `<QUEST=n>`,
-`<Cap>` (majuscule sur le mot suivant **[hypothèse]**), conditionnels
-`<IF_HERO_MALE>…<ELSE_HERO_NOT_MALE>…<ENDIF_HERO_MALE>` (et `_MALE`, `_SOLO`, `_ALONE`,
-`_ADDRESSEE_MALE`, `_SING`, `_PLRNOUN`).
+`<Cap>`, conditionnels `<IF_HERO_MALE>…<ELSE_HERO_NOT_MALE>…<ENDIF_HERO_MALE>` (et `_MALE`,
+`_SOLO`, `_ALONE`, `_ADDRESSEE_MALE`, `_SING`, `_PLRNOUN`).
 
-**Non localisés dans le code** : `<Cap>`, les conditionnels `IF_…`, les accents `<'e>`. Ils sont
-traités ailleurs (avant la passe 1, ou par le moteur de police) **[à rechercher]**.
+**Encore inconnus** : la fonction de flexion des noms (`FUN_020e4968`), le test de voyelle
+(`FUN_02067ffc`), et la conversion finale des octets en glyphes après `Msg_Compile`
+(`FUN_0206a984`).
 
 ## Fichiers `.nat` (partiel)
 

@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use dq9_formats::{Gpc2, Table, Value, level5};
+use dq9_formats::{Font, FontId, Gpc2, Table, Value, level5};
 use nds_rom::Rom;
 
 /// Calls `f(archive path, member name, decompressed bytes)` for every GPC2 member.
@@ -77,4 +77,53 @@ fn record_tables_parse() {
     });
     // 47 075 `.bin` + 283 `.bmmp` + 28 `.bcfg`; the other 152 `.bin` use other formats.
     assert_eq!(tables, 47_386);
+}
+
+/// Both fonts parse, and every accented-letter tag used in the European texts (`<'e>`,
+/// `<^a>`, `<:O>`, `<,c>`, `<~n>`…) is a glyph of the message font.
+#[test]
+fn fonts_cover_accent_tags() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let font = |id: FontId| {
+        let info = rom
+            .file_by_path(&format!("data/pack_lv5/fi_{}.bin", id.name()))
+            .unwrap();
+        let data = rom
+            .file_by_path(&format!("data/pack_lv5/fd_{}.bin", id.name()))
+            .unwrap();
+        Font::parse(info, data, id).unwrap()
+    };
+    assert_eq!(font(FontId::Small).glyphs.len(), 245);
+    let message = font(FontId::Message);
+    assert_eq!(message.glyphs.len(), 242);
+
+    let mut tags = HashSet::new();
+    for_each_member(&rom, |_, name, data| {
+        let Ok(table) = Table::parse(data) else {
+            return;
+        };
+        if !name.ends_with(".bin") {
+            return;
+        }
+        for value in table.records.iter().flat_map(|r| &r.values) {
+            let Value::Str(Some(s)) = value else { continue };
+            for w in s.windows(4) {
+                if w[0] == b'<'
+                    && b"`'^:~,".contains(&w[1])
+                    && w[2].is_ascii_alphabetic()
+                    && w[3] == b'>'
+                {
+                    tags.insert(w.to_vec());
+                }
+            }
+        }
+    });
+    assert!(tags.len() > 40, "only {} accent tags found", tags.len());
+    for tag in &tags {
+        let index = message
+            .find(tag)
+            .unwrap_or_else(|| panic!("{}", String::from_utf8_lossy(tag)));
+        assert_eq!(message.glyphs[usize::from(index)].text, tag.as_slice());
+    }
 }

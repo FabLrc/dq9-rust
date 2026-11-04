@@ -66,3 +66,89 @@
 0x02069f84 MsgCtl_END                   arm # <END> control tag handler (g_MsgControlTags)
 0x02069fac MsgCtl_CLOSE                 arm # <CLOSE> control tag handler (g_MsgControlTags)
 0x02069fd4 MsgCtl_SHAKE                 arm # <SHAKE> control tag handler (g_MsgControlTags)
+
+# --- Message conditionals (docs/re/text.md) ---
+0x02068e2c Msg_SelectBranch         # [inferred] keeps the chosen branch between the rule's IF/ELSE/ENDIF tags
+0x02068eb0 Msg_CondTagName          # builds "<A_B_C>" from keyword indices (g_MsgCondKeywords)
+0x02068f50 Msg_EvalConditionals     # pass 0: resolves <IF_...>...<ELSE_...>...<ENDIF_...> blocks
+0x020e80dc g_MsgCondKeywords        # 52 keywords, char[12] each (ACTION, ACTOR, CONSONANT, ELSE...)
+0x020e834c g_MsgCondRules           # {s8 if[4]; s8 else[4]; s8 else2[4]; s8 endif[4]; handler} x56
+0x0206853c MsgCond_SP                   arm # <IF_SP> condition: returns branch index (0 = first)
+0x02068568 MsgCond_HOST_MALE            arm # <IF_HOST_MALE> condition: returns branch index (0 = first)
+0x02068590 MsgCond_ADDRESSEE_MALE       arm # <IF_ADDRESSEE_MALE> condition: returns branch index (0 = first)
+0x020685b4 MsgCond_HERO_MALE            arm # <IF_HERO_MALE> condition: returns branch index (0 = first)
+0x020685dc MsgCond_MALE                 arm # <IF_MALE> condition: returns branch index (0 = first)
+0x02068600 MsgCond_FEMALE_PARTY         arm # <IF_FEMALE_PARTY> condition: returns branch index (0 = first)
+0x02068660 MsgCond_SOLO                 arm # <IF_SOLO> condition: returns branch index (0 = first)
+0x0206868c MsgCond_SOLOHOST             arm # <IF_SOLOHOST> condition: returns branch index (0 = first)
+0x020686f0 MsgCond_ALONE                arm # <IF_ALONE> condition: returns branch index (0 = first)
+0x02068778 MsgCond_SING_VAL_1           arm # <IF_SING VAL_1> condition: returns branch index (0 = first)
+0x0206878c MsgCond_SING_VAL_2           arm # <IF_SING VAL_2> condition: returns branch index (0 = first)
+0x020687a0 MsgCond_SING_VAL_3           arm # <IF_SING VAL_3> condition: returns branch index (0 = first)
+0x020687b4 MsgCond_SING_VAL_4           arm # <IF_SING VAL_4> condition: returns branch index (0 = first)
+0x020687c8 MsgCond_SING_VAL_5           arm # <IF_SING VAL_5> condition: returns branch index (0 = first)
+0x020687dc MsgCond_I_NAME_PLRNOUN       arm # <IF_I_NAME_PLRNOUN> condition: returns branch index (0 = first)
+0x02068808 MsgCond_M_NAME_PLRNOUN       arm # <IF_M_NAME_PLRNOUN> condition: returns branch index (0 = first)
+0x02068834 MsgCond_I_NAME_M             arm # <IF_I_NAME_M> condition: returns branch index (0 = first)
+0x02068850 MsgCond_M_NAME_M             arm # <IF_M_NAME_M> condition: returns branch index (0 = first)
+0x0206886c MsgCond_ACTION_M             arm # <IF_ACTION_M> condition: returns branch index (0 = first)
+0x02068888 MsgCond_ACTOR_MALE           arm # <IF_ACTOR_MALE> condition: returns branch index (0 = first)
+0x020688a4 MsgCond_ACTOR_M              arm # <IF_ACTOR_M> condition: returns branch index (0 = first)
+0x020688c0 MsgCond_TARGET_M             arm # <IF_TARGET_M> condition: returns branch index (0 = first)
+0x020688dc MsgCond_TARGET_PARTY         arm # <IF_TARGET_PARTY> condition: returns branch index (0 = first)
+0x020688f4 MsgCond_ACTOR_PARTY          arm # <IF_ACTOR_PARTY> condition: returns branch index (0 = first)
+0x0206890c MsgCond_ACTOR_TARGET         arm # <IF_ACTOR_TARGET> condition: returns branch index (0 = first)
+0x02068938 MsgCond_ACTOR_PR             arm # <IF_ACTOR_PR> condition: returns branch index (0 = first)
+0x02068964 MsgCond_TARGET_PR            arm # <IF_TARGET_PR> condition: returns branch index (0 = first)
+0x02068990 MsgCond_TARGET_SING          arm # <IF_TARGET_SING> condition: returns branch index (0 = first)
+0x0206899c MsgCond_TARGET_MIXED         arm # <IF_TARGET_MIXED> condition: returns branch index (0 = first)
+0x020689b4 MsgCond_VOWEL_FR_HERO        arm # <IF_VOWEL_FR_HERO> condition: returns branch index (0 = first)
+0x020689f4 MsgCond_VOWEL_FR_ADDRESSEE   arm # <IF_VOWEL_FR_ADDRESSEE> condition: returns branch index (0 = first)
+0x02068a30 MsgCond_VOWEL_FR_LEADER      arm # <IF_VOWEL_FR_LEADER> condition: returns branch index (0 = first)
+0x02068a6c MsgCond_VOWEL_FR_I           arm # <IF_VOWEL_FR_I> condition: returns branch index (0 = first)
+0x02068a9c MsgCond_VOWEL_FR_I2          arm # <IF_VOWEL_FR_I2> condition: returns branch index (0 = first)
+0x02068acc MsgCond_VOWEL_FR_M           arm # <IF_VOWEL_FR_M> condition: returns branch index (0 = first)
+0x02068afc MsgCond_VOWEL_FR_VOCATION    arm # <IF_VOWEL_FR_VOCATION> condition: returns branch index (0 = first)
+0x02068b2c MsgCond_VOWEL_FR_ACTOR       arm # <IF_VOWEL_FR_ACTOR> condition: returns branch index (0 = first)
+0x02068b5c MsgCond_VOWEL_FR_TARGET      arm # <IF_VOWEL_FR_TARGET> condition: returns branch index (0 = first)
+0x02068b8c MsgCond_SING_FR_VAL_1        arm # <IF_SING_FR VAL_1> condition: returns branch index (0 = first)
+0x02068ba4 MsgCond_SING_FR_VAL_2        arm # <IF_SING_FR VAL_2> condition: returns branch index (0 = first)
+0x02068bbc MsgCond_SING_FR_VAL_3        arm # <IF_SING_FR VAL_3> condition: returns branch index (0 = first)
+0x02068bd4 MsgCond_SING_FR_VAL_4        arm # <IF_SING_FR VAL_4> condition: returns branch index (0 = first)
+0x02068bec MsgCond_SING_FR_VAL_5        arm # <IF_SING_FR VAL_5> condition: returns branch index (0 = first)
+0x02068c04 MsgCond_VOWEL_HERO           arm # <IF_VOWEL_HERO> condition: returns branch index (0 = first)
+0x02068c40 MsgCond_VOWEL_LEADER         arm # <IF_VOWEL_LEADER> condition: returns branch index (0 = first)
+0x02068c7c MsgCond_VOWEL_I              arm # <IF_VOWEL_I> condition: returns branch index (0 = first)
+0x02068cac MsgCond_VOWEL_M              arm # <IF_VOWEL_M> condition: returns branch index (0 = first)
+0x02068cdc MsgCond_VOWEL_VOCATION       arm # <IF_VOWEL_VOCATION> condition: returns branch index (0 = first)
+0x02068d0c MsgCond_VOWEL_ACTOR          arm # <IF_VOWEL_ACTOR> condition: returns branch index (0 = first)
+0x02068d3c MsgCond_VOWEL_TARGET         arm # <IF_VOWEL_TARGET> condition: returns branch index (0 = first)
+0x02068d6c MsgCond_LAST_LETTER_S_I      arm # <IF_LAST_LETTER_S_I> condition: returns branch index (0 = first)
+0x02068d9c MsgCond_LAST_LETTER_S_M      arm # <IF_LAST_LETTER_S_M> condition: returns branch index (0 = first)
+0x02068dcc MsgCond_LAST_LETTER_S_DE_ACTOR arm # <IF_LAST_LETTER_S_DE_ACTOR> condition: returns branch index (0 = first)
+0x02068dfc MsgCond_LAST_LETTER_S_DE_TARGET arm # <IF_LAST_LETTER_S_DE_TARGET> condition: returns branch index (0 = first)
+
+# --- Fonts (docs/re/font.md) ---
+0x020420f8 Font_MeasureString       # width of a string: sum(width + 1 + kerning) - 1
+0x020424f4 Font_FindGlyph           # first glyph whose byte string prefixes the text; -1 if none
+0x0204255c Font_FindGlyphEntry      # same as Font_FindGlyph, returns the 8-byte entry
+0x020425c4 Font_GlyphEntry          # glyph entry by index
+0x020425f4 Font_Kerning             # adjustment for (previous glyph, glyph) pair
+0x02042658 Font_SpaceWidth          # width of bytes without glyph (g_FontSpaceWidth[font])
+0x020426cc Font_TextToGlyphIndices  # bytes -> glyph index per character (0xFF = space)
+0x02042814 Font_Load                # loads data/pack_lv5/fi_%s.bin and fd_%s.bin, rebases pointers
+0x02042954 Font_LoadAll             # Font_Load("s7") then Font_Load("me")
+0x02066d00 MsgWin_DrawGlyphs        # message window: draws glyph codes with kerning, 0xFF18 newline, 0xFF19 space
+0x020e7aa4 g_FontSpaceWidth         # u32[2] = {2, 3} for s7, me
+0x0210782c g_FontInfo               # fi_*.bin pointers [s7, me]
+0x02107834 g_FontBitmap             # fd_*.bin pointers [s7, me]
+
+# --- Message preparation passes (docs/re/text.md) ---
+0x020424bc Msg_FindTagEnd           # first '>' not followed by another '>'
+0x02067ea8 Msg_Prepare              # runs the 6 passes below on a message
+0x0206832c Msg_ExpandValues         # <val_n>/<VAL_n> via table 0x020e7e6c
+0x02068428 Msg_Normalize            # glyph strings kept, other tags uppercased, unknown bytes -> "< >"
+0x02069604 Msg_ApplyCap             # <CAP>: uppercases the next glyph if it is lowercase
+0x02067f6c Msg_AsciiUpper           # ASCII a-z -> A-Z over n bytes
+0x02068248 MsgSubst_VAL             # <VAL_n> handler
+0x020e7e6c g_MsgValueTags           # {char* tag; handler} x2: val_, VAL_
