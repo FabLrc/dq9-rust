@@ -1,7 +1,70 @@
 # Feuille de route
 
-État au fil des commits ; chaque étape se termine par une doc dans `docs/re/`, une
+Objectif : DQ9 entièrement réimplémenté en Rust (natif et Web), avec une **première version
+jouable le plus tôt possible**, en s'appuyant au maximum sur le travail public existant
+(`ressources-externes.md`). Chaque étape se termine par une doc dans `docs/re/`, une
 implémentation testée et un commit.
+
+## Principes
+
+1. **Tranche verticale d'abord.** On construit le chemin minimal « nouvelle partie → se
+   déplacer → parler → scènes → combattre » sur une zone, puis on élargit. Un système n'est
+   approfondi que lorsqu'une zone jouable en a besoin.
+2. **Ne pas redécouvrir ce qui est connu.** Avant d'analyser une fonction ou un format :
+   symboles et code de la décompilation USA (adresses converties pour la ROM européenne),
+   pages du wiki DQIX, puis seulement Ghidra. Ce qui est repris est cité et revérifié sur la
+   ROM.
+3. **Traduire le comportement du jeu, remplacer la plateforme.** La logique de jeu est
+   traduite fonction par fonction ; les bibliothèques Nintendo (NitroSDK, NitroSystem, Wi-Fi,
+   C runtime) et le matériel (VRAM, moteurs 2D/3D, son) ne sont pas traduits mais remplacés
+   par `dq9-render`, `dq9-audio`, `dq9-app` et la crate `std`.
+4. **Des oracles pour vérifier.** melonDS (stub GDB, sauvegardes d'état), DQIX Enhanced
+   (portage PC fidèle à l'image près, GPL : comportement seulement), BattleEmulator et
+   Grotto-Searcher (combats, grottes) : même entrée, même résultat.
+5. **Les sauvegardes DS comme points de départ.** Charger un `.sav` réel permet de tester
+   n'importe quel moment du jeu sans y jouer depuis le début.
+
+## Définition de « 100 % traduit »
+
+Périmètre mesuré sur la décompilation USA (`config/usa/arm9`) : **14 780 fonctions**, 2,9 Mo
+de code.
+
+| Catégorie | Contenu | Traitement |
+|---|---|---|
+| Jeu | logique Level-5 de l'ARM9 principal et des overlays de jeu | **traduite** en Rust, en citant l'adresse d'origine |
+| Plateforme | NitroSDK, NitroSystem (G3D, son), C runtime, overlay 31 (Wi-Fi, 1 962 fonctions), multiboot | **remplacée**, non traduite |
+| Hors jeu | overlays de débogage (7, 22), anti-piratage, écran d'erreur de lecture (19) | **exclue** |
+
+« 100 % » = toutes les fonctions de la catégorie Jeu sont traduites ou explicitement
+remplacées par un équivalent documenté, et les tests différentiels passent. Le compteur est
+fourni par `dq9re coverage` (jalon J0).
+
+### Carte des overlays
+
+Noms internes et rôles d'après [dqix-functions](https://github.com/DQIX/dqix-functions) ;
+nombre de fonctions d'après la décompilation USA.
+
+| Overlay | Nom interne | Fonctions | Rôle | Jalon |
+|---|---|---:|---|---|
+| ARM9 | — | 6 205 | moteur Level-5 + bibliothèques Nintendo (à trier) | selon besoin |
+| 17 | gamemain | 1 194 | boucle de jeu, terrain, triggers, interpréteur `.stb` | J1–J3 |
+| 1 | event | 515 | scènes, natives des scripts (`ov_001::0215ae1c…`) | J3 |
+| 0 | battle | 826 | combat | J4 |
+| 24 / 25 / 26 | sub_battle / sub_round / sub_command | 573 / 304 / 24 | combat : action, tour, commandes | J4 |
+| 23 | sub_menu | 827 | menus secondaires, fin de combat, contenu téléchargeable | J4–J5 |
+| 2 / 4 / 5 / 11 | topmenu / menucallback / equipmenu / menusys | 213 / 532 / 89 / 186 | menus | J5 |
+| 3 | shisetsu | 510 | établissements (boutiques, auberge, église…) | J5 |
+| 20 / 21 / 9 | title / charamake / charamake2 | 18 / 5 / 43 | titre, création du personnage | J5 |
+| 13 | skillup | 40 | points de compétence | J5 |
+| 33 / 34 | bgload1 / bgload2 | 5 / 5 | chargement en arrière-plan | J1 |
+| 27 | sub_staffroll | 87 | générique de fin | J6 |
+| 6 | renkin | 132 | alchimie | J7 |
+| 8 / 14 / 12 / 15 | jourecode / subjugation / prof / charaview | 63 / 69 / 71 / 103 | registres, bestiaire, profil, visionneuse | J7 |
+| 16 | movieview | 87 | vidéos Mobiclip | J9 |
+| 31 / 30 | wifi / sub_libmb | 1 962 / 11 | Wi-Fi Nintendo, téléchargement DS | J8 (remplacés) |
+| 7, 22, 19, 29 | debug, sub_debug, readerror, sub_makescn | — | hors jeu | exclus |
+
+Les overlays 10, 28 et 32 (`pitfall`, `sub_hoge`, `sound`) sont à identifier.
 
 ## Fait
 
@@ -9,32 +72,159 @@ implémentation testée et un commit.
 - [x] Conteneur ROM : en-tête, fichiers, ARM9/overlays (BLZ), NARC, codecs Nintendo.
 - [x] Archives GPC2 + compression Level-5 (`gpc2.md`).
 - [x] Tables d'enregistrements (`table.md`) ; extraction de tous les textes (`text.md`).
-- [x] Pipeline des messages : tables de balises, codes de contrôle `FF01..FF2F`.
-- [x] Polices `fi_*/fd_*` (glyphes nommés par chaîne, crénage) (`font.md`).
-- [x] Pipeline des messages réimplémenté (6 passes, conditions, majuscules) et rendu des
-      dialogues avec la police du jeu (`dq9re msg`).
-- [x] Choix de la réplique d'un PNJ : types d'enregistrements, étapes, quêtes, nuit,
-      emplacements et zones de conversation ; lecteur de tables du jeu (`dialogue.md`,
-      `dq9re talk`).
-- [x] Triggers de scénario : chargement par salle et étape, compilation des mots, choix,
-      toutes les conditions des données, pistes de scénario, types d'événements, actions
-      immédiates et différées sur un état modélisé (`trigger.md`) ; `dq9re talk` enchaîne
-      triggers, actions et choix de la réplique.
-- [x] Scripts d'événements `.stb` (`SB2`) : format, machine à pile, désassembleur ; natives
-      numérotées (`stb.md`, `dq9re stb`).
+- [x] Pipeline des messages réimplémenté (6 passes, balises, codes `FF01..FF2F`, conditions,
+      majuscules) et rendu des dialogues avec les polices du jeu (`font.md`, `dq9re msg`).
+- [x] Choix de la réplique d'un PNJ (`dialogue.md`, `dq9re talk`).
+- [x] Triggers de scénario : chargement, conditions, pistes, types d'événements, actions
+      immédiates et différées sur un état modélisé (`trigger.md`).
+- [x] Scripts d'événements `.stb` : format, machine à pile, désassembleur (`stb.md`,
+      `dq9re stb`).
+- [x] Recensement des ressources externes (`ressources-externes.md`).
 
-## Prochaines étapes
+## J0 — Accélérateurs
 
-1. **Natives des scripts** : rôle des 228 natives employées (décompilation de
-   `ov_001::0215ae1c…`), à commencer par les plus fréquentes (210, 570, 206, 208, 571).
-2. **Interpréteur de scripts** dans `dq9-core` : exécuter les `.stb` sur l'état des
-   triggers (attentes, messages, drapeaux).
-3. **Graphismes 3D Nitro** (`BMD0`/`BTX0`/`BCA0`, formats documentés publiquement) : lecteur
-   + rendu wgpu de premier jet (personnages `chr`, cartes `ambl`).
-4. **Tables de jeu** : objets, monstres, sorts (`bin/*`, `prm/*`, `.nat` binaires) ; noms
-   d'objets/monstres pour la flexion grammaticale (`FUN_020e4968`).
-5. **Frontend** `dq9-app` (winit + wgpu, natif et wasm) affichant d'abord une carte et une
-   boîte de dialogue réelles (cadre de fenêtre, nom de l'orateur `//Nom//`, défilement).
-6. Balises non localisées : `<RIKKA>`, `<CEN>`, `<TC#>`, `<W=#>`… (`text.md`).
-7. Points de sens inconnu des triggers : journal de quêtes (conditions 0x25/0x33, bits des
-   entrées), événements 6, 19, 22, 23, 27, valeurs globales des conditions 0x5d–0x63.
+Petits chantiers qui rendent tous les suivants plus rapides.
+
+- [ ] **Symboles de la décompilation** : convertisseur des `symbols.txt` de dqix-decomp
+      (commit épinglé) vers les adresses européennes (`ressources-externes.md`), produisant
+      `re/symbols-decomp.txt` ; appliqué avant `re/symbols.txt` (nos noms priment), avec les
+      bornes de fonctions. Critère : nos 193 symboles retombent sur leur équivalent.
+- [ ] **`dq9re coverage`** : liste des fonctions (bornes ci-dessus), classement Jeu /
+      Plateforme / Hors jeu (`re/coverage.txt`), fonctions citées dans le code Rust
+      (`ov_017::0218c0f4`, `0x020d91ec`, `FUN_…`) ; affiche le pourcentage par module.
+- [ ] **Natives des scripts** : reporter dans `stb.md` les rôles lus par le wiki
+      ([Engine-Functions](https://github.com/DQIX/wiki/blob/main/Engine-Functions.md)) en
+      vérifiant chacune sur `ov_001` ; priorité aux plus fréquentes (210, 570, 206, 208, 571).
+- [ ] **Sauvegarde DS** (`dq9-formats::save`) : lecture/écriture du `.sav` (EEPROM 64 Ko,
+      sommes de contrôle), disposition d'après l'éditeur DQIX (`pattern.hexpat`) et
+      `GameState` de la décompilation. Critère : relire et réécrire à l'identique une
+      sauvegarde réelle ; `dq9re save` affiche équipe, lieu, étape du scénario, drapeaux.
+- [ ] **Oracle** : lecture d'une sauvegarde d'état melonDS (format documenté par ndskit, MIT)
+      ou script GDB, pour extraire les structures réimplémentées (état des triggers, équipe,
+      position). Sert à tous les tests différentiels.
+- [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-core`,
+      `dq9-render`, `dq9-audio`, `dq9-app` ; l'état modélisé des triggers passe de
+      `dq9-formats` à `dq9-core`.
+
+## J1 — Voir le monde
+
+Afficher une carte et ses personnages dans une fenêtre (natif et wasm).
+
+| Tâche | Réutiliser |
+|---|---|
+| `BMD0`/`BTX0`/`BCA0` (+ `BTA0`/`BTP0`/`BMA0`) | [apicula](https://github.com/scurest/apicula) (Rust, 0BSD) : reprendre ses lecteurs dans `dq9-formats`, avec mention ; wiki NSBMD/NSBTP/NSBTA |
+| rendu wgpu proche de la DS (points fixes, matériaux, toon, brouillard, transparence, tri) | `src/NitroSDK/NSBXX/` de la décompilation (commandes de rendu G3D), GBATEK, rendu de DQIX Enhanced en comparaison visuelle |
+| liste des cartes `maplist9.bin`, archives `.ambl`/`.amdj`, objets `.bmdj`, textures | wiki Map-List, Map-Archive, Map-Objects, Map-Textures ; Tagged-Data-Table |
+| personnages `.chr` (`.bcfg`, modèles, animations), parties d'équipement | wiki Character-Parts, Motion-Tables |
+| application `dq9-app` (winit + wgpu, 60 Hz fixe), caméra libre | — |
+
+Critère : `dq9-app --map M01` affiche le village d'Angel Falls avec ses PNJ animés, en natif
+et dans un navigateur.
+
+## J2 — Se déplacer
+
+| Tâche | Réutiliser |
+|---|---|
+| état de jeu (`dq9-core`) initialisé depuis une sauvegarde DS (J0) ou un état par défaut | — |
+| déplacement du héros, collisions, caméra de terrain (rotation L/R) | wiki Map-Collision, Getting-Around ; `ov_017` |
+| placement des PNJ par carte et étape (`.npc`, script `place.bin`), sprites `.spr` | wiki Area-Cast, Sprites |
+| portes et changements de carte, zones de trigger orientées | wiki Doors, Triggers (« Areas ») |
+| heure du jour | wiki Time-Of-Day |
+
+Critère : depuis une sauvegarde réelle, se promener dans tout Angel Falls, entrer dans les
+maisons et en ressortir ; position comparée à melonDS sur une même séquence d'entrées.
+
+## J3 — Parler et scènes : **v0.1 jouable**
+
+| Tâche | Réutiliser |
+|---|---|
+| fenêtre de dialogue à l'écran : police, cadre, nom de l'orateur, défilement, Oui/Non ; balises de mise en page restantes (`<CEN>`, `<TC#>`, `<W=#>`… de `text.md`) | `message.rs`, `font.rs` (fait) ; wiki Text-Markup |
+| triggers branchés sur le jeu réel (parler, examiner, entrer dans une zone) | `trigger.rs` (fait) |
+| interpréteur `.stb` dans `dq9-core` (attente par image, appels de fonctions) | `stb.rs` (fait) ; wiki Event-Scripts |
+| natives : personnages (200), caméra (300), messages (400), scène et fondus (500, 100–122) | wiki Engine-Functions ; `ov_001` |
+| deux écrans DS : écran haut (carte) et bas, disposition configurable | — |
+| son minimal : musique SDAT (séquenceur SSEQ + mixage SWAV) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
+
+**v0.1** : nouvelle partie avec un héros par défaut, prologue d'Angel Falls jouable (scènes,
+dialogues, quêtes du village), sans combats. Critère : toute la suite d'événements du
+prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points.
+
+## J4 — Combattre : **v0.2**
+
+| Tâche | Réutiliser |
+|---|---|
+| tables : monstres, actions, objets, sorts, niveaux, articles | wiki Monsters, Actions, Items, Spell-Table, Level-Tables, Articles |
+| générateurs aléatoires AT/BT/CT (constantes connues) | glossaire dqix-functions, `src/Util/Random.cpp` |
+| monstres visibles sur le terrain, apparition et rencontre | wiki Encounters ; scripts DeSmuME (nœuds d'apparition) |
+| déroulement : commandes, ordre, IA, dégâts, critiques, tension, états, fin et expérience | `src/Combat/` de la décompilation (formules déjà en C++), wiki Battle-Resolution, Battle-AI, Battle-Commands ; overlays 0, 24, 25, 26 |
+| présentation : arène, animations, messages, interface | wiki Battle-Stages, Battle-Presentation, Battle-Text |
+| combats scriptés (boss) | wiki Event-Battles |
+
+Critère : résultats identiques à BattleEmulator sur ses combats de référence (même graine,
+mêmes entrées). **v0.2** : jusqu'au premier boss du jeu.
+
+## J5 — Progresser : **v0.3**
+
+- Écran titre, création du personnage, chargement/sauvegarde au format DS (J0).
+- Menus : objets, équipement (modèles changeants), sorts, statut, stratégie, compétences
+  (overlays 2, 4, 5, 11, 13).
+- Établissements : boutiques, auberge, église, banque (overlay 3 ; wiki Inns-and-Churches,
+  Items `shopdata1.bin`).
+- Équipe, recrutement au Quester's Rest, vocations (wiki Party, Vocation-Skill-Trees,
+  Skill-Panels).
+
+**v0.3** : on peut jouer, sauvegarder et reprendre, avec une sauvegarde échangeable avec la DS.
+
+## J6 — Histoire complète : **v0.5**
+
+- Toutes les cartes, scènes et natives restantes ; navire, Starflight Express (wiki Ship,
+  Starflight-Express, Travel) ; zoom (téléportation).
+- Combats de boss et mécaniques spéciales rencontrées ; générique (overlay 27).
+- Fermer les **[sens inconnu]** de `trigger.md` et `stb.md` au fil des chapitres.
+
+**v0.5** : le jeu se termine. Critère : scénario parcouru de bout en bout, sauvegardes de
+contrôle à chaque chapitre comparées à melonDS.
+
+## J7 — Contenu annexe
+
+- Quêtes, accolades, mini-médailles, bestiaire, registres (overlays 8, 14 ; wiki Quests,
+  Accolades, Mini-Medals).
+- Alchimie (overlay 6 ; wiki Alchemy, Alchemy-Recipes).
+- Grottes et cartes au trésor : générateur traduit depuis `src/Grotto/` de la décompilation,
+  vérifié contre Grotto-Searcher ; boss légendaires.
+- Récolte, tours de passe-passe, visionneuse de personnages (wiki Gathering, Party-Tricks).
+
+## J8 — Multijoueur et contenu en ligne
+
+Le « online » du projet : ce que la DS faisait en local, sur Internet.
+
+- Coopération jusqu'à 4 joueurs (visites via Pavo) et mode Tag : protocole réseau propre, au
+  niveau du jeu (pas d'émulation radio) ; données échangées d'après `ov_017` et la session
+  (conditions 0x17/0x51 de `trigger.md`).
+- DQVC (calendrier des 52 soldes, fichiers chiffrés RC4) et quêtes/invités téléchargeables,
+  servis localement ; formats d'après DQIX Enhanced (faits seulement) et `DQIX/auction`.
+- Remplace les overlays 30 et 31.
+
+## J9 — 100 %
+
+- `dq9re coverage` à 100 % pour la catégorie Jeu.
+- Vidéos Mobiclip (overlay 16) via FFmpeg ou décodeur propre ; son complet (effets, flux).
+- Langues des cinq versions européennes ; versions USA/JPN si la correspondance d'adresses
+  est étendue.
+- Finitions plateforme : Web, manettes, écran large, mise à l'échelle.
+
+## Approche écartée : recompilation hybride
+
+Exécuter le code ARM d'origine (recompilé ou interprété) et le remplacer progressivement
+donnerait un jeu jouable plus tôt, mais : DQIX Enhanced le fait déjà ; il faudrait émuler le
+matériel DS (contraire à `architecture.md`) ; la cible Web en souffrirait ; et ses sources
+sont en GPL. On garde la réimplémentation et on utilise ces projets comme oracles.
+
+## Risques
+
+| Risque | Parade |
+|---|---|
+| Rendu 3D éloigné de la DS | comparaison d'images avec melonDS/DQIX Enhanced dès J1 ; sémantique G3D de la décompilation |
+| Natives des scripts nombreuses (228) | lectures du wiki, implémentation à la demande par zone jouable |
+| Écarts USA/Europe | correspondance d'adresses vérifiée (J0) ; observations du wiki faites sur la ROM européenne |
+| Licences | règles de `ressources-externes.md` : intégrer Unlicense/MIT/0BSD/WTFPL, lire seulement GPL et non licencié |
