@@ -9,8 +9,8 @@ votre propre ROM ; aucune donnée du jeu n'est incluse dans ce dépôt.
 | Chemin | Rôle |
 |---|---|
 | `crates/nds-rom` | Lecture d'une ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC. Sans E/S, compile en wasm. |
-| `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives GPC2 (`.gp2`), tables d'enregistrements, polices, pipeline des messages, triggers de scénario, choix des répliques des PNJ. Sans E/S. |
-| `crates/dq9re` | CLI de rétro-ingénierie : `info`, `ls`, `stats`, `extract`, `gp2`, `table`, `text`, `font`, `msg`, `talk`, `narc`, `cat`. |
+| `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives GPC2 (`.gp2`), tables d'enregistrements, polices, pipeline des messages, triggers de scénario (conditions et actions), scripts d'événements (`.stb`), choix des répliques des PNJ. Sans E/S. |
+| `crates/dq9re` | CLI de rétro-ingénierie : `info`, `ls`, `stats`, `extract`, `gp2`, `table`, `text`, `font`, `msg`, `talk`, `stb`, `narc`, `cat`. |
 | `crates/testrom` | Aide aux tests : localise la ROM pour les tests sur données réelles. |
 | `re/ghidra_scripts` | Scripts Ghidra : `NdsLayout` (carte mémoire), `ApplySymbols`, `Query`. |
 | `re/symbols.txt` | Noms retrouvés (source de vérité versionnée, appliquée au projet Ghidra). |
@@ -68,8 +68,12 @@ compilation wasm. Elle n'a jamais accès à la ROM.
   (adresses `0x020d91ec` ou `ov_017::0218c0f4`). `decomp` crée, sans l'enregistrer, la
   fonction que l'analyse n'a pas trouvée (code atteint seulement par une table de pointeurs).
 - **`cargo dq9re talk data/scenario/M02M0.gp2 018_en.bin --quest 11=1 --level 25`** :
-  applique les triggers de conversation de la carte, puis marque la réplique que le jeu
-  choisit pour l'état donné (`--help` pour les options d'état).
+  déclenche les triggers de conversation de la carte et exécute leurs actions, puis marque la
+  réplique que le jeu choisit pour l'état donné (`--help` pour les options d'état).
+- **`cargo dq9re stb data/event/ev03030.gp2`** : désassemble un script d'événement, avec les
+  textes de la scène à côté des appels de message.
+- Les requêtes Ghidra verrouillent le projet : pour en lancer plusieurs à la fois, copier
+  `re/ghidra` et désigner chaque copie par `DQ9_GHIDRA_PROJECT`.
 
 ### Consigner une découverte
 
@@ -85,7 +89,8 @@ Notes : `docs/re/rom-layout.md` (structure de la ROM), `docs/re/gpc2.md` (archiv
 compression Level-5), `docs/re/table.md` (tables d'enregistrements), `docs/re/text.md`
 (textes, balises, pipeline des messages), `docs/re/font.md` (polices et mise en page),
 `docs/re/dialogue.md` (choix des répliques des PNJ, zones de conversation, `.npc`),
-`docs/re/trigger.md` (triggers de scénario).
+`docs/re/trigger.md` (triggers de scénario, pistes, événements, actions), `docs/re/stb.md`
+(scripts d'événements).
 
 ## Légal
 

@@ -3,6 +3,7 @@
 mod extract;
 mod font;
 mod msg;
+mod stb;
 mod talk;
 mod text;
 
@@ -98,6 +99,15 @@ enum Command {
     },
     /// Decode an NPC dialogue file and show the line chosen for a given game state.
     Talk(talk::TalkArgs),
+    /// Disassemble the event script of an event archive, with its texts next to the
+    /// message natives.
+    Stb {
+        /// Event archive inside the ROM, e.g. `data/event/ev03030.gp2`.
+        path: String,
+        /// Language of the texts shown.
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
     /// List (and optionally extract) the members of a NARC file in the ROM.
     Narc {
         /// Path inside the ROM filesystem, e.g. `data/map/F01M01.ambl`.
@@ -160,6 +170,7 @@ fn main() -> Result<()> {
             out,
         } => msg::run(&rom, &archive, &member, record, &out),
         Command::Talk(args) => talk::run(&rom, &args),
+        Command::Stb { path, lang } => stb::run(&rom, &path, &lang),
         Command::Narc {
             path,
             out,

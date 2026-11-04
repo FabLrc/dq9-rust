@@ -124,8 +124,9 @@ pub struct Session {
     /// Byte of the local peer at session `+0x1038` is non-zero (`FUN_0202c1b4`)
     /// **[meaning unknown]**.
     pub peer_flag: bool,
-    /// Halfword at `hero->+0x130->+4` is non-zero **[meaning unknown]**; blocks kinds 5/6.
-    pub hero_flag: bool,
+    /// Halfword at `hero->+0x130->+4` is non-zero, read as "the hero's HP is not 0"
+    /// **[hypothesis, docs/re/dialogue.md]**; a fallen hero enables kinds 5/6.
+    pub hero_alive: bool,
 }
 
 /// Game state read while choosing a line.
@@ -301,7 +302,7 @@ impl Selector {
             Kind::HostStep => {
                 if self.host_quest_line >= 0
                     || session.guest
-                    || session.hero_flag
+                    || session.hero_alive
                     || !Self::step_in_range(line, state)
                 {
                     return;
@@ -326,7 +327,7 @@ impl Selector {
             }
             Kind::HostQuest => {
                 if session.guest
-                    || session.hero_flag
+                    || session.hero_alive
                     || !Self::quest_passes(state, line, self.host_quest_line)
                 {
                     return;
@@ -478,13 +479,13 @@ mod tests {
             line(Kind::SessionStepB, 1, 9, None, 0),
             line(Kind::HostStep, 1, 9, None, 0),
         ];
-        s.session.hero_flag = true;
+        s.session.hero_alive = true;
         assert_eq!(select(&lines, &s), Some(0));
         s.session = Session {
             active: true,
             guest: true,
             peer_flag: true,
-            hero_flag: false,
+            hero_alive: false,
         };
         assert_eq!(select(&lines, &s), Some(1));
         s.session = Session::default();

@@ -17,14 +17,18 @@ implémentation testée et un commit.
       emplacements et zones de conversation ; lecteur de tables du jeu (`dialogue.md`,
       `dq9re talk`).
 - [x] Triggers de scénario : chargement par salle et étape, compilation des mots, choix,
-      conditions principales, action « parler au PNJ » (`trigger.md`) ; `dq9re talk`
-      enchaîne triggers et choix de la réplique.
+      toutes les conditions des données, pistes de scénario, types d'événements, actions
+      immédiates et différées sur un état modélisé (`trigger.md`) ; `dq9re talk` enchaîne
+      triggers, actions et choix de la réplique.
+- [x] Scripts d'événements `.stb` (`SB2`) : format, machine à pile, désassembleur ; natives
+      numérotées (`stb.md`, `dq9re stb`).
 
 ## Prochaines étapes
 
-1. **Triggers, suite** : conditions restantes (0x29, 0x31, 0x2A…), autres actions (0x77
-   et suivantes : `Trig_RunDeferred`, `Trig_RunAction`), types d'événements autres que 0.
-2. **Scripts d'événements** : `.stb` (`SB2`) dans `event/` et `scenario/`.
+1. **Natives des scripts** : rôle des 228 natives employées (décompilation de
+   `ov_001::0215ae1c…`), à commencer par les plus fréquentes (210, 570, 206, 208, 571).
+2. **Interpréteur de scripts** dans `dq9-core` : exécuter les `.stb` sur l'état des
+   triggers (attentes, messages, drapeaux).
 3. **Graphismes 3D Nitro** (`BMD0`/`BTX0`/`BCA0`, formats documentés publiquement) : lecteur
    + rendu wgpu de premier jet (personnages `chr`, cartes `ambl`).
 4. **Tables de jeu** : objets, monstres, sorts (`bin/*`, `prm/*`, `.nat` binaires) ; noms
@@ -32,3 +36,5 @@ implémentation testée et un commit.
 5. **Frontend** `dq9-app` (winit + wgpu, natif et wasm) affichant d'abord une carte et une
    boîte de dialogue réelles (cadre de fenêtre, nom de l'orateur `//Nom//`, défilement).
 6. Balises non localisées : `<RIKKA>`, `<CEN>`, `<TC#>`, `<W=#>`… (`text.md`).
+7. Points de sens inconnu des triggers : journal de quêtes (conditions 0x25/0x33, bits des
+   entrées), événements 6, 19, 22, 23, 27, valeurs globales des conditions 0x5d–0x63.

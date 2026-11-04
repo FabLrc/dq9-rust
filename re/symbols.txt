@@ -213,3 +213,60 @@ ov_017::021d8438 g_TalkSelect       # selection state (flags, step, context, cou
 0x02094d7c QuestLog_Get             # quest log: u8 count, then 16-byte entries (quest id: low 9 bits)
 0x02096144 QuestLog_Find            # entry of a quest, or null
 0x020f05bc g_TrigRecordHandlers     # {100, nop}, {101, nop}, {1, Trig_LoadRecord}, {0}
+
+# --- Trigger actions, events and scenario tracks (docs/re/trigger.md) ---
+0x0200fd1c Save_Warp                # save +0x3f8: destination room (+0), entry (+0x20), position, direction
+0x0200fd80 Chara_Get                # character table entry 0..0xe8 (0 = hero), no flag check
+0x02010374 Save_SetTimeOfDay        # save +0x3dc = n (< 4), then lighting
+0x02010844 Party_List               # ids at save +0x397c, count at +0x3980
+0x020457f0 MsgWin_Answer           # +0x954 of the message window: last YESNO answer (0 yes, 1 no) [hypothesis]
+0x0206446c Trig_Defer              # appends an action node to the deferred list (+0x30, link +0x18)
+0x02064914 QuestLog_Value          # quest-log entry halfword selected by field 0..9 (condition 0x4e, action 0xbc)
+0x02064a04 Trig_FireRoomArrival    # event 3
+0x02064a18 Trig_FireBattleEnd      # event 15
+0x02064a34 Trig_FireBattleEndAlt   # event 16
+0x02064a50 Trig_FireCounterLocal   # event 9
+0x02064aac Trig_FireCounterLeader  # event 19
+0x02064b08 Trig_AddArea            # appends to the area list +0x494 (action 0x8f; events 2/5)
+0x02064b34 Trig_RunActionsOfCode   # matched trigger: runs only its actions of one code
+0x02064ba8 Track_SelectForRoom     # +0x332 = track of the room (0..4), progress copied to the save
+0x0206ded8 Track_SetProgress       # chapter, step, substep of track n
+0x0206def8 Track_GetProgress
+0x0206df24 Track_CopyToSave        # current track's progress -> save +0x5cb0..+0x5cb8
+0x0206df7c Flags_Set               # set/clear bit idx of a byte array
+0x0206e090 Track_ClearFlags        # both flag sets of a track (chapter change)
+0x0206e0e0 Track_ClearStepFlags    # flag set 1 of a track (step change)
+0x0206e110 Quest_Complete          # quest state 3
+0x0206e174 Quest_SetState          # nibble bits 0-1, bits 2-3 kept
+0x0206e358 Flags_SetRanked         # flag 0xbf1 + rank of a value in g_RankedValues (ranks >= 17)
+0x0206eb74 Flags_SetExt            # story flag, idx >= 0x400 shifted by 0x6fa
+0x020703d8 Track_Advance           # forward only; clears the track's flags on chapter/step change
+0x0207d310 Items_Give              # distributes copies of an item to the party, then the bag
+0x02086d98 Party_TakeItem          # bag, then equipped copies
+0x020961c0 QuestLog_Accept         # adds an offered quest if the log has < 8 entries
+0x020a0a18 Bag_Remove              # decrements a bag slot, frees it at 0
+0x020e87d0 g_RankedValues          # s16[32] used by Flags_SetRanked
+ov_017::0219814c Area_CheckLeader  # fires events 2 (enter) / 5 (leave) for map areas
+ov_017::021bc77c EventTask_Update  # event task (+8 = event id from action 0x77); fires event 11 at its end
+
+# --- Event scripts (docs/re/stb.md) ---
+ov_001::0215bfd4 StbNat_206 arm     # object lookup + 3 scaled floats [hypothesis: actor position]
+ov_001::0215c138 StbNat_208 arm
+ov_001::0215c298 StbNat_210 arm
+ov_001::0215e2a4 StbNat_Message arm # native 400: message id of the event's text table
+ov_001::0215e374 StbNat_405 arm     # writes a message-window state through an address argument
+ov_001::02164d6c g_StbNatives       # {handler, id} x304, ended by {0, -1}
+ov_017::021d4980 Stb_ToInt          # value must be an int
+ov_017::021d49ac Stb_Truthy
+ov_017::021d4a38 Stb_Push           # (type, value)
+ov_017::021d4a78 Stb_PushInt
+ov_017::021d4a98 Stb_PushStr
+ov_017::021d4ab8 Stb_PushAddr
+ov_017::021d4ad8 Stb_PushFloat
+ov_017::021d4af8 Stb_Call           # new frame from a function record (code, ?, frame, params)
+ov_017::021d4b9c Stb_Return
+ov_017::021d4bc8 Stb_CallNative     # natives[first arg](args + 1, n - 1, n)
+ov_017::021d4c04 Stb_Init           # checks "SB2", code base = file + header word 2
+ov_017::021d4ccc Stb_Resume
+ov_017::021d4ce4 Stb_Start          # runs entry id (header words 3/4), default record if id < 0
+ov_017::021d4e38 Stb_Run            # interpreter: [op, a, b] instructions

@@ -17,8 +17,9 @@ flowchart TD
 ```
 
 État : `nds-rom`, `dq9-formats` (compression Level-5, GPC2, tables, polices, messages, choix
-des répliques) et `dq9re` existent. Les autres crates seront créées quand le format ou le
-sous-système correspondant aura été documenté dans `docs/re/`.
+des répliques, triggers et leurs actions, scripts d'événements) et `dq9re` existent. Les
+autres crates seront créées quand le format ou le sous-système correspondant aura été
+documenté dans `docs/re/`.
 
 ## Règles
 

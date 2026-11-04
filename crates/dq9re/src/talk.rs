@@ -5,7 +5,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use dq9_formats::dialogue::{self, Kind, Line, Session, TalkState};
-use dq9_formats::trigger::{self, Op, World};
+use dq9_formats::trigger::{self, Member, Op, QuestLogEntry, Request, State};
 use dq9_formats::{Gpc2, Table, Value};
 use nds_rom::{Narc, Rom};
 
@@ -44,9 +44,12 @@ pub struct TalkArgs {
     /// Item count, `ITEM=COUNT`; repeatable.
     #[arg(long = "item", value_parser = parse_pair)]
     items: Vec<(i32, i32)>,
-    /// Highest party level.
+    /// Leader's level (in the current vocation).
     #[arg(long, default_value_t = 1)]
-    level: i32,
+    level: u16,
+    /// Leader's (and hero's) vocation: 0 Guardian, 1 Warrior … 12 Ranger.
+    #[arg(long, default_value_t = 0)]
+    vocation: u8,
     /// Quests in the quest log (8 = full).
     #[arg(long, default_value_t = 0)]
     quest_log: u8,
@@ -59,10 +62,13 @@ pub struct TalkArgs {
     /// Local peer flag (session +0x1038).
     #[arg(long)]
     peer_flag: bool,
-    /// Clear the hero word (hero +0x130 → +4), enabling kinds 5/6. Set by default: the
-    /// kind 5 lines read as a visitor's view [assumption, see docs/re/dialogue.md].
+    /// The hero has fallen (HP 0, hero +0x130 → +4) [hypothesis, docs/re/trigger.md]: another
+    /// member speaks; enables dialogue kinds 5/6.
     #[arg(long)]
-    hero_flag_clear: bool,
+    hero_down: bool,
+    /// The leader stands in one of the NPC's talk zones (condition 0x29).
+    #[arg(long)]
+    in_zone: bool,
     /// Room of the NPC; defaults to the first room placing it in `<map>place.bin`.
     #[arg(long)]
     room: Option<i32>,
@@ -78,70 +84,47 @@ fn parse_pair(s: &str) -> Result<(i32, i32)> {
     Ok((a.parse()?, b.parse()?))
 }
 
-/// The state given on the command line, as both selection inputs.
-struct Preview<'a> {
-    args: &'a TalkArgs,
-    npc: u32,
-}
-
-fn lookup(pairs: &[(i32, i32)], key: i32) -> i32 {
-    pairs
-        .iter()
-        .find(|&&(k, _)| k == key)
-        .map_or(0, |&(_, v)| v)
-}
-
-impl Preview<'_> {
+impl TalkArgs {
     fn session(&self) -> Session {
         Session {
-            active: self.args.session,
-            guest: self.args.guest,
-            peer_flag: self.args.peer_flag,
-            hero_flag: !self.args.hero_flag_clear,
+            active: self.session,
+            guest: self.guest,
+            peer_flag: self.peer_flag,
+            hero_alive: !self.hero_down,
         }
     }
-}
 
-impl World for Preview<'_> {
-    fn flag(&self, index: i32) -> bool {
-        self.args.flags.contains(&index)
-    }
-    fn player_flag(&self, _: u8, _: i32) -> bool {
-        false
-    }
-    fn quest(&self, quest: i32) -> u8 {
-        lookup(&self.args.quests, quest) as u8
-    }
-    fn daytime(&self) -> bool {
-        !self.args.night
-    }
-    fn session(&self) -> Session {
-        Preview::session(self)
-    }
-    fn substep(&self) -> i32 {
-        self.args.substep
-    }
-    fn event(&self, i: usize) -> u32 {
-        match i {
-            0 => self.npc,
-            5 => self.args.zone as u32,
-            _ => 0,
+    /// The game state given on the command line, talking to `npc`: a party of one (the
+    /// hero), the given quests, flags, items and quest-log size.
+    fn state(&self, npc: u32) -> State {
+        let mut hero = Member {
+            vocation: self.vocation,
+            hp: u16::from(!self.hero_down),
+            ..Member::default()
+        };
+        if let Some(level) = hero.levels.get_mut(usize::from(self.vocation)) {
+            *level = self.level;
         }
-    }
-    fn item_count(&self, id: i32) -> i32 {
-        lookup(&self.args.items, id)
-    }
-    fn max_level(&self) -> i32 {
-        self.args.level
-    }
-    fn quest_log_len(&self) -> u8 {
-        self.args.quest_log
-    }
-    fn quest_log_flag(&self, _: i32) -> bool {
-        false
-    }
-    fn quest_known(&self, _: i32) -> bool {
-        false
+        let mut s = State {
+            flags: self.flags.iter().copied().collect(),
+            quests: self.quests.iter().map(|&(q, v)| (q, v as u8)).collect(),
+            time_of_day: u32::from(!self.night),
+            session: self.session(),
+            items: self.items.iter().copied().collect(),
+            party: vec![hero],
+            characters: [(0, hero)].into(),
+            zones: [(npc, self.in_zone)].into(),
+            ..State::default()
+        };
+        // Entries for no real quest (id 0x1ff): only the count matters here.
+        let filler = QuestLogEntry {
+            word: 0x1ff,
+            ..QuestLogEntry::default()
+        };
+        s.quest_log.entries = vec![filler; usize::from(self.quest_log)];
+        s.event[0] = npc;
+        s.event[5] = self.zone as u32;
+        s
     }
 }
 
@@ -193,7 +176,8 @@ fn ops(ops: &[Op]) -> String {
                     Value::Str(s) => format!("{:?}", s.map(escape)),
                 })
                 .collect();
-            format!("{:#04x}({}){operands:?}", op.code, op.arg)
+            let name = trigger::action_name(op.code).map_or(String::new(), |n| format!("{n}:"));
+            format!("{name}{:#04x}({}){operands:?}", op.code, op.arg)
         })
         .collect();
     parts.join(" ")
@@ -216,20 +200,26 @@ fn npc_room(rom: &Rom, map: &str, npc: u32) -> Result<Option<i32>> {
     Ok(None)
 }
 
-/// Talk context after the map's talk triggers (event 0), or `None` if a trigger takes the
-/// conversation over without the talk action.
+/// Talk context after the map's talk triggers (event 0): the trigger's actions run on
+/// `world`, then its deferred actions; `None` if no talk with this NPC results.
 fn trigger_context(
     rom: &Rom,
     args: &TalkArgs,
-    preview: &Preview,
+    world: &mut State,
+    npc: u32,
     map: &str,
     chapter: i32,
 ) -> Result<Option<i32>> {
     let room = match args.room {
         Some(room) => room,
-        None => npc_room(rom, map, preview.npc)?
-            .with_context(|| format!("NPC {} not placed in {map}; pass --room", preview.npc))?,
+        None => npc_room(rom, map, npc)?
+            .with_context(|| format!("NPC {npc} not placed in {map}; pass --room"))?,
     };
+    // The room selects the scenario track that holds the progress and its flags.
+    world.track = trigger::track_of_room(room);
+    let track = &mut world.tracks[world.track];
+    (track.chapter, track.step, track.substep) =
+        (chapter as u8, args.step as u8, args.substep as u8);
     let data = rom.file_by_path(&format!("data/scenario/trigger{map}.bin"))?;
     let table = Table::parse(data).context("trigger table")?;
     let triggers: Vec<_> = trigger::parse(&table)?
@@ -237,11 +227,12 @@ fn trigger_context(
         .filter(|t| t.loaded(room, chapter, args.step))
         .collect();
     println!(
-        "room {room}, chapter {chapter}, step {}: {} triggers loaded",
+        "room {room} (track {}), chapter {chapter}, step {}: {} triggers loaded",
+        world.track,
         args.step,
         triggers.len()
     );
-    match trigger::first_match(&triggers, 0, preview) {
+    match trigger::fire(&triggers, 0, world) {
         Err(trigger::Unsupported(code)) => {
             bail!("trigger condition {code:#x} not reimplemented; use --no-triggers")
         }
@@ -249,16 +240,25 @@ fn trigger_context(
             println!("no talk trigger: context = zone {}", args.zone);
             Ok(Some(args.zone))
         }
-        Ok(Some(t)) => {
+        Ok(Some(fired)) => {
+            let t = fired.trigger;
             println!(
                 "trigger: if {} then {}",
                 ops(&t.conditions),
                 ops(&t.actions)
             );
-            Ok(match t.talk() {
-                Some((npc, context)) if u32::from(npc) == preview.npc => Some(context),
+            if !fired.completed {
+                println!("the action list stopped: deferred actions are dropped");
+                return Ok(None);
+            }
+            let requests = trigger::run_deferred(&fired.deferred, world);
+            println!("requests: {requests:?}");
+            Ok(requests.iter().find_map(|r| match *r {
+                Request::Talk { npc: n, context } if u32::from(n) == npc => {
+                    Some(i32::from(context))
+                }
                 _ => None,
-            })
+            }))
         }
     }
 }
@@ -292,24 +292,24 @@ pub fn run(rom: &Rom, args: &TalkArgs) -> Result<()> {
     let table = Table::parse(&data).context("not a record table")?;
     let lines = dialogue::parse(&table)?;
 
-    let preview = Preview { args, npc };
+    let mut world = args.state(npc);
     let context = if args.no_triggers {
         Some(args.zone)
     } else {
-        trigger_context(rom, args, &preview, map, chapter)?
+        trigger_context(rom, args, &mut world, npc, map, chapter)?
     };
     let Some(context) = context else {
         println!("the trigger replaces the conversation");
         return Ok(());
     };
-    let quests = |q: i32| preview.quest(q);
+    let quests = |q: i32| world.quests.get(&q).copied().unwrap_or(0);
     let state = TalkState {
         step: args.step,
         substep: args.substep,
         context,
         talk_count: [args.talks, args.talks],
         daytime: !args.night,
-        session: preview.session(),
+        session: args.session(),
         quest: &quests,
     };
     let chosen = dialogue::select(&lines, &state);

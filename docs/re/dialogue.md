@@ -2,7 +2,8 @@
 
 Implémentation : `crates/dq9-formats/src/dialogue.rs` (`parse`, `select`). Outil :
 `cargo dq9re talk <archive> <membre> [--step N] [--context N] [--talks N] [--night]
-[--quest Q=quartet]…` décode le fichier et marque la réplique choisie pour cet état.
+[--quest Q=quartet] [--hero-down]…` décode le fichier et marque la réplique choisie pour cet
+état.
 
 ## Chargement
 
@@ -72,10 +73,11 @@ champs :
   confirment le sens.
 - **Session** : `0x0202b7e8` (session sans fil active), `0x0202c550` (active et console
   locale ≠ pair 0, donc invitée), `0x0202c1b4` (octet du pair local à `+0x1038` de l'état de
-  session) **[sens inconnu]**. **Mot du héros** : demi-mot à `héros->+0x130->+4` **[sens
-  inconnu]**. Les répliques de type 5 sont des points de vue de visiteur (« Welcome,
-  traveller » face à « Welcome, saviour of Stornway » en type 1), ce qui suppose que ce mot
-  est non nul en partie solo ; `dq9re talk` le suppose (option `--hero-flag-clear`).
+  session) **[sens inconnu]**. **Mot du héros** : demi-mot à `héros->+0x130->+4`, les **PV
+  du héros** **[hypothèse étayée, `trigger.md`]** : les types 5 et 6 exigent qu'ils soient
+  nuls, c'est-à-dire qu'un autre membre parle à la place du héros tombé (« friend of
+  `<HERO>` », silences des esprits que seul le héros entend). `dq9re talk` suppose le héros
+  debout ; `--hero-down` le fait tomber.
 
 ### Emplacement (`Talk_SlotAccepts`, `ov_017::021b9bcc`)
 

@@ -3,7 +3,8 @@
 use std::collections::HashSet;
 
 use dq9_formats::dialogue::{self, Kind, Session, TalkState};
-use dq9_formats::trigger::{self, World};
+use dq9_formats::stb::{Instr, Script};
+use dq9_formats::trigger::{self, Member, State};
 use dq9_formats::{Font, FontId, Gpc2, Table, Value, level5};
 use nds_rom::Rom;
 
@@ -19,6 +20,38 @@ fn for_each_member(rom: &Rom, mut f: impl FnMut(&str, &str, &[u8])) {
             f(&file.path, &entry.name, &content);
         }
     }
+}
+
+/// Every event script decodes: code reachable from its entries holds only known opcodes,
+/// each function's code follows its record, and every native call's id is a constant.
+#[test]
+fn event_scripts_decode() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let (mut scripts, mut natives, mut ids) = (0, 0, HashSet::new());
+    for_each_member(&rom, |archive, name, data| {
+        if !name.ends_with(".stb") {
+            return;
+        }
+        let script = Script::parse(data).unwrap_or_else(|e| panic!("{archive}/{name}: {e}"));
+        for function in script.functions.values() {
+            for (i, id) in function.native_calls() {
+                let id = id.unwrap_or_else(|| panic!("{archive}/{name}: native at {i}"));
+                ids.insert(id);
+                natives += 1;
+            }
+            for (_, instr) in &function.code {
+                if let Instr::Str(offset) = *instr {
+                    assert!(script.string(offset).is_some(), "{archive}/{name}");
+                }
+            }
+        }
+        scripts += 1;
+    });
+    assert_eq!(scripts, 689);
+    assert_eq!(natives, 80_237);
+    // 228 of the 304 natives registered in overlay 1 (`ov_001::02164d6c`).
+    assert_eq!(ids.len(), 228);
 }
 
 /// Every `.gp2` is a GPC2 archive whose index hashes match its names (checked by `parse`) and
@@ -167,7 +200,8 @@ fn dialogue_selection_follows_quest_state() {
     );
 }
 
-/// Every scenario trigger file compiles: each word's operands fit in its record.
+/// Every scenario trigger file compiles (each word's operands fit in its record) and every
+/// condition it uses is reimplemented.
 #[test]
 fn trigger_files_compile() {
     let Some(bytes) = testrom::load() else { return };
@@ -182,6 +216,14 @@ fn trigger_files_compile() {
         let table = Table::parse(rom.file(file.id).unwrap()).unwrap();
         let parsed = trigger::parse(&table).unwrap_or_else(|e| panic!("{}: {e}", file.path));
         for t in &parsed {
+            for c in &t.conditions {
+                assert!(
+                    !trigger::UNMODELLED.contains(&c.code),
+                    "{}: condition {:#x}",
+                    file.path,
+                    c.code
+                );
+            }
             if let Some((_, context)) = t.talk() {
                 assert!(
                     (0..240).contains(&context),
@@ -201,50 +243,20 @@ fn trigger_files_compile() {
 /// forces context 202 (offer) from level 25, 203 ("if only someone strong enough…") below.
 #[test]
 fn talk_triggers_force_the_dialogue_context() {
-    struct George {
-        level: i32,
-    }
-    impl World for George {
-        fn flag(&self, _: i32) -> bool {
-            false
-        }
-        fn player_flag(&self, _: u8, _: i32) -> bool {
-            false
-        }
-        fn quest(&self, q: i32) -> u8 {
-            u8::from(q == 11)
-        }
-        fn daytime(&self) -> bool {
-            true
-        }
-        fn session(&self) -> Session {
-            Session {
-                hero_flag: true,
-                ..Session::default()
-            }
-        }
-        fn substep(&self) -> i32 {
-            0
-        }
-        fn event(&self, i: usize) -> u32 {
-            if i == 0 { 18 } else { 0 }
-        }
-        fn item_count(&self, _: i32) -> i32 {
-            0
-        }
-        fn max_level(&self) -> i32 {
-            self.level
-        }
-        fn quest_log_len(&self) -> u8 {
-            0
-        }
-        fn quest_log_flag(&self, _: i32) -> bool {
-            false
-        }
-        fn quest_known(&self, _: i32) -> bool {
-            false
-        }
-    }
+    let george = |level: u16| {
+        let mut leader = Member {
+            hp: 1,
+            ..Member::default()
+        };
+        leader.levels[0] = level;
+        let mut s = State::default();
+        s.quests.insert(11, 1);
+        s.event[0] = 18;
+        s.party = vec![leader];
+        s.characters.insert(0, leader);
+        s.time_of_day = 1;
+        s
+    };
     let Some(bytes) = testrom::load() else { return };
     let rom = Rom::parse(bytes).unwrap();
     let table = Table::parse(rom.file_by_path("data/scenario/triggerM02.bin").unwrap()).unwrap();
@@ -263,7 +275,7 @@ fn talk_triggers_force_the_dialogue_context() {
         (25, 202, &b"*: Just lately I<1>ve had real trouble"[..]),
         (5, 203, &b"*: There<1>ve been so many monsters"[..]),
     ] {
-        let world = George { level };
+        let world = george(level);
         let t = trigger::first_match(&triggers, 0, &world).unwrap().unwrap();
         assert_eq!(t.talk(), Some((18, context)));
         let talk = TalkState {
@@ -272,7 +284,10 @@ fn talk_triggers_force_the_dialogue_context() {
             context,
             talk_count: [0, 0],
             daytime: true,
-            session: world.session(),
+            session: Session {
+                hero_alive: true,
+                ..Session::default()
+            },
             quest: &available,
         };
         let chosen = dialogue::select(&lines, &talk).unwrap();
