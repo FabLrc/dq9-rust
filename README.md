@@ -8,10 +8,13 @@ votre propre ROM ; aucune donnée du jeu n'est incluse dans ce dépôt.
 
 | Chemin | Rôle |
 |---|---|
-| `crates/nds-rom` | Lecture d'une ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11, NARC. Sans E/S, compile en wasm. |
-| `crates/dq9re` | CLI de rétro-ingénierie : `info`, `ls`, `stats`, `extract`, `narc`, `cat`. |
-| `re/ghidra_scripts` | Scripts Ghidra (`NdsLayout.java` : carte mémoire ARM9 + overlays). |
-| `scripts/` | Installation des outils, import Ghidra, lancement de Ghidra. |
+| `crates/nds-rom` | Lecture d'une ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC. Sans E/S, compile en wasm. |
+| `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives GPC2 (`.gp2`). Sans E/S. |
+| `crates/dq9re` | CLI de rétro-ingénierie : `info`, `ls`, `stats`, `extract`, `gp2`, `narc`, `cat`. |
+| `crates/testrom` | Aide aux tests : localise la ROM pour les tests sur données réelles. |
+| `re/ghidra_scripts` | Scripts Ghidra : `NdsLayout` (carte mémoire), `ApplySymbols`, `Query`. |
+| `re/symbols.txt` | Noms retrouvés (source de vérité versionnée, appliquée au projet Ghidra). |
+| `scripts/` | Installation des outils, import Ghidra, requêtes et application des symboles. |
 | `docs/` | Architecture (`architecture.md`) et notes de RE (`re/`). |
 | `rom/` | Emplacement de votre ROM (ignoré par git). |
 | `build/`, `tools/`, `re/ghidra/` | Générés, ignorés par git. |
@@ -44,7 +47,7 @@ La ROM est cherchée dans `rom/`, puis à la racine ; sinon `--rom <chemin>` ou 
 cargo test --workspace                       # inclut les tests sur la vraie ROM si présente
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
-cargo build -p nds-rom --target wasm32-unknown-unknown
+cargo build -p nds-rom -p dq9-formats --target wasm32-unknown-unknown
 ```
 
 La CI (`.github/workflows/ci.yml`) exécute fmt, clippy, les tests sur Linux/Windows/macOS et la
@@ -58,10 +61,24 @@ compilation wasm. Elle n'a jamais accès à la ROM.
 - **melonDS** (`tools/melonds/melonDS.exe`) : référence visuelle et analyse dynamique via son
   stub GDB (à activer dans les paramètres de l'émulateur).
 - **`cargo dq9re`** : exploration rapide des fichiers (`ls data/map/`,
-  `narc data/map/F01M01.ambl --lz --out build/narc`, `cat <fichier> --lz --out x.bin`).
+  `gp2 data/scenario/M02M0.gp2 --out build/x`, `narc data/map/F01M01.ambl -d --out build/narc`,
+  `cat <fichier> -d --out x.bin`). `extract --unpack` décompresse toutes les archives `.gp2`
+  dans `build/rom/gp2/` (pratique pour chercher avec `grep`).
+- **Requêtes Ghidra scriptées** : `scripts/ghidra-query.ps1 decomp|xrefs|calls|disasm <adresse>`
+  (adresses `0x020d91ec` ou `ov_017::0218c0f4`).
 
-Les constatations sont consignées dans `docs/re/` (voir `rom-layout.md`), en séparant faits
-observés et hypothèses.
+### Consigner une découverte
+
+1. Nommer les fonctions/données dans `re/symbols.txt` (`<adresse> <nom> # commentaire`), puis
+   `scripts/ghidra-apply-symbols.ps1` (projet fermé dans l'interface). Le fichier est réappliqué
+   à chaque `ghidra-import.ps1` : le projet Ghidra est jetable, les noms sont versionnés.
+2. Décrire le format ou le comportement dans `docs/re/<sujet>.md` : preuves (adresses,
+   contrôles sur données), faits observés et hypothèses marquées **[hypothèse]**.
+3. Implémenter dans la crate correspondante avec un test sur données synthétiques et, si
+   pertinent, un invariant vérifié sur la vraie ROM (`tests/real_rom.rs`).
+
+Notes : `docs/re/rom-layout.md` (structure de la ROM), `docs/re/gpc2.md` (archives et
+compression Level-5).
 
 ## Légal
 

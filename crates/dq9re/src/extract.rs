@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use dq9_formats::Gpc2;
 use nds_rom::Rom;
 use serde::Serialize;
 
@@ -77,7 +78,7 @@ fn write(path: &Path, data: &[u8]) -> Result<()> {
     fs::write(path, data).with_context(|| format!("writing {}", path.display()))
 }
 
-pub fn run(rom: &Rom, out: &Path, code_only: bool) -> Result<()> {
+pub fn run(rom: &Rom, out: &Path, code_only: bool, unpack: bool) -> Result<()> {
     let arm9 = rom.arm9()?;
     write(&out.join("arm9.bin"), &arm9.data)?;
     write(&out.join("arm7.bin"), rom.arm7()?)?;
@@ -151,6 +152,27 @@ pub fn run(rom: &Rom, out: &Path, code_only: bool) -> Result<()> {
             rom.files.files.len(),
             out.join("files").display()
         );
+    }
+
+    if unpack {
+        let root = out.join("gp2");
+        let mut count = 0;
+        for f in rom.files.files.iter().filter(|f| f.path.ends_with(".gp2")) {
+            let archive = Gpc2::parse(rom.file(f.id)?).with_context(|| f.path.clone())?;
+            let dir = root.join(f.path.trim_end_matches(".gp2"));
+            unpack_gp2(&archive, &dir).with_context(|| f.path.clone())?;
+            count += archive.entries.len();
+        }
+        println!("unpacked {count} GPC2 members to {}", root.display());
+    }
+    Ok(())
+}
+
+/// Writes every member of `archive`, decompressed, into `dir`.
+pub fn unpack_gp2(archive: &Gpc2, dir: &Path) -> Result<()> {
+    for entry in &archive.entries {
+        let data = archive.member(entry).with_context(|| entry.name.clone())?;
+        write(&dir.join(&entry.name), &data)?;
     }
     Ok(())
 }

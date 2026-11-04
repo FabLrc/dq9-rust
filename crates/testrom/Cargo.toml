@@ -1,0 +1,11 @@
+[package]
+name = "testrom"
+description = "Test helper: locates the user's ROM for real-data tests (skipped when absent)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true

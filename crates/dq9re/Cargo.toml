@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 nds-rom.workspace = true
+dq9-formats.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["env"] }
 serde.workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "dq9-formats"
+description = "Parsers for Dragon Quest IX (Level-5) data formats: compression, GPC2 archives."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nds-rom.workspace = true
+crc32fast = "1"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+testrom.workspace = true

@@ -39,4 +39,4 @@ jobs:
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       # Platform-independent crates must keep building for the web target.
-      - run: cargo build -p nds-rom --target wasm32-unknown-unknown
+      - run: cargo build -p nds-rom -p dq9-formats --target wasm32-unknown-unknown

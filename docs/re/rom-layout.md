@@ -45,7 +45,7 @@ l'overlay 17, 622 dans l'overlay 0).
 
 | Ext. | Fichiers | Octets | Magic | Remarques |
 |---|---:|---:|---|---|
-| gp2 | 1 671 | 76 M | `GPC2` | scripts (`data/scenario`, `data/event`, `data/evspt_*`) **[hypothèse : bytecode d'événements]** |
+| gp2 | 1 671 | 76 M | `GPC2` | archives Level-5 de fichiers nommés et compressés, 53 639 membres (textes, tables, modèles…) — voir `gpc2.md` |
 | sdat | 3 | 69 M | `SDAT` | son Nitro standard (SSEQ/SBNK/SWAR/STRM) |
 | chr | 2 683 | 38 M | `NARC` | personnages/effets ; ex. `data/chara_sub/s158.chr` = `.bcfg`, modèle `BMD0` (`.nsbmd`), animations `BCA0` (`.nsbca`), non compressés |
 | ambl | 681 | 28 M | `NARC` | cartes ; membres nommés (`.bmbl`, `.dat`, `.nsbtx`) compressés LZ10 |
@@ -66,7 +66,7 @@ Les membres de NARC sont souvent compressés LZ10 (premier octet `0x10`) : par e
 
 ## Formats à documenter (par priorité pour le portage)
 
-1. `gp2` — logique du jeu scriptée.
+1. Contenu des archives `gp2` : textes (`.bin` de `scenario/`, `.mes`), tables, scripts.
 2. Modèles/textures 3D Nitro (`BMD0`/`BTX0`/`BCA0`) dans les NARC `chr`/`ambl`.
 3. Tables de données `bin` (objets, monstres, sorts) et textes.
 4. `spr`, `pac`, `stb`, `nat`, `lia`.

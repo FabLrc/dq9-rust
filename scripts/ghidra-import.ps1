@@ -28,6 +28,7 @@ New-Item -ItemType Directory -Force -Path $Project | Out-Null
     -loader BinaryLoader -loader-baseAddr $Base `
     -scriptPath (Join-Path $Root 're/ghidra_scripts') `
     -preScript NdsLayout.java $LayoutPath `
+    -postScript ApplySymbols.java (Join-Path $Root 're/symbols.txt') `
     -max-cpu ([Environment]::ProcessorCount)
 if ($LASTEXITCODE -ne 0) { throw "analyzeHeadless failed ($LASTEXITCODE)" }
 Write-Host "Open $Project/dq9.gpr with tools/ghidra/ghidraRun.bat"

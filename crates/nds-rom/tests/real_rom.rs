@@ -1,35 +1,11 @@
-//! Invariants checked against the real game image. The ROM is never committed, so these tests
-//! are skipped (with a notice) when it is absent; CI runs without it.
-//! Location: `DQ9_ROM`, else the only `*.nds` in `<repo>/rom/` or `<repo>/`.
-
-use std::fs;
-use std::path::PathBuf;
+//! Invariants checked against the real game image; skipped when the ROM is absent.
 
 use nds_rom::{Narc, Rom};
 
-fn rom_bytes() -> Option<Vec<u8>> {
-    let path = std::env::var_os("DQ9_ROM").map(PathBuf::from).or_else(|| {
-        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        [repo.join("rom"), repo].into_iter().find_map(|dir| {
-            fs::read_dir(dir)
-                .ok()?
-                .filter_map(|e| e.ok().map(|e| e.path()))
-                .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("nds")))
-        })
-    });
-    match path {
-        Some(path) => Some(fs::read(path).expect("reading ROM")),
-        None => {
-            eprintln!("skipped: no ROM (set DQ9_ROM)");
-            None
-        }
-    }
-}
-
 #[test]
 fn real_rom_invariants() {
-    let Some(bytes) = rom_bytes() else { return };
-    let rom = Rom::parse(&bytes).unwrap();
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
     assert!(rom.header.crc_ok());
 
     // BLZ correctness: the autoload list sits right after the autoload payload, which only

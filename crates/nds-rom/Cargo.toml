@@ -11,3 +11,6 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+testrom.workspace = true

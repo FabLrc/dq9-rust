@@ -16,7 +16,8 @@ flowchart TD
     re[dq9re<br/>outillage RE] --> rom
 ```
 
-État : seuls `nds-rom` et `dq9re` existent. Les autres crates seront créées quand le format
+État : `nds-rom`, `dq9-formats` (compression Level-5, GPC2) et `dq9re` existent. Les autres
+crates seront créées quand le format
 ou le sous-système correspondant aura été documenté dans `docs/re/`.
 
 ## Règles

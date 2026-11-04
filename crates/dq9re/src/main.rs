@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use dq9_formats::Gpc2;
 use nds_rom::rom::BANNER_LANGUAGES;
 use nds_rom::{Narc, Rom, compress};
 
@@ -40,6 +41,16 @@ enum Command {
         /// Skip the 7.5k data files; only binaries, overlays and layout.
         #[arg(long)]
         code_only: bool,
+        /// Also unpack every `.gp2` archive (decompressed) into `<out>/gp2/<archive>/`.
+        #[arg(long, conflicts_with = "code_only")]
+        unpack: bool,
+    },
+    /// List (and optionally extract, decompressed) the members of a GPC2 archive (`.gp2`).
+    Gp2 {
+        /// Path inside the ROM filesystem, e.g. `data/scenario/M02M0.gp2`.
+        path: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// List (and optionally extract) the members of a NARC file in the ROM.
     Narc {
@@ -47,19 +58,19 @@ enum Command {
         path: String,
         #[arg(long)]
         out: Option<PathBuf>,
-        /// Decompress members that start with an LZ10/LZ11 header; members that fail to
-        /// decode are kept raw and flagged `raw`.
-        #[arg(long)]
-        lz: bool,
+        /// Decompress members that start with a Nintendo compression header; members that
+        /// fail to decode are kept raw and flagged `raw`.
+        #[arg(long, short)]
+        decompress: bool,
     },
-    /// Write one ROM file to disk, LZ-decompressing it if requested.
+    /// Write one ROM file to disk, decompressing it if requested.
     Cat {
         path: String,
         #[arg(long)]
         out: PathBuf,
-        /// Decompress an LZ10/LZ11 stream.
-        #[arg(long)]
-        lz: bool,
+        /// Decompress a stream with a Nintendo compression header (LZ10/LZ11/Huffman/RLE).
+        #[arg(long, short)]
+        decompress: bool,
     },
 }
 
@@ -75,12 +86,25 @@ fn main() -> Result<()> {
         Command::Info => info(&rom),
         Command::Ls { prefix } => ls(&rom, prefix.as_deref().unwrap_or("")),
         Command::Stats => stats(&rom),
-        Command::Extract { out, code_only } => extract::run(&rom, &out, code_only),
-        Command::Narc { path, out, lz } => narc(&rom, &path, out.as_deref(), lz),
-        Command::Cat { path, out, lz } => {
+        Command::Extract {
+            out,
+            code_only,
+            unpack,
+        } => extract::run(&rom, &out, code_only, unpack),
+        Command::Gp2 { path, out } => gp2(&rom, &path, out.as_deref()),
+        Command::Narc {
+            path,
+            out,
+            decompress,
+        } => narc(&rom, &path, out.as_deref(), decompress),
+        Command::Cat {
+            path,
+            out,
+            decompress,
+        } => {
             let data = rom.file_by_path(&path)?;
-            let data = if lz {
-                compress::lz(data)?
+            let data = if decompress {
+                compress::decompress(data)?
             } else {
                 data.to_vec()
             };
@@ -233,7 +257,7 @@ fn stats(rom: &Rom) -> Result<()> {
     Ok(())
 }
 
-fn narc(rom: &Rom, path: &str, out: Option<&Path>, lz: bool) -> Result<()> {
+fn narc(rom: &Rom, path: &str, out: Option<&Path>, decompress: bool) -> Result<()> {
     let narc = Narc::parse(rom.file_by_path(path)?).with_context(|| format!("{path} as NARC"))?;
     if let Some(out) = out {
         fs::create_dir_all(out)?;
@@ -242,10 +266,12 @@ fn narc(rom: &Rom, path: &str, out: Option<&Path>, lz: bool) -> Result<()> {
         let index = u16::try_from(i)?;
         let raw = narc.file(index)?;
         let (data, codec) = match raw.first() {
-            Some(0x10 | 0x11) if lz => match compress::lz(raw) {
-                Ok(d) => (Cow::Owned(d), "lz"),
-                Err(_) => (Cow::Borrowed(raw), "raw"),
-            },
+            Some(0x10 | 0x11 | 0x24 | 0x28 | 0x30) if decompress => {
+                match compress::decompress(raw) {
+                    Ok(d) => (Cow::Owned(d), "nds"),
+                    Err(_) => (Cow::Borrowed(raw), "raw"),
+                }
+            }
             _ => (Cow::Borrowed(raw), ""),
         };
         let name = narc
@@ -263,6 +289,28 @@ fn narc(rom: &Rom, path: &str, out: Option<&Path>, lz: bool) -> Result<()> {
             }
             fs::write(&dest, &data).with_context(|| format!("writing {}", dest.display()))?;
         }
+    }
+    Ok(())
+}
+
+fn gp2(rom: &Rom, path: &str, out: Option<&Path>) -> Result<()> {
+    let archive =
+        Gpc2::parse(rom.file_by_path(path)?).with_context(|| format!("{path} as GPC2"))?;
+    for entry in &archive.entries {
+        let data = archive
+            .member(entry)
+            .with_context(|| format!("{path}/{}", entry.name))?;
+        println!(
+            "{:08x} {:>8} -> {:>8} {:4} {}",
+            entry.hash,
+            entry.size,
+            data.len(),
+            magic(&data),
+            entry.name
+        );
+    }
+    if let Some(out) = out {
+        extract::unpack_gp2(&archive, out)?;
     }
     Ok(())
 }

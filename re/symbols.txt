@@ -1,0 +1,15 @@
+# Names recovered by reverse engineering, applied to Ghidra by ApplySymbols.java.
+# Format: <address> <name> [# comment]. Keep sorted by address within each section.
+# Only names backed by evidence (decompilation reading, data checks) belong here;
+# document the evidence in docs/re/.
+
+# --- Level-5 archives (docs/re/gpc2.md) ---
+0x020d8ef4 L5_DecompressStream      # decodes one Level-5 block (u32 method|size<<3) from a file stream
+0x020d8fdc Gpc_EntryLocation        # entry -> (data ptr = base + (offset + hdr.data_words) * 4, size)
+0x020d902c Gpc_FindEntryByHash      # binary search of the 12-byte index by CRC-32 of the name
+0x020d9110 Gpc1_FindMember          # lookup in an in-memory (decompressed) archive, magic GPC1
+0x020d91ec Gpc2_LoadIndex           # reads a GPC2 header, decompresses its index into memory
+0x020e6720 FileTags_StaticInit      # static init: builds the GPC0/GPC1/GPC2 FourCC globals
+0x020f27c8 g_TagGpc0
+0x020f27cc g_TagGpc1
+0x020f27d0 g_TagGpc2
