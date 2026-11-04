@@ -9,8 +9,8 @@ votre propre ROM ; aucune donnée du jeu n'est incluse dans ce dépôt.
 | Chemin | Rôle |
 |---|---|
 | `crates/nds-rom` | Lecture d'une ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC. Sans E/S, compile en wasm. |
-| `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives GPC2 (`.gp2`). Sans E/S. |
-| `crates/dq9re` | CLI de rétro-ingénierie : `info`, `ls`, `stats`, `extract`, `gp2`, `narc`, `cat`. |
+| `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives GPC2 (`.gp2`), tables d'enregistrements. Sans E/S. |
+| `crates/dq9re` | CLI de rétro-ingénierie : `info`, `ls`, `stats`, `extract`, `gp2`, `table`, `text`, `narc`, `cat`. |
 | `crates/testrom` | Aide aux tests : localise la ROM pour les tests sur données réelles. |
 | `re/ghidra_scripts` | Scripts Ghidra : `NdsLayout` (carte mémoire), `ApplySymbols`, `Query`. |
 | `re/symbols.txt` | Noms retrouvés (source de vérité versionnée, appliquée au projet Ghidra). |
@@ -78,7 +78,8 @@ compilation wasm. Elle n'a jamais accès à la ROM.
    pertinent, un invariant vérifié sur la vraie ROM (`tests/real_rom.rs`).
 
 Notes : `docs/re/rom-layout.md` (structure de la ROM), `docs/re/gpc2.md` (archives et
-compression Level-5).
+compression Level-5), `docs/re/table.md` (tables d'enregistrements), `docs/re/text.md`
+(textes, balises, pipeline des messages).
 
 ## Légal
 

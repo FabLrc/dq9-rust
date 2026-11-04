@@ -5,6 +5,8 @@
 
 pub mod gpc2;
 pub mod level5;
+pub mod table;
 
 pub use gpc2::Gpc2;
 pub use nds_rom::{Error, Result};
+pub use table::{Record, Table, Value};

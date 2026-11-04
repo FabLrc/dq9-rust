@@ -13,3 +13,56 @@
 0x020f27c8 g_TagGpc0
 0x020f27cc g_TagGpc1
 0x020f27d0 g_TagGpc2
+
+# --- Message text pipeline (docs/re/text.md) ---
+0x02069244 Msg_ExpandNames          # pass 1: expands <HERO>, <STR_n>, grammar name tags, [WPN..]/[ACTER..]
+0x02069ffc Msg_Compile              # pass 2: markup -> 16-bit code stream (0xFF18 newline, 0xFF01 end)
+0x020e7e84 g_MsgSkippedTagPrefixes  # <INN= <CHURCH= <BANK> <SHOP RENKIN: dropped up to '>' by Msg_Compile
+0x020e7e9c g_MsgSubstTags           # {char* tag; handler} x6, used by Msg_ExpandNames
+0x020e7f14 g_MsgGrammarTags         # {char* prefix; u8 kind; s8 value; u16 pad} x15: article/number/case + entity
+0x020e7f94 g_MsgControlTags         # {char* tag; handler} x40, used by Msg_Compile
+0x02069130 MsgSubst_HERO                arm # <HERO...> substitution handler (g_MsgSubstTags)
+0x02069168 MsgSubst_LEADER              arm # <LEADER...> substitution handler (g_MsgSubstTags)
+0x0206919c MsgSubst_ADDRESSEE           arm # <ADDRESSEE...> substitution handler (g_MsgSubstTags)
+0x020691d0 MsgSubst_TMAP_SEC            arm # <TMAP_SEC...> substitution handler (g_MsgSubstTags)
+0x02069208 MsgSubst_STR_                arm # <STR_...> substitution handler (g_MsgSubstTags)
+0x0206974c MsgCtl_PAGE_T                arm # <PAGE_T= control tag handler (g_MsgControlTags)
+0x020697a0 MsgCtl_PAGE                  arm # <PAGE> control tag handler (g_MsgControlTags)
+0x020697c8 MsgCtl_AUTO                  arm # <AUTO= control tag handler (g_MsgControlTags)
+0x0206981c MsgCtl_ADD                   arm # <ADD> control tag handler (g_MsgControlTags)
+0x02069844 MsgCtl_TIME                  arm # <TIME= control tag handler (g_MsgControlTags)
+0x02069894 MsgCtl_PAD_WAIT              arm # <PAD_WAIT> control tag handler (g_MsgControlTags)
+0x020698bc MsgCtl_PAD_T                 arm # <PAD_T= control tag handler (g_MsgControlTags)
+0x0206990c MsgCtl_PAD_WAIT_NOCUR        arm # <PAD_WAIT_NOCUR> control tag handler (g_MsgControlTags)
+0x02069934 MsgCtl_WIN_ON                arm # <WIN_ON> control tag handler (g_MsgControlTags)
+0x0206995c MsgCtl_WIN_OFF               arm # <WIN_OFF> control tag handler (g_MsgControlTags)
+0x02069984 MsgCtl_CEN_ON                arm # <CEN_ON> control tag handler (g_MsgControlTags)
+0x020699ac MsgCtl_CEN_OFF               arm # <CEN_OFF> control tag handler (g_MsgControlTags)
+0x020699d4 MsgCtl_ALL_RECOVER           arm # <ALL_RECOVER= control tag handler (g_MsgControlTags)
+0x02069a5c MsgCtl_ST                    arm # <ST= control tag handler (g_MsgControlTags)
+0x02069af4 MsgCtl_YESNO                 arm # <YESNO> control tag handler (g_MsgControlTags)
+0x02069b1c MsgCtl_NOYES                 arm # <NOYES> control tag handler (g_MsgControlTags)
+0x02069b44 MsgCtl_YESNO_NOTSE           arm # <YESNO_NOTSE> control tag handler (g_MsgControlTags)
+0x02069b6c MsgCtl_YESNO_NOTSE_IIE       arm # <YESNO_NOTSE_IIE> control tag handler (g_MsgControlTags)
+0x02069b94 MsgCtl_UKEYAME               arm # <UKEYAME> control tag handler (g_MsgControlTags)
+0x02069bbc MsgCtl_LB_                   arm # <LB_ control tag handler (g_MsgControlTags)
+0x02069bf4 MsgCtl_JP_                   arm # <JP_ control tag handler (g_MsgControlTags)
+0x02069c2c MsgCtl_TURN                  arm # <TURN= control tag handler (g_MsgControlTags)
+0x02069cf0 MsgCtl_QUEST_SE              arm # <QUEST_SE> control tag handler (g_MsgControlTags)
+0x02069d18 MsgCtl_QUEST                 arm # <QUEST= control tag handler (g_MsgControlTags)
+0x02069d7c MsgCtl_QUEST_HAN             arm # <QUEST_HAN> control tag handler (g_MsgControlTags)
+0x02069da4 MsgCtl_QUEST_FAILED          arm # <QUEST_FAILED> control tag handler (g_MsgControlTags)
+0x02069dcc MsgCtl_end_QUEST             arm # </QUEST> control tag handler (g_MsgControlTags)
+0x02069df4 MsgCtl_N_TURN                arm # <N_TURN> control tag handler (g_MsgControlTags)
+0x02069e1c MsgCtl_END_R_TURN            arm # <END_R_TURN> control tag handler (g_MsgControlTags)
+0x02069e44 MsgCtl_R_TURN                arm # <R_TURN> control tag handler (g_MsgControlTags)
+0x02069e6c MsgCtl_TURN_P                arm # <TURN_P> control tag handler (g_MsgControlTags)
+0x02069e94 MsgCtl_EXC                   arm # <EXC> control tag handler (g_MsgControlTags)
+0x02069ebc MsgCtl_QES                   arm # <QES> control tag handler (g_MsgControlTags)
+0x02069ee4 MsgCtl_YES                   arm # <YES> control tag handler (g_MsgControlTags)
+0x02069f0c MsgCtl_NO                    arm # <NO> control tag handler (g_MsgControlTags)
+0x02069f34 MsgCtl_UKE                   arm # <UKE> control tag handler (g_MsgControlTags)
+0x02069f5c MsgCtl_YAME                  arm # <YAME> control tag handler (g_MsgControlTags)
+0x02069f84 MsgCtl_END                   arm # <END> control tag handler (g_MsgControlTags)
+0x02069fac MsgCtl_CLOSE                 arm # <CLOSE> control tag handler (g_MsgControlTags)
+0x02069fd4 MsgCtl_SHAKE                 arm # <SHAKE> control tag handler (g_MsgControlTags)

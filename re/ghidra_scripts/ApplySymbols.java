@@ -1,18 +1,22 @@
 // Applies re/symbols.txt (the versioned source of truth for names) to the program.
-// Line format:   <address> <name> [# comment]
+// Line format:   <address> <name> [arm|thumb] [# comment]
 //   address: 0x020d91ec, or ov_017::0218c0f4 for overlay code. Blank lines and lines
 //   starting with '#' are ignored. If code starts at the address, a function is created
-//   (or renamed); otherwise a label. The comment becomes the plate comment.
+//   (or renamed); otherwise a label. `arm`/`thumb` marks a function Ghidra did not find
+//   (e.g. only reached through a pointer table): it is disassembled in that mode first.
+//   The comment becomes the plate comment.
 // Args: [path to symbols.txt]
 //@category NDS
 //@runtime Java
 
 import java.io.File;
 import java.nio.file.Files;
+import java.math.BigInteger;
 import java.util.List;
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.CodeUnit;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.symbol.SourceType;
@@ -38,18 +42,34 @@ public class ApplySymbols extends GhidraScript {
                 line = line.substring(0, hash).strip();
             }
             String[] parts = line.split("\\s+");
-            if (parts.length != 2) {
-                throw new IllegalArgumentException(file + ":" + (n + 1) + ": expected '<address> <name>'");
+            if (parts.length < 2 || parts.length > 3
+                    || (parts.length == 3 && !parts[2].equals("arm") && !parts[2].equals("thumb"))) {
+                throw new IllegalArgumentException(file + ":" + (n + 1) + ": expected '<address> <name> [arm|thumb]'");
             }
             String text = parts[0].startsWith("0x") ? parts[0].substring(2) : parts[0];
             Address addr = currentProgram.getAddressFactory().getAddress(text);
             if (addr == null || currentProgram.getMemory().getBlock(addr) == null) {
                 throw new IllegalArgumentException(file + ":" + (n + 1) + ": unmapped address " + parts[0]);
             }
+            if (parts.length == 3) {
+                disassembleAs(addr, parts[2].equals("thumb"));
+            }
             apply(addr, parts[1], comment);
             applied++;
         }
         println("ApplySymbols: applied " + applied + " symbols from " + file);
+    }
+
+    private void disassembleAs(Address addr, boolean thumb) throws Exception {
+        if (getInstructionAt(addr) != null) {
+            return;
+        }
+        Register tmode = currentProgram.getRegister("TMode");
+        currentProgram.getProgramContext().setValue(tmode, addr, addr,
+            thumb ? BigInteger.ONE : BigInteger.ZERO);
+        if (!disassemble(addr)) {
+            throw new IllegalStateException("cannot disassemble " + addr);
+        }
     }
 
     private void apply(Address addr, String name, String comment) throws Exception {

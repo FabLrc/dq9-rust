@@ -1,6 +1,7 @@
 //! `dq9re`: command-line tooling for reverse engineering the Dragon Quest IX ROM.
 
 mod extract;
+mod text;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -52,6 +53,21 @@ enum Command {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Print the records of a record-table member (`.bin`/`.bmmp`/`.bcfg`) of a `.gp2`.
+    Table {
+        /// Archive inside the ROM, e.g. `data/scenario/M02M0.gp2`.
+        archive: String,
+        /// Member name, e.g. `018_en.bin`.
+        member: String,
+    },
+    /// Dump every string of the record tables of one language to text files.
+    Text {
+        /// Language suffix of the members (`en`, `fr`, `de`, `it`, `es`).
+        #[arg(long, default_value = "en")]
+        lang: String,
+        #[arg(long, default_value = "build/text")]
+        out: PathBuf,
+    },
     /// List (and optionally extract) the members of a NARC file in the ROM.
     Narc {
         /// Path inside the ROM filesystem, e.g. `data/map/F01M01.ambl`.
@@ -92,6 +108,8 @@ fn main() -> Result<()> {
             unpack,
         } => extract::run(&rom, &out, code_only, unpack),
         Command::Gp2 { path, out } => gp2(&rom, &path, out.as_deref()),
+        Command::Table { archive, member } => text::table(&rom, &archive, &member),
+        Command::Text { lang, out } => text::dump(&rom, &lang, &out),
         Command::Narc {
             path,
             out,
