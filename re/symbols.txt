@@ -246,6 +246,7 @@ ov_017::021d8438 g_TalkSelect       # selection state (flags, step, context, cou
 0x020961c0 QuestLog_Accept         # adds an offered quest if the log has < 8 entries
 0x020a0a18 Bag_Remove              # decrements a bag slot, frees it at 0
 0x020e87d0 g_RankedValues          # s16[32] used by Flags_SetRanked
+0x020f33d8 g_GameState          # the GameState singleton (GameState::GetInstance returns this literal)
 ov_017::0219814c Area_CheckLeader  # fires events 2 (enter) / 5 (leave) for map areas
 ov_017::021bc77c EventTask_Update  # event task (+8 = event id from action 0x77); fires event 11 at its end
 

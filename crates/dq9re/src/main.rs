@@ -5,6 +5,7 @@ mod extract;
 mod font;
 mod msg;
 mod save;
+mod state;
 mod stb;
 mod talk;
 mod text;
@@ -161,6 +162,13 @@ enum Command {
         #[arg(long, short)]
         verbose: bool,
     },
+    /// Inspect a melonDS savestate (`.ml1`): sections, frame, scenario, or `--peek ADDR[:LEN]`
+    /// (hex) bytes of main RAM / TCM. Needs no ROM.
+    State {
+        path: PathBuf,
+        #[arg(long, num_args = 1..)]
+        peek: Vec<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -175,6 +183,7 @@ fn main() -> Result<()> {
             check,
         } => return coverage::run_coverage(functions, crates, readme.as_deref(), *check),
         Command::Save { path, verbose } => return save::run(path, *verbose, cli.rom.as_deref()),
+        Command::State { path, peek } => return state::run(path, peek),
         _ => {}
     }
     let rom_path = match cli.rom {
@@ -235,7 +244,10 @@ fn main() -> Result<()> {
             fs::write(&out, data).with_context(|| format!("writing {}", out.display()))
         }
         // Handled above, before the ROM is read.
-        Command::Functions { .. } | Command::Coverage { .. } | Command::Save { .. } => Ok(()),
+        Command::Functions { .. }
+        | Command::Coverage { .. }
+        | Command::Save { .. }
+        | Command::State { .. } => Ok(()),
     }
 }
 

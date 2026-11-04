@@ -134,9 +134,11 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       protocole d'écriture à 4 états, 21 fonctions du jeu nommées. `dq9re save`. Le décodage
       interne de quelques blocs (journal de quêtes, bestiaire, sac, cartes au trésor…) est
       repris quand `dq9-core` en aura besoin (liste dans `re/save.md`, § Inconnu).
-- [ ] **Oracle** : lecture d'une sauvegarde d'état melonDS (format documenté par ndskit, MIT)
-      ou script GDB, pour extraire les structures réimplémentées (état des triggers, équipe,
-      position). Sert à tous les tests différentiels.
+- [ ] **Oracle** : lecteur d'états melonDS fait (`dq9_formats::melonds`, `dq9re state`,
+      [`re/melonds-state.md`](re/melonds-state.md) : mémoire, `GameState`, scénario ; format
+      d'après ndskit, MIT). **Reste** : le contrôler sur un vrai fichier `.ml1` (aucun lu
+      encore), puis comparer les structures réimplémentées (état des triggers, équipe,
+      position) à la RAM. Sert à tous les tests différentiels.
 - [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-core`,
       `dq9-render`, `dq9-audio`, `dq9-app` ; l'état modélisé des triggers passe de
       `dq9-formats` à `dq9-core`.

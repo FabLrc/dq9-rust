@@ -142,6 +142,7 @@ Consigner une découverte :
 | `docs/re/dialogue.md`, `trigger.md`, `stb.md` | répliques des PNJ, triggers de scénario, scripts d'événements |
 | `docs/re/stb-natives.md` | inventaire des 228 natives employées : arguments, effets établis, adresses et inconnus |
 | `docs/re/save.md` | sauvegarde DS : conteneur, sommes de contrôle, champs typés, inconnus |
+| `docs/re/melonds-state.md` | oracle melonDS : lecture des sauvegardes d'état, adresses utiles, vérification restante |
 | `AGENTS.md` | contexte et règles pour les agents de développement |
 
 ## Légal
