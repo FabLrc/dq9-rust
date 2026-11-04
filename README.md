@@ -50,8 +50,8 @@ cargo fmt --all
 cargo build -p nds-rom -p dq9-formats --target wasm32-unknown-unknown
 ```
 
-La CI (`.github/workflows/ci.yml`) exécute fmt, clippy, les tests sur Linux/Windows/macOS et la
-compilation wasm. Elle n'a jamais accès à la ROM.
+La CI (`.github/workflows/ci.yml`) exécute fmt, clippy, les tests sous Linux et la compilation
+wasm. Elle n'a jamais accès à la ROM.
 
 ## Outils de rétro-ingénierie
 
