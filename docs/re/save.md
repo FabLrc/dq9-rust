@@ -112,14 +112,17 @@ Voir les accesseurs de `Slot` et `Character` ; tous sont vérifiés sur la démo
 (572 octets) : niveaux `+2` (13 octets, vocation 0 = Gardien), renaissances `+15`, expérience
 `+28` (13 × u32), vocation `+80`, graines `+88` (12 octets par vocation : 3 mots de 3 × 10
 bits : force, agilité, résistance / adresse, charme, guérison magique / puissance magique,
-PV max, PM max), points libres `+244`, maîtrises `+282`, nom `+320` (10 octets), équipement
+PV max, PM max), points libres `+244`, maîtrises `+282`, nom `+320` (10 octets, **un octet par
+caractère = indice dans la table de glyphes de la police `me`** (`font.md`), terminé par 0 :
+`12 2f 30 39 34 39 30` = A d e n i n e ; la démo donne quatre noms lisibles), équipement
 (u16) torse `+352`, jambes `+354`, bras `+360`, pieds `+362`, tête `+364`, arme `+366`, bouclier
 `+368`, accessoire `+370`, visage `+356`, coiffure `+358`, teint/yeux/sexe `+372`, cheveux
 `+373`, morphologie `+376`/`+378`.
 
 ## Inconnu
 
-- Encodage des noms (`12 2f 30 39…` pour le héros de la démo) : à rapprocher de `text.md`.
+- Noms : voir plus haut (indices de glyphes) ; les caractères hors police `me` ne sont pas
+  contrôlés.
 - Numérotation de la zone (`109` sur la démo) ; sens des mots de position.
 - Bits de `lieux visités` (`0xfe77ffff` sur la démo, l'éditeur ne nomme que les bits 1..=18).
 - Sens des drapeaux eux-mêmes (indices) : le bloc est typé, pas les bits. Les blocs de

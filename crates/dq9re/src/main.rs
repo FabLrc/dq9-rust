@@ -153,7 +153,8 @@ enum Command {
         #[arg(long, requires = "readme")]
         check: bool,
     },
-    /// Summarize a DS save file (`.sav`) and verify its checksums. Needs no ROM.
+    /// Summarize a DS save file (`.sav`) and verify its checksums. The ROM is optional: when
+    /// found, character names are decoded with its message font.
     Save {
         path: PathBuf,
         /// Also list levels, equipment and appearance.
@@ -173,7 +174,7 @@ fn main() -> Result<()> {
             readme,
             check,
         } => return coverage::run_coverage(functions, crates, readme.as_deref(), *check),
-        Command::Save { path, verbose } => return save::run(path, *verbose),
+        Command::Save { path, verbose } => return save::run(path, *verbose, cli.rom.as_deref()),
         _ => {}
     }
     let rom_path = match cli.rom {

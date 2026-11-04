@@ -4,11 +4,23 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use dq9_formats::FontId;
 use dq9_formats::save::{EquipSlot, Save, Slot};
+use nds_rom::Rom;
 
-pub fn run(path: &Path, verbose: bool) -> Result<()> {
+use crate::font;
+
+pub fn run(path: &Path, verbose: bool, rom: Option<&Path>) -> Result<()> {
     let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let save = Save::parse(&bytes).context("parsing save")?;
+    let rom_path = rom
+        .map(Path::to_path_buf)
+        .or_else(|| crate::find_rom().ok());
+    let rom_bytes = rom_path.and_then(|p| fs::read(p).ok());
+    let rom = rom_bytes.as_deref().and_then(|b| Rom::parse(b).ok());
+    let font = rom
+        .as_ref()
+        .and_then(|r| font::load(r, FontId::Message).ok());
     println!("magic: {}", save.has_magic());
     println!("current slot: {:?}", save.current_slot());
     for index in 0..dq9_formats::save::SLOT_COUNT {
@@ -31,13 +43,13 @@ pub fn run(path: &Path, verbose: bool) -> Result<()> {
             );
         }
         if slot.exists() {
-            summary(&slot, verbose);
+            summary(&slot, verbose, font.as_ref());
         }
     }
     Ok(())
 }
 
-fn summary(slot: &Slot<'_>, verbose: bool) {
+fn summary(slot: &Slot<'_>, verbose: bool, font: Option<&dq9_formats::Font<'_>>) {
     let (h, m, s) = slot.play_time();
     println!(
         "  chapter {} step {} substep {}  play time: {h}:{m:02}:{s:02}  area: {}",
@@ -79,11 +91,11 @@ fn summary(slot: &Slot<'_>, verbose: bool) {
     for i in 0..used.min(dq9_formats::save::CHARACTER_COUNT) {
         let Some(c) = slot.character(i) else { break };
         let v = usize::from(c.vocation());
+        let name = font.map_or_else(|| format!("{:02x?}", c.name_raw()), |f| c.name(f));
         println!(
-            "  character {i}: vocation {v} level {} exp {} name {:02x?}",
+            "  character {i}: vocation {v} level {} exp {} name {name}",
             c.level(v).unwrap_or(0),
             c.experience(v).unwrap_or(0),
-            c.name_raw()
         );
         if verbose {
             let levels: Vec<u8> = (0..13).filter_map(|v| c.level(v)).collect();

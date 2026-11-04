@@ -435,10 +435,23 @@ impl EquipSlot {
 }
 
 impl<'a> Character<'a> {
-    /// Name in the game's own encoding (not ASCII), padded with zeros.
-    /// **[unknown]** the character table; see `docs/re/save.md`.
+    /// Name as stored: one byte per character, each the index of a glyph of the message
+    /// font (`fi_me.bin`), zero-terminated and padded with zeros.
     pub fn name_raw(&self) -> &'a [u8] {
         &self.0[320..320 + NAME_LEN]
+    }
+
+    /// Name as text: every byte up to the first zero is looked up in the message font's
+    /// glyph table (`<'e>` for é…); an index outside the table gives `?`.
+    pub fn name(&self, font: &crate::Font<'_>) -> String {
+        let mut out = String::new();
+        for &b in self.name_raw().iter().take_while(|&&b| b != 0) {
+            match font.glyphs.get(usize::from(b)) {
+                Some(g) => out.push_str(&String::from_utf8_lossy(g.text)),
+                None => out.push('?'),
+            }
+        }
+        out
     }
 
     /// Current vocation index (0 = Guardian … 12 = Ranger).
