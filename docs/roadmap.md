@@ -16,7 +16,7 @@ implémentation testée et un commit.
 1. **Police et rendu du texte** : fichiers `pack/font/*.mes` (528 membres, format inconnu),
    correspondance balises d'accent → glyphes, puis `Msg_Compile` en Rust.
 2. **Sens des champs des dialogues** (`a`, `b` des enregistrements de `scenario/`) : suivre
-   le code qui lit `NNN_xx.bin` (chemin `data/scenario/trigger%s.bin` à `0x020f05xx`).
+   le code qui lit `NNN_xx.bin` (chaîne `data/scenario/trigger%s.bin` à `0x020f05dc`).
 3. **Scripts d'événements** : `.stb` (`SB2`) dans `event/`, et triggers de scénario.
 4. **Graphismes 3D Nitro** (`BMD0`/`BTX0`/`BCA0`, formats documentés publiquement) : lecteur
    + rendu wgpu de premier jet (personnages `chr`, cartes `ambl`).
