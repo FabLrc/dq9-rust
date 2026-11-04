@@ -62,9 +62,9 @@ champs :
   | 4 | bit 3 et état 0 |
   | autre | rien (le `switch` n'a pas de cas par défaut ; jamais rencontré) |
 
-  Sur la quête 11 de George (`M02M0/018`) : état 0 = niveau trop bas (« if only there was
-  someone… »), 1 = quête proposée, 2 = acceptée, 3 = terminée. **[Interprétation tirée des
-  textes.]**
+  Sur la quête 11 de George (`M02M0/018`) : état 0 = pas encore disponible, 1 = disponible
+  (le trigger de conversation vérifie alors le niveau avant de faire proposer la quête,
+  `trigger.md`), 2 = acceptée, 3 = terminée. **[Noms tirés des textes et des triggers.]**
 - **Nuit** (forme à 5 champs, valeur non nulle) : réplique ignorée de jour
   (`Save_IsDaytime`, sauvegarde `+0x3dc` non nulle). Une fois qu'une réplique de nuit a passé
   ce test, toutes les répliques **à 4 champs** suivantes sont ignorées ; les répliques à 5
@@ -123,19 +123,20 @@ monsters… » quand elle est terminée.
 
 ## Contexte de conversation
 
-Champ `+0x124` de la tâche de conversation, rempli par `Talk_Start`
-(`ov_017::021a4cf0`) avec la valeur calculée par `Talk_NearestNpc`
-(`ov_017::021a4e88`) : identifiant de la **zone de conversation** du PNJ qui contient le
-héros (rectangles x/z attachés au PNJ), 0 hors zone. Les zones viennent des enregistrements
-de type 6 de `<carte>place.bin` (`[pnj, x0, z0, x1, z1, id]`, `id` ∈ {0, 80, 192}). Deux
-autres appelants imposent `0xd7` et `0xc4`.
+Champ `+0x124` de la tâche de conversation. `Talk_Start` (`ov_017::021a4cf0`) passe d'abord
+l'événement « parler au PNJ » aux **triggers de la carte** (`trigger.md`) avec la zone
+calculée par `Talk_NearestNpc` (`ov_017::021a4e88`) : identifiant de la **zone de
+conversation** du PNJ qui contient le héros (rectangles x/z attachés au PNJ), 0 hors zone.
+Les zones viennent des enregistrements de type 6 de `<carte>place.bin`
+(`[pnj, x0, z0, x1, z1, id]`, `id` ∈ {0, 80, 192}).
 
-Les 20 023 répliques anglaises (sur 37 988) des emplacements exacts 192–223 (offres et
-récompenses de quêtes…) ne sont donc atteignables que si le contexte est forcé ailleurs :
-**[hypothèse : par les `trigger<carte>.bin`]**. Ce sont des tables d'enregistrements de type 1
-`[salle, …, mots]` dont les mots `0x00XXYYYY` ressemblent à un bytecode (`XX` = opcode) : les
-plus fréquents sont `0x76` (argument = numéro de PNJ, 3 382 fois) et `0xC0`–`0xDF` avec un
-argument nul, c.-à-d. exactement les emplacements 192–223.
+- Si un trigger s'applique, ses actions s'exécutent ; l'action 0x76 lance la conversation
+  avec le contexte qu'elle porte (0, 80–131, 160, 176, 192–223). C'est ainsi que sont
+  atteintes les 20 023 répliques anglaises (sur 37 988) des emplacements exacts 192–223
+  (offres et récompenses de quêtes…).
+- Sinon, le contexte est la zone.
+
+Deux autres appelants imposent `0xd7` et `0xc4`.
 
 ## `<carte>.npc` (NARC)
 

@@ -191,3 +191,25 @@ ov_017::021ba810 Talk_SelectLine    # runs the dialogue table through the kind h
 ov_017::021d7c54 g_TalkQuestLine    # s8[2]: quest of the chosen kind 2 / kind 6 line, -1 = none
 ov_017::021d7c58 g_TalkLineHandlers # {kind, handler} x6 + terminator
 ov_017::021d8438 g_TalkSelect       # selection state (flags, step, context, counters, result)
+
+# --- Scenario triggers (docs/re/trigger.md) ---
+0x0205ec80 Trig_CompileWords        # word stream -> condition list (code <100 or >499) + action list
+0x0205f9cc Trig_RecordNop100        # record kind 100 handler (no-op)
+0x0205f9d4 Trig_RecordNop101        # record kind 101 handler (no-op)
+0x0205f9dc Trig_LoadRecord          # kind 1: room + (chapter,step) range filter, compile, register
+0x0205fb04 Trig_EvalCondition       # one condition node (switch on code, composites recurse)
+0x02061c14 Trig_RunAction           # one action node
+0x0206440c Trig_Register            # appends to the chain of its event type (+0x47c list)
+0x020644a0 Trig_FindMatch           # first trigger of an event whose conditions all hold
+0x02064540 Trig_RunActions          # runs the action list until an action returns 0
+0x02064584 Trig_LoadTable           # Tbl_* over trigger<map>.bin with g_TrigRecordHandlers
+0x0206462c Trig_LoadMap             # builds "data/scenario/trigger%s.bin" (map, or "F"), loads it
+0x0206475c Trig_QuestCondition      # dialogue-style quest condition (0 accepted .. -1/5 state 0)
+0x020649c0 Trig_Fire                # Trig_FindMatch + Trig_RunActions for one event
+0x0206dfc0 Flags_Test               # bit idx of a byte array
+0x0206eba8 Flags_TestExt            # story flag, idx >= 0x400 shifted by 0x6fa
+0x0206f82c Trig_RunDeferred         # deferred actions of the matched trigger (0x76 starts a talk)
+0x02086afc Party_ItemCount          # copies of an item held by party members and bag
+0x02094d7c QuestLog_Get             # quest log: u8 count, then 16-byte entries (quest id: low 9 bits)
+0x02096144 QuestLog_Find            # entry of a quest, or null
+0x020f05bc g_TrigRecordHandlers     # {100, nop}, {101, nop}, {1, Trig_LoadRecord}, {0}

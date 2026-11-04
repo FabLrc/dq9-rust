@@ -9,6 +9,7 @@ pub mod gpc2;
 pub mod level5;
 pub mod message;
 pub mod table;
+pub mod trigger;
 
 pub use font::{Font, FontId};
 pub use gpc2::Gpc2;

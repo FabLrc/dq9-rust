@@ -9,7 +9,7 @@ votre propre ROM ; aucune donnée du jeu n'est incluse dans ce dépôt.
 | Chemin | Rôle |
 |---|---|
 | `crates/nds-rom` | Lecture d'une ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC. Sans E/S, compile en wasm. |
-| `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives GPC2 (`.gp2`), tables d'enregistrements, polices, pipeline des messages, choix des répliques des PNJ. Sans E/S. |
+| `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives GPC2 (`.gp2`), tables d'enregistrements, polices, pipeline des messages, triggers de scénario, choix des répliques des PNJ. Sans E/S. |
 | `crates/dq9re` | CLI de rétro-ingénierie : `info`, `ls`, `stats`, `extract`, `gp2`, `table`, `text`, `font`, `msg`, `talk`, `narc`, `cat`. |
 | `crates/testrom` | Aide aux tests : localise la ROM pour les tests sur données réelles. |
 | `re/ghidra_scripts` | Scripts Ghidra : `NdsLayout` (carte mémoire), `ApplySymbols`, `Query`. |
@@ -67,8 +67,9 @@ compilation wasm. Elle n'a jamais accès à la ROM.
 - **Requêtes Ghidra scriptées** : `scripts/ghidra-query.ps1 decomp|xrefs|calls|disasm <adresse>`
   (adresses `0x020d91ec` ou `ov_017::0218c0f4`). `decomp` crée, sans l'enregistrer, la
   fonction que l'analyse n'a pas trouvée (code atteint seulement par une table de pointeurs).
-- **`cargo dq9re talk data/scenario/M02M0.gp2 018_en.bin --quest 11=2`** : décode les
-  répliques d'un PNJ et marque celle que le jeu choisit pour l'état donné.
+- **`cargo dq9re talk data/scenario/M02M0.gp2 018_en.bin --quest 11=1 --level 25`** :
+  applique les triggers de conversation de la carte, puis marque la réplique que le jeu
+  choisit pour l'état donné (`--help` pour les options d'état).
 
 ### Consigner une découverte
 
@@ -83,7 +84,8 @@ compilation wasm. Elle n'a jamais accès à la ROM.
 Notes : `docs/re/rom-layout.md` (structure de la ROM), `docs/re/gpc2.md` (archives et
 compression Level-5), `docs/re/table.md` (tables d'enregistrements), `docs/re/text.md`
 (textes, balises, pipeline des messages), `docs/re/font.md` (polices et mise en page),
-`docs/re/dialogue.md` (choix des répliques des PNJ, zones de conversation, `.npc`).
+`docs/re/dialogue.md` (choix des répliques des PNJ, zones de conversation, `.npc`),
+`docs/re/trigger.md` (triggers de scénario).
 
 ## Légal
 
