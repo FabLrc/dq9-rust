@@ -2,6 +2,7 @@
 
 mod extract;
 mod font;
+mod msg;
 mod text;
 
 use std::borrow::Cow;
@@ -82,6 +83,18 @@ enum Command {
         #[arg(long, default_value_t = 4)]
         scale: usize,
     },
+    /// Run one dialogue string through the message pipeline and render its pages to PNG.
+    Msg {
+        /// Archive inside the ROM, e.g. `data/scenario/M02M0.gp2`.
+        archive: String,
+        /// Member name, e.g. `018_en.bin`.
+        member: String,
+        /// Record index in the table.
+        #[arg(default_value_t = 0)]
+        record: usize,
+        #[arg(long, default_value = "build/msg.png")]
+        out: PathBuf,
+    },
     /// List (and optionally extract) the members of a NARC file in the ROM.
     Narc {
         /// Path inside the ROM filesystem, e.g. `data/map/F01M01.ambl`.
@@ -137,6 +150,12 @@ fn main() -> Result<()> {
             };
             font::run(&rom, id, text.as_deref(), &out, scale)
         }
+        Command::Msg {
+            archive,
+            member,
+            record,
+            out,
+        } => msg::run(&rom, &archive, &member, record, &out),
         Command::Narc {
             path,
             out,

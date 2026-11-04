@@ -7,6 +7,28 @@ d'enregistrements (`table.md`) et dans les fichiers `.nat`. Une langue par fichi
 `cargo dq9re text --lang en` écrit toutes les chaînes des tables dans `build/text/en/`
 (51 089 chaînes en anglais, 1 441 fichiers).
 
+## Réimplémentation
+
+`crates/dq9-formats/src/message.rs` reproduit les six passes (une fonction par passe, l'état
+du jeu fourni par des fermetures). `cargo dq9re msg <archive.gp2> <membre> [n]` fait passer un
+dialogue par tout le pipeline avec un contexte d'aperçu (héros « Hero », première branche de
+chaque condition) et dessine les pages avec la police du jeu (`build/msg.png`).
+
+Test `message_pipeline_leaves_only_glyphs` : les 272 484 chaînes des tables (5 langues)
+traversent le pipeline ; ensuite, tout octet de texte est un glyphe ou un espace, sauf ces
+balises laissées à d'autres systèmes **[non localisés]** :
+
+| Balise | Hypothèse |
+|---|---|
+| `<RIKKA>`, `<LUIDA>`, `<DAMA>`, `<RENKIN>` | noms de personnages / lieux (Rikka, Luida…) remplacés ailleurs ; `RIKKA` apparaît dans l'ARM9 à `0x020f0ab1` |
+| `<CEN>` | centrage de ligne |
+| `<TC#>`, `<PLTT=#>` | couleur du texte / palette |
+| `<W=#>`, `<CURSOR=#>`, `<TRI-L>`, `<TRI-R>`, `<LG>` | mise en page des menus |
+
+S'y ajoutent deux fautes de frappe dans les données (`<ADDRESSE>`, et un bloc fermé par
+`<END_IF_MALE>` au lieu de `<ENDIF_MALE>`), et des `<END>`/`<END_R_TURN>` qui suivent une
+balise supprimée par `Msg_Compile` (`<INN=…>`…) : le jeu recopie alors le `<` suivant comme du
+texte. **[À vérifier en émulateur : ces messages passent peut-être par un autre chemin.]**
 ## Caractères
 
 - Pas d'octets non ASCII dans les textes européens : accents et signes spéciaux sont des
@@ -120,9 +142,11 @@ Les plus courantes : `<n>` chiffres (137 696, ex. `<1>` apostrophe), `<,>` (105 
 `<Cap>`, conditionnels `<IF_HERO_MALE>…<ELSE_HERO_NOT_MALE>…<ENDIF_HERO_MALE>` (et `_MALE`,
 `_SOLO`, `_ALONE`, `_ADDRESSEE_MALE`, `_SING`, `_PLRNOUN`).
 
-**Encore inconnus** : la fonction de flexion des noms (`FUN_020e4968`), le test de voyelle
-(`FUN_02067ffc`), et la conversion finale des octets en glyphes après `Msg_Compile`
-(`FUN_0206a984`).
+**Encore inconnus** : la fonction de flexion des noms (`FUN_020e4968`) et la conversion
+finale des octets en glyphes après `Msg_Compile` (`FUN_0206a984`). Le test de voyelle
+(`FUN_02067ffc`) est réimplémenté par `message::starts_with_vowel` : premier glyphe voyelle,
+ou `h` + voyelle + non-voyelle (h muet), ou `y` + non-voyelle ; le jeu consulte d'abord un
+indicateur propre à l'entité.
 
 ## Fichiers `.nat` (partiel)
 

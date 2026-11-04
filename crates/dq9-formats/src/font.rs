@@ -61,6 +61,8 @@ pub struct Font<'a> {
     /// 1bpp, row-major, most significant bit first.
     bits: &'a [u8],
     space_width: u8,
+    /// Glyph indices by first byte of their string, in table order.
+    by_first_byte: Vec<Vec<u8>>,
 }
 
 fn u32_at(data: &[u8], offset: usize) -> Result<usize> {
@@ -145,6 +147,12 @@ impl<'a> Font<'a> {
                 })
             })
             .collect::<Result<_>>()?;
+        // Glyph indices grouped by first byte, in table order: same result as the game's
+        // linear scan, without testing every glyph at every position.
+        let mut by_first_byte = vec![Vec::new(); 256];
+        for (i, g) in glyphs.iter().enumerate() {
+            by_first_byte[usize::from(g.text[0])].push(i as u8);
+        }
         Ok(Self {
             glyphs,
             kerning,
@@ -152,16 +160,18 @@ impl<'a> Font<'a> {
             height,
             bits,
             space_width: id.space_width(),
+            by_first_byte,
         })
     }
 
     /// First glyph (in table order) whose string starts `text` (`Font_FindGlyph`,
     /// `0x020424f4`).
     pub fn find(&self, text: &[u8]) -> Option<u8> {
-        self.glyphs
+        let candidates = &self.by_first_byte[usize::from(*text.first()?)];
+        candidates
             .iter()
-            .position(|g| text.starts_with(g.text))
-            .map(|i| i as u8)
+            .copied()
+            .find(|&i| text.starts_with(self.glyphs[usize::from(i)].text))
     }
 
     /// Horizontal adjustment between two consecutive glyphs (`Font_Kerning`, `0x020425f4`).

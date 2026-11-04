@@ -28,3 +28,7 @@ all = { level = "warn", priority = -1 }
 [profile.dev.package."*"]
 # Dependencies are rarely debugged; optimize them so tools stay fast on a 256 MiB ROM.
 opt-level = 3
+
+[profile.test]
+# Real-ROM tests walk ~270k strings and 53k archive members; unoptimized they take minutes.
+opt-level = 2

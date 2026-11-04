@@ -16,14 +16,14 @@ pub fn load<'a>(rom: &Rom<'a>, id: FontId) -> Result<Font<'a>> {
 }
 
 /// 8-bit grayscale canvas: ink is black on white.
-struct Canvas {
+pub(crate) struct Canvas {
     width: usize,
     height: usize,
     pixels: Vec<u8>,
 }
 
 impl Canvas {
-    fn new(width: usize, height: usize) -> Self {
+    pub(crate) fn new(width: usize, height: usize) -> Self {
         Self {
             width,
             height,
@@ -31,7 +31,14 @@ impl Canvas {
         }
     }
 
-    fn glyph(&mut self, font: &Font, index: u8, x: i32, y: i32) {
+    /// Light grey separator line across the canvas.
+    pub(crate) fn hline(&mut self, y: usize) {
+        if y < self.height {
+            self.pixels[y * self.width..(y + 1) * self.width].fill(0xC0);
+        }
+    }
+
+    pub(crate) fn glyph(&mut self, font: &Font, index: u8, x: i32, y: i32) {
         let g = &font.glyphs[usize::from(index)];
         for gy in 0..font.height {
             for gx in 0..u16::from(g.width) {
@@ -46,7 +53,7 @@ impl Canvas {
         }
     }
 
-    fn save(&self, path: &Path, scale: usize) -> Result<()> {
+    pub(crate) fn save(&self, path: &Path, scale: usize) -> Result<()> {
         let file = File::create(path).with_context(|| format!("creating {}", path.display()))?;
         let mut encoder = png::Encoder::new(
             BufWriter::new(file),

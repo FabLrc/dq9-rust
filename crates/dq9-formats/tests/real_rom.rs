@@ -127,3 +127,88 @@ fn fonts_cover_accent_tags() {
         assert_eq!(message.glyphs[usize::from(index)].text, tag.as_slice());
     }
 }
+
+/// Every dialogue/menu string of the five languages goes through the whole message pipeline;
+/// afterwards, text bytes are glyphs, spaces, or tags the pipeline leaves to other systems.
+#[test]
+fn message_pipeline_leaves_only_glyphs() {
+    use dq9_formats::message::{self, Name, Token};
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let info = rom.file_by_path("data/pack_lv5/fi_me.bin").unwrap();
+    let data = rom.file_by_path("data/pack_lv5/fd_me.bin").unwrap();
+    let font = Font::parse(info, data, FontId::Message).unwrap();
+    let mut leftovers = std::collections::BTreeMap::<String, usize>::new();
+    let mut messages = 0;
+    for_each_member(&rom, |_, name, data| {
+        if !name.ends_with(".bin") {
+            return;
+        }
+        let Ok(table) = Table::parse(data) else {
+            return;
+        };
+        for value in table.records.iter().flat_map(|r| &r.values) {
+            let Value::Str(Some(s)) = value else { continue };
+            let text = message::expand_values(s, |_| b"1".to_vec());
+            let text = message::normalize(&font, &text);
+            let text = message::eval_conditionals(&text, |_| 0);
+            let text = message::expand_names(&text, |n| match n {
+                Name::Substitution { .. } | Name::Inflected { .. } => b"Name".to_vec(),
+                Name::Weapon | Name::Actor => b"Name".to_vec(),
+            });
+            let text = message::apply_cap(&font, &text);
+            for token in message::compile(&text) {
+                let Token::Text(bytes) = token else { continue };
+                let mut rest = bytes.as_slice();
+                while !rest.is_empty() {
+                    if let Some(i) = font.find(rest) {
+                        rest = &rest[font.glyphs[usize::from(i)].text.len()..];
+                    } else if rest[0] == b' ' {
+                        rest = &rest[1..];
+                    } else {
+                        let end = message::find_tag_end(rest).filter(|_| rest[0] == b'<');
+                        let len = end.map_or(1, |e| e + 1);
+                        let key: String = String::from_utf8_lossy(&rest[..len])
+                            .chars()
+                            .map(|c| if c.is_ascii_digit() { '#' } else { c })
+                            .collect();
+                        *leftovers.entry(key).or_default() += 1;
+                        rest = &rest[len..];
+                    }
+                }
+            }
+            messages += 1;
+        }
+    });
+    assert_eq!(messages, 272_484);
+    // Tags left for other systems (see docs/re/text.md), plus two typos in the game data
+    // (`<ADDRESSE>`, `<END_IF_MALE>` with its block) and `<END>`/`<END_R_TURN>` right after a
+    // tag `Msg_Compile` drops (it then copies the next '<' as text, like the game).
+    let expected = [
+        "<ADDRESSE>",
+        "<CEN>",
+        "<CURSOR=#>",
+        "<DAMA>",
+        "<ELSE_NOT_MALE>",
+        "<END>",
+        "<END_IF_MALE>",
+        "<END_R_TURN>",
+        "<IF_MALE>",
+        "<LG>",
+        "<LUIDA>",
+        "<PLTT=##>",
+        "<PLTT=#>",
+        "<RENKIN>",
+        "<RIKKA>",
+        "<TC##>",
+        "<TC#>",
+        "<TRI-L>",
+        "<TRI-R>",
+        "<W=###>",
+        "<W=##>",
+    ];
+    assert_eq!(
+        leftovers.keys().map(String::as_str).collect::<Vec<_>>(),
+        expected
+    );
+}

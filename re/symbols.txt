@@ -152,3 +152,5 @@
 0x02067f6c Msg_AsciiUpper           # ASCII a-z -> A-Z over n bytes
 0x02068248 MsgSubst_VAL             # <VAL_n> handler
 0x020e7e6c g_MsgValueTags           # {char* tag; handler} x2: val_, VAL_
+0x02067ffc Msg_StartsWithVowel      # entity override flag, else first glyph vowel / h+vowel / y rules
+0x02067fac Msg_IsVowelAt            # entity override flag, else glyph at text marked vowel
