@@ -17,12 +17,14 @@ pub const SLOT_SIZE: usize = 0x8000;
 /// Number of slots in the image.
 pub const SLOT_COUNT: usize = 2;
 
-/// First 15 bytes of a committed slot (byte 15 is 0).
+/// First 15 bytes of the file, followed by a zero byte. Only at offset 0 of the image.
 pub const MAGIC: &[u8; 15] = b"DRAGON QUEST IX";
 
-const MAGIC_LEN: usize = 16;
 const INTERMISSION_FLAG: usize = 20;
 const EXISTS_FLAG: usize = 21;
+const VERSION: usize = 24;
+/// Chapter, step and substep words, then flag data (`Save_Serialize`, block `0x2d30`).
+const PROGRESS: usize = 11568;
 
 /// Characters stored per slot (hero, standby and party members, 8 at the inn + 4 in party
 /// + 1 spare in the editor's reading).
@@ -105,6 +107,19 @@ impl ChecksumStatus {
     }
 }
 
+/// What a slot header says, in the order `Save_SlotStatus` (`0x020ab9d0`) tests it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotStatus {
+    /// The header CRC does not match (the game's status 2).
+    BadHeaderChecksum,
+    /// The empty flag is clear (status 3).
+    Empty,
+    /// An intermission (suspend) save (status 4).
+    Intermission,
+    /// A normal save (status 0).
+    Valid,
+}
+
 fn u16_at(b: &[u8], at: usize) -> u16 {
     u16::from_le_bytes([b[at], b[at + 1]])
 }
@@ -159,15 +174,20 @@ impl Save {
         Some(SlotMut(&mut self.data[start..start + SLOT_SIZE]))
     }
 
-    /// First slot that carries the magic and whose three checksums hold.
+    /// Whether the file starts with [`MAGIC`] (`Save_CheckMagic`, `0x020ac920`, tests only
+    /// the first 16 bytes of the whole EEPROM, not of each slot).
+    pub fn has_magic(&self) -> bool {
+        self.data[..MAGIC.len()] == MAGIC[..] && self.data[MAGIC.len()] == 0
+    }
+
+    /// First slot whose header says [`SlotStatus::Valid`] and whose three checksums hold.
     ///
-    /// **[hypothesis]** this is the slot the game loads: on the one real save examined, slot
-    /// 1 is a copy of slot 0 with the magic erased to `0xff`, as if the game finished a slot
-    /// by writing its magic last.
+    /// **[hypothesis]** this is the slot a normal load takes; which slot the game loads is
+    /// decided by its callers (`Save_LoadSlot` takes the slot as an argument).
     pub fn current_slot(&self) -> Option<usize> {
         (0..SLOT_COUNT).find(|&i| {
             self.slot(i)
-                .is_some_and(|s| s.has_magic() && s.checksums_valid())
+                .is_some_and(|s| s.status() == SlotStatus::Valid && s.checksums_valid())
         })
     }
 }
@@ -179,7 +199,7 @@ pub struct Slot<'a>(&'a [u8]);
 impl core::fmt::Debug for Slot<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Slot")
-            .field("magic", &self.has_magic())
+            .field("status", &self.status())
             .finish()
     }
 }
@@ -187,10 +207,6 @@ impl core::fmt::Debug for Slot<'_> {
 impl<'a> Slot<'a> {
     pub fn bytes(&self) -> &'a [u8] {
         self.0
-    }
-
-    pub fn has_magic(&self) -> bool {
-        self.0[..MAGIC.len()] == MAGIC[..] && self.0[MAGIC_LEN - 1] == 0
     }
 
     pub fn checksums(&self) -> [ChecksumStatus; 3] {
@@ -205,15 +221,54 @@ impl<'a> Slot<'a> {
         self.checksums().iter().all(ChecksumStatus::is_valid)
     }
 
-    /// Byte 20: set on the "intermission" (quick) save written by the in-game suspend.
-    /// **[hypothesis]** name from the editor and ImHex pattern; not checked in code.
+    /// Byte 20 of the header (`slot+0x14`). `Save_SlotStatus` (`0x020ab9d0`) answers
+    /// "intermission save" when it is 1; the game sets it from the `intermission` argument
+    /// of `Save_Serialize` (`0x020a9ec8`).
     pub fn is_intermission(&self) -> bool {
         self.0[INTERMISSION_FLAG] != 0
     }
 
-    /// Bit 0 of byte 21: the slot holds a save.
+    /// Byte 21 of the header (`slot+0x15`): zero means an empty slot for `Save_SlotStatus`.
     pub fn exists(&self) -> bool {
         self.0[EXISTS_FLAG] & 1 != 0
+    }
+
+    /// Format version string at `slot+0x18` (`b"save013"` for this game; the game rejects
+    /// `b"save011"` in `Save_ReadHeaderA`, `0x020a9508`).
+    pub fn version(&self) -> &'a [u8] {
+        let raw = &self.0[VERSION..VERSION + 8];
+        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+        &raw[..end]
+    }
+
+    /// Mirrors `Save_SlotStatus` (`0x020ab9d0`) on the header, minus its I/O and the
+    /// held-key test: header CRC, then the empty flag, then the intermission flag.
+    pub fn status(&self) -> SlotStatus {
+        let crc = crc32fast::hash(&self.0[Checksum::A.range()]);
+        if crc != u32_at(self.0, Checksum::A.stored_at()) {
+            SlotStatus::BadHeaderChecksum
+        } else if !self.exists() {
+            SlotStatus::Empty
+        } else if self.is_intermission() {
+            SlotStatus::Intermission
+        } else {
+            SlotStatus::Valid
+        }
+    }
+
+    /// Scenario chapter (1..=19), `Save_Chapter` in memory (`0x020107ac`).
+    pub fn chapter(&self) -> u32 {
+        u32_at(self.0, PROGRESS)
+    }
+
+    /// Scenario step, `Save_ScenarioStep` (`0x020107e0`).
+    pub fn scenario_step(&self) -> u32 {
+        u32_at(self.0, PROGRESS + 4)
+    }
+
+    /// Scenario substep, `Save_ScenarioSubstep` (`0x02010814`).
+    pub fn scenario_substep(&self) -> u32 {
+        u32_at(self.0, PROGRESS + 8)
     }
 
     /// Characters kept at the inn (not in the party).
@@ -484,6 +539,7 @@ mod tests {
     fn blank() -> Vec<u8> {
         let mut data = vec![0u8; FILE_SIZE];
         data[..15].copy_from_slice(MAGIC);
+        data[EXISTS_FLAG] = 1;
         let mut save = Save::parse(&data).unwrap();
         save.slot_mut(0).unwrap().seal();
         save.as_bytes().to_vec()
@@ -523,12 +579,59 @@ mod tests {
     }
 
     #[test]
-    fn slot_without_magic_is_not_current() {
+    fn status_follows_header_flags() {
         let mut data = blank();
+        let status = |data: &[u8]| Save::parse(data).unwrap().slot(0).unwrap().status();
+        assert_eq!(status(&data), SlotStatus::Valid);
+
+        data[EXISTS_FLAG] = 0;
+        assert_eq!(
+            status(&data),
+            SlotStatus::BadHeaderChecksum,
+            "flags are CRC-covered"
+        );
+        let mut save = Save::parse(&data).unwrap();
+        save.slot_mut(0).unwrap().seal();
+        assert_eq!(save.slot(0).unwrap().status(), SlotStatus::Empty);
+
+        let mut data = blank();
+        data[INTERMISSION_FLAG] = 1;
+        let mut save = Save::parse(&data).unwrap();
+        save.slot_mut(0).unwrap().seal();
+        assert_eq!(save.slot(0).unwrap().status(), SlotStatus::Intermission);
+        assert_eq!(save.current_slot(), None);
+    }
+
+    #[test]
+    fn magic_is_file_level() {
+        let mut data = blank();
+        assert!(Save::parse(&data).unwrap().has_magic());
         data[..16].fill(0xff);
         let save = Save::parse(&data).unwrap();
-        assert!(!save.slot(0).unwrap().has_magic());
-        assert_eq!(save.current_slot(), None);
+        assert!(!save.has_magic());
+        assert_eq!(
+            save.current_slot(),
+            Some(0),
+            "slot data does not depend on the magic"
+        );
+    }
+
+    #[test]
+    fn progress_words_and_version_read_back() {
+        let mut data = blank();
+        data[VERSION..VERSION + 8].copy_from_slice(b"save013\0");
+        data[PROGRESS..PROGRESS + 12].copy_from_slice(&[19, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0]);
+        let save = Save::parse(&data).unwrap();
+        let slot = save.slot(0).unwrap();
+        assert_eq!(slot.version(), b"save013");
+        assert_eq!(
+            (
+                slot.chapter(),
+                slot.scenario_step(),
+                slot.scenario_substep()
+            ),
+            (19, 2, 1)
+        );
     }
 
     #[test]

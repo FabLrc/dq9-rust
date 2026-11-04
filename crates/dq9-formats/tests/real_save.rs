@@ -36,6 +36,13 @@ fn real_save_fields_are_coherent() {
     let slot = save
         .slot(save.current_slot().expect("a committed slot"))
         .unwrap();
+    assert!(save.has_magic());
+    assert_eq!(slot.version(), b"save013");
+    assert!(
+        (1..=19).contains(&slot.chapter()),
+        "chapter {}",
+        slot.chapter()
+    );
     assert!(slot.exists());
     assert!(slot.party_count() >= 1 && slot.party_count() <= 4);
     let used = usize::from(slot.standby_count()) + usize::from(slot.party_count());

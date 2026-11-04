@@ -126,11 +126,12 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       sémantique : restent notamment les bits de 570/571, les déclarations différées,
       les unités temporelles et certaines variantes de messages.
 - [ ] **Sauvegarde DS** (`dq9-formats::save`, [`re/save.md`](re/save.md)) : **conteneur fait**
-      (2 emplacements, 3 CRC-32 vérifiés, relecture/réécriture octet pour octet sur une
-      sauvegarde réelle, champs typés : groupe, personnages, or, temps de jeu, équipement) et
-      `dq9re save`. Reste : encodage des noms, étape du scénario et drapeaux d'événements
-      (disposition fichier ≠ RAM de `Save_*`), quêtes, bestiaire, sacs, retrouver le code ARM
-      de (dé)sérialisation, rôle exact des deux emplacements.
+      (2 emplacements, 3 CRC-32, relecture/réécriture octet pour octet sur une sauvegarde
+      réelle, groupe, personnages, or, temps de jeu, équipement, chapitre/étape/sous-étape) et
+      `dq9re save`. Le code ARM de (dé)sérialisation est localisé (`0x020a94f8..0x020ac9bc`,
+      12 fonctions nommées) et sa table de blocs est documentée. Reste : décoder les 820
+      octets de drapeaux d'événements, l'encodage des noms, quêtes, bestiaire, sacs, le
+      protocole d'écriture à 4 états, rôle exact des deux emplacements.
 - [ ] **Oracle** : lecture d'une sauvegarde d'état melonDS (format documenté par ndskit, MIT)
       ou script GDB, pour extraire les structures réimplémentées (état des triggers, équipe,
       position). Sert à tous les tests différentiels.

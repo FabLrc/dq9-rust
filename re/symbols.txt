@@ -406,3 +406,17 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x020ca96c MI_ReadUncompRL8
 0x020caa20 MI_ReadUncompLZ8
 0x020caba4 MI_ReadUncompHuffman
+
+# --- Save file (docs/re/save.md) ---
+0x02075920 Save_BackupRead          # (offset, dst, len, async): reads the DS backup memory
+0x02075adc Save_BackupWrite        # (offset, src, len, async): writes it
+0x020a9508 Save_ReadHeaderA        # slot+0x10, 0x14 bytes: CRC, flags, version; rejects "save011" and bad CRC
+0x020a9ec8 Save_Serialize           # GameState -> slot blocks at fixed file offsets (the whole layout)
+0x020aad2c Save_WriteStep           # state machine of a save: serialize, then write the slot(s)
+0x020aaf94 Save_LoadSlot            # reads slot (0|1), checks header A and CRC B, unpacks into GameState
+0x020ab9d0 Save_SlotStatus          # 0 ok, 1 unreadable, 2 bad CRC, 3 empty, 4 intermission save
+0x020aba6c Save_WriteHeaderA        # CRC + flags + version "save013" at slot+0x10
+0x020abaf8 Save_ClearHeaderC        # empty 0x54-byte block with its CRC at slot+0x24
+0x020ac7c4 Save_WriteHeaderC        # GameState+0x6380 (0x54 bytes) + CRC at slot+0x24
+0x020ac874 Save_ReadHeaderC        # slot+0x24, 0x60 bytes, CRC checked, copied to GameState+0x6380
+0x020ac920 Save_CheckMagic          # EEPROM+0 == "DRAGON QUEST IX", else erases and writes it

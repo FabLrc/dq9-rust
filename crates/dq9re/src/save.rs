@@ -9,13 +9,15 @@ use dq9_formats::save::{EquipSlot, Save, Slot};
 pub fn run(path: &Path, verbose: bool) -> Result<()> {
     let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let save = Save::parse(&bytes).context("parsing save")?;
+    println!("magic: {}", save.has_magic());
     println!("current slot: {:?}", save.current_slot());
     for index in 0..dq9_formats::save::SLOT_COUNT {
         let slot = save.slot(index).expect("index below SLOT_COUNT");
         println!("\nslot {index}");
         println!(
-            "  magic: {}  exists: {}  intermission: {}",
-            slot.has_magic(),
+            "  status: {:?}  version: {}  exists: {}  intermission: {}",
+            slot.status(),
+            String::from_utf8_lossy(slot.version()),
             slot.exists(),
             slot.is_intermission()
         );
@@ -37,7 +39,13 @@ pub fn run(path: &Path, verbose: bool) -> Result<()> {
 
 fn summary(slot: &Slot<'_>, verbose: bool) {
     let (h, m, s) = slot.play_time();
-    println!("  play time: {h}:{m:02}:{s:02}  area: {}", slot.area());
+    println!(
+        "  chapter {} step {} substep {}  play time: {h}:{m:02}:{s:02}  area: {}",
+        slot.chapter(),
+        slot.scenario_step(),
+        slot.scenario_substep(),
+        slot.area()
+    );
     println!(
         "  gold: {} (bank {})  mini medals: {}",
         slot.gold_on_hand(),
