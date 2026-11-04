@@ -5,6 +5,10 @@
 //! Loading reimplements `Trig_LoadRecord` (`0x0205f9dc`) and `Trig_CompileWords`
 //! (`0x0205ec80`), matching `Trig_FindMatch` (`0x020644a0`) and every condition of
 //! `Trig_EvalCondition` (`0x0205fb04`) used by the data.
+//!
+//! port: 0x0205f9cc, 0x0205f9d4, 0x0205f9dc, 0x0205ec80, 0x020644a0, 0x0205fb04
+//! port: 0x02061c14, 0x02064540, 0x0206446c, 0x020649c0, 0x0206f82c, 0x0206475c
+//! port: 0x02064ba8, 0x020703d8, 0x0206e174, 0x0206e358, 0x0206eb74, 0x0206eba8
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};

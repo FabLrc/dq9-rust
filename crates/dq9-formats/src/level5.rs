@@ -2,6 +2,8 @@
 //!
 //! A block starts with a little-endian `u32`: bits 0-2 = method, bits 3-31 = decompressed
 //! size. The body that follows uses the Nintendo BIOS encodings without their own header.
+//!
+//! port: 0x020d8ef4
 
 use std::borrow::Cow;
 

@@ -9,6 +9,47 @@ donnée du jeu n'est incluse dans ce dépôt.
 choix des répliques, triggers, scripts d'événements) ; pas encore de jeu affiché. Prochain
 objectif : une **v0.1 jouable** (prologue d'Angel Falls). Plan complet : `docs/roadmap.md`.
 
+<!-- coverage:start -->
+**Avancement : 0,7 %** des fonctions de jeu traduites (89 / 12 142), 1,4 % du code (38 Ko / 2 516 Ko).
+Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (définition dans `docs/roadmap.md`).
+
+<details><summary>Détail par module</summary>
+
+| Module | Fonctions traduites | Code traduit |
+|---|---:|---:|
+| ARM9 | 81 / 5 550 (1,4 %) | 35 Ko / 837 Ko (4,0 %) |
+| ITCM | 0 / 34 (0,0 %) | 0 Ko / 6 Ko (0,0 %) |
+| ov_000 | 0 / 826 (0,0 %) | 0 Ko / 190 Ko (0,0 %) |
+| ov_001 | 0 / 515 (0,0 %) | 0 Ko / 70 Ko (0,0 %) |
+| ov_002 | 0 / 213 (0,0 %) | 0 Ko / 101 Ko (0,0 %) |
+| ov_003 | 0 / 510 (0,0 %) | 0 Ko / 176 Ko (0,0 %) |
+| ov_004 | 0 / 532 (0,0 %) | 0 Ko / 113 Ko (0,0 %) |
+| ov_005 | 0 / 89 (0,0 %) | 0 Ko / 38 Ko (0,0 %) |
+| ov_006 | 0 / 132 (0,0 %) | 0 Ko / 51 Ko (0,0 %) |
+| ov_008 | 0 / 63 (0,0 %) | 0 Ko / 29 Ko (0,0 %) |
+| ov_009 | 0 / 43 (0,0 %) | 0 Ko / 26 Ko (0,0 %) |
+| ov_010 | 0 / 3 (0,0 %) | 0 Ko / 2 Ko (0,0 %) |
+| ov_011 | 0 / 186 (0,0 %) | 0 Ko / 18 Ko (0,0 %) |
+| ov_012 | 0 / 71 (0,0 %) | 0 Ko / 28 Ko (0,0 %) |
+| ov_013 | 0 / 40 (0,0 %) | 0 Ko / 15 Ko (0,0 %) |
+| ov_014 | 0 / 69 (0,0 %) | 0 Ko / 21 Ko (0,0 %) |
+| ov_015 | 0 / 103 (0,0 %) | 0 Ko / 34 Ko (0,0 %) |
+| ov_016 | 0 / 87 (0,0 %) | 0 Ko / 22 Ko (0,0 %) |
+| ov_017 | 8 / 1 194 (0,6 %) | 4 Ko / 301 Ko (1,0 %) |
+| ov_020 | 0 / 18 (0,0 %) | 0 Ko / 9 Ko (0,0 %) |
+| ov_021 | 0 / 5 (0,0 %) | 0 Ko / 2 Ko (0,0 %) |
+| ov_023 | 0 / 827 (0,0 %) | 0 Ko / 147 Ko (0,0 %) |
+| ov_024 | 0 / 573 (0,0 %) | 0 Ko / 152 Ko (0,0 %) |
+| ov_025 | 0 / 304 (0,0 %) | 0 Ko / 90 Ko (0,0 %) |
+| ov_026 | 0 / 24 (0,0 %) | 0 Ko / 24 Ko (0,0 %) |
+| ov_027 | 0 / 87 (0,0 %) | 0 Ko / 20 Ko (0,0 %) |
+| ov_028 | 0 / 34 (0,0 %) | 0 Ko / 5 Ko (0,0 %) |
+| ov_033 | 0 / 5 (0,0 %) | 0 Ko / 3 Ko (0,0 %) |
+| ov_034 | 0 / 5 (0,0 %) | 0 Ko / 3 Ko (0,0 %) |
+
+</details>
+<!-- coverage:end -->
+
 ## Arborescence
 
 | Chemin | Rôle |
@@ -51,10 +92,11 @@ cargo test --workspace                        # tests sur la vraie ROM inclus si
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo build -p nds-rom -p dq9-formats --target wasm32-unknown-unknown
+cargo dq9re coverage --readme README.md       # avancement (sans ROM), réécrit le bloc ci-dessus
 ```
 
 La CI exécute fmt, clippy, les tests sous Linux et la compilation wasm, sans jamais avoir accès
-à la ROM.
+à la ROM, puis calcule l'avancement et met à jour ce README sur `main`.
 
 ## Rétro-ingénierie
 

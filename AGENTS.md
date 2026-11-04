@@ -46,6 +46,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo build -p nds-rom -p dq9-formats --target wasm32-unknown-unknown
 cargo dq9re --help                                  # exploration de la ROM
+cargo dq9re coverage                                # avancement, vérifie les marqueurs port:
 powershell -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
 ```
 
@@ -62,8 +63,11 @@ powershell -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
 - Données non fiables : un parseur renvoie une erreur, ne panique jamais.
 - `dq9-core` (à venir) : déterministe, pas fixes de 60 Hz, entrées explicites.
 - **Traçabilité** : chaque comportement réimplémenté cite sa fonction d'origine en
-  commentaire (`ov_017::021ba810`, `0x020d91ec`) ; `dq9re coverage` (jalon J0) mesurera
-  l'avancement à partir de ces citations.
+  commentaire (`ov_017::021ba810`, `0x020d91ec`). Quand une fonction du jeu est entièrement
+  réimplémentée, l'ajouter à un marqueur `port:` du module (`//! port: 0x020d91ec,
+  ov_017::021ba810`, plages `A..=B`) : c'est ce que compte `cargo dq9re coverage`, et une
+  adresse qui n'est pas un début de fonction de `re/functions.txt` fait échouer la CI.
+  Ne pas marquer une fonction seulement lue ou partiellement modélisée.
 - Tests sur données synthétiques ; invariants sur la vraie ROM quand c'est pertinent.
   Jamais de données de la ROM dans le dépôt, ni en fixture.
 

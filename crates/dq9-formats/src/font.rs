@@ -1,6 +1,8 @@
 //! Level-5 bitmap fonts: `data/pack_lv5/fi_<id>.bin` (glyph table) + `fd_<id>.bin` (1bpp
 //! strip). Glyphs are keyed by byte strings, which is how markup such as `<'e>` or `<1>`
 //! becomes a single glyph. Layout and evidence in `docs/re/font.md`.
+//!
+//! port: 0x02042814, 0x020420f8, 0x020424f4, 0x020425f4, 0x02042658
 
 use nds_rom::{Error, Result};
 

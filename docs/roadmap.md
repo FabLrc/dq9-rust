@@ -36,8 +36,24 @@ de code.
 | Hors jeu | overlays de débogage (7, 22), anti-piratage, écran d'erreur de lecture (19) | **exclue** |
 
 « 100 % » = toutes les fonctions de la catégorie Jeu sont traduites ou explicitement
-remplacées par un équivalent documenté, et les tests différentiels passent. Le compteur est
-fourni par `dq9re coverage` (jalon J0).
+remplacées par un équivalent documenté, et les tests différentiels passent.
+
+### Mesure (`cargo dq9re coverage`)
+
+- `re/functions.txt` liste les 14 780 fonctions aux adresses européennes avec leur catégorie.
+  Il est généré par `cargo dq9re functions <checkout de dqix-decomp>` (commit noté en tête) ;
+  le test `our_symbols_start_listed_functions` vérifie que nos symboles y tombent tous sur un
+  début de fonction.
+- Une fonction compte comme traduite quand un commentaire d'une crate du portage (toutes sauf
+  `dq9re` et `testrom`) la cite dans un marqueur `port:` :
+  `//! port: 0x020d91ec, ov_017::021ba810` ou une plage `0x0206974c..=0x02069fd4` (toutes les
+  fonctions qui y commencent). Une adresse qui n'est pas un début de fonction est une erreur.
+- Classement automatique : overlays 30/31 et fichiers `src/NitroSDK/` de la décompilation,
+  C runtime, démarrage et stubs BIOS en Plateforme ; overlays 7, 19, 22, 29 hors jeu ; le
+  reste en Jeu. **Le NitroSDK de l'ARM9 principal n'est que partiellement identifié** : la
+  part Plateforme grandira (et le dénominateur baissera) à mesure qu'il sera reconnu.
+- La CI vérifie les marqueurs à chaque exécution, affiche le résultat dans le résumé du job
+  et, sur `main`, réécrit le bloc d'avancement du `README.md`.
 
 ### Carte des overlays
 
@@ -85,13 +101,12 @@ Les overlays 10, 28 et 32 (`pitfall`, `sub_hoge`, `sound`) sont à identifier.
 
 Petits chantiers qui rendent tous les suivants plus rapides.
 
-- [ ] **Symboles de la décompilation** : convertisseur des `symbols.txt` de dqix-decomp
-      (commit épinglé) vers les adresses européennes (`ressources-externes.md`), produisant
-      `re/symbols-decomp.txt` ; appliqué avant `re/symbols.txt` (nos noms priment), avec les
-      bornes de fonctions. Critère : nos 193 symboles retombent sur leur équivalent.
-- [ ] **`dq9re coverage`** : liste des fonctions (bornes ci-dessus), classement Jeu /
-      Plateforme / Hors jeu (`re/coverage.txt`), fonctions citées dans le code Rust
-      (`ov_017::0218c0f4`, `0x020d91ec`, `FUN_…`) ; affiche le pourcentage par module.
+- [ ] **Symboles de la décompilation dans Ghidra** : appliquer les noms et les bornes de
+      `re/functions.txt` avant `re/symbols.txt` (nos noms priment).
+- [x] **`dq9re functions` / `dq9re coverage`** : liste des fonctions aux adresses
+      européennes, classement, marqueurs `port:`, avancement dans le README par la CI.
+- [ ] **Classement du NitroSDK** de l'ARM9 principal (signatures, noms de pret) pour affiner
+      la catégorie Plateforme.
 - [ ] **Natives des scripts** : reporter dans `stb.md` les rôles lus par le wiki
       ([Engine-Functions](https://github.com/DQIX/wiki/blob/main/Engine-Functions.md)) en
       vérifiant chacune sur `ov_001` ; priorité aux plus fréquentes (210, 570, 206, 208, 571).

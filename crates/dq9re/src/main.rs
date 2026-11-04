@@ -1,5 +1,6 @@
 //! `dq9re`: command-line tooling for reverse engineering the Dragon Quest IX ROM.
 
+mod coverage;
 mod extract;
 mod font;
 mod msg;
@@ -128,10 +129,44 @@ enum Command {
         #[arg(long, short)]
         decompress: bool,
     },
+    /// Build `re/functions.txt` from a checkout of the USA decompilation (DQIX/dqix-decomp):
+    /// every function, at European addresses, classified game / platform / excluded.
+    Functions {
+        /// Root of the dqix-decomp checkout.
+        decomp: PathBuf,
+        #[arg(long, default_value = "re/functions.txt")]
+        out: PathBuf,
+    },
+    /// Porting progress: game functions cited by `port:` markers in the port crates.
+    /// Needs no ROM.
+    Coverage {
+        #[arg(long, default_value = "re/functions.txt")]
+        functions: PathBuf,
+        /// Directory of the crates to scan (tool crates are skipped).
+        #[arg(long, default_value = "crates")]
+        crates: PathBuf,
+        /// Rewrite the progress block of this README (between the coverage markers).
+        #[arg(long)]
+        readme: Option<PathBuf>,
+        /// With --readme: fail instead of writing when the block is out of date.
+        #[arg(long, requires = "readme")]
+        check: bool,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Commands that do not read the ROM, so that they also run in CI.
+    match &cli.command {
+        Command::Functions { decomp, out } => return coverage::run_functions(decomp, out),
+        Command::Coverage {
+            functions,
+            crates,
+            readme,
+            check,
+        } => return coverage::run_coverage(functions, crates, readme.as_deref(), *check),
+        _ => {}
+    }
     let rom_path = match cli.rom {
         Some(path) => path,
         None => find_rom()?,
@@ -189,6 +224,8 @@ fn main() -> Result<()> {
             };
             fs::write(&out, data).with_context(|| format!("writing {}", out.display()))
         }
+        // Handled above, before the ROM is read.
+        Command::Functions { .. } | Command::Coverage { .. } => Ok(()),
     }
 }
 

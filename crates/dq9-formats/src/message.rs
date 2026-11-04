@@ -4,6 +4,12 @@
 //!
 //! Order: [`expand_values`] → [`normalize`] → [`eval_conditionals`] → [`expand_names`] →
 //! [`apply_cap`] → [`compile`].
+//!
+//! port: 0x020424bc, 0x0206832c, 0x02068428, 0x02068f50, 0x02068e2c, 0x02069244
+//! port: 0x02069604, 0x02067ffc, 0x02069ffc
+//! port: 0x0206974c..=0x02069fd4
+//!
+//! The range is the control-tag handlers of `Msg_Compile`, reduced here to their codes.
 
 use crate::font::Font;
 

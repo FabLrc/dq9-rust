@@ -5,6 +5,10 @@
 //! Reimplements `ov_017::021ba810` (`Talk_SelectLine`): the record table is walked once in
 //! file order, each record goes through its kind's handler (`ov_017::021b9d00`…`021ba524`)
 //! and the last accepted line wins, subject to the precedence flags the handlers raise.
+//!
+//! port: ov_017::021ba810, ov_017::021b9bcc, ov_017::021b9d00, ov_017::021b9e30
+//! port: ov_017::021ba124, ov_017::021ba280, ov_017::021ba3dc, ov_017::021ba524
+//! port: 0x02030b1c
 
 use nds_rom::{Error, Result};
 

@@ -1,5 +1,7 @@
 //! `GPC2` archives (`*.gp2`): Level-5 packs of named, individually compressed files.
 //! Layout in `docs/re/gpc2.md`; loader at `0x020d91ec` (`Gpc2_LoadIndex`).
+//!
+//! port: 0x020d91ec, 0x020d902c, 0x020d8fdc
 
 use std::borrow::Cow;
 

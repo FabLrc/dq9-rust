@@ -30,7 +30,9 @@ documenté dans `docs/re/`.
 - **Données non fiables** : tout parseur renvoie une erreur sur une donnée corrompue, jamais
   de panique.
 - **Traçabilité** : chaque comportement réimplémenté cite la fonction d'origine
-  (`// ov_017::0218c0f4`) et le format correspondant est décrit dans `docs/re/`.
+  (`// ov_017::0218c0f4`) et le format correspondant est décrit dans `docs/re/`. Les
+  fonctions entièrement réimplémentées sont listées dans un marqueur `port:`, qui mesure
+  l'avancement (`docs/roadmap.md`).
 
 ## Vérification
 

@@ -36,3 +36,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Platform-independent crates must keep building for the web target.
       - run: cargo build -p nds-rom -p dq9-formats --target wasm32-unknown-unknown
+
+  # Porting progress (`cargo dq9re coverage`, no ROM needed): checks the `port:` markers on
+  # every run, shows the result in the job summary and, on main, commits the README block.
+  coverage:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo dq9re coverage --readme README.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit the updated README
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git diff --quiet README.md && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: update porting progress" README.md
+          git push

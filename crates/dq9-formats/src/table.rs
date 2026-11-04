@@ -1,5 +1,7 @@
 //! Level-5 record tables: the container of most `.bin` files (dialogue, menus, parameters,
 //! maps), `.bmmp` and `.bcfg`. Layout and evidence in `docs/re/table.md`.
+//!
+//! port: 0x02030744, 0x02030784, 0x020307e0, 0x02030b8c
 
 use nds_rom::{Error, Result};
 
