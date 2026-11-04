@@ -3,6 +3,7 @@
 mod extract;
 mod font;
 mod msg;
+mod talk;
 mod text;
 
 use std::borrow::Cow;
@@ -95,6 +96,8 @@ enum Command {
         #[arg(long, default_value = "build/msg.png")]
         out: PathBuf,
     },
+    /// Decode an NPC dialogue file and show the line chosen for a given game state.
+    Talk(talk::TalkArgs),
     /// List (and optionally extract) the members of a NARC file in the ROM.
     Narc {
         /// Path inside the ROM filesystem, e.g. `data/map/F01M01.ambl`.
@@ -156,6 +159,7 @@ fn main() -> Result<()> {
             record,
             out,
         } => msg::run(&rom, &archive, &member, record, &out),
+        Command::Talk(args) => talk::run(&rom, &args),
         Command::Narc {
             path,
             out,

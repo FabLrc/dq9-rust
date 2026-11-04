@@ -13,12 +13,16 @@ implémentation testée et un commit.
 - [x] Polices `fi_*/fd_*` (glyphes nommés par chaîne, crénage) (`font.md`).
 - [x] Pipeline des messages réimplémenté (6 passes, conditions, majuscules) et rendu des
       dialogues avec la police du jeu (`dq9re msg`).
+- [x] Choix de la réplique d'un PNJ : types d'enregistrements, étapes, quêtes, nuit,
+      emplacements et zones de conversation ; lecteur de tables du jeu (`dialogue.md`,
+      `dq9re talk`).
 
 ## Prochaines étapes
 
-1. **Sens des champs des dialogues** (`a`, `b` des enregistrements de `scenario/`) : suivre
-   le code qui lit `NNN_xx.bin` (chaîne `data/scenario/trigger%s.bin` à `0x020f05dc`).
-2. **Scripts d'événements** : `.stb` (`SB2`) dans `event/`, et triggers de scénario.
+1. **Triggers de scénario** (`trigger<carte>.bin`, bytecode `0x00XXYYYY`) : ils imposent
+   probablement le contexte de conversation 192–223 (offres/récompenses de quêtes).
+   Point d'entrée : `ov_017::021b8c84` (charge `scenario/trigger.bin`).
+2. **Scripts d'événements** : `.stb` (`SB2`) dans `event/` et `scenario/`.
 3. **Graphismes 3D Nitro** (`BMD0`/`BTX0`/`BCA0`, formats documentés publiquement) : lecteur
    + rendu wgpu de premier jet (personnages `chr`, cartes `ambl`).
 4. **Tables de jeu** : objets, monstres, sorts (`bin/*`, `prm/*`, `.nat` binaires) ; noms

@@ -10,7 +10,7 @@ use nds_rom::Rom;
 
 /// Printable rendering of raw string bytes: ASCII kept (the game writes line breaks as the
 /// two characters `\n`), real newlines and non-ASCII bytes escaped.
-fn escape(bytes: &[u8]) -> String {
+pub(crate) fn escape(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len());
     for &b in bytes {
         match b {

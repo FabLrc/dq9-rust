@@ -5,8 +5,8 @@ Implémentation : `crates/dq9-formats/src/table.rs`. Outils : `cargo dq9re table
 
 Format générique de la majorité des données du jeu : dialogues (`scenario/*/NNN_xx.bin`),
 menus (`bin/menu`), paramètres, cartes (`map/*.bin`, flottants de positions), etc.
-Le nom du format est inconnu **[hypothèse : ancêtre du « cfg.bin » des jeux Level-5 3DS]** ;
-le parseur du jeu n'est pas encore localisé dans le code.
+Le nom du format est inconnu **[hypothèse : ancêtre du « cfg.bin » des jeux Level-5 3DS]**.
+Lecteur du jeu : `Tbl_*` (`0x02030644`–`0x02030b8c`), décrit dans `dialogue.md`.
 
 ## Preuves
 
@@ -58,7 +58,5 @@ sont en Shift-JIS (`bin/presetdt`).
 
 ## Dialogues (`scenario/<lieu>/NNN_<langue>.bin`)
 
-Formes d'enregistrements observées (fichiers anglais) : types 1, 2, 4, 5, soit avec 4 champs
-`int, int, int, chaîne` (35 376), soit avec 5 champs `int, int, int, int, chaîne` (2 612).
-Pour 4 champs : `[a, b, identifiant du message, texte]`. Signification de `a`, `b` et du champ
-supplémentaire : **[inconnue — probablement condition/orateur]**.
+Types 1, 2, 4, 5 ; 4 champs `[a, b, emplacement, texte]` ou 5 champs
+`[a, b, nuit, emplacement, texte]`. Sens complet et algorithme de choix : `dialogue.md`.

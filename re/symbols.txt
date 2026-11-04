@@ -154,3 +154,40 @@
 0x020e7e6c g_MsgValueTags           # {char* tag; handler} x2: val_, VAL_
 0x02067ffc Msg_StartsWithVowel      # entity override flag, else first glyph vowel / h+vowel / y rules
 0x02067fac Msg_IsVowelAt            # entity override flag, else glyph at text marked vowel
+
+# --- Record tables (docs/re/table.md) ---
+0x02030644 Tbl_Init                 # clears the table reader state (0x430-byte struct)
+0x0203067c Tbl_SetHandlers          # {u32 kind; handler} array ended by kind 0, bubble-sorted by kind
+0x02030744 Tbl_SetData              # data, size: records at +0x10, string pool at header word 1
+0x02030784 Tbl_Run                  # calls Tbl_Next until the records are exhausted
+0x020307e0 Tbl_Next                 # decodes one record's fields, calls handler(fields, count)
+0x02030b1c Tbl_FieldInt             # int field as is, float field converted, string -> 0
+0x02030b8c Tbl_FieldStr             # string field pointer, else 0
+
+# --- NPC dialogue (docs/re/dialogue.md) ---
+0x020103c4 Save_IsDaytime           # save +0x3dc != 0
+0x020107ac Save_Chapter             # save +0x5cb0: chapter 1..19 -> archive letter
+0x020107e0 Save_ScenarioStep        # save +0x5cb4
+0x02010814 Save_ScenarioSubstep     # save +0x5cb8
+0x0206e130 Quest_State              # 2 low bits of the quest's save nibble (+0x2cc, 0xcc quests)
+0x0206e270 Quest_Bit2               # nibble bit 2
+0x0206e2ec Quest_Bit3               # nibble bit 3
+0x0206e32c Quest_AllowedForGuest    # not a session guest, or quest > 0xad
+0x0206ec2c NpcTalkCount_Get         # nibble per NPC in a 128-byte array
+0x0206ec74 NpcTalkCount_Inc         # saturating at 15
+ov_017::0218d2c4 Scenario_ChapterLetter   # "ABCDEFGHIJSTKLMNOPQ"[chapter-1]
+ov_017::021a476c Talk_FindPartner   # picks the NPC in front of the hero, sets the talk context
+ov_017::021a4cf0 Talk_Start         # fills the talk task: NPC, context (+0x124)
+ov_017::021a4e88 Talk_NearestNpc    # nearest NPC; context = id of the talk zone containing the hero
+ov_017::021b8e8c TalkTask_Update    # loads scenario/<map><letter>0.gp2 / NNN_<lang>.bin, selects, shows
+ov_017::021b9bcc Talk_SlotAccepts   # slot/80 == context/80; tests by slot%80/16
+ov_017::021b9d00 TalkLine_Step      # record kind 1
+ov_017::021b9e30 TalkLine_Quest arm            # record kind 2 (only reached via g_TalkLineHandlers)
+ov_017::021ba124 TalkLine_SessionStepA arm     # record kind 3
+ov_017::021ba280 TalkLine_SessionStepB arm     # record kind 4
+ov_017::021ba3dc TalkLine_HostStep arm         # record kind 5
+ov_017::021ba524 TalkLine_HostQuest arm        # record kind 6
+ov_017::021ba810 Talk_SelectLine    # runs the dialogue table through the kind handlers
+ov_017::021d7c54 g_TalkQuestLine    # s8[2]: quest of the chosen kind 2 / kind 6 line, -1 = none
+ov_017::021d7c58 g_TalkLineHandlers # {kind, handler} x6 + terminator
+ov_017::021d8438 g_TalkSelect       # selection state (flags, step, context, counters, result)

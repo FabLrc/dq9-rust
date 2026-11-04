@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use dq9_formats::dialogue::{self, Kind, Session, TalkState};
 use dq9_formats::{Font, FontId, Gpc2, Table, Value, level5};
 use nds_rom::Rom;
 
@@ -77,6 +78,92 @@ fn record_tables_parse() {
     });
     // 47 075 `.bin` + 283 `.bmmp` + 28 `.bcfg`; the other 152 `.bin` use other formats.
     assert_eq!(tables, 47_386);
+}
+
+/// NPC dialogue files: every record has a handled kind, a text, a quest id and condition in
+/// the ranges the game tests, and a slot in groups 0-2.
+#[test]
+fn dialogue_files_decode() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let (mut files, mut lines) = (0, 0);
+    let mut kinds = HashSet::new();
+    for_each_member(&rom, |archive, name, data| {
+        let is_dialogue = archive.starts_with("data/scenario/")
+            && name.len() == 10
+            && name[..3].bytes().all(|b| b.is_ascii_digit())
+            && name.ends_with(".bin");
+        if !is_dialogue {
+            return;
+        }
+        files += 1;
+        let table = Table::parse(data).unwrap();
+        for line in dialogue::parse(&table).unwrap_or_else(|e| panic!("{archive}/{name}: {e}")) {
+            lines += 1;
+            let kind = line
+                .kind
+                .unwrap_or_else(|| panic!("{archive}/{name}: unknown kind"));
+            kinds.insert(format!("{kind:?}"));
+            assert!(line.text.is_some(), "{archive}/{name}");
+            assert!(
+                (0..240).contains(&line.slot),
+                "{archive}/{name}: slot {}",
+                line.slot
+            );
+            if matches!(kind, Kind::Quest | Kind::HostQuest) {
+                assert!(
+                    (0..0xcc).contains(&line.a),
+                    "{archive}/{name}: quest {}",
+                    line.a
+                );
+                assert!(
+                    (-1..=4).contains(&line.b),
+                    "{archive}/{name}: state {}",
+                    line.b
+                );
+            }
+        }
+    });
+    assert_eq!(files, 42_305);
+    assert_eq!(lines, 189_940);
+    let mut kinds: Vec<_> = kinds.into_iter().collect();
+    kinds.sort();
+    assert_eq!(kinds, ["HostStep", "Quest", "SessionStepB", "Step"]);
+}
+
+/// George (Stornway, chapter M, NPC 18) once quest 11 is accepted: the in-progress line.
+#[test]
+fn dialogue_selection_follows_quest_state() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let archive = Gpc2::parse(rom.file_by_path("data/scenario/M02M0.gp2").unwrap()).unwrap();
+    let data = archive.member(archive.find("018_en.bin").unwrap()).unwrap();
+    let table = Table::parse(&data).unwrap();
+    let lines = dialogue::parse(&table).unwrap();
+    let quest = |state: u8| move |q: i32| if q == 11 { state } else { 0 };
+    let accepted = quest(2);
+    let mut talk = TalkState {
+        step: 1,
+        substep: 0,
+        context: 0,
+        talk_count: [0, 0],
+        daytime: true,
+        session: Session::default(),
+        quest: &accepted,
+    };
+    let chosen = dialogue::select(&lines, &talk).unwrap();
+    let text = lines[chosen].text.unwrap();
+    assert!(text.starts_with(b"<QUEST=11>//George// Those betterflies"));
+    // Quest done (state 3): the closing line.
+    let done = quest(3);
+    talk.quest = &done;
+    let chosen = dialogue::select(&lines, &talk).unwrap();
+    assert!(
+        lines[chosen]
+            .text
+            .unwrap()
+            .starts_with(b"//George// I suppose those monsters")
+    );
 }
 
 /// Both fonts parse, and every accented-letter tag used in the European texts (`<'e>`,

@@ -1,6 +1,7 @@
 // Read-only queries against the analyzed program, for scripted/agent-driven RE.
 // Args: <command> <address>... where address is `0x020f27f8` or `ov_017::0218c0f4`.
-//   decomp <addr>...   decompile the function containing each address
+//   decomp <addr>...   decompile the function containing each address (created, unsaved,
+//                      when the address is code that analysis did not reach)
 //   xrefs  <addr>...   references to each address, with the containing function
 //   calls  <addr>...   callers and callees of the function containing each address
 //   disasm <addr> [n]  n instructions (default 32) starting at addr
@@ -61,6 +62,12 @@ public class Query extends GhidraScript {
 
     private void decompile(DecompInterface decomp, Address addr) {
         Function f = getFunctionContaining(addr);
+        if (f == null) {
+            // Code only reached through data tables (callback arrays) is not found by the
+            // auto-analysis: create the function in memory (the project is opened read-only).
+            disassemble(addr);
+            f = createFunction(addr, null);
+        }
         if (f == null) {
             println("== no function contains " + addr);
             return;
