@@ -83,7 +83,7 @@ cargo dq9re extract --unpack     # code + données dans build/rom, archives .gp2
 powershell -ExecutionPolicy Bypass -File scripts/setup-re-tools.ps1
 powershell -ExecutionPolicy Bypass -File scripts/ghidra-import.ps1   # projet re/ghidra (~3 min)
 powershell -ExecutionPolicy Bypass -File scripts/ghidra.ps1          # interface graphique
-powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save partie.sav   # état .ml1 (~30 s)
+powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save partie.sav   # état .ml1 vérifié (~40 s)
 ```
 
 ## Développement

@@ -168,6 +168,9 @@ enum Command {
         path: PathBuf,
         #[arg(long, num_args = 1..)]
         peek: Vec<String>,
+        /// Compare the RAM with the `.sav` the game was loaded from (`SAVE_COPIES`).
+        #[arg(long)]
+        save: Option<PathBuf>,
     },
 }
 
@@ -183,7 +186,9 @@ fn main() -> Result<()> {
             check,
         } => return coverage::run_coverage(functions, crates, readme.as_deref(), *check),
         Command::Save { path, verbose } => return save::run(path, *verbose, cli.rom.as_deref()),
-        Command::State { path, peek } => return state::run(path, peek, cli.rom.as_deref()),
+        Command::State { path, peek, save } => {
+            return state::run(path, peek, save.as_deref(), cli.rom.as_deref());
+        }
         _ => {}
     }
     let rom_path = match cli.rom {

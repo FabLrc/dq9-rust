@@ -1,18 +1,20 @@
 //! `dq9re state`: inspect a melonDS savestate (`docs/re/melonds-state.md`). When the ROM is
 //! found, also compares resident code with it: checks the section offsets, lists overlays.
+//! With `--save`, compares the RAM with the save the game was loaded from.
 
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use dq9_formats::melonds::State;
+use dq9_formats::save::Save;
 use nds_rom::Rom;
 
 /// Share of identical bytes above which an overlay is reported as loaded. Overlays sharing an
 /// address range agree on far fewer bytes; `.data` writes keep a loaded one below 100 %.
 const LOADED: f64 = 0.9;
 
-pub fn run(path: &Path, peek: &[String], rom: Option<&Path>) -> Result<()> {
+pub fn run(path: &Path, peek: &[String], save: Option<&Path>, rom: Option<&Path>) -> Result<()> {
     let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let state = State::parse(&bytes).context("parsing savestate")?;
     if peek.is_empty() {
@@ -38,6 +40,9 @@ pub fn run(path: &Path, peek: &[String], rom: Option<&Path>) -> Result<()> {
             }
             None => println!("no ROM found: resident code not compared"),
         }
+        if let Some(save) = save {
+            compare_with_save(&state, save)?;
+        }
         return Ok(());
     }
     for spec in peek {
@@ -52,6 +57,41 @@ pub fn run(path: &Path, peek: &[String], rom: Option<&Path>) -> Result<()> {
         let bytes = state.read(addr, len)?;
         let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         println!("{addr:08x}  {hex}");
+    }
+    Ok(())
+}
+
+fn compare_with_save(state: &State, path: &Path) -> Result<()> {
+    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let save = Save::parse(&bytes).context("parsing save")?;
+    let index = save.current_slot().context("no valid slot in the save")?;
+    let slot = save.slot(index).context("slot")?;
+    println!("save slot {index} copied into RAM by a normal load:");
+    let mut unexpected = 0;
+    for (c, diffs) in state.compare_save(&slot)? {
+        let verdict = match diffs.first() {
+            None => "identical".to_owned(),
+            Some(first) => {
+                unexpected += usize::from(!c.runtime);
+                format!(
+                    "{}/{} bytes differ, first at +{first:#x}{}",
+                    diffs.len(),
+                    c.len,
+                    if c.runtime {
+                        " (changed by the game)"
+                    } else {
+                        ""
+                    }
+                )
+            }
+        };
+        println!(
+            "  {:<26} slot+{:<5} -> {:#010x} ({:#x} bytes): {verdict}",
+            c.name, c.slot_offset, c.ram, c.len
+        );
+    }
+    if unexpected > 0 {
+        println!("{unexpected} copies differ: was the game loaded from this save?");
     }
     Ok(())
 }

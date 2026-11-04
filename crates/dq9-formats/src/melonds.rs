@@ -3,9 +3,12 @@
 //!
 //! The container layout (sections, and where the memories sit inside `NDSG` and `CP15`) is
 //! the one documented by ndskit (MIT, `melonds.py`); it is not copied from melonDS (GPL).
-//! No real state has been read yet: the tests use synthetic states.
+//! Checked on real states: resident code equals the ROM's, and [`SAVE_COPIES`] equals the
+//! loaded save.
 
 use nds_rom::{Error, Result};
+
+use crate::save::Slot;
 
 /// Start of main RAM in the ARM9 address space.
 pub const MAIN_RAM_BASE: u32 = 0x0200_0000;
@@ -21,6 +24,84 @@ pub const DTCM_BASE: u32 = 0x027E_0000;
 pub const VBLANK_COUNT: u32 = 0x027F_FC3C;
 /// Address of the `GameState` singleton (`GameState::GetInstance` reads it from a literal pool).
 pub const GAME_STATE: u32 = 0x020f_33d8;
+/// Quest manager whose start is the save's event block (`func_0205ec44` returns it).
+pub const QUEST_MANAGER: u32 = 0x0210_8844;
+/// Quest log (`QuestLog_Get`, `0x02094d7c`).
+pub const QUEST_LOG: u32 = 0x0210_9418;
+/// Current `Zone3D` object (`func_02012ff4` returns it).
+pub const ZONE_3D: u32 = 0x020f_b3f0;
+
+/// A byte range of a save slot that `Save_LoadSlot` (`0x020aaf94`) and the functions it
+/// calls copy unchanged into RAM when a normal save is loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SaveCopy {
+    pub name: &'static str,
+    /// Offset inside the slot (as [`crate::save::Block::start`]).
+    pub slot_offset: usize,
+    pub len: usize,
+    pub ram: u32,
+    /// The game changes these bytes after loading, so a difference is expected.
+    pub runtime: bool,
+}
+
+const fn copy(name: &'static str, slot_offset: usize, len: usize, ram: u32) -> SaveCopy {
+    SaveCopy {
+        name,
+        slot_offset,
+        len,
+        ram,
+        runtime: false,
+    }
+}
+
+const MAIN: usize = 136;
+
+/// Plain copies of a normal load, in slot order. Left out: standby characters (variable
+/// length, `GameState+0x3984`), party members (converted by `func_02082d6c`), the zone's five
+/// extra fields and the suspend-only blocks. Sources: `Save_ReadHeaderC` (`0x020ac874`),
+/// `Save_UnpackMain` (`0x020a95b4`), `Save_UnpackProgress`, `Save_CopyEvents`,
+/// `Save_UnpackHints`, `Save_UnpackZone`, `Save_UnpackDqvcMessages`,
+/// `Save_UnpackTreasureMaps` and the `memcpy` calls of `Save_LoadSlot`.
+pub const SAVE_COPIES: &[SaveCopy] = &[
+    copy("header C (with its CRC)", 36, 0x54, GAME_STATE + 0x6380),
+    copy("bag", MAIN + 0x1d5c, 0x1d4, GAME_STATE + 0x2a04),
+    copy(
+        "party list (order, count)",
+        MAIN + 0x1d0d,
+        5,
+        GAME_STATE + 0x397c,
+    ),
+    copy("Main +0x2b08", MAIN + 0x2b08, 0x128, GAME_STATE + 0x3808),
+    copy("gold in bank", MAIN + 0x2c34, 4, GAME_STATE + 0x396c),
+    copy("gold on hand", MAIN + 0x2c30, 4, GAME_STATE + 0x3970),
+    copy("Main +0x2c38", MAIN + 0x2c38, 4, GAME_STATE + 0x3974),
+    copy("mini medals", MAIN + 0x2c3c, 4, GAME_STATE + 0x3978),
+    copy("Main +0x2c44", MAIN + 0x2c44, 7, GAME_STATE + 0x5691),
+    copy("Main +0x2c78", MAIN + 0x2c78, 6, GAME_STATE + 0x74fe),
+    copy("Main +0x2c88", MAIN + 0x2c88, 0x1a, QUEST_LOG + 0x4a8),
+    copy("progress words", 11568, 0x10, GAME_STATE + 0x5cb0),
+    SaveCopy {
+        runtime: true,
+        ..copy("event block", 11584, 0x334, QUEST_MANAGER)
+    },
+    copy("quest log", 12404, 0xa0, QUEST_LOG),
+    copy("quest timers", 12564, 0x330, QUEST_LOG + 0x178),
+    SaveCopy {
+        runtime: true,
+        ..copy("hints", 13384, 400, GAME_STATE + 0x5cdc)
+    },
+    copy("monsters", 13784, 0x4d0, GAME_STATE + 0x75f0),
+    copy("alchemy", 15016, 0x3b4, GAME_STATE + 0x7ac0),
+    copy("accolades", 15964, 0xec, GAME_STATE + 0x7504),
+    copy("zone", 16200, 0x1b30, ZONE_3D + 0x840),
+    copy("DQVC message 1", 23176, 0x200, GAME_STATE + 0x5f80),
+    copy("DQVC message 2", 23688, 0x200, GAME_STATE + 0x6180),
+    copy("DQVC word", 24200, 4, GAME_STATE + 0x5f7c),
+    copy("treasure maps", 24204, 0xad6, GAME_STATE + 0x64f4),
+    copy("profile", 26980, 0x7c, GAME_STATE + 0x569c),
+    copy("DQVC", 27132, 0x2c4, GAME_STATE + 0x71fc),
+    copy("misc", 27840, 0x110, GAME_STATE + 0x5e6c),
+];
 
 /// Section header: 4-byte name, 32-bit length (header included), 8 more bytes.
 const SECTION_HEADER: usize = 16;
@@ -192,6 +273,24 @@ impl<'a> State<'a> {
             self.u32(GAME_STATE + 0x5cb8)?,
         ))
     }
+
+    /// For each of [`SAVE_COPIES`], the offsets (relative to the copy) where RAM differs from
+    /// `slot`: all empty when the state's game was loaded from that slot and the copies have
+    /// not been changed since (except those marked `runtime`).
+    pub fn compare_save(&self, slot: &Slot<'_>) -> Result<Vec<(SaveCopy, Vec<usize>)>> {
+        let bytes = slot.bytes();
+        SAVE_COPIES
+            .iter()
+            .map(|&c| {
+                let saved = bytes
+                    .get(c.slot_offset..c.slot_offset + c.len)
+                    .ok_or(Error::Malformed("save slot shorter than its blocks"))?;
+                let ram = self.read(c.ram, c.len)?;
+                let diffs = (0..c.len).filter(|&i| saved[i] != ram[i]).collect();
+                Ok((c, diffs))
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -207,6 +306,11 @@ mod tests {
 
     /// Builds a state whose main RAM, ITCM and DTCM bytes are `f(address)`-like markers.
     fn synthetic() -> Vec<u8> {
+        synthetic_with(|_| {})
+    }
+
+    /// Same, letting `edit` change main RAM (indexed by `addr & 0x3fffff`) first.
+    fn synthetic_with(edit: impl FnOnce(&mut [u8])) -> Vec<u8> {
         let mut out = b"MELN".to_vec();
         out.resize(FIRST_SECTION, 0);
         let mut ndsg = vec![0u8; NDSG_MAIN - SECTION_HEADER];
@@ -219,6 +323,7 @@ mod tests {
         put(&mut main, GAME_STATE + 0x5cb4, 2);
         put(&mut main, GAME_STATE + 0x5cb8, 1);
         put(&mut main, VBLANK_COUNT, 1234);
+        edit(&mut main);
         ndsg.extend_from_slice(&main);
         section(&mut out, b"ARM9", &[0; 20]);
         section(&mut out, b"NDSG", &ndsg);
@@ -269,5 +374,60 @@ mod tests {
         assert!(st.read(0x0400_0000, 1).is_err());
         assert!(st.read(u32::MAX, usize::MAX).is_err());
         assert!(st.shared_wram().is_none() && st.arm7_wram().is_none());
+    }
+
+    #[test]
+    fn compare_save_reports_each_copy_that_differs() {
+        let mut file = vec![0u8; crate::save::FILE_SIZE];
+        for (i, b) in file.iter_mut().enumerate() {
+            *b = (i * 7 + 3) as u8;
+        }
+        let save = crate::save::Save::parse(&file).unwrap();
+        let slot = save.slot(0).unwrap();
+        let load = |main: &mut [u8]| {
+            for c in SAVE_COPIES {
+                let o = (c.ram & 0x3f_ffff) as usize;
+                main[o..o + c.len]
+                    .copy_from_slice(&slot.bytes()[c.slot_offset..c.slot_offset + c.len]);
+            }
+        };
+        let data = synthetic_with(load);
+        let st = State::parse(&data).unwrap();
+        assert!(
+            st.compare_save(&slot)
+                .unwrap()
+                .iter()
+                .all(|(_, d)| d.is_empty())
+        );
+
+        // The game changes one byte of the monster records after loading.
+        let monsters = SAVE_COPIES.iter().find(|c| c.name == "monsters").unwrap();
+        let data = synthetic_with(|main| {
+            load(main);
+            main[(monsters.ram & 0x3f_ffff) as usize + 5] ^= 1;
+        });
+        let st = State::parse(&data).unwrap();
+        for (c, diffs) in st.compare_save(&slot).unwrap() {
+            let expected: &[usize] = if c == *monsters { &[5] } else { &[] };
+            assert_eq!(diffs, expected, "{}", c.name);
+        }
+    }
+
+    #[test]
+    fn save_copies_do_not_overlap() {
+        let mut by_slot: Vec<_> = SAVE_COPIES.iter().collect();
+        by_slot.sort_by_key(|c| c.slot_offset);
+        for w in by_slot.windows(2) {
+            assert!(
+                w[0].slot_offset + w[0].len <= w[1].slot_offset,
+                "{}",
+                w[1].name
+            );
+        }
+        let mut by_ram: Vec<_> = SAVE_COPIES.iter().collect();
+        by_ram.sort_by_key(|c| c.ram);
+        for w in by_ram.windows(2) {
+            assert!(w[0].ram + w[0].len as u32 <= w[1].ram, "{}", w[1].name);
+        }
     }
 }

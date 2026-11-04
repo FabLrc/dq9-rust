@@ -30,7 +30,7 @@ Image EEPROM de **0x10000 octets** = 2 emplacements de **0x8000** (0x6fe4 octets
 | slot+20 | octet « intermission » (1 = sauvegarde de suspension) | `Save_SlotStatus` (`0x020ab9d0`) : statut 4 |
 | slot+21 | octet « existe » (0 = emplacement vide) | même fonction : statut 3 |
 | slot+24 | version `save013\0` (`save011` est rejeté) | `Save_ReadHeaderA`, `Save_WriteHeaderA` (`0x020aba6c`) |
-| slot+36 | CRC C, couvre `+40..+132` (0x5c octets) | `Save_ReadHeaderC` (`0x020ac874`) ; 0x54 octets copiés vers `GameState+0x6380` |
+| slot+36 | CRC C, couvre `+40..+132` (0x5c octets) | `Save_ReadHeaderC` (`0x020ac874`) ; les 0x54 octets `+36..+120` (**CRC compris**) sont copiés vers `GameState+0x6380` (vu en RAM) |
 | slot+132 | CRC B, couvre `+136..+28644` (0x6f5c octets) | `Save_LoadSlot` (`0x020aaf94`) : lit 0x6f60 octets à `0x84` / `0x8084` |
 | slot+136 | personnages (13 × 572) puis le reste (§ suivant) | `Save_Serialize` (`0x020a9ec8`) |
 
@@ -98,8 +98,44 @@ réserve ; `7573` ordre du groupe (4) ; `7577` effectif du groupe ; `7578 + 18 n
 « Inconnu ») ; réglages et position de départ `11488..11519` ; drapeau d'intermission
 `11530` (tampon `+0x2ca2`).
 
-La somme C (`40..132`) ne couvre pas ces blocs : elle protège le petit bloc de 0x54 octets
-copié vers `GameState+0x6380`.
+La somme C (`40..132`) ne couvre pas ces blocs : elle protège le petit bloc copié vers
+`GameState+0x6380` (avec le mot de CRC lui-même).
+
+## En RAM après un chargement
+
+Contrôlé sur un état melonDS pris dans le jeu après « Continue » sur la démo
+(`dq9re state … --save`, [`melonds-state.md`](melonds-state.md)) : chaque copie simple de
+`Save_LoadSlot` (`0x020aaf94`) et de ses fonctions se retrouve **octet pour octet** à
+l'adresse lue dans le code. Table complète : `melonds::SAVE_COPIES`.
+
+| Données | Destination | Vu |
+|---|---|---|
+| en-tête C (`slot+36`, 0x54) | `GameState+0x6380` | identique |
+| sac (`7652`, 0x1d4), puis `+0x2b08` (0x128) | `GameState_Party` (`0x02010838` → `GameState+0x2a04`) `+0`, `+0xe04` | identiques |
+| banque, or, mot `11456`, mini-médailles | `GameState+0x396c`, `+0x3970`, `+0x3974`, `+0x3978` (partie `+0xf68..+0xf74`) | identiques |
+| ordre (4) et effectif du groupe | `GameState+0x397c`, `+0x3980` | identiques |
+| membres du groupe (572 octets chacun) | convertis par `func_02082d6c` vers `GameState_PartyMember` (`GameState+0x474 + i×0x964`) | non comparés |
+| personnages en réserve | `GameState+0x3984` (n × 572, copie directe) | démo : 0 en réserve |
+| mots de progression (16) | `GameState+0x5cb0` | identiques |
+| bloc d'événements | `g_QuestManager` (`0x02108844`, rendu par `0x0205ec44`) | identique sauf `+0x180..+0x1cf` remis à zéro |
+| `QuestLog`, `QuestTimers` | `g_QuestLog` (`0x02109418`), `+0x178` | identiques |
+| `Hints` (`+4`, 400) | `GameState+0x5cdc` | 180 octets changés par le jeu |
+| `Monsters`, `Alchemy`, `Accolades`, `TreasureMaps`, `Profile`, `Dqvc`, `Misc`, messages DQVC | `GameState+` décalages du tableau ci-dessus | identiques |
+| `Zone` (0x1b30) | `g_Zone3D+0x840` (`0x020fb3f0`, rendu par `0x02012ff4`) | identique |
+
+Toute la sauvegarde chargée est en `.bss` de l'ARM9 (`0x020f2e60..0x021536e0`) : adresses fixes.
+Le tampon de lecture de l'emplacement est aussi en RAM (`slot+0x84` en `0x0214633c`) : une
+recherche d'octets de la sauvegarde y tombe d'abord.
+
+**Écarts dus au jeu** [inconnu : quelle fonction] :
+- Drapeaux globaux `+0x180..+0x1cf` du bloc d'événements (indices 1 952 à 2 591, 80 octets)
+  remis à zéro dans le jeu (la démo en avait 211 posés). [hypothèse] drapeaux temporaires
+  de zone, effacés au chargement d'une carte.
+- `Hints` : des mots `1e281ea2` deviennent `012800a2` (octets 0 et 2 réécrits).
+
+L'écran titre lit déjà l'emplacement (journal d'aventure) et pose chapitre/étape/sous-étape
+dans `GameState`, sans le reste : un état pris sur l'écran titre a le bon scénario mais ni
+l'or ni les bestiaires (`ov_004` chargé au lieu de `ov_003`).
 
 ## Bloc d'événements (`slot+11584`, 0x334 octets)
 

@@ -428,5 +428,14 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x020aba6c Save_WriteHeaderA        # CRC + flags + version "save013" at slot+0x10
 0x020abaf8 Save_ClearHeaderC        # empty 0x54-byte block with its CRC at slot+0x24
 0x020ac7c4 Save_WriteHeaderC        # GameState+0x6380 (0x54 bytes) + CRC at slot+0x24
-0x020ac874 Save_ReadHeaderC        # slot+0x24, 0x60 bytes, CRC checked, copied to GameState+0x6380
+0x020ac874 Save_ReadHeaderC        # slot+0x24, 0x60 bytes, CRC checked; 0x54 bytes from slot+0x24 (CRC word included) to GameState+0x6380
 0x020ac920 Save_CheckMagic          # EEPROM+0 == "DRAGON QUEST IX", else erases and writes it
+
+# --- Where a loaded save lives in RAM (docs/re/save.md, checked on a melonDS state) ---
+0x02010838 GameState_Party          # returns GameState+0x2a04: bag, +0xf68 bank, +0xf6c gold, +0xf78 party list, +0xf80 standby characters
+0x020108e8 GameState_PartyMember    # (GameState, i): GameState+0x474 + i*0x964
+0x02012ff4 Zone3D_GetCurrent        # returns g_Zone3D
+0x0205ec44 QuestManager_Get         # returns g_QuestManager
+0x020fb3f0 g_Zone3D                 # current zone object; +0x840 holds the save's Zone block (0x1b30 bytes)
+0x02108844 g_QuestManager           # starts with the save's event block (tracks, global flags)
+0x02109418 g_QuestLog               # QuestLog_Get returns it; save QuestLog block here, QuestTimers at +0x178

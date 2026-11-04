@@ -134,12 +134,14 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       protocole d'écriture à 4 états, 21 fonctions du jeu nommées. `dq9re save`. Le décodage
       interne de quelques blocs (journal de quêtes, bestiaire, sac, cartes au trésor…) est
       repris quand `dq9-core` en aura besoin (liste dans `re/save.md`, § Inconnu).
-- [ ] **Oracle** : lecteur d'états melonDS fait et vérifié sur un état réel
+- [ ] **Oracle** : lecteur d'états melonDS fait et vérifié sur des états réels
       (`dq9_formats::melonds`, `dq9re state`, [`re/melonds-state.md`](re/melonds-state.md) :
-      mémoire, `GameState`, scénario, code résident et overlays comparés à la ROM ; format
-      d'après ndskit, MIT) ; `scripts/melonds-state.ps1` produit un état depuis un `.sav`.
-      **Reste** : comparer les structures réimplémentées (état des triggers, équipe, position)
-      à la RAM. Sert à tous les tests différentiels.
+      mémoire, code résident et overlays comparés à la ROM ; format d'après ndskit, MIT) ;
+      `scripts/melonds-state.ps1` produit un état depuis un `.sav` sans prendre le premier
+      plan. **Sauvegarde chargée → RAM** : toutes les copies de `Save_LoadSlot` retrouvées
+      octet pour octet (`SAVE_COPIES`, `dq9re state --save`, `re/save.md` § « En RAM »).
+      **Reste** : comparer les structures que `dq9-core` calculera (position, triggers,
+      membres du groupe convertis par `func_02082d6c`) à la RAM.
 - [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-core`,
       `dq9-render`, `dq9-audio`, `dq9-app` ; l'état modélisé des triggers passe de
       `dq9-formats` à `dq9-core`.
