@@ -1,6 +1,7 @@
 # Oracle melonDS : sauvegardes d'état (`.ml1`)
 
-Module `dq9_formats::melonds`, commande `dq9re state <fichier>` (sans ROM).
+Module `dq9_formats::melonds`, commande `dq9re state <fichier>` (la ROM, si elle est trouvée,
+sert à comparer le code résident), script `scripts/melonds-state.ps1` pour produire un état.
 
 Objet : lire la mémoire d'un jeu qui tourne dans melonDS pour la comparer à ce que calcule
 notre réimplémentation (état des triggers, équipe, position, progression). Le format est
@@ -36,26 +37,49 @@ Un état troncaté ou sans `NDSG`/`CP15` assez longs est refusé (jamais de pani
 ## Utilisation
 
 ```powershell
-cargo dq9re state partie.ml1                       # sections, VBlank, chapitre/étape/sous-étape
+cargo dq9re state partie.ml1                       # sections, VBlank, scénario, code vs ROM
 cargo dq9re state partie.ml1 --peek 020f33d8:40    # octets en hexadécimal (adresse:longueur)
 ```
 
-Pour produire un état : dans melonDS, *Système → Enregistrer l'état* (fichiers `.ml1`
-à côté de la ROM, un par emplacement).
+Avec la ROM, `dq9re state` compare au contenu de la ROM le module ARM9 statique, chaque bloc
+autoload (ITCM, DTCM) et chaque overlay, et liste les overlays présents (≥ 90 % d'octets
+identiques ; des overlays de même adresse ne se ressemblent pas à ce point).
+
+### Produire un état
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save build/sav/demo.sav -Out build/melonds/demo.ml1
+```
+
+Le script (~30 s) prépare un melonDS portable dans `build/melonds/` (copie de
+`tools/melonds/melonDS.exe`, fichier `portable`, ROM en lien physique, copie du `.sav`),
+touche START sur l'écran titre (détecté à la couleur du bouton), puis deux fois « Continue
+your adventure », attend `-Settle` secondes (8 par défaut) dans le jeu, enregistre l'état 1
+(Maj+F1) et ferme melonDS ; `-Keep` le laisse ouvert pour jouer avant un autre Maj+F1. Il
+suppose la fenêtre par défaut (échelle 1, écrans l'un sous l'autre). melonDS 1.1 n'associe
+aucune touche DS par défaut : pour jouer au clavier, les régler une fois dans *Config →
+Input and hotkeys* (gardé dans `build/melonds/melonDS.toml`). À la main : *System → Save
+state* (fichiers `.ml1` à côté de la ROM, un par emplacement).
 
 ## Vérification
 
-**[non vérifié sur un état réel]** : aucun fichier `.ml1` n'a encore été lu. Les tests
-(`melonds::tests`) utilisent un état synthétique construit selon ce format. Premier contrôle à
-faire : charger un état d'une partie dont on connaît le chapitre et comparer `scenario` à ce
-que montre le jeu (et à la sauvegarde `.sav` correspondante, `dq9re save`). Si l'adresse de
-`GameState` ou les décalages des sections diffèrent, corriger ici ; `State::read` est
-déjà borné.
+Sur un état réel produit par le script depuis la sauvegarde de démonstration (`save.md`,
+melonDS 1.1, démarrage direct, BIOS libres) :
+
+- Les décalages de ndskit sont justes : module ARM9 statique (`0x02000000`, RAM principale de
+  `NDSG`) et ITCM (`0x01ff8000`, `CP15`) identiques à 100 % à la ROM ; DTCM à 92,7 % (le
+  reste est écrit à l'exécution) ; les overlays chargés le sont à 100 % (`ov_004`, `ov_011`,
+  `ov_017`, `ov_023`, `ov_032`, `ov_033` ; un premier état pris pendant le dialogue d'accueil
+  avait `ov_003` à la place de `ov_004`).
+- `GameState` est bien en `0x020f33d8` : chapitre 19, étape 2, sous-étape 1, comme dans le
+  `.sav` chargé (`dq9re save`).
+- Compteur de VBlank à ~1 720 après ~30 s d'exécution : cohérent avec 60 images/s.
+
+Les tests (`melonds::tests`) utilisent un état synthétique construit selon ce format.
 
 ## Suite
 
-- Contrôler sur un état réel (ci-dessus), puis ajouter la comparaison des champs que
-  `dq9-core` calculera (position, drapeaux d'événements via le gestionnaire de quêtes) à ceux
-  de la RAM : c'est le test différentiel de `architecture.md`.
+- Comparer les structures que `dq9-core` calculera (position, drapeaux d'événements via le
+  gestionnaire de quêtes) à celles de la RAM : c'est le test différentiel de `architecture.md`.
 - L'état contient aussi l'ARM7 et le son (`SPU.`) : hors périmètre tant que l'audio n'est pas
   porté.

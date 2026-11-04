@@ -162,8 +162,8 @@ enum Command {
         #[arg(long, short)]
         verbose: bool,
     },
-    /// Inspect a melonDS savestate (`.ml1`): sections, frame, scenario, or `--peek ADDR[:LEN]`
-    /// (hex) bytes of main RAM / TCM. Needs no ROM.
+    /// Inspect a melonDS savestate (`.ml1`): sections, frame, scenario, resident code compared
+    /// with the ROM when one is found, or `--peek ADDR[:LEN]` (hex) bytes of main RAM / TCM.
     State {
         path: PathBuf,
         #[arg(long, num_args = 1..)]
@@ -183,7 +183,7 @@ fn main() -> Result<()> {
             check,
         } => return coverage::run_coverage(functions, crates, readme.as_deref(), *check),
         Command::Save { path, verbose } => return save::run(path, *verbose, cli.rom.as_deref()),
-        Command::State { path, peek } => return state::run(path, peek),
+        Command::State { path, peek } => return state::run(path, peek, cli.rom.as_deref()),
         _ => {}
     }
     let rom_path = match cli.rom {
