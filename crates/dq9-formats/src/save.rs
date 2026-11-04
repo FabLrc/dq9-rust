@@ -67,6 +67,120 @@ const PLAY_TIME: usize = 16024;
 /// Value of an empty item word.
 pub const NO_ITEM: u16 = 0xffff;
 
+/// The blocks `Save_Serialize` (`0x020a9ec8`) writes, in file order. Together they tile the
+/// range covered by checksum B exactly (checked by a test). Sizes come from the copy lengths
+/// in `Save_Serialize` / `Save_LoadSlot`; the notes on each are in `docs/re/save.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Block {
+    /// Characters, standby/party lists, held items, bag, gold, area (`Save_UnpackMain`).
+    Main,
+    /// Four progress words, then the event block (see [`EventFlags`]).
+    Progress,
+    /// `QuestLog` state (`0xa0` bytes).
+    QuestLog,
+    /// `QuestLog+0x178` (`0x330` bytes).
+    QuestTimers,
+    /// One byte, then 400 bytes to `GameState+0x5cdc` (`Save_UnpackHints`).
+    Hints,
+    /// `GameState+0x75f0`.
+    Monsters,
+    /// `GameState+0x7ac0`.
+    Alchemy,
+    /// `GameState+0x7504`.
+    Accolades,
+    /// `Zone3D+0x840` state and five fields (`Save_UnpackZone`).
+    Zone,
+    /// Two 512-byte messages and a word (`Save_UnpackDqvcMessages`).
+    DqvcMessages,
+    /// 99 treasure maps of 0x1c bytes after a 2-byte header (`Save_UnpackTreasureMaps`).
+    TreasureMaps,
+    /// `GameState+0x569c`.
+    Profile,
+    /// Warp destination, only restored from a suspend save (`Save_UnpackWarp`).
+    Warp,
+    /// `GameState+0x71fc`.
+    Dqvc,
+    /// `GameState+0x5e6c`.
+    Misc,
+    /// Suspend-only data (`Save_UnpackSuspend`); a short list when read by a normal load.
+    Suspend,
+}
+
+impl Block {
+    pub const ALL: [Self; 16] = [
+        Self::Main,
+        Self::Progress,
+        Self::QuestLog,
+        Self::QuestTimers,
+        Self::Hints,
+        Self::Monsters,
+        Self::Alchemy,
+        Self::Accolades,
+        Self::Zone,
+        Self::DqvcMessages,
+        Self::TreasureMaps,
+        Self::Profile,
+        Self::Warp,
+        Self::Dqvc,
+        Self::Misc,
+        Self::Suspend,
+    ];
+
+    /// Offset inside the slot.
+    pub const fn start(self) -> usize {
+        match self {
+            Self::Main => 136,
+            Self::Progress => 11568,
+            Self::QuestLog => 12404,
+            Self::QuestTimers => 12564,
+            Self::Hints => 13380,
+            Self::Monsters => 13784,
+            Self::Alchemy => 15016,
+            Self::Accolades => 15964,
+            Self::Zone => 16200,
+            Self::DqvcMessages => 23176,
+            Self::TreasureMaps => 24204,
+            Self::Profile => 26980,
+            Self::Warp => 27104,
+            Self::Dqvc => 27132,
+            Self::Misc => 27840,
+            Self::Suspend => 28112,
+        }
+    }
+
+    /// Size in bytes: up to the next block (the serializer leaves no gap between them; the
+    /// few padding bytes belong to the block before).
+    pub const fn len(self) -> usize {
+        let next = match self {
+            Self::Main => 11568,
+            Self::Progress => 12404,
+            Self::QuestLog => 12564,
+            Self::QuestTimers => 13380,
+            Self::Hints => 13784,
+            Self::Monsters => 15016,
+            Self::Alchemy => 15964,
+            Self::Accolades => 16200,
+            Self::Zone => 23176,
+            Self::DqvcMessages => 24204,
+            Self::TreasureMaps => 26980,
+            Self::Profile => 27104,
+            Self::Warp => 27132,
+            Self::Dqvc => 27840,
+            Self::Misc => 28112,
+            Self::Suspend => 28644,
+        };
+        next - self.start()
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    pub const fn range(self) -> core::ops::Range<usize> {
+        self.start()..self.start() + self.len()
+    }
+}
+
 /// One of the three CRC-32 checksums of a slot. Each covers a byte range and is stored
 /// just before it (`A`, then `C`, then `B`, in file order).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +397,11 @@ impl<'a> Slot<'a> {
     /// leading words), a copy of the quest manager's state (`docs/re/trigger.md`).
     pub fn event_flags(&self) -> EventFlags<'a> {
         EventFlags(&self.0[EVENT_FLAGS..EVENT_FLAGS + EVENT_FLAGS_SIZE])
+    }
+
+    /// Raw bytes of one serializer block (`Save_Serialize`).
+    pub fn block(&self, block: Block) -> &'a [u8] {
+        &self.0[block.range()]
     }
 
     /// Characters kept at the inn (not in the party).
@@ -722,6 +841,19 @@ mod tests {
             Some(0),
             "slot data does not depend on the magic"
         );
+    }
+
+    #[test]
+    fn blocks_tile_checksum_b_exactly() {
+        let b = Checksum::B.range();
+        assert_eq!(Block::ALL[0].start(), b.start);
+        for pair in Block::ALL.windows(2) {
+            assert_eq!(pair[0].range().end, pair[1].start(), "{:?}", pair[0]);
+        }
+        assert_eq!(Block::ALL[Block::ALL.len() - 1].range().end, b.end);
+        assert!(Block::ALL.iter().all(|b| !b.is_empty()));
+        assert_eq!(Block::Progress.start(), PROGRESS);
+        assert_eq!(Block::Progress.len(), 16 + EVENT_FLAGS_SIZE);
     }
 
     #[test]

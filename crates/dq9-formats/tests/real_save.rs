@@ -1,7 +1,7 @@
 //! Invariants on a real DS save. Set `DQ9_SAVE` to a `.sav` file (no save is shipped with
 //! the repository); the tests are skipped otherwise, like the real-ROM ones.
 
-use dq9_formats::save::{self, Save};
+use dq9_formats::save::{self, Block, Save};
 
 fn real_save() -> Option<Vec<u8>> {
     let path = std::env::var_os("DQ9_SAVE")?;
@@ -57,6 +57,9 @@ fn real_save_fields_are_coherent() {
     assert_eq!(u32::from(t.substep()), slot.scenario_substep());
     assert!(ev.global_flags().iter().any(|&b| b != 0));
     assert!(slot.exists());
+    for b in [Block::QuestLog, Block::Monsters, Block::Profile] {
+        assert!(slot.block(b).iter().any(|&x| x != 0), "{b:?} is all zero");
+    }
     assert!(slot.party_count() >= 1 && slot.party_count() <= 4);
     let used = usize::from(slot.standby_count()) + usize::from(slot.party_count());
     assert!(used <= save::CHARACTER_COUNT);

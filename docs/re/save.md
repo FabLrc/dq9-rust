@@ -43,49 +43,63 @@ Une erreur de chargement pose `GameState+0x5cc8` à 2 (emplacement 0) ou 3 (empl
 l'emplacement 0 sauf les 16 premiers octets (`0xff`), ce qui s'explique : le magic n'existe
 qu'à l'offset 0 du fichier.
 
-**[inconnu]** Rôle exact des deux emplacements. Indices : `Save_Serialize` prend un argument
-`intermission` ; quand il est vrai, les blocs partent à `slot 1` (`+0x8000`) et l'en-tête
-écrit à `0x10` (emplacement 0) porte l'octet intermission à 1 ; le bloc « position » en
-`slot+27104` n'est écrit que dans ce cas. Lecture la plus probable : emplacement 0 = sauvegarde
-normale, emplacement 1 = sauvegarde de suspension. `Save::current_slot` prend le premier
-emplacement de statut valide.
+## Rôle des deux emplacements et protocole d'écriture
+
+`Save_LoadSlot` (`0x020aaf94`) reçoit `intermission` (0 ou 1) : **emplacement 0 = sauvegarde
+normale, emplacement 1 = sauvegarde de suspension** (« intermission »). Il lit l'en-tête à
+`0x10` ou `0x8010`, les blocs à `0x84` ou `0x8084`. Un échec de somme B pose
+`GameState+0x5cc8` à 2 (emplacement 0) ou 3 (emplacement 1) ; il n'y a **pas de repli**
+automatique sur l'autre emplacement dans cette fonction.
+
+`Save_WriteStep` (`0x020aad2c`, un état par appel, `*param_1` = état) :
+
+| État | Action |
+|---:|---|
+| 0 | teste le périphérique (lit 1 octet à 0) ; **lit tout l'emplacement 1** (`0x8000`, `0x6fe4` octets) dans le tampon (pour garder ce que la sérialisation ne réécrit pas) → 1 |
+| 1 | attend la fin, `Save_Serialize`, puis écrit `0x6fe4` octets à `0x10` (emplacement 0, sauvegarde normale) ou à `0x8010` (suspension) → 2 |
+| 2 | sauvegarde de suspension : terminé. Sauvegarde normale : réécrit **la même image à `0x8010`** → 3 |
+| 3 | attend la fin, relâche les verrous → 4 (terminé) |
+
+Une sauvegarde normale écrit donc **deux copies identiques** (emplacement 0 puis 1), ce qui
+explique la démo (emplacement 1 = copie de 0). L'octet intermission de l'en-tête n'est à 1
+que dans la copie écrite par une sauvegarde de suspension ; seul `Save_SlotStatus` le lit.
+`Save::current_slot` prend le premier emplacement de statut valide (0 avant 1).
 
 ## Sérialisation (`Save_Serialize`, `0x020a9ec8`)
 
 Les offsets de la fonction sont relatifs à un tampon décalé de `-0x84` : ajouter 0x84 pour
-l'offset d'emplacement. `Save_LoadSlot` fait l'inverse. Blocs retrouvés (offset d'emplacement,
-taille, source en mémoire) :
+l'offset d'emplacement. Les 16 blocs ci-dessous **pavent exactement** la zone de la somme B
+(`136..28644`, test `blocks_tile_checksum_b_exactly`) : taille = distance au bloc suivant,
+recoupée avec les longueurs de copie du code. Accès brut : `Slot::block(Block)`.
 
-| Offset | Taille | Contenu | Source |
-|---:|---:|---|---|
-| 136 | ≈ 0x2ca3 | personnages 13 × 0x23c, effectifs, sacs, or, zone, réglages | tampon assemblé par la fonction |
-| 7572 | 1 | personnages en réserve (`0x1d0c` du tampon) | |
-| 7573 | 4 | ordre du groupe | |
-| 7577 | 1 | effectif du groupe | |
-| 7578 | 4 × 18 | objets portés (8 × u16 + 2 octets) | `char+0x454` (0x10 octets) |
-| 7652 | 0x1d4 | sac (`iVar11+0`, structure de 0x1d4 octets) | |
-| 11448 / 11452 | 4 / 4 | or en main / en banque | `+0xf6c` / `+0xf68` |
-| 11460 | 4 | mini-médailles remises | `+0xf74` |
-| 11476 | 2 | zone (`+0x2c94`, mot courant, ou `0x6d` pour le point de départ) | |
-| 11568 | 0x344 | **progression** : chapitre, étape, sous-étape (`Save_Chapter`, `Save_ScenarioStep`, `Save_ScenarioSubstep`), 1 mot (`0x0201081c`), puis le bloc d'événements (0x334 octets, voir plus bas) | `GameState`, copié par `func_020a99d0` (écriture) / `func_020a9a50` (lecture) |
-| 12404 | 0xa0 | état du journal de quêtes (`QuestLog_Get`) | |
-| 12564 | 0x330 | durées de quêtes (`QuestLog+0x178`) | |
-| 13380 | 0x194 | `GameState+0x5cda` (1 octet) puis `+0x5cdc` (400 octets) | |
-| 13784 | 0x4d0 | monstres vaincus | `GameState+0x75f0` |
-| 15016 | 0x3b4 | alchimie | `GameState+0x7ac0` |
-| 15964 | 0xec | accolades | `GameState+0x7504` |
-| 16200 | 30 × 232 (l'éditeur) | invités recensés ; le code écrit `uRam020aad18` octets de `func_02012fe4()+0x840`, puis un second bloc de `uRam020aad1c` octets à `+0xd98` | `func_02012fe4()+0x840`, `+0x15d8` |
-| 23176 | 0x200 | message DQVC (éditeur) ; le code y écrit `GameState+0x5f80` | `GameState+0x5f80` |
-| 26980 | 0x7c | profil du joueur | `GameState+0x569c` |
-| 27104 | 0x1c | position (sauvegarde de suspension seulement) | objet du héros |
-| 27132 | 0x2c4 | contenu téléchargeable (DQVC) | `GameState+0x71fc` |
-| 27840 | 0x110 | (sens inconnu) | `GameState+0x5e6c` |
+| `Block` | Offset | Taille | Contenu | Lecture dans le jeu |
+|---|---:|---:|---|---|
+| `Main` | 136 | 11432 | personnages (13 × 0x23c), effectifs, ordre du groupe, objets portés, or, banque, médailles, zone, réglages | `Save_UnpackMain` (`0x020a95b4`) |
+| `Progress` | 11568 | 836 | 4 mots (chapitre, étape, sous-étape, 1 mot) + bloc d'événements (0x334) | `Save_UnpackProgress` (`0x020a9a60`) |
+| `QuestLog` | 12404 | 160 | `QuestLog_Get()` | `memcpy` direct |
+| `QuestTimers` | 12564 | 816 | `QuestLog+0x178` | `memcpy` direct |
+| `Hints` | 13380 | 404 | 1 octet (`func_020120d4`) + 400 octets → `GameState+0x5cdc` | `Save_UnpackHints` (`0x020a9b08`) |
+| `Monsters` | 13784 | 1232 | `GameState+0x75f0` | `memcpy` direct |
+| `Alchemy` | 15016 | 948 | `GameState+0x7ac0` | `memcpy` direct |
+| `Accolades` | 15964 | 236 | `GameState+0x7504` | `memcpy` direct |
+| `Zone` | 16200 | 6976 | 0x1b30 octets de l'objet de zone (`func_02012fe4()+0x840`), puis 5 champs en `+0x1b30..+0x1b3f` (→ `+0x2374..0x23a1`) | `Save_UnpackZone` (`0x020a9b3c`) |
+| `DqvcMessages` | 23176 | 1028 | 2 × 512 octets → `GameState+0x5f80`, `+0x6180` ; 1 mot → `+0x5f7c` | `Save_UnpackDqvcMessages` (`0x020a9bb4`) |
+| `TreasureMaps` | 24204 | 2776 | 0xad6 octets → `GameState+0x64f4` : 99 cartes de 0x1c octets (`TreasureMapMetadata`), après un en-tête de 2 octets ; reconstruit ensuite la grotte courante | `Save_UnpackTreasureMaps` (`0x020a9c24`) |
+| `Profile` | 26980 | 124 | `GameState+0x569c` | `memcpy` direct |
+| `Warp` | 27104 | 28 | destination (carte u16, vecteur à `+4`, drapeau), **sauvegarde de suspension seulement** | `Save_UnpackWarp` (`0x020a9d88`) |
+| `Dqvc` | 27132 | 708 | `GameState+0x71fc` | `memcpy` direct |
+| `Misc` | 27840 | 272 | `GameState+0x5e6c` | `memcpy` direct |
+| `Suspend` | 28112 | 532 | suspension : 0x200 octets → `GameState+0x6fcc`, 10 octets (`+0x204`) → `+0x5cd0`, un mot (`+0x200`) ; sauvegarde normale : le même bloc se lit comme `u16` présence, `u16` n, puis n × 0x14 octets → `func_02010828()+0xf2c` (3 au plus) | `Save_UnpackSuspend` (`0x020a9e40`) |
 
-Les lignes sans « Source » viennent du seul éditeur (non revérifiées dans le code). Le bloc
-« 136 » est assemblé dans un tampon puis écrit d'un coup : dans ce tampon, `+0x1d0c` à `+0x1d12 + 18n`
-(effectif, ordre, groupe, objets portés), `+0x2c30..0x2c3c` (or, banque, médailles),
-`+0x2c4c` (zone), `+0x2c58..0x2c77` (réglages, position de départ), `+0x2ca2` (drapeau
-d'intermission).
+`Main` en détail (offsets d'emplacement) : personnages `136 + 572 n` ; `7572` personnages en
+réserve ; `7573` ordre du groupe (4) ; `7577` effectif du groupe ; `7578 + 18 n` objets portés
+(8 × u16 + 2 octets) ; `11448` or en main ; `11452` or en banque ; `11460` mini-médailles ;
+`11476` zone (mot courant, ou `0x6d` pour le point de départ) ; `7652` sac (0x1d4 octets, voir
+« Inconnu ») ; réglages et position de départ `11488..11519` ; drapeau d'intermission
+`11530` (tampon `+0x2ca2`).
+
+La somme C (`40..132`) ne couvre pas ces blocs : elle protège le petit bloc de 0x54 octets
+copié vers `GameState+0x6380`.
 
 ## Bloc d'événements (`slot+11584`, 0x334 octets)
 
@@ -128,7 +142,10 @@ caractère = indice dans la table de glyphes de la police `me`** (`font.md`), te
 - Sens des drapeaux eux-mêmes (indices) : le bloc est typé, pas les bits. Les blocs de
   `+0x2c0` (12 octets), `+0x2cc` (0x66 octets) et l'octet `+0x332` hors sélecteur de piste
   n'ont pas de rôle établi.
-- Écritures : protocole de `Save_WriteStep` (`0x020aad2c`, 4 états : lecture de l'emplacement
-  1, sérialisation, écriture, vérification) et rôle des écritures redirigées vers un tampon
-  (`puRam020aaf8c`) ; pas encore porté, donc aucun marqueur `port:`.
+- Contenu interne des blocs `QuestLog`, `QuestTimers`, `Hints`, `Monsters`, `Alchemy`,
+  `Accolades`, `TreasureMaps`, `Profile`, `Dqvc`, `Misc` : tailles et destinations en RAM
+  établies, **champs non décodés**. Le sac (`Main`+7652) idem.
+- Le protocole d'écriture est compris (§ « Rôle des deux emplacements ») mais **pas porté** :
+  il pilote le matériel (`Save_BackupWrite`) et un moteur d'état de chargement, donc aucun
+  marqueur `port:` ; `dq9_formats::save` écrit seulement l'image (`Save::seal`).
 - Nombre et ordre des allocations de compétence (`+247`).

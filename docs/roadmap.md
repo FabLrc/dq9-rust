@@ -125,14 +125,15 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       L'[inventaire statique](re/stb-natives.md) est complet, pas l'identification
       sémantique : restent notamment les bits de 570/571, les déclarations différées,
       les unités temporelles et certaines variantes de messages.
-- [ ] **Sauvegarde DS** (`dq9-formats::save`, [`re/save.md`](re/save.md)) : **conteneur fait**
+- [x] **Sauvegarde DS** (`dq9-formats::save`, [`re/save.md`](re/save.md)) : conteneur
       (2 emplacements, 3 CRC-32, relecture/réécriture octet pour octet sur une sauvegarde
-      réelle, groupe, personnages, or, temps de jeu, équipement, chapitre/étape/sous-étape) et
-      `dq9re save`. Le code ARM de (dé)sérialisation est localisé (`0x020a94f8..0x020ac9bc`,
-      12 fonctions nommées) et sa table de blocs est documentée ; pistes de scénario et
-      drapeaux globaux typés (`EventFlags`), noms décodés (indices de glyphes de la police
-      `me`). Reste : quêtes, bestiaire,
-      sacs, protocole d'écriture à 4 états, rôle exact des deux emplacements.
+      réelle), champs typés (groupe, personnages et leurs noms, or, temps de jeu, équipement,
+      chapitre/étape/sous-étape, pistes de scénario, drapeaux globaux/d'histoire), les 16
+      blocs du sérialiseur (`Block`, pavage exact de la zone de la somme B), rôles des deux
+      emplacements (0 normale, 1 suspension, copie miroir à chaque sauvegarde normale) et
+      protocole d'écriture à 4 états, 21 fonctions du jeu nommées. `dq9re save`. Le décodage
+      interne de quelques blocs (journal de quêtes, bestiaire, sac, cartes au trésor…) est
+      repris quand `dq9-core` en aura besoin (liste dans `re/save.md`, § Inconnu).
 - [ ] **Oracle** : lecture d'une sauvegarde d'état melonDS (format documenté par ndskit, MIT)
       ou script GDB, pour extraire les structures réimplémentées (état des triggers, équipe,
       position). Sert à tous les tests différentiels.

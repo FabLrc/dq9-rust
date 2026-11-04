@@ -411,6 +411,15 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x02075920 Save_BackupRead          # (offset, dst, len, async): reads the DS backup memory
 0x02075adc Save_BackupWrite        # (offset, src, len, async): writes it
 0x020a9508 Save_ReadHeaderA        # slot+0x10, 0x14 bytes: CRC, flags, version; rejects "save011" and bad CRC
+0x020a95b4 Save_UnpackMain          # main block (slot+0x88: characters, party, gold, area) -> GameState
+0x020a99e0 Save_CopyEvents          # 0x334-byte event block copied in 5 pieces (tracks, global flags, 3 tails)
+0x020a9a60 Save_UnpackProgress      # 4 progress words to GameState setters, then the event block
+0x020a9b08 Save_UnpackHints         # slot+0x3444: 1 byte (func_020120d4) + 400 bytes to GameState+0x5cdc
+0x020a9b3c Save_UnpackZone          # slot+0x3f48: 0x1b30 bytes of Zone3D+0x840 and 5 fields (+0x2374..0x23a1)
+0x020a9bb4 Save_UnpackDqvcMessages  # slot+0x5a88: 2 x 512 bytes to GameState+0x5f80/+0x6180, word to +0x5f7c
+0x020a9c24 Save_UnpackTreasureMaps  # slot+0x5e8c: 0xad6 bytes to GameState+0x64f4 (99 maps of 0x1c), then grotto setup
+0x020a9d88 Save_UnpackWarp          # slot+0x69e0 (suspend save only): map, position, flags -> Save_Warp, GameState+0x7e78
+0x020a9e40 Save_UnpackSuspend       # slot+0x6dd0 (suspend save only): 0x200 bytes to GameState+0x6fcc, 10 to +0x5cd0
 0x020a9ec8 Save_Serialize           # GameState -> slot blocks at fixed file offsets (the whole layout)
 0x020aad2c Save_WriteStep           # state machine of a save: serialize, then write the slot(s)
 0x020aaf94 Save_LoadSlot            # reads slot (0|1), checks header A and CRC B, unpacks into GameState
