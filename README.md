@@ -90,7 +90,8 @@ compression Level-5), `docs/re/table.md` (tables d'enregistrements), `docs/re/te
 (textes, balises, pipeline des messages), `docs/re/font.md` (polices et mise en page),
 `docs/re/dialogue.md` (choix des répliques des PNJ, zones de conversation, `.npc`),
 `docs/re/trigger.md` (triggers de scénario, pistes, événements, actions), `docs/re/stb.md`
-(scripts d'événements).
+(scripts d'événements). Projets, outils et wikis externes réutilisables (décompilation DQ9,
+wiki des formats, portage PC, outils DS) : `docs/ressources-externes.md`.
 
 ## Légal
 
