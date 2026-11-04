@@ -40,6 +40,61 @@ const LIBC: [&str; 18] = [
 /// Startup code of the SDK.
 const STARTUP: [&str; 3] = ["Entry", "AutoloadCallback", "BuildInfo"];
 
+/// Individually verified EUR tuples, sorted by address; see `docs/re/nitro-sdk.md`.
+/// Names and full symbol sizes must still match; proximity and prefixes prove nothing.
+const VERIFIED_SDK: [(u32, u32, &str); 50] = [
+    (0x020c_112c, 0xc, "Mat2x2_WriteRotation"),
+    (0x020c_1138, 0x58, "Mat2x2_ApplyScale"),
+    (0x020c_1190, 0x24, "Mat3x3_WriteIdentity"),
+    (0x020c_11b4, 0xc0, "Mat3x3_ApplyScale"),
+    (0x020c_1274, 0x1c, "Mat3x3_WriteRotationX"),
+    (0x020c_1290, 0x1c, "Mat3x3_WriteRotationY"),
+    (0x020c_12ac, 0x18, "Mat3x3_WriteRotationZ"),
+    (0x020c_12c4, 0x2f0, "Mat3x3_Invert"),
+    (0x020c_15b4, 0x220, "Mat3x3_Multiply"),
+    (0x020c_17d4, 0x7c, "Mat3x3_ApplyToVector"),
+    (0x020c_1850, 0x28, "Mat4x3_WriteIdentity"),
+    (0x020c_1878, 0x34, "Mat4x3_ConvertTo4x4"),
+    (0x020c_18ac, 0xac, "Mat4x3_ApplyTranslation"),
+    (0x020c_1958, 0x34, "Mat4x3_ApplyScale"),
+    (0x020c_198c, 0x20, "Mat4x3_WriteRotationX"),
+    (0x020c_19ac, 0x1c, "Mat4x3_WriteRotationY"),
+    (0x020c_19c8, 0x1c, "Mat4x3_WriteRotationZ"),
+    (0x020c_19e4, 0x38c, "Mat4x3_Invert"),
+    (0x020c_1d70, 0x2d4, "Mat4x3_Multiply"),
+    (0x020c_2044, 0xa0, "Mat4x3_ApplyToVector"),
+    (0x020c_20e4, 0x108, "Mat4x3_WriteViewMatrix"),
+    (0x020c_21ec, 0x2c, "Mat4x4_WriteIdentity"),
+    (0x020c_2218, 0x34, "Mat4x4_ConvertTo4x3"),
+    (0x020c_224c, 0x664, "Mat4x4_Multiply"),
+    (0x020c_28b0, 0x14c, "Mat4x4_MaybeWriteFrustum"),
+    (0x020c_29fc, 0x208, "Mat4x4_WriteProjectionUnknown"),
+    (0x020c_2c04, 0x10, "fix32_Divide"),
+    (0x020c_2c14, 0x34, "fix32_Sqrt"),
+    (0x020c_2c48, 0x24, "GetHardwareDividerResult"),
+    (0x020c_2c6c, 0x38, "fix32_GetDivisionResult"),
+    (0x020c_2ca4, 0x30, "fix32_QueueComputeReciprocal"),
+    (0x020c_2cd4, 0x2c, "fix32_GetSqrtResult"),
+    (0x020c_2d00, 0x28, "fix32_QueueComputeQuotient"),
+    (0x020c_2d28, 0x3c, "FastIntDivide"),
+    (0x020c_2d64, 0x3c, "FastIntModulus"),
+    (0x020c_2da0, 0x34, "Vector3fix_Add"),
+    (0x020c_2dd4, 0x34, "Vector3fix_Subtract"),
+    (0x020c_2e08, 0x3c, "Vector3fix_InnerProduct"),
+    (0x020c_2e44, 0x84, "Vector3fix_CrossProduct"),
+    (0x020c_2ec8, 0x60, "Vector3fix_Length"),
+    (0x020c_2f28, 0x118, "Vector3fix_Normalize"),
+    (0x020c_3040, 0x7c, "Vector3fix_Distance"),
+    (0x020c_339c, 0x1b8, "fix32_Atan2"),
+    (0x020c_7d44, 0x4c, "SaveContext"),
+    (0x020c_7d90, 0x44, "RestoreContext"),
+    (0x020c_a5a4, 0xbc, "VectorizedMemset"),
+    (0x020c_a660, 0x180, "VectorizedInvertedMemcpy"),
+    (0x020c_a96c, 0xb4, "DecompressC"),
+    (0x020c_aa20, 0x184, "DecompressA"),
+    (0x020c_aba4, 0x16c, "DecompressB"),
+];
+
 pub const README_START: &str = "<!-- coverage:start -->";
 pub const README_END: &str = "<!-- coverage:end -->";
 
@@ -193,6 +248,16 @@ fn classify(module: Module, usa_addr: u32, name: &str, sdk: &[(u32, u32)]) -> Ca
     }
 }
 
+fn verified_sdk(module: Module, eur_addr: u32, eur_size: u32, name: &str) -> bool {
+    module == Module::Main
+        && VERIFIED_SDK
+            .binary_search_by_key(&eur_addr, |&(addr, _, _)| addr)
+            .is_ok_and(|index| {
+                let (_, size, source_name) = VERIFIED_SDK[index];
+                size == eur_size && source_name == name
+            })
+}
+
 fn read(path: &Path) -> Result<String> {
     fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
 }
@@ -239,12 +304,16 @@ pub fn from_decomp(root: &Path) -> Result<Vec<Function>> {
             Vec::new()
         };
         for (name, addr, size) in dsd_functions(&symbols) {
-            let category = classify(module, addr, &name, &sdk);
             let (eur, eur_size) = if module == Module::Main && addr >= SECURE_END {
                 let eur = usa_to_eur(addr);
                 (eur, usa_to_eur(addr + size.max(1) - 1) + 1 - eur)
             } else {
                 (addr, size)
+            };
+            let category = if verified_sdk(module, eur, eur_size, &name) {
+                Category::Platform
+            } else {
+                classify(module, addr, &name, &sdk)
             };
             functions.push(Function {
                 module,
@@ -578,6 +647,33 @@ pub fn run_coverage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verified_sdk_requires_the_exact_main_module_tuple() {
+        assert!(verified_sdk(
+            Module::Main,
+            0x020c_112c,
+            0xc,
+            "Mat2x2_WriteRotation"
+        ));
+        for (module, addr, size, name) in [
+            (Module::Main, 0x020c_1130, 0xc, "Mat2x2_WriteRotation"),
+            (Module::Main, 0x020c_112c, 0x10, "Mat2x2_WriteRotation"),
+            (Module::Main, 0x020c_112c, 0xc, "Mat2x2_Unverified"),
+            (Module::Overlay(0), 0x020c_112c, 0xc, "Mat2x2_WriteRotation"),
+            (Module::Itcm, 0x020c_112c, 0xc, "Mat2x2_WriteRotation"),
+            (Module::Main, 0x020c_0eac, 0x294, "func_020c0e9c"),
+            (
+                Module::Main,
+                0x0203_0e3c,
+                0x5c,
+                "_Z24Vector3fixMultiplyScalarPK8Vector3iiPS_",
+            ),
+        ] {
+            assert!(!verified_sdk(module, addr, size, name));
+            assert_eq!(classify(module, addr, name, &[]), Category::Game);
+        }
+    }
 
     #[test]
     fn eur_addresses_follow_the_two_inserted_blocks() {

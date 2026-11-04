@@ -10,14 +10,14 @@ choix des répliques, triggers, scripts d'événements) ; pas encore de jeu affi
 objectif : une **v0.1 jouable** (prologue d'Angel Falls). Plan complet : `docs/roadmap.md`.
 
 <!-- coverage:start -->
-**Avancement : 0,7 %** des fonctions de jeu traduites (89 / 12 142), 1,4 % du code (38 Ko / 2 516 Ko).
+**Avancement : 0,7 %** des fonctions de jeu traduites (89 / 12 092), 1,4 % du code (38 Ko / 2 506 Ko).
 Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (définition dans `docs/roadmap.md`).
 
 <details><summary>Détail par module</summary>
 
 | Module | Fonctions traduites | Code traduit |
 |---|---:|---:|
-| ARM9 | 81 / 5 550 (1,4 %) | 35 Ko / 837 Ko (4,0 %) |
+| ARM9 | 81 / 5 500 (1,4 %) | 35 Ko / 827 Ko (4,1 %) |
 | ITCM | 0 / 34 (0,0 %) | 0 Ko / 6 Ko (0,0 %) |
 | ov_000 | 0 / 826 (0,0 %) | 0 Ko / 190 Ko (0,0 %) |
 | ov_001 | 0 / 515 (0,0 %) | 0 Ko / 70 Ko (0,0 %) |
@@ -136,6 +136,7 @@ Consigner une découverte :
 | `docs/architecture.md` | crates cibles et règles (portabilité, déterminisme, traçabilité) |
 | `docs/ressources-externes.md` | décompilation, wiki, portage PC, outils DS, licences |
 | `docs/re/rom-layout.md` | structure de la ROM, overlays, systèmes de fichiers |
+| [`docs/re/nitro-sdk.md`](docs/re/nitro-sdk.md) | premier lot de 50 routines NitroSDK ARM9 identifiées, non portées |
 | `docs/re/gpc2.md`, `table.md` | archives et compression Level-5, tables d'enregistrements |
 | `docs/re/text.md`, `font.md` | textes, balises, pipeline des messages, polices |
 | `docs/re/dialogue.md`, `trigger.md`, `stb.md` | répliques des PNJ, triggers de scénario, scripts d'événements |

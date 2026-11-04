@@ -354,3 +354,55 @@ ov_017::021d6110 StbArg_Float       # argument as float (int converted by FUN_02
 ov_017::021d612c StbArg_Str         # argument value word (string pointer)
 ov_017::021d6134 StbArg_SetInt      # writes through an address argument (type 3)
 ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3)
+
+# --- NitroSDK ARM9: 50 structural identifications (docs/re/nitro-sdk.md) ---
+0x020c112c MTX_Rot22_
+0x020c1138 MTX_ScaleApply22
+0x020c1190 MTX_Identity33_
+0x020c11b4 MTX_ScaleApply33
+0x020c1274 MTX_RotX33_
+0x020c1290 MTX_RotY33_
+0x020c12ac MTX_RotZ33_
+0x020c12c4 MTX_Inverse33
+0x020c15b4 MTX_Concat33
+0x020c17d4 MTX_MultVec33
+0x020c1850 MTX_Identity43_
+0x020c1878 MTX_Copy43To44_
+0x020c18ac MTX_TransApply43
+0x020c1958 MTX_ScaleApply43
+0x020c198c MTX_RotX43_
+0x020c19ac MTX_RotY43_
+0x020c19c8 MTX_RotZ43_
+0x020c19e4 MTX_Inverse43
+0x020c1d70 MTX_Concat43
+0x020c2044 MTX_MultVec43
+0x020c20e4 MTX_LookAt
+0x020c21ec MTX_Identity44_
+0x020c2218 MTX_Copy44To43_
+0x020c224c MTX_Concat44
+0x020c28b0 MTX_PerspectiveW
+0x020c29fc MTX_OrthoW
+0x020c2c04 FX_Div
+0x020c2c14 FX_Sqrt
+0x020c2c48 FX_GetDivResultFx64c
+0x020c2c6c FX_GetDivResult
+0x020c2ca4 FX_InvAsync
+0x020c2cd4 FX_GetSqrtResult
+0x020c2d00 FX_DivAsync
+0x020c2d28 FX_DivS32
+0x020c2d64 FX_ModS32
+0x020c2da0 VEC_Add
+0x020c2dd4 VEC_Subtract
+0x020c2e08 VEC_DotProduct
+0x020c2e44 VEC_CrossProduct
+0x020c2ec8 VEC_Mag
+0x020c2f28 VEC_Normalize
+0x020c3040 VEC_Distance
+0x020c339c FX_Atan2
+0x020c7d44 OS_SaveContext
+0x020c7d90 OS_LoadContext
+0x020ca5a4 MI_CpuFill8
+0x020ca660 MI_CpuCopy8
+0x020ca96c MI_ReadUncompRL8
+0x020caa20 MI_ReadUncompLZ8
+0x020caba4 MI_ReadUncompHuffman
