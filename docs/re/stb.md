@@ -90,22 +90,42 @@ overlay 1 (`ov_001::0215ae1c…`). `ov_017::021d4bc8` appelle la native avec un 
 ses arguments (sans le numéro) et leur nombre. Une native n'empile rien : elle rend ses
 résultats par des arguments adresse (op 2).
 
+Le retour C du handler est **ignoré** : `Stb_CallNative` (`ov_017::021d4bc8`) appelle
+le pointeur puis revient ; le cas 0x15 de `Stb_Run` continue à l'instruction suivante.
+Un retour 0 n'est donc ni une attente ni un résultat sur la pile. Les attentes sont
+des boucles du script qui interrogent une sortie adresse puis exécutent `yield`.
+
+Accès aux arguments (valeurs de 8 octets, indices ci-dessous sans le numéro de native) :
+
+| Fonction (`ov_017`) | Effet |
+|---|---|
+| `021d60f4` (`StbArg_Int`) | lit le mot valeur ; convertit un flottant en entier par `0200c5fc` si type 1 |
+| `021d6110` (`StbArg_Float`) | lit le mot valeur ; convertit un entier en flottant par `0200c670` si type 0 |
+| `021d612c` (`StbArg_Str`) | lit le mot valeur (pointeur de chaîne) |
+| `021d6134` / `021d6148` | écrivent le mot valeur de la case pointée si l'argument est de type 3 (adresse) ; ne modifient pas son type |
+
+Ces faits proviennent de la décompilation et des conversions logicielles ARM9 ;
+ils ne constituent pas une observation d'exécution sous émulateur.
+
 Le compilateur écrit le numéro sous la forme `base + décalage` (`int 400; int 5; add`) :
 plié, il est constant pour les 80 237 appels, qui emploient 228 natives
 (`Function::native_calls`, test `event_scripts_decode`).
 
-Natives identifiées :
+L’[inventaire des 228 natives employées](stb-natives.md) détaille, par famille,
+arguments, effets établis, adresses des handlers/moteur et limites d’identification.
+Les entrées encore incertaines restent numérotées.
 
-| Native | Rôle | Preuve |
-|---|---|---|
-| 400 | affiche le message `arg 1` de la table de textes de l'événement | 223 de ses 250 premiers arguments constants valent 100–373, la plage des numéros de messages ; `ev03030` appelle `fn@0xe3c(100, 0)`, `fn@0xe3c(101, 0)`… qui la passent à 400, et ses messages 100–103 sont les quatre répliques de la scène |
-| 405 | écrit un état de la fenêtre de messages à l'adresse `arg 1` ; les scripts attendent tant qu'il vaut 1 **[hypothèse]** | fonction utilitaire de `ev03030` (`fn@0xe3c`) : 400, 554, puis boucle sur 405 |
+206 enfile une position absolue, 208 une rotation (radians), 210 une animation
+nommée ; ce ne sont pas trois variantes de déplacement. Les acteurs STB, leurs
+liaisons et les personnages/modèles appartiennent à trois espaces distincts.
+Les commandes sont en files par canal ; 224 attend la fin de l’animation courante,
+contrairement à 210. Les cadences absolues des durées ne sont pas établies.
 
-Les natives 206, 208 et 210 cherchent un objet d'après leur premier argument
-(`ov_001::0215ab20`, échec si absent) et lui passent leurs autres arguments, des flottants
-multipliés par une constante (`ov_001::0215bfd4`, `0215c138`, `0215c298`) **[hypothèse :
-acteur de la scène ; position, rotation, déplacement]**. Les autres sont seulement
-numérotées.
+400 affiche un message par identifiant ou chaîne ; 405 expose l’état d’attente
+(`ev03030:fn@0xe3c` boucle tant qu’il vaut 1), et 558 lit séparément la réponse.
+Le chemin YESNO documenté utilise 0=oui, 1=non, sans généralisation aux variantes.
+La caméra orbitale prend azimut, hauteur relative et distance totale, pas un pitch.
+726–728 chargent/restaurent des ressources sonores et jouent un index SE, pas des flags.
 
 Les fonctions utilitaires sont compilées dans le fichier, pas fournies par le moteur ; dans
 `ev03030` : attente de `n` images (`while (n >= 0) { n -= 1; yield; }`, `fn@0x58`) et
@@ -113,6 +133,7 @@ affichage d'un message avec attente de sa fin (`fn@0xe3c`).
 
 ## Questions ouvertes
 
-- Rôle des 226 autres natives (décompilation de `ov_001::0215ae1c…`, 6 800 lignes).
+- Rôle des natives et champs encore inconnus, unités temporelles et variantes :
+  voir les limites de l’[inventaire](stb-natives.md).
 - Sens de l'op 0x16, de l'op 0x1c et du deuxième mot des enregistrements de fonction.
 - Champs inconnus des listes d'événements.

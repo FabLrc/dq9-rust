@@ -96,6 +96,9 @@ Les overlays 10, 28 et 32 (`pitfall`, `sub_hoge`, `sound`) sont à identifier.
 - [x] Scripts d'événements `.stb` : format, machine à pile, désassembleur (`stb.md`,
       `dq9re stb`).
 - [x] Recensement des ressources externes (`ressources-externes.md`).
+- [x] Inventaire statique des 228 natives STB employées : arguments, effets établis,
+      preuves par adresses et limites (`re/stb-natives.md`) ; noms descriptifs dans
+      `dq9re stb` uniquement pour les comportements démontrés.
 
 ## J0 — Accélérateurs
 
@@ -110,6 +113,9 @@ Petits chantiers qui rendent tous les suivants plus rapides.
 - [ ] **Natives des scripts** : reporter dans `stb.md` les rôles lus par le wiki
       ([Engine-Functions](https://github.com/DQIX/wiki/blob/main/Engine-Functions.md)) en
       vérifiant chacune sur `ov_001` ; priorité aux plus fréquentes (210, 570, 206, 208, 571).
+      L'[inventaire statique](re/stb-natives.md) est complet, pas l'identification
+      sémantique : restent notamment les bits de 570/571, les déclarations différées,
+      les unités temporelles et certaines variantes de messages.
 - [ ] **Sauvegarde DS** (`dq9-formats::save`) : lecture/écriture du `.sav` (EEPROM 64 Ko,
       sommes de contrôle), disposition d'après l'éditeur DQIX (`pattern.hexpat`) et
       `GameState` de la décompilation. Critère : relire et réécrire à l'identique une

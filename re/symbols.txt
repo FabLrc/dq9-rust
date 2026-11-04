@@ -250,11 +250,90 @@ ov_017::0219814c Area_CheckLeader  # fires events 2 (enter) / 5 (leave) for map 
 ov_017::021bc77c EventTask_Update  # event task (+8 = event id from action 0x77); fires event 11 at its end
 
 # --- Event scripts (docs/re/stb.md) ---
-ov_001::0215bfd4 StbNat_206 arm     # object lookup + 3 scaled floats [hypothesis: actor position]
-ov_001::0215c138 StbNat_208 arm
-ov_001::0215c298 StbNat_210 arm
+ov_001::0215ab20 Stb_Actor          # actor slot 0..23 of the event (null outside), stride * slot + table
+ov_001::0215ae1c StbNat_CountFaceButtonsHeld arm # native 0
+ov_001::0215afec StbNat_RandomInt arm # native 7
+ov_001::0215b040 StbNat_EnableEventChaining arm # native 8
+ov_001::0215b058 StbNat_DisableEventChaining arm # native 9
+ov_001::0215b2cc StbNat_FadeInBoth arm # native 100
+ov_001::0215b318 StbNat_FadeBoth arm # native 101
+ov_001::0215b5b4 StbNat_SetDisplaySwap arm # native 109
+ov_001::0215b5c8 StbNat_ClearDisplaySwap arm # native 110
+ov_001::0215b5f8 StbNat_FadeBothAndLock arm # native 112
+ov_001::0215b684 StbNat_UnlockAndFadeInBoth arm # native 117
+ov_001::0215b6a0 StbNat_UnlockAndFadeBoth arm # native 118
+ov_001::0215b72c StbNat_LoadCharacterModel arm # native 200
+ov_001::0215b9c4 StbNat_ReleaseCharacterModel arm # native 212
+ov_001::0215bdd0 StbNat_BindActorObject arm # native 202
+ov_001::0215bf34 StbNat_ResetActor arm # native 203
+ov_001::0215bf58 StbNat_GetActorBusy arm # native 204
+ov_001::0215bf94 StbNat_SetActorBinding arm # native 205
+ov_001::0215bfd4 StbNat_SetActorPosition arm # native 206
+ov_001::0215c06c StbNat_MoveActorTo arm # native 207
+ov_001::0215c138 StbNat_SetActorRotation arm # native 208
+ov_001::0215c1d0 StbNat_RotateActorTo arm # native 209
+ov_001::0215c298 StbNat_PlayActorAnimation arm # native 210
+ov_001::0215c330 StbNat_SetActorScale arm # native 211
+ov_001::0215c3e8 StbNat_WaitActorAnimation arm # native 213
+ov_001::0215c544 StbNat_DelayActorAnimation arm # native 218
+ov_001::0215c57c StbNat_SetActorAlpha arm # native 219
+ov_001::0215c5b4 StbNat_FadeActorAlpha arm # native 220
+ov_001::0215c5fc StbNat_TurnActorTowardsActor arm # native 221
+ov_001::0215c70c StbNat_StopActorAnimation arm # native 222
+ov_001::0215c788 StbNat_QueueActorAnimation arm # native 224
+ov_001::0215c994 StbNat_MoveActorOnGround arm # native 232
+ov_001::0215ca4c StbNat_LoadMonsterCharacter arm # native 233
+ov_001::0215ccdc StbNat_GetAnimationActive arm # native 234
+ov_001::0215cd50 StbNat_AttachCharacterToBone arm # native 235
+ov_001::0215cdf8 StbNat_DetachCharacter arm # native 236
+ov_001::0215d134 StbNat_ResetCameraCommands arm # native 300
+ov_001::0215d168 StbNat_GetCameraBusy arm # native 301
+ov_001::0215d19c StbNat_SetCameraPosition arm # native 302
+ov_001::0215d234 StbNat_SetCameraTarget arm # native 303
+ov_001::0215d2cc StbNat_MoveCameraPositionAndTarget arm # native 304
+ov_001::0215d418 StbNat_MoveCameraTarget arm # native 305
+ov_001::0215d4bc StbNat_MoveCameraPosition arm # native 306
+ov_001::0215d608 StbNat_SetCameraOrbit arm # native 310
+ov_001::0215d684 StbNat_MoveCameraOrbit arm # native 311
+ov_001::0215d8f4 StbNat_ShakeCamera arm # native 317
+ov_001::0215d984 StbNat_ShakeCameraTarget arm # native 326
+ov_001::0215dbd0 StbNat_MoveCameraTargetPreservingOrbit arm # native 321
+ov_001::0215dd58 StbNat_MoveCameraTargetAndOrbit arm # native 322
+ov_001::0215dfc4 StbNat_FollowActorWithCameraTarget arm # native 324
+ov_001::0215e0c0 StbNat_StopCameraTargetFollow arm # native 325
 ov_001::0215e2a4 StbNat_Message arm # native 400: message id of the event's text table
-ov_001::0215e374 StbNat_405 arm     # writes a message-window state through an address argument
+ov_001::0215e374 StbNat_GetMessageState arm # native 405
+ov_001::0215e398 StbNat_CloseMessage arm # native 401
+ov_001::0215ed2c StbNat_PreloadResources arm # native 506
+ov_001::0215edb8 StbNat_GetPreloadPending arm # native 507
+ov_001::0215eeb0 StbNat_SetCharacterFlags arm # native 509
+ov_001::0215ef44 StbNat_ReleasePreloadedResources arm # native 508
+ov_001::0215f3fc StbNat_CreateSprite arm # native 521
+ov_001::0215f740 StbNat_DestroySprite arm # native 522
+ov_001::0215ff10 StbNat_GetActorPosition arm # native 543
+ov_001::0215ffc0 StbNat_GetActorRotation arm # native 544
+ov_001::021603d8 StbNat_SetSceneTimeOfDay arm # native 588
+ov_001::021609c0 StbNat_GetMessageAnswer arm # native 558
+ov_001::02161a90 StbNat_IsEventSkipped arm # native 595
+ov_001::02161ab8 StbNat_GetActorStatus arm # native 596
+ov_001::02161ce8 StbNat_GetSceneTimeOfDay arm # native 597
+ov_001::02161d08 StbNat_GetPartyLeaderId arm # native 598
+ov_001::02162148 StbNat_SetTimeOfDay arm # native 808
+ov_001::021632e4 StbNat_TestGlobalFlag arm # native 600
+ov_001::02163390 StbNat_TestStepFlag arm # native 602
+ov_001::021633ec StbNat_TestStoryFlag arm # native 603
+ov_001::021635d0 StbNat_StopSoundHandle arm # native 723
+ov_001::02163640 StbNat_SelectBgm arm # native 713
+ov_001::021636a8 StbNat_RestartBgm arm # native 714
+ov_001::021636d0 StbNat_SetBgmVolume arm # native 715
+ov_001::021637a8 StbNat_PlayMusicSequence arm # native 737
+ov_001::021637d4 StbNat_ResetBgm arm # native 738
+ov_001::021637ec StbNat_LoadSeGroup arm # native 726
+ov_001::02163848 StbNat_RestoreSeHeap arm # native 727
+ov_001::02163860 StbNat_PlaySe arm # native 728
+ov_001::021638cc StbNat_StopSe arm # native 729
+ov_001::0216393c StbNat_StopBgm arm # native 721
+ov_001::02164004 StbNat_SetLightIntensity arm # native 578
 ov_001::02164d6c g_StbNatives       # {handler, id} x304, ended by {0, -1}
 ov_017::021d4980 Stb_ToInt          # value must be an int
 ov_017::021d49ac Stb_Truthy
@@ -270,3 +349,8 @@ ov_017::021d4c04 Stb_Init           # checks "SB2", code base = file + header wo
 ov_017::021d4ccc Stb_Resume
 ov_017::021d4ce4 Stb_Start          # runs entry id (header words 3/4), default record if id < 0
 ov_017::021d4e38 Stb_Run            # interpreter: [op, a, b] instructions
+ov_017::021d60f4 StbArg_Int         # argument as int (float truncated by FUN_0200c5fc)
+ov_017::021d6110 StbArg_Float       # argument as float (int converted by FUN_0200c670)
+ov_017::021d612c StbArg_Str         # argument value word (string pointer)
+ov_017::021d6134 StbArg_SetInt      # writes through an address argument (type 3)
+ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3)

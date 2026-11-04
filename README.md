@@ -136,6 +136,7 @@ Consigner une découverte :
 | `docs/re/gpc2.md`, `table.md` | archives et compression Level-5, tables d'enregistrements |
 | `docs/re/text.md`, `font.md` | textes, balises, pipeline des messages, polices |
 | `docs/re/dialogue.md`, `trigger.md`, `stb.md` | répliques des PNJ, triggers de scénario, scripts d'événements |
+| `docs/re/stb-natives.md` | inventaire des 228 natives employées : arguments, effets établis, adresses et inconnus |
 | `AGENTS.md` | contexte et règles pour les agents de développement |
 
 ## Légal
