@@ -29,6 +29,7 @@ S'y ajoutent deux fautes de frappe dans les données (`<ADDRESSE>`, et un bloc f
 `<END_IF_MALE>` au lieu de `<ENDIF_MALE>`), et des `<END>`/`<END_R_TURN>` qui suivent une
 balise supprimée par `Msg_Compile` (`<INN=…>`…) : le jeu recopie alors le `<` suivant comme du
 texte. **[À vérifier en émulateur : ces messages passent peut-être par un autre chemin.]**
+
 ## Caractères
 
 - Pas d'octets non ASCII dans les textes européens : accents et signes spéciaux sont des
