@@ -8,6 +8,7 @@ pub mod font;
 pub mod gpc2;
 pub mod level5;
 pub mod message;
+pub mod save;
 pub mod stb;
 pub mod table;
 pub mod trigger;

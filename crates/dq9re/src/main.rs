@@ -4,6 +4,7 @@ mod coverage;
 mod extract;
 mod font;
 mod msg;
+mod save;
 mod stb;
 mod talk;
 mod text;
@@ -152,6 +153,13 @@ enum Command {
         #[arg(long, requires = "readme")]
         check: bool,
     },
+    /// Summarize a DS save file (`.sav`) and verify its checksums. Needs no ROM.
+    Save {
+        path: PathBuf,
+        /// Also list levels, equipment and appearance.
+        #[arg(long, short)]
+        verbose: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -165,6 +173,7 @@ fn main() -> Result<()> {
             readme,
             check,
         } => return coverage::run_coverage(functions, crates, readme.as_deref(), *check),
+        Command::Save { path, verbose } => return save::run(path, *verbose),
         _ => {}
     }
     let rom_path = match cli.rom {
@@ -225,7 +234,7 @@ fn main() -> Result<()> {
             fs::write(&out, data).with_context(|| format!("writing {}", out.display()))
         }
         // Handled above, before the ROM is read.
-        Command::Functions { .. } | Command::Coverage { .. } => Ok(()),
+        Command::Functions { .. } | Command::Coverage { .. } | Command::Save { .. } => Ok(()),
     }
 }
 

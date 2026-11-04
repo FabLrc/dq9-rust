@@ -125,10 +125,12 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       L'[inventaire statique](re/stb-natives.md) est complet, pas l'identification
       sémantique : restent notamment les bits de 570/571, les déclarations différées,
       les unités temporelles et certaines variantes de messages.
-- [ ] **Sauvegarde DS** (`dq9-formats::save`) : lecture/écriture du `.sav` (EEPROM 64 Ko,
-      sommes de contrôle), disposition d'après l'éditeur DQIX (`pattern.hexpat`) et
-      `GameState` de la décompilation. Critère : relire et réécrire à l'identique une
-      sauvegarde réelle ; `dq9re save` affiche équipe, lieu, étape du scénario, drapeaux.
+- [ ] **Sauvegarde DS** (`dq9-formats::save`, [`re/save.md`](re/save.md)) : **conteneur fait**
+      (2 emplacements, 3 CRC-32 vérifiés, relecture/réécriture octet pour octet sur une
+      sauvegarde réelle, champs typés : groupe, personnages, or, temps de jeu, équipement) et
+      `dq9re save`. Reste : encodage des noms, étape du scénario et drapeaux d'événements
+      (disposition fichier ≠ RAM de `Save_*`), quêtes, bestiaire, sacs, retrouver le code ARM
+      de (dé)sérialisation, rôle exact des deux emplacements.
 - [ ] **Oracle** : lecture d'une sauvegarde d'état melonDS (format documenté par ndskit, MIT)
       ou script GDB, pour extraire les structures réimplémentées (état des triggers, équipe,
       position). Sert à tous les tests différentiels.

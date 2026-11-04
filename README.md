@@ -141,6 +141,7 @@ Consigner une découverte :
 | `docs/re/text.md`, `font.md` | textes, balises, pipeline des messages, polices |
 | `docs/re/dialogue.md`, `trigger.md`, `stb.md` | répliques des PNJ, triggers de scénario, scripts d'événements |
 | `docs/re/stb-natives.md` | inventaire des 228 natives employées : arguments, effets établis, adresses et inconnus |
+| `docs/re/save.md` | sauvegarde DS : conteneur, sommes de contrôle, champs typés, inconnus |
 | `AGENTS.md` | contexte et règles pour les agents de développement |
 
 ## Légal
