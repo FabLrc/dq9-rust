@@ -26,9 +26,9 @@ struct Cli {
     /// DS save image; selects its current map when `--map` is absent.
     #[arg(long)]
     save: Option<PathBuf>,
-    /// Time of day (`LightingManager+0x98`, 0-3).
-    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..4))]
-    time: u32,
+    /// Time of day (`LightingManager+0x98`, 0-3); defaults to the save's clock phase, else 0.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(0..4))]
+    time: Option<u32>,
     /// Story chapter (the prologue is 1.1.1).
     #[arg(long, default_value_t = 1)]
     chapter: u8,
@@ -143,8 +143,9 @@ pub fn main() -> Result<()> {
     }
     if let Some(script) = &cli.walk {
         let script = walk::parse_script(script)?;
-        let map = load::starting_map(cli.map.as_deref(), save.as_deref())?;
-        let mut walker = walk::Walker::new(&rom, &map, cli.time, &cli.story(), cli.start)?;
+        let map = load::start(cli.map.as_deref(), save.as_deref())?.map;
+        let time = cli.time.unwrap_or(0);
+        let mut walker = walk::Walker::new(&rom, &map, time, &cli.story(), cli.start)?;
         return walker.run(&script);
     }
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
@@ -165,8 +166,32 @@ pub fn main() -> Result<()> {
 
 /// Renders one frame of the map offscreen and writes it as PNG.
 fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<()> {
-    let map = load::starting_map(cli.map.as_deref(), save)?;
-    let mut loaded = load::load(rom, &map, cli.time, &cli.story(), None)?;
+    let start = load::start(cli.map.as_deref(), save)?;
+    let time = cli
+        .time
+        .or_else(|| start.state.as_ref().map(|s| s.clock.phase().index()))
+        .unwrap_or(0);
+    let mut loaded = load::load(
+        rom,
+        &start.map,
+        time,
+        &cli.story(),
+        None,
+        start.state.as_ref(),
+    )?;
+    let hero = loaded.hero;
+    println!(
+        "hero: ({:.3}, {:.3}, {:.3}) yaw {:.3} ({})",
+        hero.position.x,
+        hero.position.y,
+        hero.position.z,
+        hero.yaw,
+        if loaded.placed {
+            "from the save"
+        } else {
+            "computed"
+        }
+    );
     let s = &loaded.runtime.scene;
     println!(
         "{} {} ({}), time {}: {} models, {} textures, {} instances, {} triangles",
@@ -196,7 +221,12 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     let mut camera = Camera::default();
     match (cli.eye, cli.target, s.bounds()) {
         (Some(eye), Some(target), _) => camera.look_at(eye, target),
-        (_, _, Some(bounds)) => camera.frame(bounds),
+        (_, _, Some(bounds)) => {
+            camera.frame(bounds);
+            if loaded.placed {
+                camera.target = hero.position;
+            }
+        }
         _ => {}
     }
     camera.far = camera.far.max(camera.distance * 4.0);

@@ -210,7 +210,7 @@ Avancement :
 
 | Tâche | Réutiliser |
 |---|---|
-| état de jeu (`dq9-core`) initialisé depuis une sauvegarde DS (J0) ou un état par défaut | — |
+| état de jeu (`dq9-core`) initialisé depuis une sauvegarde DS (J0) ou un état par défaut : **fait** pour carte, position, cap, scénario, heure du jour, drapeaux d'événements ; reste groupe, sac, or | — |
 | déplacement du héros, collisions, caméra de terrain (rotation L/R) | wiki Map-Collision, Getting-Around ; `ov_017` |
 | placement des PNJ par carte et étape (`.npc`, script `place.bin`), sprites `.spr` | wiki Area-Cast, Sprites |
 | portes et changements de carte, zones de trigger orientées | wiki Doors, Triggers (« Areas ») |
@@ -222,8 +222,12 @@ maisons et en ressortir ; position comparée à melonDS sur une même séquence 
 Avancement : `dq9-core` assemble les collisions transformées et fournit un déplacement
 déterministe au pas fixe avec snap du sol et blocage simplifié des faces verticales
 ([`re/movement.md`](re/movement.md)). L'application affiche un repère joueur et suit la caméra.
-`--save`/le champ Web sélectionne la carte du slot normal valide ; la position enregistrée
-exploitable pour le héros n'est pas établie, le départ reste calculé depuis les collisions.
+`--save`/le champ Web restaurent la carte, la position et le cap du héros, l'heure et le
+scénario du slot normal valide (`dq9_core::state::GameState`, [`re/save.md`](re/save.md)
+§ « Position à la reprise » : le groupe est posé au point de départ `0x6e` de la carte ;
+égal à melonDS sur la démo et sur la carte 100) ; la sauvegarde de suspension (position
+enregistrée) est décodée mais non vérifiée en RAM, le reste de l'état (groupe, sac) et le
+cast selon le scénario sauvegardé ne sont pas branchés.
 Portes, zones et warps du `.bmbl` : lus en `fx32` comme le jeu (`dq9_formats::map::Regions`,
 identiques à la RAM de melonDS dans `C01M09` et `C01`) et testés par `dq9_core::field` : boîte
 tournée (sens de la rotation lu sur la ROM), hauteur, cylindres, portes de type 2 qui exigent

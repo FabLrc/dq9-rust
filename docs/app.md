@@ -24,7 +24,7 @@ renvoie ; l'éclairage n'est pas encore pris en charge.
 ```powershell
 cargo run -p dq9-app --release -- --map M01            # ROM : --rom, DQ9_ROM, ou le seul *.nds de rom/
 cargo run -p dq9-app --release -- --map C01M09 --time 1 --ds-aspect
-cargo run -p dq9-app --release -- --save rom/dq9.sav   # charge la carte enregistrée, sans position exacte
+cargo run -p dq9-app --release -- --save rom/dq9.sav   # carte, position, cap et heure de la sauvegarde
 # Une image hors écran en PNG, sans fenêtre, puis sortie :
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/m01.png
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/village.png `
@@ -44,15 +44,18 @@ carte, chaque arrivée et chaque tronçon sont écrits sur la sortie standard.
 `--map` : code (`M01`, `C01M09`) ou id (`1100`) de la liste des cartes ; il prévaut sur la
 carte lue dans `--save`. En l'absence des deux options, la carte reste `M01`. `--save` lit un
 `.sav` local et sélectionne la carte du premier slot normal valide ; aucune donnée n'est envoyée
-au réseau. La position exacte du héros n'est pas identifiée dans la sauvegarde normale : il
-commence encore au départ provisoire calculé depuis les collisions. `--time` : moment de la
-journée 0 à 3 (`LightingManager+0x98`, choix des variantes et des instances visibles) ;
+au réseau. Le héros commence à la position et au cap que le jeu donne après « Continue » (point
+de départ de la carte, `re/save.md` § « Position à la reprise »), posé sur le sol ; l'écran
+`--screenshot` imprime cette pose (`hero: …`) et centre la caméra dessus. `--time` : moment de
+la journée 0 à 3 (`LightingManager+0x98`, choix des variantes et des instances visibles), par
+défaut la phase de l'horloge de la sauvegarde, sinon 0 ;
 `--ds-aspect` : rendu au format d'un écran DS (256×192), bandes noires autour.
 
 La distribution est celle du prologue **1.1.1 de jour** par défaut. `--chapter`, `--step`,
 `--substep` choisissent le point de l'histoire ; `--night` choisit les placements de nuit,
 indépendamment de `--time` (variante graphique de la carte). Une sauvegarde ne restaure ici
-que la carte : quête, drapeaux et position exacte du héros ne sont pas chargés. `--frame N`
+que la carte, la position, le cap et l'heure : quête, drapeaux et groupe ne sont pas chargés
+(la distribution suit `--chapter`/`--step`/`--substep`). `--frame N`
 évalue exactement N pas fixes depuis le début des mouvements avant la capture (0 par défaut),
 avec la même mise à jour CPU qu'en fenêtre et sur le Web, sans dépendre du temps de chargement
 du GPU. Les sprites sont orientés vers la caméra de `--eye`/`--target` avant cette évaluation.

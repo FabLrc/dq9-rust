@@ -95,7 +95,7 @@ impl<'r> Walker<'r> {
         story: &Story,
         start: Option<(f32, f32)>,
     ) -> Result<Self> {
-        let loaded = load::load(rom, key, time, story, None)?;
+        let loaded = load::load(rom, key, time, story, None, None)?;
         let collision = loaded.collision;
         let mut hero = loaded.hero;
         if let Some((x, z)) = start {
@@ -176,6 +176,7 @@ impl<'r> Walker<'r> {
             self.time,
             &self.story,
             spawn,
+            None,
         )?;
         self.entry = loaded.entry;
         self.collision = loaded.collision;

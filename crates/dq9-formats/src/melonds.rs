@@ -459,6 +459,12 @@ impl<'a> State<'a> {
         }))
     }
 
+    /// Heading of a game object: `fx32` radians at `+0x54` (set from the angle given to
+    /// `func_020399b0` when the party is placed, `ov_017::0219c598`).
+    pub fn object_heading(&self, object: u32) -> Result<i32> {
+        Ok(self.u32(object + 0x54)? as i32)
+    }
+
     /// Current map id and its area (`Zone3D+0`, `+4`, set by `Zone3D::SwitchZone`,
     /// `0x0201384c`).
     pub fn current_map(&self) -> Result<(u16, u16)> {

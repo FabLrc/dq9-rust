@@ -518,12 +518,15 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x02010838 GameState_Party          # returns GameState+0x2a04: bag, +0xf68 bank, +0xf6c gold, +0xf78 party list, +0xf80 standby characters
 0x020108e8 GameState_PartyMember    # (GameState, i): GameState+0x474 + i*0x964
 0x02012ff4 Zone3D_GetCurrent        # returns g_Zone3D
+0x020399c0 Object_Place             # (object, map id, position, angle): SetField06, position +0x44, angle, clears motion state
 0x0205ec44 QuestManager_Get         # returns g_QuestManager
 0x02082d7c PartyMember_LoadRecord   # member object <- 572-byte character record (fields in docs/re/save.md)
 0x020838d4 PartyMember_DropHeldItem # first held copy of an item -> 0xffff, then one compaction pass
 0x020fb3f0 g_Zone3D                 # current zone object; +0x840 holds the save's Zone block (0x1b30 bytes)
 0x02108844 g_QuestManager           # starts with the save's event block (tracks, global flags)
 0x02109418 g_QuestLog               # QuestLog_Get returns it; save QuestLog block here, QuestTimers at +0x178
+ov_017::0219c598 Party_Place        # (pos*, angle*, force): puts each party member on Zone3D; no pos: Save_Warp+7 ? Save_Warp+0x10/+0x1c : the map's start point (Zone3D+0x6c: +0x70/+0x7c)
+ov_017::0219e384 Field_EnterMap     # map-entry state machine of the field; state 3 calls Party_Place, state 9 copies the hero position to GameState+0x7f60
 
 # --- Map list (docs/re/maplist.md) ---
 0x02011594 GameState_MapList        # returns GameState+0x468: {records, count, capacity}, 16-byte map records
@@ -574,12 +577,15 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x0201c734 Zone3D_LoadMapList       # Tbl_* over maplist9.bin with g_ZoneMapListHandlers for one map id
 0x0201c7ac BlockList_RecCount       # bmbl kind 0x64: new list of n entries
 0x0201c7d4 BlockList_RecEntry       # bmbl kind 0x65: id, offset (fx32), name, optional names 5 and 6
+0x0201d4a4 BlockList_RecStart       # bmbl kind 0x6e: x, y, z (floats x 4096) -> BlockList+0x70; 4th float x 4096, reduced to 0..2pi -> +0x7c
 0x0201e1e0 BlockList_Load           # Tbl_* with g_BlockListHandlers (kinds 0x64..0x7e)
 0x0201e258 BlockList_Clear          # memset(Zone3D+0x6c, 0, 0x88)
 0x0201e26c BlockList_Alloc          # n * 0x58 bytes, count 0, capacity n
 0x0201e2c4 BlockList_Parse          # calls BlockList_Load
 0x0201e2e8 BlockList_Get            # i-th 0x58-byte entry, else 0
 0x0201e314 BlockList_Append         # copies an entry while count < capacity
+0x0201e81c BlockList_GetStart       # (out, BlockList): copies the start position (+0x70, 3 x fx32)
+0x0201e830 BlockList_GetStartAngle  # BlockList+0x7c as a signed halfword
 0x0201ebd4 Bmdj_RecResourceCount    # kind 0x6a: resource array of n * 12 bytes
 0x0201ec08 Bmdj_RecNop6b            # kind 0x6b handler: nothing
 0x0201ec10 Bmdj_RecResource         # kind 0x6c: id, name, flags & 0x3f, texture links; becomes the current resource

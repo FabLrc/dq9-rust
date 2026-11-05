@@ -106,7 +106,9 @@ démarrage direct, BIOS libres) :
   dans la table est l'id de l'ordre du groupe (`save.md` § « Membres du groupe ») : sur la
   démo, ordre `[0, 3, 2, 1]`, et l'id 3 (2ᵉ personnage) pointe vers le 2ᵉ objet alloué.
 - Le vecteur de la sauvegarde copié en `g_Zone3D+0x2774` (−57 ; 0,1 ; −31,5) n'est pas la
-  position du héros dans l'église : [inconnu] (position extérieure de retour ?).
+  position du héros dans l'église : celle-ci est le point de départ de la carte (`.bmbl`,
+  enregistrement `0x6e`), `save.md` § « Position à la reprise ». Comparaison automatisée :
+  `dq9-core/tests/real_rom.rs` (`DQ9_SAVE`, `DQ9_STATE`).
 
 **Correction** : la première version du script perdait parfois la confirmation de
 « Continue » et enregistrait l'**écran titre** (`ov_004`) ; le scénario 19/2/1 y est déjà

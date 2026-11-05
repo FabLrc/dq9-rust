@@ -38,7 +38,7 @@ fn options() -> Options {
     let mut options = Options {
         map: None,
         save: None,
-        time: 0,
+        time: None,
         ds_aspect: false,
         story: dq9_formats::cast::Story {
             chapter: 1,
@@ -55,7 +55,7 @@ fn options() -> Options {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
         match key {
             "map" if !value.is_empty() => options.map = Some(value.to_owned()),
-            "time" => options.time = value.parse::<u32>().map_or(0, |t| t.min(3)),
+            "time" => options.time = Some(value.parse::<u32>().map_or(0, |t| t.min(3))),
             "ds" => options.ds_aspect = value != "0",
             "chapter" => {
                 if let Ok(n) = value.parse() {

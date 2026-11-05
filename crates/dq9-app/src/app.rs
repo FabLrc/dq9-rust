@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
+use dq9_core::state::GameState;
 use dq9_core::trigger::State;
 use dq9_core::{CollisionWorld, Hero};
 use dq9_render::camera::{DS_ASPECT, letterbox};
@@ -39,7 +40,7 @@ pub enum UserEvent {
     /// ROM picked in the page (the native build reads it before starting).
     #[cfg(target_arch = "wasm32")]
     Rom(Vec<u8>),
-    /// Save picked in the page; only its map id is used for startup.
+    /// Save picked in the page: it selects the map, the position and the time of day.
     #[cfg(target_arch = "wasm32")]
     Save(Vec<u8>),
 }
@@ -50,7 +51,8 @@ pub struct Options {
     /// Explicit map override; save map is used if absent.
     pub map: Option<String>,
     pub save: Option<Vec<u8>>,
-    pub time: u32,
+    /// Time of day of the map assembly (0-3); the save's clock phase, else 0, when absent.
+    pub time: Option<u32>,
     pub ds_aspect: bool,
     pub story: dq9_formats::cast::Story,
 }
@@ -66,6 +68,8 @@ pub fn status(message: &str) {
 pub struct App {
     proxy: EventLoopProxy<UserEvent>,
     options: Options,
+    /// Time of day in use (`LightingManager+0x98`).
+    time: u32,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
     rom: Option<Vec<u8>>,
@@ -109,6 +113,7 @@ impl App {
         let mut app = Self {
             proxy,
             options,
+            time: 0,
             window: None,
             gpu: None,
             rom: None,
@@ -154,15 +159,19 @@ impl App {
         }
         self.rom = Some(rom);
         self.state = field::initial_state(&self.options.story);
-        let map =
-            match load::starting_map(self.options.map.as_deref(), self.options.save.as_deref()) {
-                Ok(map) => map,
-                Err(e) => {
-                    status(&format!("{e:#}"));
-                    return;
-                }
-            };
-        self.load(&map, true, None);
+        let start = match load::start(self.options.map.as_deref(), self.options.save.as_deref()) {
+            Ok(start) => start,
+            Err(e) => {
+                status(&format!("{e:#}"));
+                return;
+            }
+        };
+        self.time = self
+            .options
+            .time
+            .or_else(|| start.state.as_ref().map(|s| s.clock.phase().index()))
+            .unwrap_or(0);
+        self.load(&start.map, true, None, start.state.as_ref());
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -173,9 +182,16 @@ impl App {
         }
     }
 
-    /// Loads map `key` at the current time of day; `frame` resets the camera onto it.
-    fn load(&mut self, key: &str, frame: bool, spawn: Option<(Vec3, f32)>) -> bool {
-        self.load_map(key, frame, spawn, false)
+    /// Loads map `key` at the current time of day; `frame` resets the camera onto it. `state`
+    /// (a restored save) places the hero on its own map when there is no `spawn`.
+    fn load(
+        &mut self,
+        key: &str,
+        frame: bool,
+        spawn: Option<(Vec3, f32)>,
+        state: Option<&GameState>,
+    ) -> bool {
+        self.load_map(key, frame, spawn, state, false)
     }
 
     /// [`App::load`]; `transition` is set when the hero arrives through a door or a warp,
@@ -185,11 +201,12 @@ impl App {
         key: &str,
         frame: bool,
         spawn: Option<(Vec3, f32)>,
+        state: Option<&GameState>,
         transition: bool,
     ) -> bool {
         let Some(rom) = &self.rom else { return false };
         let started = Instant::now();
-        let mut loaded = match load::load(rom, key, self.options.time, &self.options.story, spawn) {
+        let mut loaded = match load::load(rom, key, self.time, &self.options.story, spawn, state) {
             Ok(l) => l,
             Err(e) => {
                 status(&format!("{e:#}"));
@@ -223,8 +240,8 @@ impl App {
             }
             self.framed = s.bounds();
         }
-        if let Some((_, yaw)) = spawn {
-            self.camera.yaw = yaw;
+        if loaded.placed {
+            self.camera.yaw = loaded.hero.yaw;
         }
         self.camera.target = hero_start;
         self.current = Some((loaded.entry, loaded.label));
@@ -286,7 +303,7 @@ impl App {
             .position
             .map(|p| (p, change.angle.map_or(0.0, field::yaw_of_angle)));
         self.chain += 1;
-        let loaded = self.load_map(&change.destination.to_string(), true, spawn, true);
+        let loaded = self.load_map(&change.destination.to_string(), true, spawn, None, true);
         self.chain -= 1;
         loaded
     }
@@ -313,7 +330,7 @@ impl App {
         };
         window.set_title(&format!(
             "dq9-app: {} {} ({label}), time {}, {mode}",
-            entry.id, entry.code, self.options.time
+            entry.id, entry.code, self.time
         ));
     }
 
@@ -328,7 +345,7 @@ impl App {
             .unwrap_or(0);
         let next = (at as isize + delta).rem_euclid(self.maps.len() as isize) as usize;
         let id = self.maps[next].id.to_string();
-        self.load(&id, true, None);
+        self.load(&id, true, None, None);
     }
 
     fn key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, pressed: bool) {
@@ -355,13 +372,13 @@ impl App {
             }
             KeyCode::KeyR => self.options.ds_aspect = !self.options.ds_aspect,
             KeyCode::KeyT => {
-                self.options.time = (self.options.time + 1) % TIMES;
+                self.time = (self.time + 1) % TIMES;
                 let map = self
                     .current
                     .as_ref()
                     .map(|(entry, _)| entry.code.clone())
                     .unwrap_or_else(|| "M01".into());
-                self.load(&map, false, None);
+                self.load(&map, false, None, None);
             }
             KeyCode::PageDown => self.cycle_map(1),
             KeyCode::PageUp => self.cycle_map(-1),

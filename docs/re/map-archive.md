@@ -107,8 +107,10 @@ Une entrée sans nom est ignorée ; les autres sont ajoutées tant qu'il reste d
 `+0x30`). Sur la ROM : 754 entrées, toutes à décalage nul sauf `F07` (0.018, −0.037, 0.02).
 
 Les autres types de la table ne font pas partie de `BlockList` : `0x66`/`0x67` boîtes,
-`0x68`/`0x69` et `0x72` régions, `0x6a`/`0x6b` éléments typés, `0x6e` position + angle
-(`+0x70`, `+0x7c`), `0x70` couleur BGR555 (`+0x7e`), `0x73`/`0x74` régions typées et leur
+`0x68`/`0x69` et `0x72` régions, `0x6a`/`0x6b` éléments typés, `0x6e` **point de départ du
+groupe** (position `fx32` en `BlockList+0x70`, angle en `+0x7c` ; `BlockList::start`, lu par
+`Party_Place`, `save.md` § « Position à la reprise »), `0x70` couleur BGR555 (`+0x7e`),
+`0x73`/`0x74` régions typées et leur
 action (portes, voir ci-dessous), `0x7b`/`0x7c` rectangles tournés, `0x7d`/`0x7e` grille des
 `.bpos` de grotte. Formes restantes [inconnu].
 

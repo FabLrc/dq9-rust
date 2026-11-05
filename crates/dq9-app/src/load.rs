@@ -3,6 +3,7 @@
 
 use anyhow::{Context as _, Result};
 use dq9_core::field::{self, Field};
+use dq9_core::state::GameState;
 use dq9_core::{CollisionWorld, Hero};
 use dq9_formats::Table;
 use dq9_formats::cast::Story;
@@ -13,20 +14,37 @@ use dq9_render::AnimatedScene;
 use glam::Vec3;
 use nds_rom::Rom;
 
-/// Chooses an explicit map, otherwise the map id in a normal save, then the prologue map.
-pub fn starting_map(map: Option<&str>, save: Option<&[u8]>) -> Result<String> {
+/// What the application starts from: a map key and, when it comes from a save, the state the
+/// save restores.
+#[derive(Debug, Clone)]
+pub struct Start {
+    pub map: String,
+    /// `None` for an explicit map or without a save: the hero then starts where the
+    /// collisions put it.
+    pub state: Option<GameState>,
+}
+
+/// Chooses an explicit map (the save is then ignored: its position belongs to its own map),
+/// otherwise the first valid normal slot of the save, then the prologue map.
+pub fn start(map: Option<&str>, save: Option<&[u8]>) -> Result<Start> {
     if let Some(map) = map {
-        return Ok(map.to_owned());
+        return Ok(Start {
+            map: map.to_owned(),
+            state: None,
+        });
     }
     let Some(bytes) = save else {
-        return Ok("M01".into());
+        return Ok(Start {
+            map: "M01".into(),
+            state: None,
+        });
     };
     let save = Save::parse(bytes).context("parsing the save")?;
-    let index = save
-        .current_slot()
-        .context("save has no valid normal slot")?;
-    let slot = save.slot(index).context("save slot is missing")?;
-    Ok(slot.area().to_string())
+    let state = GameState::from_save(&save).context("restoring the save")?;
+    Ok(Start {
+        map: state.map.to_string(),
+        state: Some(state),
+    })
 }
 
 #[cfg(test)]
@@ -46,23 +64,27 @@ mod tests {
 
     #[test]
     fn saved_map_uses_first_valid_normal_slot_area() {
-        assert_eq!(
-            starting_map(None, Some(&save_with_area(109))).unwrap(),
-            "109"
-        );
+        let start = start(None, Some(&save_with_area(109))).unwrap();
+        assert_eq!(start.map, "109");
+        assert_eq!(start.state.unwrap().map, 109);
     }
 
     #[test]
     fn explicit_map_overrides_save_and_bad_save_is_rejected() {
-        assert_eq!(starting_map(Some("C01M09"), Some(&[])).unwrap(), "C01M09");
-        assert!(starting_map(None, Some(&[])).is_err());
+        let start = start(Some("C01M09"), Some(&[])).unwrap();
+        assert_eq!(start.map, "C01M09");
+        assert!(start.state.is_none());
+        assert!(super::start(None, Some(&[])).is_err());
     }
 
     #[test]
     fn no_save_defaults_to_prologue_map() {
-        assert_eq!(starting_map(None, None).unwrap(), "M01");
+        let start = start(None, None).unwrap();
+        assert_eq!(start.map, "M01");
+        assert!(start.state.is_none());
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapEntry {
     pub id: u16,
@@ -82,6 +104,8 @@ pub struct LoadedMap {
     pub hero_instance: usize,
     /// Warps, doorways and areas of the map with its trigger file.
     pub field: Field,
+    /// The hero's pose is a game pose (doorway arrival or save), not the computed default.
+    pub placed: bool,
 }
 
 fn text(s: &[u8]) -> String {
@@ -114,14 +138,20 @@ pub fn maps(rom: &[u8]) -> Result<Vec<MapEntry>> {
         .collect())
 }
 
+/// Height at which the game stands a character above the ground it finds (`0x02018fcc`
+/// adds `0x199` in `fx32`).
+const STAND_HEIGHT: f32 = 0x199 as f32 / 4096.0;
+
 /// Assembles map `key` (code such as `M01`, or id) at time of day `time` and builds its
-/// scene.
+/// scene. The hero stands at `spawn` (a doorway arrival), else where `state` puts the party
+/// on this map (`GameState::hero_pose`), else at the point the collisions give.
 pub fn load(
     rom: &[u8],
     key: &str,
     time: u32,
     story: &Story,
     spawn: Option<(Vec3, f32)>,
+    state: Option<&GameState>,
 ) -> Result<LoadedMap> {
     let rom = Rom::parse(rom).context("parsing the ROM")?;
     let table = Table::parse(rom.file_by_path(maplist::PATH)?).context("parsing the map list")?;
@@ -135,7 +165,26 @@ pub fn load(
         .with_context(|| format!("assembling map {key}"))?;
     let collision = CollisionWorld::build(&assembled, |p| map::rom_file(&rom, p))
         .with_context(|| format!("loading collision for {key}"))?;
-    let (position, yaw) = spawn.unwrap_or_else(|| (collision.spawn().unwrap_or(Vec3::ZERO), 0.0));
+    // A state only places the party on its own map; a map without start record (all zero)
+    // keeps the computed point.
+    let saved = state
+        .filter(|s| s.map == record.id)
+        .map(|s| s.hero_pose(assembled.block_list.start))
+        .filter(|pose| pose.position != [0; 3]);
+    let (position, yaw) = match (spawn, saved) {
+        (Some(spawn), _) => spawn,
+        (None, Some(pose)) => {
+            let [x, y, z] = pose.position_f32();
+            // The game stands the hero on the ground it finds (`ov_017::0219c598` places the
+            // pose as is, the ground follows).
+            let y = collision
+                .ground_height(x, z, y)
+                .map_or(y, |ground| ground + STAND_HEIGHT);
+            (Vec3::new(x, y, z), pose.angle_radians())
+        }
+        (None, None) => (collision.spawn().unwrap_or(Vec3::ZERO), 0.0),
+    };
+    let placed = spawn.is_some() || saved.is_some();
     let mut hero = Hero::new(position);
     hero.yaw = yaw;
     let mut runtime = AnimatedScene::build(&assembled, record.id, record.code, story, |p| {
@@ -165,6 +214,7 @@ pub fn load(
         collision,
         hero,
         field,
+        placed,
         hero_instance,
     })
 }

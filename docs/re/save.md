@@ -86,7 +86,7 @@ recoupée avec les longueurs de copie du code. Accès brut : `Slot::block(Block)
 | `DqvcMessages` | 23176 | 1028 | 2 × 512 octets → `GameState+0x5f80`, `+0x6180` ; 1 mot → `+0x5f7c` | `Save_UnpackDqvcMessages` (`0x020a9bb4`) |
 | `TreasureMaps` | 24204 | 2776 | 0xad6 octets → `GameState+0x64f4` : 99 cartes de 0x1c octets (`TreasureMapMetadata`), après un en-tête de 2 octets ; reconstruit ensuite la grotte courante | `Save_UnpackTreasureMaps` (`0x020a9c24`) |
 | `Profile` | 26980 | 124 | `GameState+0x569c` | `memcpy` direct |
-| `Warp` | 27104 | 28 | destination (carte u16, vecteur à `+4`, drapeau), **sauvegarde de suspension seulement** | `Save_UnpackWarp` (`0x020a9d88`) |
+| `Warp` | 27104 | 28 | destination de la reprise : carte u16, angle s16, position (3 × fx32), § « Position à la reprise » ; **sauvegarde de suspension seulement** | `Save_UnpackWarp` (`0x020a9d88`) |
 | `Dqvc` | 27132 | 708 | `GameState+0x71fc` | `memcpy` direct |
 | `Misc` | 27840 | 272 | `GameState+0x5e6c` | `memcpy` direct |
 | `Suspend` | 28112 | 532 | suspension : 0x200 octets → `GameState+0x6fcc`, 10 octets (`+0x204`) → `+0x5cd0`, un mot (`+0x200`) ; sauvegarde normale : le même bloc se lit comme `u16` présence, `u16` n, puis n × 0x14 octets → `func_02010828()+0xf2c` (3 au plus) | `Save_UnpackSuspend` (`0x020a9e40`) |
@@ -102,6 +102,69 @@ voir « Inconnu ») ; réglages et données de départ `11488..11519` ; drapeau 
 La somme C (`40..132`) ne couvre pas ces blocs : elle protège le petit bloc copié vers
 `GameState+0x6380` (avec le mot de CRC lui-même).
 
+## Position à la reprise
+
+`Save_LoadSlot` ne place personne : il remplit `GameState`. Le groupe est posé plus tard par
+`Party_Place` (`ov_017::0219c598`), appelée à l'état 3 de la machine d'entrée de carte
+(`Field_EnterMap`, `ov_017::0219e384`), après le chargement de la carte. Sans position
+explicite, elle choisit :
+
+- **octet `Save_Warp+7` nul** (sauvegarde normale, nouvelle partie) : le **point de départ de
+  la carte**, l'enregistrement `0x6e` de son `.bmbl` (`BlockList_RecStart`, `0x0201d4a4`) :
+  trois flottants × 4096 → `BlockList+0x70` (= `g_Zone3D+0xdc`), un quatrième × 4096, ramené
+  à `0..2π` (`0x02030f40`), → `+0x7c` (= `g_Zone3D+0xe8`) ; lus par `BlockList_GetStart`
+  (`0x0201e81c`) et `BlockList_GetStartAngle` (`0x0201e830`) ;
+- **octet `+7` non nul** (sauvegarde de suspension, posé par `Save_UnpackWarp`) : le vecteur
+  `Save_Warp+0x10` et l'angle (`s16`) `+0x1c`, soit les champs du bloc `Warp` ci-dessous.
+
+Chaque membre du groupe (ordre `GameState_Party+0xf78`, effectif `+0xf7c`) est posé par
+`Object_Place` (`0x020399c0`) : carte (`Object3D` champ 6), position `+0x44`, angle `+0x54`,
+sans recalage au sol. L'état 9 de `Field_EnterMap` copie ensuite la position du héros en
+`GameState+0x7f60` (vu en RAM).
+
+Bloc `Warp` (`slot+27104`, 28 octets, lu par `Save_UnpackWarp` `0x020a9d88`) :
+
+| Décalage | Type | Destination | Sens |
+|---:|---|---|---|
+| +0 | u16 | `Save_Warp+0` | id de la carte |
+| +2 | s16 | `Save_Warp+0x1c` | angle, fx32 radians |
+| +4 | 3 × fx32 | `Save_Warp+0x10` | position dans le monde |
+| +0x10, +0x12 | u16 | deux champs de `g_Zone3D` (`0x0201bc88`, `0x0201bc7c`) | [inconnu] |
+| +0x14 | u8 | bit 3 d'un drapeau de la zone | [inconnu] |
+| +0x15 | u8 | `GameState+0x7e7e` | [inconnu] |
+| +0x16, +0x18, +0x1a | u16 | `GameState+0x7e78..0x7e7c` | [inconnu] |
+
+Sur une sauvegarde **normale** ce bloc contient des octets périmés que personne ne lit
+(démo : `21 4e f7 57…`) ; `Slot::warp` ne le décode que pour une sauvegarde de suspension.
+
+**Vérifié sur la RAM** (`Party_Place` sans position, octet `+7` nul) : sur la démo, l'état
+`before.ml1` (carte 109 `C01M09`) a les quatre membres en (860 ; 491 ; −5 652) en fx32 avec
+l'angle `0x323d` en `+0x54`, exactement l'enregistrement `0x6e` de `C01M09.bmbl`
+(0,21 ; 0,12 ; −1,38 ; 3,14) lu par notre code, et ce même triplet est en `g_Zone3D+0xdc`
+(`0x020fb4cc`). Même sauvegarde, id de carte patché à 100 (`C01`, sommes recalculées) puis
+chargée dans melonDS : le héros est en x = −819, z = 113 664, angle `0x3245`, identiques à
+l'enregistrement de `C01.bmbl` (−0,2 ; 0,1 ; 27,75) ; la hauteur est 821 au lieu de 409 :
+le jeu pose le héros `0x199` au-dessus du sol qu'il trouve (`Zone3D_GroundHeight`) après
+coup ; sur le sol de l'église la hauteur écrite est déjà celle-là (0,12 = 0,02 + 0,1).
+Test : `dq9-core/tests/real_rom.rs`, `save_start_matches_melonds_ram` et
+`patched_save_start_matches_melonds_ram` (`DQ9_SAVE`, `DQ9_STATE`, `DQ9_STATE_MAP100`).
+
+**Non vérifié sur la RAM** : la sauvegarde de suspension (aucune sauvegarde de ce type, et le
+script de `melonds-state.ps1` ne pilote que « Continue ») ; l'état 8 de `Field_EnterMap`
+peut encore remplacer la position du héros (`ov_017::021a01f4`, table indexée par carte et
+moment de la journée) **[inconnu : quelles cartes]** ; une carte sans enregistrement `0x6e`
+place le groupe en (0, 0, 0).
+
+## Heure et temps de la journée
+
+L'en-tête A porte l'heure : un `f32` en `slot+32` (secondes, jour de 420 s ;
+`Save_Serialize` y écrit `GameState::GetDayTimer`). `Save_LoadSlot` le passe à
+`GameState::SetDayTimer` (`0x02010298`, `GameState+0x3cc`), qui dérive le moment (`+0x3dc`) :
+nuit 0 (< 180 s), matin 1 (≥ 180), jour 2 (≥ 210), soir 3 (≥ 390) ; seuils lus en RAM
+(`0x020f33b8..0x020f33c4` : 420, 390, 210, 180). La démo : 42,649 s, nuit, identique en RAM ;
+le drapeau « horloge en marche » (`+0x3d8`, 1 en RAM) n'est pas sauvegardé. `dq9_core::state`
+porte `SetDayTimer`, `AdvanceDayTimer` (`+0x3c4` ticks × `+0x3d4` = 1/60 s), `SetTimeOfDay`.
+
 ## En RAM après un chargement
 
 Contrôlé sur un état melonDS pris dans le jeu après « Continue » sur la démo
@@ -116,7 +179,7 @@ l'adresse lue dans le code. Table complète : `melonds::SAVE_COPIES`.
 | banque, or, mot `11456`, mini-médailles | `GameState+0x396c`, `+0x3970`, `+0x3974`, `+0x3978` (partie `+0xf68..+0xf74`) | identiques |
 | ordre (4) et effectif du groupe | `GameState+0x397c`, `+0x3980` | identiques |
 | id de carte (`11476`, u16) ; `11490`, `11491` | `GameState+0x7e74` (également partie `+0x2c94`) ; partie `+0xf7d`, `GameState+0x63dc` | identiques ; l'id 109 correspond à la carte `C01M09` dans la liste |
-| `11492`, `11494` (u16, ordre inversé), vecteur `11496` (3 × fx32) + mot `11508`, `11512`, `11516`, `11519` | `g_Zone3D+0x2786`, `+0x2784`, `+0x2774..+0x2784`, `+0x2794`, `+0x2788`, `+0x27d0` | identiques ; le vecteur n'est pas la position du héros à la reprise |
+| `11492`, `11494` (u16, ordre inversé), vecteur `11496` (3 × fx32) + mot `11508`, `11512`, `11516`, `11519` | `g_Zone3D+0x2786`, `+0x2784`, `+0x2774..+0x2784`, `+0x2794`, `+0x2788`, `+0x27d0` | identiques ; le vecteur n'est pas la position du héros à la reprise (§ « Position à la reprise ») |
 | membres du groupe (572 octets chacun) | convertis par `PartyMember_LoadRecord` (`0x02082d7c`) vers `GameState_PartyMember` (`GameState+0x474 + i×0x964`), § suivant | tous les champs comparés identiques |
 | personnages en réserve | `GameState+0x3984` (n × 572, copie directe) | démo : 0 en réserve |
 | mots de progression (16) | `GameState+0x5cb0` | identiques |
@@ -215,9 +278,10 @@ caractère = indice dans la table de glyphes de la police `me`** (`font.md`), te
 
 - Noms : voir plus haut (indices de glyphes) ; les caractères hors police `me` ne sont pas
   contrôlés.
-- Signification de la position enregistrée (`11496..11508`) : le vecteur est copié dans
-  `g_Zone3D`, mais ce n'est pas la position du héros à la reprise (`Continue`) ; voir
-  [`movement.md`](movement.md).
+- Signification exacte du vecteur `11496` : copié en `g_Zone3D+0x2774`, ce n'est **pas** la
+  position du héros à la reprise (§ « Position à la reprise »). **[hypothèse]** point de
+  retour sur la carte de campagne (l'id `11492` vaut 20002 = `F02` sur la démo, le vecteur
+  (−57 ; 0,1 ; −31,5) est une position de cette carte).
 - Bits de `lieux visités` (`0xfe77ffff` sur la démo, l'éditeur ne nomme que les bits 1..=18).
 - Sens des drapeaux eux-mêmes (indices) : le bloc est typé, pas les bits. Les blocs de
   `+0x2c0` (12 octets), `+0x2cc` (0x66 octets) et l'octet `+0x332` hors sélecteur de piste

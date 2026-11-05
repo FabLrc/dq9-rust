@@ -89,3 +89,109 @@ fn talk_triggers_force_the_dialogue_context() {
         );
     }
 }
+
+/// What `check_save_start` found: the hero's RAM position and the pose the save decodes to.
+struct StartCheck {
+    ram: [i32; 3],
+    pose: dq9_core::state::HeroPose,
+}
+
+/// Decodes the start of `save_bytes` (ROM start point of its map) and compares it with the
+/// party in the melonDS state `state_bytes`, taken in the game resumed from that save: map,
+/// scenario, heading, x and z, the day clock and its phase.
+fn check_save_start(rom: &Rom, save_bytes: &[u8], state_bytes: &[u8]) -> StartCheck {
+    use dq9_core::state::{GameState, Placement};
+    use dq9_formats::map::{self, Context, Map};
+    use dq9_formats::maplist::{self, MapList};
+    use dq9_formats::melonds::State as RamState;
+    use dq9_formats::save::Save;
+
+    let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+    let list = MapList::parse(&table).unwrap();
+    let save = Save::parse(save_bytes).unwrap();
+    let state = GameState::from_save(&save).unwrap();
+    assert_eq!(state.placement, Placement::MapStart, "a normal save");
+    let record = list.find(state.map).expect("the save's map exists");
+    let ctx = Context {
+        time_of_day: 0,
+        grotto_environ: 1,
+    };
+    let assembled = Map::assemble(record, &table, &list, |p| map::rom_file(rom, p), &ctx).unwrap();
+    let pose = state.hero_pose(assembled.block_list.start);
+
+    let ram = RamState::parse(state_bytes).unwrap();
+    assert_eq!(ram.current_map().unwrap().0, state.map);
+    assert_eq!(
+        ram.scenario().unwrap(),
+        (
+            state.scenario.chapter,
+            state.scenario.step,
+            state.scenario.substep
+        )
+    );
+    // The hero is object `protagonist_index`; the rest of the party stands on the same point.
+    let hero = ram
+        .object(ram.protagonist_index().unwrap())
+        .unwrap()
+        .expect("the protagonist object exists");
+    let at = ram.object_position(hero).unwrap();
+    assert_eq!(at[0], pose.position[0], "x");
+    assert_eq!(at[2], pose.position[2], "z");
+    assert_eq!(ram.object_heading(hero).unwrap(), i32::from(pose.angle));
+    // The day clock restored from header A is the one in RAM (`GameState+0x3cc`, `+0x3dc`).
+    let seconds = f32::from_bits(ram.u32(0x020f_33d8 + 0x3cc).unwrap());
+    assert_eq!(seconds, state.clock.seconds());
+    assert_eq!(
+        ram.u32(0x020f_33d8 + 0x3dc).unwrap(),
+        state.clock.phase().index()
+    );
+    StartCheck { ram: at, pose }
+}
+
+fn env_bytes(name: &str) -> Option<Vec<u8>> {
+    let path = std::env::var_os(name)?;
+    Some(std::fs::read(path).unwrap())
+}
+
+/// The position a save puts the party at is the one in melonDS RAM after "Continue".
+///
+/// Needs the ROM, `DQ9_SAVE` (a normal save) and `DQ9_STATE` (a melonDS state of the game
+/// resumed from it, `scripts/melonds-state.ps1`). The church floor is at the authored height:
+/// y matches too.
+#[test]
+fn save_start_matches_melonds_ram() {
+    let Some(bytes) = testrom::load() else { return };
+    let (Some(save), Some(state)) = (env_bytes("DQ9_SAVE"), env_bytes("DQ9_STATE")) else {
+        eprintln!("DQ9_SAVE / DQ9_STATE not set, skipping");
+        return;
+    };
+    let rom = Rom::parse(bytes).unwrap();
+    let found = check_save_start(&rom, &save, &state);
+    assert_eq!(found.ram[1], found.pose.position[1], "y");
+}
+
+/// Same save with its map id patched to 100 (Stornway, `C01`) and resealed; `DQ9_STATE_MAP100`
+/// is the melonDS state of the game resumed from that file. The start record's height is the
+/// floor's, the game then stands the hero `0x199` above the ground it finds: higher, never
+/// lower, and within a unit.
+#[test]
+fn patched_save_start_matches_melonds_ram() {
+    use dq9_formats::save::Save;
+    let Some(bytes) = testrom::load() else { return };
+    let (Some(mut save), Some(state)) = (env_bytes("DQ9_SAVE"), env_bytes("DQ9_STATE_MAP100"))
+    else {
+        eprintln!("DQ9_SAVE / DQ9_STATE_MAP100 not set, skipping");
+        return;
+    };
+    for i in 0..2 {
+        save[i * 0x8000 + 11476..][..2].copy_from_slice(&100u16.to_le_bytes());
+    }
+    let mut patched = Save::parse(&save).unwrap();
+    for i in 0..2 {
+        patched.slot_mut(i).unwrap().seal();
+    }
+    let rom = Rom::parse(bytes).unwrap();
+    let found = check_save_start(&rom, patched.as_bytes(), &state);
+    let rise = found.ram[1] - found.pose.position[1];
+    assert!((0..0x1000).contains(&rise), "y rose by {rise}");
+}

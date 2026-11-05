@@ -27,7 +27,8 @@ const VERSION: usize = 24;
 const PROGRESS: usize = 11568;
 /// Event block: `PROGRESS + 16`, 0x334 bytes (`Save_Serialize`, `func_020a99d0`).
 const EVENT_FLAGS: usize = PROGRESS + 16;
-const EVENT_FLAGS_SIZE: usize = 0x334;
+/// Size of the saved event block (`func_020a99d0`).
+pub const EVENT_FLAGS_SIZE: usize = 0x334;
 const TRACK_COUNT: usize = 5;
 const TRACK_SIZE: usize = 0x1c;
 const GLOBAL_FLAGS: usize = TRACK_COUNT * TRACK_SIZE;
@@ -53,8 +54,10 @@ const PARTY_COUNT: usize = 7577;
 const HELD_ITEMS: usize = 7578;
 const HELD_ITEMS_STRIDE: usize = 18;
 const AREA: usize = 11476;
-const QUICK_SAVE_AREA: usize = 27104;
-const QUICK_SAVE_POSITION: usize = 27108;
+const WARP_MAP: usize = 27104;
+const WARP_ANGLE: usize = 27106;
+const WARP_POSITION: usize = 27108;
+const DAY_TIMER: usize = 32;
 const GOLD_ON_HAND: usize = 11448;
 const GOLD_IN_BANK: usize = 11452;
 const MINI_MEDALS: usize = 11460;
@@ -66,6 +69,19 @@ const PLAY_TIME: usize = 16024;
 
 /// Value of an empty item word.
 pub const NO_ITEM: u16 = 0xffff;
+
+/// Where an intermission save resumes (`Save_UnpackWarp` copies it to `Save_Warp`, with the
+/// "use this position" byte `+7` set; `ov_017::0219c598` then reads it instead of the map's
+/// start point).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Warp {
+    /// Map id (`Save_Warp+0`).
+    pub map: u16,
+    /// Heading of the party, `fx32` radians (`Save_Warp+0x1c`, signed halfword).
+    pub angle: i16,
+    /// World position, `fx32` (`Save_Warp+0x10`).
+    pub position: [i32; 3],
+}
 
 /// The blocks `Save_Serialize` (`0x020a9ec8`) writes, in file order. Together they tile the
 /// range covered by checksum B exactly (checked by a test). Sizes come from the copy lengths
@@ -462,22 +478,33 @@ impl<'a> Slot<'a> {
     }
 
     /// Area word of a normal save (`+11476`) or, for an intermission save, of the one at
-    /// `+27104`. **[unknown]** the numbering (map id or zone id).
+    /// `+27104`. Both are map ids of the map list (109 = `C01M09`).
     pub fn area(&self) -> u16 {
         u16_at(
             self.0,
             if self.is_intermission() {
-                QUICK_SAVE_AREA
+                WARP_MAP
             } else {
                 AREA
             },
         )
     }
 
-    /// Three signed words of the intermission save position (`+27108`). **[unknown]**
-    /// units and axis order; meaningful only when [`Slot::is_intermission`].
-    pub fn intermission_position(&self) -> [i32; 3] {
-        core::array::from_fn(|i| u32_at(self.0, QUICK_SAVE_POSITION + 4 * i) as i32)
+    /// Destination block of an intermission save (`Save_UnpackWarp`, `0x020a9d88`): the game
+    /// stands the party there instead of at the map's start point. `None` on a normal save,
+    /// whose block holds stale bytes the loader never reads.
+    pub fn warp(&self) -> Option<Warp> {
+        self.is_intermission().then(|| Warp {
+            map: u16_at(self.0, WARP_MAP),
+            angle: u16_at(self.0, WARP_ANGLE) as i16,
+            position: core::array::from_fn(|i| u32_at(self.0, WARP_POSITION + 4 * i) as i32),
+        })
+    }
+
+    /// Time of the in-game day in seconds (`f32` in header A, `slot+32`): `Save_LoadSlot`
+    /// (`0x020aaf94`) hands it to `GameState::SetDayTimer`. The day lasts 420 s.
+    pub fn day_timer(&self) -> f32 {
+        f32::from_bits(u32_at(self.0, DAY_TIMER))
     }
 
     /// Raw bit set of visited locations (bit 0 unused). **[unknown]** bit meanings beyond
@@ -733,6 +760,16 @@ pub fn test_bit(bytes: &[u8], index: i32) -> bool {
 }
 
 impl<'a> EventFlags<'a> {
+    /// Wraps a copy of the event block (`EVENT_FLAGS_SIZE` = 0x334 bytes).
+    pub fn from_bytes(bytes: &'a [u8]) -> Option<Self> {
+        (bytes.len() == EVENT_FLAGS_SIZE).then_some(Self(bytes))
+    }
+
+    /// The raw block.
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.0
+    }
+
     /// Index of the current track (byte `+0x332` of the block), 0..5.
     pub fn current_track(&self) -> usize {
         usize::from(self.0[TRACK_SELECTOR])

@@ -184,12 +184,12 @@ mod start_tests {
             Value::Float(0.21),
             Value::Float(0.12),
             Value::Float(-1.38),
-            Value::Float(3.14),
+            Value::Float(3.2),
         ]);
         let mut list = BlockList::default();
         list.load(&t).unwrap();
         assert_eq!(list.start.position, [860, 491, -5652]);
-        assert_eq!(list.start.angle, 12861);
+        assert_eq!(list.start.angle, 13107);
         // A negative heading comes back into [0, 2π].
         let t = start(vec![
             Value::Int(0),

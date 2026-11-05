@@ -35,9 +35,17 @@ La vitesse de 4 unités/s (doublée avec Maj) est provisoire : les routines qui 
 l'accélération, le rayon, la rotation du modèle et les transitions d'animation ne sont pas
 modélisées. Le test des murs utilise le centre du joueur et un point à 0,75 unité de hauteur, sans
 rayon de capsule. Les escaliers spéciaux, chutes et triggers de scénario restent absents.
-Une sauvegarde sélectionne la carte par son id `11476` (par ex. 109 = `C01M09`), mais son
-vecteur sauvegardé n'est pas la position du héros : le départ reste le point provisoire calculé
-depuis les collisions, non la position de reprise.
+**Position de départ.** Une sauvegarde normale ne stocke pas la position du héros : elle donne
+la carte (id `11476`, par ex. 109 = `C01M09`) et le jeu pose le groupe au point de départ de la
+carte, l'enregistrement `0x6e` de son `.bmbl` (`Party_Place`, `ov_017::0219c598` ;
+[`save.md`](save.md) § « Position à la reprise »). `dq9_core::state::GameState` en déduit la
+pose (`hero_pose`) et `dq9-app --save` y place le héros, recalé sur le sol trouvé par les
+collisions (`0x199` au-dessus, comme le jeu) ; le cap initial est celui du jeu, sa convention
+par rapport au lacet de `Hero` est **[hypothèse]** (la même que pour les portes). Une carte
+sans enregistrement, une pose d'une autre carte ou l'absence de sauvegarde gardent le point
+provisoire calculé depuis les collisions. Position et cap sont égaux à ceux de melonDS sur la
+démo (109) et sur la même sauvegarde repointée sur la carte 100 ; seule la hauteur diffère
+avant recalage.
 
 ## Comparaison melonDS
 
