@@ -3,18 +3,22 @@
 //! Updates run at a fixed 60 Hz (the DS frame rate) from an accumulator; rendering happens once
 //! per redraw.
 //!
-//! Controls: drag with the left button to turn, wheel to zoom, `WASD`/arrows to move, `Q`/`E`
-//! down/up, `Shift` faster, `Tab` orbit/fly, `F` reframe, `R` DS aspect (256×192), `T` next
+//! Controls: drag with the left button to turn, wheel to zoom, `WASD`/arrows to move (the hero
+//! in orbit mode, the camera in fly mode), `Q`/`E` the game's `L`/`R` camera buttons in orbit
+//! mode (both together return the camera) and down/up in fly mode, `Shift` faster camera, `Tab`
+//! orbit/fly, `F` reframe, `R` DS aspect (256×192), `T` next
 //! time of day, `PageUp`/`PageDown` previous/next map, `Enter`/`Space` talk to the NPC in front
 //! of the hero and advance the message window, `Backspace`/`X` answer No.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use dq9_core::camera::FieldCamera;
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
+use dq9_core::fx::reduce_angle;
 use dq9_core::state::{DayClock, GameState, TimeOfDay};
 use dq9_core::trigger::State;
-use dq9_core::{CollisionWorld, Hero};
+use dq9_core::{CollisionWorld, Hero, Input};
 use dq9_formats::hero::HeroLook;
 use dq9_render::camera::{DS_ASPECT, letterbox};
 use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Gait, Renderer, Viewport};
@@ -103,6 +107,12 @@ pub struct App {
     /// Lighting, fog and background of the loaded map at the selected time of day.
     environment: dq9_render::Environment,
     camera: Camera,
+    /// The game's camera turn (`L`/`R`) and the yaw it is measured from: the one the map was
+    /// entered with.
+    field_camera: FieldCamera,
+    camera_home: f32,
+    /// Milliseconds of fixed steps not yet given to the camera turn.
+    clock_ms: f32,
     framed: Option<[glam::Vec3; 2]>,
     held: HashSet<KeyCode>,
     cursor: Option<(f64, f64)>,
@@ -147,6 +157,9 @@ impl App {
             renderer: None,
             environment: dq9_render::Environment::default(),
             camera: Camera::default(),
+            field_camera: FieldCamera::default(),
+            camera_home: 0.0,
+            clock_ms: 0.0,
             framed: None,
             held: HashSet::new(),
             cursor: None,
@@ -253,7 +266,7 @@ impl App {
                 return false;
             }
         };
-        let hero_start = loaded.hero.position;
+        let hero_start = loaded.hero.position();
         self.environment = lighting::environment(loaded.lighting.as_ref(), self.day);
         self.collision = loaded.collision;
         self.field = Some(loaded.field);
@@ -283,8 +296,10 @@ impl App {
             self.framed = s.bounds();
         }
         if loaded.placed {
-            self.camera.yaw = loaded.hero.yaw;
+            self.camera.yaw = loaded.hero.yaw();
         }
+        self.camera_home = self.camera.yaw;
+        self.field_camera = FieldCamera::default();
         self.camera.target = hero_start;
         self.current = Some((loaded.entry, loaded.label));
         if let Err(e) = loaded.runtime.face_camera(&self.camera) {
@@ -446,6 +461,26 @@ impl App {
     }
 
     /// Runs the fixed steps due since the last frame.
+    /// The game's camera turn (`FieldCamera_Update`): `Q`/`E` are its `L`/`R` buttons. The yaw is
+    /// measured from the one the map was entered with, and turns the other way round from the
+    /// application's.
+    fn turn_camera(&mut self) {
+        let left = self.held.contains(&KeyCode::KeyQ);
+        let right = self.held.contains(&KeyCode::KeyE);
+        if !(left || right || self.field_camera.is_returning()) {
+            return;
+        }
+        // Whole milliseconds of the fixed steps, as the game's delta time is.
+        self.clock_ms += STEP * 1000.0;
+        let delta = self.clock_ms.floor();
+        self.clock_ms -= delta;
+        let offset = -(self.camera.yaw - self.camera_home);
+        let yaw = reduce_angle((offset * 4096.0).round() as i32);
+        let yaw = self.field_camera.step(yaw, 0, left, right, delta as u32);
+        self.camera.yaw =
+            (self.camera_home - yaw as f32 / 4096.0).rem_euclid(std::f32::consts::TAU);
+    }
+
     fn update(&mut self) {
         let now = Instant::now();
         // Clamp long pauses (window dragged, tab hidden) instead of catching up.
@@ -486,8 +521,23 @@ impl App {
                 input.forward = 0.0;
                 input.right = 0.0;
             }
+            if walking {
+                input.up = 0.0;
+            }
             self.camera.step(&input, STEP);
-            let move_direction = if walking && !talking {
+            let steering = walking && !talking;
+            let pad = Input {
+                up: steering && self.axis(&[KeyCode::KeyW, KeyCode::ArrowUp], &[]) > 0.0,
+                down: steering && self.axis(&[KeyCode::KeyS, KeyCode::ArrowDown], &[]) > 0.0,
+                left: steering && self.axis(&[KeyCode::KeyA, KeyCode::ArrowLeft], &[]) > 0.0,
+                right: steering && self.axis(&[KeyCode::KeyD, KeyCode::ArrowRight], &[]) > 0.0,
+            };
+            if steering {
+                self.turn_camera();
+            }
+            // The game's camera yaw turns the other way round from the application's.
+            let camera_yaw = reduce_angle((-self.camera.yaw * 4096.0) as i32);
+            let move_direction = if steering {
                 let (sin, cos) = self.camera.yaw.sin_cos();
                 let forward = Vec3::new(sin, 0.0, -cos);
                 let right = Vec3::new(cos, 0.0, sin);
@@ -505,27 +555,24 @@ impl App {
                 Vec3::ZERO
             };
             if let Some(hero) = &mut self.hero {
-                let before = hero.position;
-                hero.step(
-                    &self.collision,
-                    move_direction,
-                    STEP * if input.fast { 2.0 } else { 1.0 },
-                );
-                self.camera.target += hero.position - before;
+                let before = hero.position();
+                hero.step(&self.collision, pad, camera_yaw, 1);
+                self.camera.target += hero.position() - before;
                 if let Some(field) = &mut self.field {
                     let leader = Leader {
-                        position: hero.position,
-                        yaw: hero.yaw,
+                        position: hero.position(),
+                        yaw: hero.yaw(),
                         input: move_direction.normalize_or_zero(),
                     };
                     events.extend(field.step(&leader, &mut self.state));
                 }
                 if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance) {
                     // Motion from the distance covered this step (`dq9-render::hero`).
-                    let moved = hero.position - before;
+                    let moved = hero.position() - before;
                     let speed = Vec3::new(moved.x, 0.0, moved.z).length() / STEP;
                     runtime.set_hero_gait(Gait::from_speed(speed));
-                    let world = runtime.hero_world(hero.position, field::angle_of_yaw(hero.yaw));
+                    let world =
+                        runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()));
                     if let Some(instance) = runtime.scene.instances.get_mut(index) {
                         instance.world = world;
                     }
@@ -567,7 +614,7 @@ impl App {
         ) && !renderer.update_instance_world(
             &gpu.queue,
             index,
-            runtime.hero_world(hero.position, field::angle_of_yaw(hero.yaw)),
+            runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw())),
         ) {
             status("hero instance is unavailable");
         }

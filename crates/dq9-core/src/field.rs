@@ -51,8 +51,7 @@ const APPROACH_FRAMES: i16 = 3;
 const DOORWAY_USED: u16 = 0x4;
 const DOORWAY_DISABLED: u16 = 0x1;
 
-/// A fixed-point vector.
-pub type Fx3 = [i32; 3];
+pub use crate::fx::Fx3;
 
 /// `fx32` of a world coordinate (`_ffix` of `4096 * x`, truncating).
 pub fn to_fx(position: Vec3) -> Fx3 {

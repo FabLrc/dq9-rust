@@ -1,14 +1,14 @@
 //! Headless walk: the field of the application without a window, driven by a script of
 //! inputs, logging the maps and positions it passes through (`dq9-app --walk`, `docs/app.md`).
 //!
-//! It runs the same fixed steps as the window: `Hero::step` on the map's collision, then
+//! It runs the same fixed steps as the window: `Hero::step` (the pad keys the direction presses) on the map's collision, then
 //! `Field::step` with the leader's pose, then the map changes the field returns, loading the
 //! destination at its arrival pose and running its load and arrival triggers.
 
 use anyhow::{Result, bail};
-use dq9_core::Hero;
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
 use dq9_core::trigger::State;
+use dq9_core::{Hero, Input};
 use dq9_formats::cast::Story;
 use dq9_formats::hero::HeroLook;
 use glam::Vec3;
@@ -81,9 +81,7 @@ pub fn start_hero(
     let Some(y) = collision.ground_height(x, z, 3.0) else {
         bail!("no ground at ({x}, {z}) on map {key}");
     };
-    let mut hero = Hero::new(Vec3::new(x, y + 0.1, z));
-    hero.yaw = field::yaw_of_angle(0.0);
-    Ok(hero)
+    Ok(Hero::at(Vec3::new(x, y, z), field::yaw_of_angle(0.0)))
 }
 
 /// The direction the script walks at fixed step `frame` (`Vec3::ZERO` once it has ended), with
@@ -148,19 +146,25 @@ impl<'r> Walker<'r> {
     }
 
     fn log_position(&self, why: &str) {
-        let p = self.hero.position;
+        let p = self.hero.position();
         println!(
             "{why}: map {} {} hero ({:.3}, {:.3}, {:.3}) yaw {:.3}",
-            self.entry.id, self.entry.code, p.x, p.y, p.z, self.hero.yaw
+            self.entry.id,
+            self.entry.code,
+            p.x,
+            p.y,
+            p.z,
+            self.hero.yaw()
         );
     }
 
     /// One fixed step walking in `direction`. Returns whether the map changed.
     pub fn step(&mut self, direction: Vec3) -> Result<bool> {
-        self.hero.step(&self.collision, direction, STEP);
+        self.hero
+            .step(&self.collision, Input::from_direction(direction), 0, 1);
         let leader = Leader {
-            position: self.hero.position,
-            yaw: self.hero.yaw,
+            position: self.hero.position(),
+            yaw: self.hero.yaw(),
             input: direction.normalize_or_zero(),
         };
         let events = self.field.step(&leader, &mut self.state);
@@ -187,7 +191,7 @@ impl<'r> Walker<'r> {
             bail!("map change chain cut at {change:?}");
         }
         let from = self.entry.id;
-        let p = self.hero.position;
+        let p = self.hero.position();
         println!(
             "map change {from} -> {}: {:?} with the hero at ({:.3}, {:.3}, {:.3}), arrival {:?} angle {:?}",
             change.destination, change.cause, p.x, p.y, p.z, change.position, change.angle

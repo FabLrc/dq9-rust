@@ -158,10 +158,6 @@ pub fn maps(rom: &[u8]) -> Result<Vec<MapEntry>> {
         .collect())
 }
 
-/// Height at which the game stands a character above the ground it finds (`0x02018fcc`
-/// adds `0x199` in `fx32`).
-const STAND_HEIGHT: f32 = 0x199 as f32 / 4096.0;
-
 /// Assembles map `key` (code such as `M01`, or id) at time of day `time` and builds its
 /// scene. The hero stands at `spawn` (a doorway arrival), else where `state` puts the party
 /// on this map (`GameState::hero_pose`), else at the point the collisions give.
@@ -197,18 +193,15 @@ pub fn load(
         (None, Some(pose)) => {
             let [x, y, z] = pose.position_f32();
             // The game stands the hero on the ground it finds (`ov_017::0219c598` places the
-            // pose as is, the ground follows).
-            let y = collision
-                .ground_height(x, z, y)
-                .map_or(y, |ground| ground + STAND_HEIGHT);
+            // pose as is, the ground follows: `ground_height` includes the `0x199` it adds).
+            let y = collision.ground_height(x, z, y).unwrap_or(y);
             (Vec3::new(x, y, z), pose.angle_radians())
         }
         (None, None) => (collision.spawn().unwrap_or(Vec3::ZERO), 0.0),
     };
     let placed = spawn.is_some() || saved.is_some();
     let lighting = crate::lighting::script(&assembled, |p| map::rom_file(&rom, p));
-    let mut hero = Hero::new(position);
-    hero.yaw = yaw;
+    let hero = Hero::at(position, yaw);
     let mut runtime = AnimatedScene::build(&assembled, record.id, record.code, story, |p| {
         map::rom_file(&rom, p)
     })
@@ -217,7 +210,7 @@ pub fn load(
         .add_hero(look, |p| map::rom_file(&rom, p))
         .context("building the hero model")?;
     runtime.scene.instances[hero_instance].world =
-        runtime.hero_world(hero.position, field::angle_of_yaw(hero.yaw));
+        runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()));
     let trigger_file = field::trigger_path(&text(record.code))
         .and_then(|path| map::rom_file(&rom, &path))
         .map(<[u8]>::to_vec);

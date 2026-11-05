@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use dq9_core::field::{self, Event, Field, Leader, warp_contains, zone_contains};
-use dq9_core::{CollisionWorld, Hero};
+use dq9_core::{CollisionWorld, Hero, Input};
 use dq9_formats::Table;
 use dq9_formats::map::{self, Context, Map, Regions, ZONE_DOORWAY};
 use dq9_formats::maplist::{self, MapList};
@@ -157,8 +157,7 @@ impl<'r> World<'r> {
         let field = Field::new(id, &map.regions, file).unwrap();
         let (position, yaw) =
             spawn.unwrap_or_else(|| (collision.spawn().unwrap_or(Vec3::ZERO), 0.0));
-        let mut hero = Hero::new(position);
-        hero.yaw = yaw;
+        let hero = Hero::at(position, yaw);
         let story = dq9_formats::cast::Story {
             chapter: 1,
             step: 1,
@@ -177,10 +176,11 @@ impl<'r> World<'r> {
     /// Steps in `direction` until the field changes the map (at most `limit` frames).
     fn walk(&mut self, direction: Vec3, limit: u32) -> Option<field::MapChange> {
         for _ in 0..limit {
-            self.hero.step(&self.collision, direction, 1.0 / 60.0);
+            self.hero
+                .step(&self.collision, Input::from_direction(direction), 0, 1);
             let leader = Leader {
-                position: self.hero.position,
-                yaw: self.hero.yaw,
+                position: self.hero.position(),
+                yaw: self.hero.yaw(),
                 input: direction,
             };
             for event in self.field.step(&leader, &mut self.state) {
@@ -212,7 +212,7 @@ fn angel_falls_houses_open_and_close() {
     let rom = Rom::parse(bytes).unwrap();
     let mut village = World::load(&rom, 1100, None);
     let ground = village.collision.ground_height(-19.5, -9.0, 3.0).unwrap();
-    village.hero = Hero::new(Vec3::new(-19.5, ground + 0.1, -9.0));
+    village.hero = Hero::at(Vec3::new(-19.5, ground, -9.0), 0.0);
 
     let entered = village.walk(Vec3::NEG_Z, 300).expect("the door opens");
     assert_eq!(entered.destination, 1102, "{entered:?}");
@@ -220,9 +220,9 @@ fn angel_falls_houses_open_and_close() {
     assert!((p - Vec3::new(0.4, 0.16, 6.1)).length() < 0.01, "{p}");
     // The hero was in the doorway (-19.5, -13) when it opened, not far from it.
     assert!(
-        (village.hero.position.z + 13.0).abs() < 1.5,
+        (village.hero.position().z + 13.0).abs() < 1.5,
         "{}",
-        village.hero.position
+        village.hero.position()
     );
 
     let mut house = village.arrive(&entered);

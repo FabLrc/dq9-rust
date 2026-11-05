@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
+use dq9_core::Input;
 use dq9_render::camera::{DS_ASPECT, letterbox};
 use dq9_render::{Camera, Gait, Renderer, Viewport};
 use glam::Vec3;
@@ -240,10 +241,10 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     }
     println!(
         "hero: ({:.3}, {:.3}, {:.3}) yaw {:.3} ({})",
-        hero.position.x,
-        hero.position.y,
-        hero.position.z,
-        hero.yaw,
+        hero.position().x,
+        hero.position().y,
+        hero.position().z,
+        hero.yaw(),
         if loaded.placed {
             "from the save"
         } else {
@@ -282,7 +283,7 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         (_, _, Some(bounds)) => {
             camera.frame(bounds);
             if loaded.placed || cli.input.is_some() {
-                camera.target = hero.position;
+                camera.target = hero.position();
             }
         }
         _ => {}
@@ -295,25 +296,25 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         let direction = script
             .as_deref()
             .map_or(Vec3::ZERO, |s| walk::direction_at(s, frame));
-        let before = hero.position;
-        hero.step(&loaded.collision, direction, crate::app::STEP);
-        let moved = hero.position - before;
+        let before = hero.position();
+        hero.step(&loaded.collision, Input::from_direction(direction), 0, 1);
+        let moved = hero.position() - before;
         let speed = Vec3::new(moved.x, 0.0, moved.z).length() / crate::app::STEP;
         loaded.runtime.set_hero_gait(Gait::from_speed(speed));
         loaded.runtime.step(&camera)?;
     }
     let world = loaded
         .runtime
-        .hero_world(hero.position, dq9_core::field::angle_of_yaw(hero.yaw));
+        .hero_world(hero.position(), dq9_core::field::angle_of_yaw(hero.yaw()));
     loaded.runtime.scene.instances[loaded.hero_instance].world = world;
     if script.is_some() || cli.start.is_some() {
         println!(
             "hero after {} steps: ({:.3}, {:.3}, {:.3}) yaw {:.3}, motion {:?}",
             cli.frame,
-            hero.position.x,
-            hero.position.y,
-            hero.position.z,
-            hero.yaw,
+            hero.position().x,
+            hero.position().y,
+            hero.position().z,
+            hero.yaw(),
             loaded.runtime.hero_gait()
         );
     }

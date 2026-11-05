@@ -208,14 +208,14 @@ impl Talk {
         field: &mut Field,
         state: &mut State,
     ) -> Vec<Event> {
-        let Some(target) = talk::nearest(&self.npcs, hero.position, hero.yaw) else {
+        let Some(target) = talk::nearest(&self.npcs, hero.position(), hero.yaw()) else {
             return Vec::new();
         };
         status(&format!(
             "talk: NPC {} (zone {})",
             target.npc, target.context
         ));
-        state.zones = talk::zones_containing(&self.npcs, hero.position);
+        state.zones = talk::zones_containing(&self.npcs, hero.position());
         let context = match field.talk(target.npc, target.context, state) {
             TalkTrigger::NoTrigger => Some(target.context),
             TalkTrigger::Unsupported(code) => {
@@ -430,6 +430,7 @@ pub use script::{parse_inputs, play};
 #[cfg(not(target_arch = "wasm32"))]
 mod script {
     use anyhow::{Result, bail};
+    use dq9_core::Input as Pad;
     use dq9_core::field::{self, Event, Leader};
     use glam::{Mat4, Vec3};
 
@@ -500,10 +501,12 @@ mod script {
             } else {
                 direction
             };
-            loaded.hero.step(&loaded.collision, direction, STEP);
+            loaded
+                .hero
+                .step(&loaded.collision, Pad::from_direction(direction), 0, 1);
             let leader = Leader {
-                position: loaded.hero.position,
-                yaw: loaded.hero.yaw,
+                position: loaded.hero.position(),
+                yaw: loaded.hero.yaw(),
                 input: direction.normalize_or_zero(),
             };
             if field::Field::changes_map(&loaded.field.step(&leader, &mut state)) {
@@ -526,7 +529,7 @@ mod script {
             }
         }
         if let Some(instance) = loaded.runtime.scene.instances.get_mut(loaded.hero_instance) {
-            instance.world = Mat4::from_translation(loaded.hero.position);
+            instance.world = Mat4::from_translation(loaded.hero.position());
         }
         Ok(())
     }
