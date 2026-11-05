@@ -5,6 +5,7 @@ mod coverage;
 mod doors;
 mod extract;
 mod font;
+mod hero;
 mod map;
 mod maps;
 mod model;
@@ -165,6 +166,8 @@ enum Command {
     /// drawn with, position, facing and initial motion. With `--state`, uses the state's
     /// story point and compares with its NPC table.
     Cast(cast::CastArgs),
+    /// The parts the hero (new game, or a save's) is drawn with: look, items, part names.
+    Hero(hero::HeroArgs),
     /// Export the textures (PNG) and models (OBJ + MTL, model space) of G3D files: a
     /// `.nsbmd`/`.nsbtx` file or the members of a NARC such as `data/map/M01.amdj`. With
     /// `--anim`, models are posed (joints), retextured (texture SRT) and recoloured (material)
@@ -294,6 +297,7 @@ fn main() -> Result<()> {
         Command::Doors(args) => doors::run(&rom, &args),
         Command::Chr(args) => cast::run_chr(&rom, &args),
         Command::Cast(args) => cast::run_cast(&rom, &args),
+        Command::Hero(args) => hero::run(&rom, &args),
         Command::Model {
             path,
             member,

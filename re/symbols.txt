@@ -615,6 +615,9 @@ ov_017::0219e384 Field_EnterMap     # map-entry state machine of the field; stat
 0x020ef2c0 g_ZoneMapListHandlers    # {0x66, nop}, {0x67, ZoneMapList_RecMap}, {0x69, nop}, {0x68, nop}, {0}
 0x020ef388 g_BlockListHandlers      # kinds 0x64..0x7e (0x64/0x65 blocks, others zone data), {0}
 0x020ef418 g_BmdjHandlers           # kinds 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x72, {0}
+0x020ef978 g_CharaIdleNames          # stand, guard, sleep, slip, smile, dance, tenchi (kind 0, by expression)
+0x020ef994 g_CharaKindNames          # 12 names by animation kind: stand, run, run, run, stand, stand, attack0a, damage, death, appear, takara, hirou
+0x020ef9c4 g_CharaStateKinds         # 13 signed bytes per state 0..8: next kind by current kind (state 1 walking -> kind 1 = run)
 0x020f051c g_DatHandlers            # kinds 0x64..0x6e, {0}
 
 # --- Map regions: warps, doorways, areas (docs/re/map-archive.md, docs/re/trigger.md) ---
@@ -685,6 +688,9 @@ ov_017::0219ca88 Field_CheckWarps      # 0x72 warps: leader inside -> Save_Warp;
 0x02033720 Character_TurnToFacing          # model angle +0x54 toward facing +0xae by +0xb0 per tick
 0x02033844 Character_SetFacing             # +0xae = ReduceAngle(angle)
 0x02033b78 Character_SetState              # +0xbe (0 idle, 1 walk), refreshes the animation
+0x02033bb0 Character_PlayKindAnimation     # (obj, kind): kind 0 = g_CharaIdleNames by expression (+0xc1 >> 4), else g_CharaKindNames[kind], Object3D::MaybeSetRegularAnimation; +0xc0 = kind
+0x02033cf8 Character_RefreshState         # after SetState: Character_UpdateAnimation, then the fade / hide of states 5 and 6
+0x02033de4 Character_UpdateAnimation      # kind = g_CharaStateKinds[state * 13 + kind +0xc0], states above 8 ignored
 0x02032e68 Character_Init                  # +0xb0 turn 0x324, +0xb4 max speed 0x189, +0xb6 acceleration 0x28
 0x02037d98 PartyMember_Update              # generic update, then input 0x02038148 and ladder 0x020385a8
 0x02038148 Hero_ReadDirectionInput          # D-pad to 8 directions (+0x250 = 8..15): table 0x020e90b8 + camera yaw

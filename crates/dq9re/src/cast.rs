@@ -60,7 +60,22 @@ fn text(s: &[u8]) -> String {
 }
 
 pub fn run_chr(rom: &Rom, args: &ChrArgs) -> Result<()> {
-    let data = map::rom_file(rom, &args.path).with_context(|| format!("no {}", args.path))?;
+    // `data/pack_lv5/chara_mp.gp2:mp0200n.chr` names a member of a GPC2 pack.
+    let owned;
+    let data = match args.path.split_once(".gp2:") {
+        Some((pack, member)) => {
+            let pack_path = format!("{pack}.gp2");
+            let bytes =
+                map::rom_file(rom, &pack_path).with_context(|| format!("no {pack_path}"))?;
+            let gpc2 = Gpc2::parse(bytes).context("parsing GPC2 pack")?;
+            let entry = gpc2
+                .find(member)
+                .with_context(|| format!("no {member} in {pack_path}"))?;
+            owned = gpc2.member(entry)?.into_owned();
+            owned.as_slice()
+        }
+        None => map::rom_file(rom, &args.path).with_context(|| format!("no {}", args.path))?,
+    };
     let chr = Chr::parse(data).context("parsing character archive")?;
     println!("{}: {} members", args.path, chr.narc.len());
     for i in 0..u16::try_from(chr.narc.len())? {

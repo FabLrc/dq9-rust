@@ -896,3 +896,37 @@ fn sprite_sheets_read() {
     // Single-step static sheets (`spr`) name step 1 next, past their one step.
     assert_eq!((bad_frames, bad_next), (0, 1960));
 }
+
+/// Every face and hair item (9020..=9033, 9000..=9013) names a part of `chara_pc.gp2` for both
+/// sexes, and the default hero's outfit is fully present (`docs/re/characters.md` § « Le héros »).
+#[test]
+fn hero_parts_resolve() {
+    use dq9_formats::hero::{HeroLook, ItemModels, Outfit, Sex};
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let defs = Gpc2::parse(rom.file_by_path("data/prm/itemdt_def.gp2").unwrap()).unwrap();
+    let def = defs.member(defs.find("itemdt_def.nat").unwrap()).unwrap();
+    let models = ItemModels::parse(&def).unwrap();
+    let pc = Gpc2::parse(rom.file_by_path("data/pack_lv5/chara_pc.gp2").unwrap()).unwrap();
+    let has = |name: &str| pc.find(name).is_some();
+    for sex in [Sex::Man, Sex::Woman] {
+        for item in (9000..=9013).chain(9020..=9033) {
+            let (letter, n) = models.model(item, sex).unwrap_or_else(|| panic!("{item}"));
+            assert!(matches!(letter, 'h' | 'f'), "{item}: {letter}");
+            let exists = if letter == 'f' {
+                has(&format!("p_f{n:03}.nsbmd"))
+            } else {
+                has(&format!("p_h{n:03}a.nsbmd")) && has(&format!("p_h{:02}0a.nsbtx", n / 10))
+            };
+            assert!(exists, "item {item} {sex:?}: p_{letter}{n:03}");
+        }
+    }
+    let outfit = Outfit::resolve(&HeroLook::new_game(), &models, has);
+    assert_eq!(outfit.body, "p_b007");
+    assert_eq!(outfit.legs.as_deref(), Some("p_p215"));
+    assert_eq!(outfit.face.as_deref(), Some("p_f004"));
+    assert_eq!(outfit.headgear.as_deref(), Some("p_m805"));
+    assert_eq!(outfit.hair.map(|h| h.model).as_deref(), Some("p_h060a"));
+    assert_eq!(outfit.arms_texture.as_deref(), Some("p_a007"));
+    assert_eq!(outfit.feet_texture.as_deref(), Some("p_r120"));
+}

@@ -656,6 +656,17 @@ impl<'a> Character<'a> {
         self.0[358]
     }
 
+    /// Face as an item id (`+356`, 9020..=9033: slot h2 of `CharaParts_GetPartNumbers`,
+    /// `docs/re/characters.md` § « Le héros »).
+    pub fn face_item(&self) -> u16 {
+        u16_at(self.0, 356)
+    }
+
+    /// Hair as an item id (`+358`, 9000..=9013: slot h3).
+    pub fn hair_item(&self) -> u16 {
+        u16_at(self.0, 358)
+    }
+
     /// Bit 0 of byte 372 (0 or 1; **[unknown]** which is which).
     pub fn gender(&self) -> u8 {
         self.0[372] & 1
