@@ -1,7 +1,8 @@
 # Application `dq9-app` et rendu `dq9-render`
 
-L'application commune native/Web affiche une carte, ses modèles, textures, animations, PNJ et un
-repère de position du joueur. `dq9-core` consomme les collisions `.col2`
+L'application commune native/Web affiche une carte, ses modèles, textures, animations, PNJ et le
+héros animé (pièces de `chara_pc.gp2` assemblées, repos/marche/course selon la vitesse ;
+[`re/characters.md`](re/characters.md) § « Le héros »). `dq9-core` consomme les collisions `.col2`
 ([`re/collision.md`](re/collision.md)) pour un déplacement de terrain expérimental ;
 `dq9_core::field` teste les portes, aires et warps des `.bmbl` à chaque pas
 ([`re/map-archive.md`](re/map-archive.md)) et `dq9-app` charge la carte de destination qu'il
@@ -38,6 +39,17 @@ cargo run -p dq9-app --release -- --map C01M09 --chapter 19 --step 2 --substep 1
 # Sans fenêtre : marcher selon un script (axes du monde, secondes) et journaliser les cartes
 # et positions, portes comprises (entrer dans une maison d'Angel Falls et en sortir) :
 cargo run -p dq9-app --release -- --map M01 --start=-19.5,-9 --walk "-z:3,+z:3,idle:0.5"
+```
+
+Avec `--screenshot`, `--walk` et `--start` pilotent le héros pendant les `--frame N` pas fixes
+(le script court depuis le pas 0, puis le héros reste immobile) : la capture montre l'allure
+choisie par sa vitesse, par exemple la marche vers l'ouest depuis Angel Falls :
+
+```powershell
+cargo run -p dq9-app --release -- --map M01 --walk "-x:5" --start=-1.74,1.22 --frame 20 `
+    --eye=-1.5,0,-3 --target=-3,-0.6,1.2 --screenshot build/scratch/app/hero-walk.png
+cargo run -p dq9-app --release -- --map M01 --frame 10 `
+    --eye=-1.74,0.3,-3.5 --target=-1.74,-0.5,1.22 --screenshot build/scratch/app/hero.png
 ```
 
 `--walk` joue les mêmes pas fixes qu'en fenêtre (`Hero::step`, puis `Field::step` avec la pose
@@ -119,6 +131,13 @@ Fidèle à ce que lit le jeu :
 - **Caméra** : celle du jeu par défaut (`0x0202df78`) : demi-angle vertical de 15°
   (`0x0202e9b4`, sinus et cosinus pour `NNS_G3dGlbPerspective`), plans à 1 et 400 ; libre en
   orbite ou en vol ; option 256×192.
+- **Héros** (`dq9_render::hero`, `AnimatedScene::add_hero`) : corps et jambes sur le gabarit de
+  14 os, animés par `mp0200n`/`mp0200ne` (`stand`, `walk`, `run`), visage, cheveux et couvre-chef
+  posés sur l'os `head`, bras et chaussures par fichiers de texture, fusionnés en un modèle ;
+  orienté selon le cap (`angle_of_yaw`), échelle `0x10a × corpulence` ; l'allure vient de la
+  distance parcourue au pas (`Gait::from_speed`). Apparence : le premier personnage de la
+  sauvegarde (`--save`), sinon un héros par défaut **[hypothèse]** ; ni armes, ni boucliers, ni
+  ailes, ni teints du `palette.bin` ([`re/characters.md`](re/characters.md)).
 - **PNJ** : distribution et placements de `cast::load`, sprites `.spr` décodés une fois
   (images détourées), noms `stand_*` choisis par `cast::sprite_stand`, panneaux face à la
   caméra ; variantes assises `sleep_*` avec miroir. Échelles du jeu : sprites `0x8f/4096`
@@ -154,8 +173,8 @@ Approximé ou absent :
   G3D des modèles, mode alpha seul du brouillard et alpha de `FOG_COLOR`, précision de la DS
   (couleurs 6 bits, profondeur W ; la profondeur du brouillard est recalculée sur 24 bits).
 - **PNJ, limites** : les hauteurs des PNJ sont celles des placements ; le snap du sol et le
-  déplacement du héros sont approximatifs (pas d'accélération, rayon, modèle animé ni départ
-  depuis une sauvegarde). Les portes, aires et warps suivent `dq9_core::field` (comparés à
+  déplacement du héros sont approximatifs (pas d'accélération ni rayon).
+  Les portes, aires et warps suivent `dq9_core::field` (comparés à
   melonDS sur l'église de Stornway) sans l'animation de la porte ; les triggers de zone sont
   évalués mais leurs demandes de conversation ou d'événement sont seulement journalisées, et
   les escaliers, chutes et chemins des PNJ ne sont pas exécutés. Les
@@ -179,6 +198,9 @@ Approximé ou absent :
   `runtime_cast_and_animation_are_deterministic` : mêmes sommets et matériaux après
   60 pas sur `M01`, `C01M09`, `F01` et `M01M08` (ce dernier avec le monstre de la quête 152),
   même topologie, nombre de corps conforme à la distribution.
+- Héros : captures `M01` du héros de face au repos et de profil en marche (jambes, bras et
+  cheveux animés, cap suivi) ; test réel `hero_model_follows_its_gait` (modèle déterministe, mouvement
+  différent par allure).
 - Captures natives d'intégration : `M01 --frame 0` et `--frame 60` donnent des PNG
   différents à caméra identique ; `C01M09 --chapter 19 --step 2 --substep 1 --night`
   montre les sprites de la religieuse et du prêtre face à une caméra `--eye/--target`.

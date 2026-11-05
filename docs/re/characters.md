@@ -2,7 +2,8 @@
 
 Implémentation : `crates/dq9-formats/src/cast.rs` (`load`, `run_placements`, `Story`,
 `Placement`, `Npc::appearance`, `initial_motion`, `sprite_stand`) et
-`crates/dq9-formats/src/chr.rs` (`Chr`, `MotionTable`, `role`, `Motion::advance`). Lecture de la
+`crates/dq9-formats/src/chr.rs` (`Chr`, `MotionTable`, `role`, `Motion::advance`) ; le héros
+(pièces, assemblage, allures) : § « Le héros ». Lecture de la
 RAM : `melonds::State::npcs` et `State::story`. Outils :
 
 ```powershell
@@ -239,6 +240,117 @@ Table d'enregistrements exécutée avec `bcfgScriptOpcodes` (décompilation, `BC
 
 Les dépassements de capacité et les mouvements inconnus sont ignorés comme dans le jeu.
 
+## Le héros (`dq9_formats::hero`, `dq9_render::hero`)
+
+Implémentation : `crates/dq9-formats/src/hero.rs` (`HeroLook`, `ItemModels`, `Outfit`),
+`crates/dq9-render/src/hero.rs` (assemblage, `Gait`), `AnimatedScene::add_hero`. Outil :
+
+```powershell
+cargo dq9re hero                                   # héros d'une nouvelle partie : parts résolues
+cargo dq9re hero --save rom/dq9.sav                # héros d'une sauvegarde (--character N pour un autre)
+cargo run -p dq9-app --release -- --map M01 --frame 30 --walk "-x:5" --start=-1.74,1.22 `
+    --eye=-1.5,0,-3 --target=-3,-0.6,1.2 --screenshot build/scratch/app/hero.png
+```
+
+Sources : wiki DQIX (Character-Parts, Character-Presets, Single-Questions, Motion-Tables,
+Weapon-Positions : tout y est lu sur la ROM européenne, revérifié ci-dessous), code ARM9 pour
+les tables d'animation, RAM de melonDS pour l'échelle.
+
+### Un personnage humain est un jeu de pièces
+
+Les dix emplacements d'équipement h0–h9 d'un personnage (`CharaParts_GetPartNumbers`, USA
+`func_02072afc` ; h2 le visage, h3 les cheveux) sont des **objets**. Chaque objet nomme un
+modèle de `data/pack_lv5/chara_pc.gp2` par son identifiant (`item_part`) : la tranche de mille
+donne la lettre (12 `m` couvre-chef, 13 `b` armure, 14 `a` bras, 15 `g` gants, 16 `p` jambes,
+17 `r` chaussures, 20 `w` arme, 21 `s` bouclier), le reste le numéro à trois chiffres : 13007 →
+`p_b007`. Les 14 identifiants de présélection sans pièce (wiki) existent aussi dans les
+sauvegardes (13309 → `p_b309`, absent) : le jeu les rattache à la pièce d'un autre objet
+**[inconnu]** ; nous retombons sur les sous-vêtements `p_p090`.
+
+- **Sauvegarde** (`save.md`, `Character::equipment`, `face_item`, `hair_item`) : visage `+356` et
+  cheveux `+358` sont des identifiants d'objets 9020–9033 et 9000–9013 (sauvegarde réelle :
+  9027 et 9008) ; équipement `+352..+370` ; octet `+372` bit 0 le sexe (0 homme, 1 femme,
+  d'après les objets réservés à un sexe, wiki), bits 1–3 le teint, 4–7 les yeux ; `+373`
+  couleur des cheveux ; `+376`/`+378` la corpulence.
+- **Visage et cheveux** : `itemdt_def.nat` (membre de `data/prm/itemdt_def.gp2`, 32 octets par
+  enregistrement, l'identifiant à `+4`) ; le mot **8 octets avant l'identifiant** donne le
+  modèle (`func_020de234`, wiki) : bits 0–9 numéro d'un homme, 10–19 d'une femme (999 : celui de
+  l'autre sexe), bits 20–27 la lettre (`h`, `f`). Vérifié sur les 28 objets pour les deux sexes :
+  chaque pièce existe (`hero_parts_resolve`). Visage 9024 = `p_f004` (homme), `p_f014`
+  (femme) ; cheveux 9006 = `p_h060` (homme), `p_h180` (femme).
+- **Forme des cheveux** (`func_02072e94`, wiki) : `a` sans couvre-chef, sinon le numéro du
+  couvre-chef ÷ 100 indexe `"bbdcc\0cea\0"` ; les centaines 5, 9 et dix et plus **ne dessinent
+  pas de cheveux** ; un homme aux cheveux 9001 sous un 3xx prend `f`. Modèle `p_h<nnn><forme>`,
+  texture de couleur `p_h<nn><couleur>a.nsbtx` (texture `p_h<nn>0a_00` liée par nom ; la
+  couleur est la couleur de cheveux de la sauvegarde **[hypothèse]**, wiki : « INFERRED »),
+  couleur 0 à défaut.
+- **Bras, gants, chaussures** sont des **textures** : le corps `p_b…` lie un matériau à
+  `p_a000_00`, les jambes `p_p…` un autre à `p_r000_00` ; le fichier chargé décide
+  (`p_g<nnn>.nsbtx` si des gants sont portés, sinon `p_a<numéro de l'armure>.nsbtx` ;
+  chaussures `p_r<nnn>.nsbtx`). L'assemblage place ces fichiers **avant** les textures du
+  modèle dans la recherche par nom (`TextureSources`).
+
+### Le gabarit et l'assemblage
+
+Corps et jambes portent le même squelette de 14 os (`root`, pièce, `waist`, `chest`,
+`arm0L/1L/0R/1R`, `head`, `usiro`, `leg0L/1L/0R/1R`) ; les pistes de l'animation sont lues par
+**indice d'objet** (`JointAnimation::transforms`), donc la même animation pose les deux. Visage,
+cheveux et couvre-chef n'ont qu'un os à eux : ils sont posés au repos puis déplacés par la
+matrice de l'os `head` du corps, celle que tiennent ses commandes de rendu après
+`MulObject(head)` (`object_worlds` rejoue la pile de matrices). Vérifié : le visage et les
+cheveux tombent sur le cou (taille totale ≈ 21 unités du modèle, test
+`hero_model_follows_its_gait`). Les pièces sont fusionnées en un seul modèle de scène.
+
+**Échelle.** Objet du héros en RAM (`demo.ml1`, `Object3D+0x5c`, fix16 ×3) : `(0xec, 0x109,
+0xec)` pour des mots de corpulence `0xe39` et `0xffb` dans la sauvegarde : `0x10a × mot / 4096`
+tronqué, sur x et z pour la largeur, y pour la hauteur (même `0x10a` que les PNJ). Rotation de
+l'objet : angle du jeu (0 regarde +z), `dq9_core::field::angle_of_yaw`.
+
+### Mouvements
+
+Le jeu choisit l'animation d'un personnage par état (`Character_UpdateAnimation`,
+`0x02033de4`) : état `+0xbe`, type `+0xc0` ; le type suivant est `g_CharaStateKinds[état × 13 +
+type]` (`0x020ef9c4`, lu en RAM) et `Character_PlayKindAnimation` (`0x02033bb0`) joue le nom
+`g_CharaKindNames[type]` (`0x020ef994`) ou, au type 0, `g_CharaIdleNames` (`0x020ef978`) selon
+l'expression (`+0xc1 >> 4`). Résultat : **repos (état 0) → `stand`, marche au clavier
+(état 1) → `run`** ; le jeu ne joue `walk` que par script (natives 210…). Les noms viennent des
+paquets `mp%02d%02d` (corps `02`, jeu de mouvements de l'arme `00` sans arme, wiki) :
+
+| Allure | Paquet (`chara_pc.gp2`) | Mouvement | Vitesse (`.bcfg`) |
+|---|---|---|---|
+| repos | `mp0200n` | `stand` | 0,1 |
+| marche | `mp0200ne` | `walk` | 0,1 |
+| course | `mp0200n` | `run` | 0,4 |
+
+`stand` existe dans trois paquets (`n`, `f`, `n2`) : nous prenons `n`, celui qui bouge le moins
+le personnage (wiki) **[hypothèse]** ; lecture « par mouvement » (`AdvanceAnimations_v1`,
+boucle sur `[0, images − 1[`). **Choix de l'allure dans l'application** (`Gait::from_speed`) :
+vitesse horizontale mesurée sur le pas (unités/s) : repos sous 0,05, marche jusqu'à
+`RUN_SPEED` = 5, course au-delà **[hypothèse]** : le jeu joue `run` à toute vitesse, `walk`
+sert ici aux vitesses sous la vitesse maximale établie (5,76 unités/s, `movement.md`), donc à
+la vitesse provisoire de 4 unités/s de `dq9-core` et à l'accélération d'un déplacement
+fidèle. À reprendre quand le déplacement fidèle sera là.
+
+### Apparence par défaut (nouvelle partie)
+
+`HeroLook::new_game` : homme, visage 9024, cheveux 9006 (présélections masculines de
+`charapreset.bin`), teint 3, tenue de céleste du début d'Angel Falls **[hypothèse]** :
+costume céleste 13007, bas célestes 16215, souliers célestes 17120 et auréole 12805 (la
+création du personnage est en overlay 9 : le héros réel n'est pas modélisé). Avec `--save` :
+le héros de l'emplacement courant (premier personnage du groupe).
+
+### Non fait
+
+- **Armes et boucliers** ne sont pas dessinés (`wpnpos.bin` : placements partiellement
+  inférés, bouclier absent du fichier) ; les ailes (`d_hane`, gabarit à 21 os de
+  `chara_pd.gp2`) non plus.
+- **Teints, yeux, sourcils** : `data/chara/palette.bin` recolore les palettes du visage et des
+  bras (Character-Colours) ; seules les palettes d'origine sont utilisées **[inconnu]**.
+- Couleurs des cheveux : la rampe de peau de `GetItemSkinShades` (`0x020731f0`, wiki) n'est pas appliquée.
+- Éclairage : lumière fixe des personnages (`app.md`), pas les lumières DS.
+- Pièces d'objets sans modèle (voir plus haut) ; compagnons du groupe ; le héros pendant les
+  scènes (`walk` des scripts, échelle et caméra des événements).
+
 ## Vérifications
 
 - **RAM (melonDS)** : `cargo dq9re cast --state build/melonds/demo.ml1` (carte 109 `C01M09`,
@@ -257,6 +369,10 @@ Les dépassements de capacité et les mouvements inconnus sont ignorés comme da
     sprites, 2 511 modèles, 370 monstres, 12 122 sans corps) : chaque feuille, archive ou
     membre existe et se lit (238 distincts) ; aucune lecture de champ jamais écrit ; C01M09 à
     l'état de `demo.ml1` donne les nœuds vus en RAM.
+- **Héros** : `hero_parts_resolve` (`dq9-formats`, 28 objets de visage et de cheveux × 2 sexes
+  résolus en pièces existantes, tenue de départ complète) et `hero_model_follows_its_gait`
+  (`dq9-render`, modèle assemblé, déterministe, mouvement selon l'allure) ; échelle comparée à
+  la RAM de `demo.ml1` (voir « Le héros »).
 
 ## Inconnu
 

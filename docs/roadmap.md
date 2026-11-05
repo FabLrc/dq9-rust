@@ -202,6 +202,16 @@ Avancement :
       Captures déterministes `--frame N`, choix de progression `--chapter/--step/--substep`
       (prologue par défaut). Hauteurs de placement conservées sans collision du sol ;
       limites de comportement et de rendu détaillées dans [`app.md`](app.md).
+- [x] **Héros animé** (`dq9_formats::hero`, `dq9_render::hero`, `dq9re hero`,
+      [`re/characters.md`](re/characters.md) § « Le héros ») : pièces de `chara_pc.gp2`
+      résolues depuis les objets portés (visage et cheveux par `itemdt_def`, forme des cheveux
+      selon le couvre-chef, bras/chaussures en textures), assemblées sur le gabarit de 14 os,
+      animées par `mp0200n`/`mp0200ne` (`stand`, `walk`, `run` ; le jeu joue `stand` au repos et
+      `run` en marche), orientées selon le cap, à l'échelle `0x10a × corpulence` (vérifiée sur
+      la RAM) ; `dq9-app` l'affiche à la place du repère, avec l'apparence du héros de la
+      sauvegarde (`--save`) ou un héros par défaut **[hypothèse]** ; `--screenshot --walk`
+      montre la marche. Non fait : armes, boucliers, ailes, teints du `palette.bin`,
+      compagnons du groupe.
 - [ ] Éclairage de la carte (`.bats`), brouillard et heure du jour appliqués au rendu (fait,
       reste la validation melonDS des zones avancées) :
       parseur `.bats` (`dq9_formats::lighting`, 504 scripts), horloge du jour et choix/mélange
@@ -232,7 +242,7 @@ Avancement : l'heure du jour existe comme horloge de 420 s et phase explicite
 branchement de la mise à jour de scène qui la fait courir sur les cartes de type 0 et 7 : l'application
 l'entre par option). `dq9-core` assemble les collisions transformées et fournit un déplacement
 déterministe au pas fixe avec snap du sol et blocage simplifié des faces verticales
-([`re/movement.md`](re/movement.md)). L'application affiche un repère joueur et suit la caméra.
+([`re/movement.md`](re/movement.md)). L'application affiche le héros animé (J1) et suit la caméra.
 `--save`/le champ Web restaurent la carte, la position et le cap du héros, l'heure et le
 scénario du slot normal valide (`dq9_core::state::GameState`, [`re/save.md`](re/save.md)
 § « Position à la reprise » : le groupe est posé au point de départ `0x6e` de la carte ;
@@ -271,7 +281,8 @@ valeurs provisoires de `dq9-core` (4 unités/s, murs simplifiés) ne sont pas en
 | deux écrans DS : écran haut (carte) et bas, disposition configurable | — |
 | son minimal : musique SDAT (séquenceur SSEQ + mixage SWAV) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
 
-**v0.1** : nouvelle partie avec un héros par défaut, prologue d'Angel Falls jouable (scènes,
+**v0.1** : nouvelle partie avec un héros par défaut (modèle animé fait en J1 ; reste le choix
+de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,
 dialogues, quêtes du village), sans combats. Critère : toute la suite d'événements du
 prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points.
 
