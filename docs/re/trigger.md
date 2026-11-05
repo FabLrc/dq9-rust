@@ -1,6 +1,7 @@
 # Triggers de scénario (`data/scenario/trigger<carte>.bin`)
 
-Implémentation : `crates/dq9-formats/src/trigger.rs` (`parse`, `Trigger::loaded`,
+Implémentation : `crates/dq9-formats/src/trigger.rs` (format : `parse`, `Trigger::loaded`,
+`Trigger::talk`, `action_name`) et `crates/dq9-core/src/trigger.rs` (état et exécution :
 `first_match`, `fire`, `run_action`, `run_deferred`, `State`). Outil : `cargo dq9re talk`
 déclenche les triggers de conversation de la carte, exécute leurs actions, puis choisit la
 réplique (`dialogue.md`).
@@ -91,13 +92,13 @@ l'événement 17 marque l'objet (0x6c) puis fait parler.
 ## Mots (`Trig_CompileWords`, `0x0205ec80`)
 
 Chaque mot vaut `code << 16 | arg` et est suivi d'un nombre fixe de champs d'opérandes, propre
-au code (table dans `trigger::operand_count`). Les codes 100 à 499 sont des **actions**, les
+au code (table dans `dq9_formats::trigger::operand_count`). Les codes 100 à 499 sont des **actions**, les
 autres des **conditions** ; le compilateur les sépare en deux listes. Contrôle : les mots des
 5 895 triggers tombent exactement sur la fin de leur enregistrement.
 
 Les nœuds compilés rangent l'argument et les moitiés des opérandes dans des demi-mots ; les
 dispositions, relevées sur les deux tables de sauts (`0x0205ed1c` conditions,
-`0x0205f1f4` actions), sont reproduites par `trigger.rs`. Cas notables :
+`0x0205f1f4` actions), sont reproduites par `dq9-core/src/trigger.rs`. Cas notables :
 
 - 0x1D et les actions 0x6c/0x6d/0x88/0x98–0x9a : le second opérande est un angle en degrés,
   converti en `(π·x/180 ramené une fois dans [0, 2π]) × 4096` tronqué ;
@@ -120,8 +121,8 @@ zéro condition). Si aucun trigger ne convient, le jeu suit son comportement par
 ## Conditions (`Trig_EvalCondition`, `0x0205fb04`)
 
 Toutes les conditions présentes dans les données sont réimplémentées (test
-`trigger_files_compile`) ; seules 0x2C, 0x45, 0x4F, 0x53 et 0x5B, absentes des données,
-lisent un état non modélisé (`trigger::UNMODELLED`). « Personnage `n` » = entrée `n` de la
+`trigger_conditions_are_modelled`, `dq9-core/tests/real_rom.rs`) ; seules 0x2C, 0x45, 0x4F, 0x53 et 0x5B, absentes des données,
+lisent un état non modélisé (`dq9_core::trigger::UNMODELLED`). « Personnage `n` » = entrée `n` de la
 table des personnages (`FUN_0200fd80`, 0 = le héros), « équipe » = liste à `+0x397c` de la
 sauvegarde (le premier est le meneur).
 
@@ -211,7 +212,7 @@ sauvegarde (le premier est le meneur).
 `Trig_RunActions` (`0x02064540`) exécute la liste dans l'ordre et s'arrête à la première
 action qui rend 0 ; les actions **différées** sont ajoutées à la liste `+0x30` du bloc de
 paramètres (`Trig_Defer`, `0x0206446c`) et ne sont exécutées par `Trig_RunDeferred` que si
-la liste est allée au bout. `trigger::run_action` reproduit le déroulement et les effets
+la liste est allée au bout. `dq9_core::trigger::run_action` reproduit le déroulement et les effets
 sur `State` (drapeaux, pistes, quêtes, journal, or, objets, moment de la journée) ; les
 effets sur ce que `State` ne contient pas (objets de carte, PNJ, menus, son,
 synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
@@ -284,7 +285,7 @@ structures non identifiées ; ils ne changent pas le déroulement de la liste, s
 le résultat d'une opération sur les objets, non modélisée). Absents des données, 0xc6 et
 0xd1 l'arrêtent selon le nombre de joueurs d'une session.
 
-Différées, dans l'ordre de la liste (`trigger::run_deferred`) : objets et progression sont
+Différées, dans l'ordre de la liste (`dq9_core::trigger::run_deferred`) : objets et progression sont
 appliqués à l'état, le reste est rendu sous forme de demandes (`Request::Talk`, `Event`,
 `Warp`, `RemoveNpc`). Une progression qui change recharge les triggers de la carte
 (`Request::ReloadTriggers`).

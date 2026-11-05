@@ -145,8 +145,8 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       `dq9re state`), vérifiés en déplaçant le héros. **Reste** : comparer les structures que
       `dq9-core` calculera (position après une même suite d'entrées, triggers) à la RAM.
 - [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-render` et
-      `dq9-app` faites (J1) ; restent `dq9-core`, `dq9-audio` ; l'état modélisé des triggers
-      passe de `dq9-formats` à `dq9-core`.
+      `dq9-app` faites (J1) ; reste `dq9-audio` ; l'état modélisé des triggers est passé de
+      `dq9-formats` à `dq9-core` (`dq9-core/src/trigger.rs` ; `dq9-formats::trigger` ne garde que le parsing).
 
 ## J1 — Voir le monde
 
