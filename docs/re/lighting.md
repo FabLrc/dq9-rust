@@ -66,8 +66,24 @@ couleur de bord (11) ; la couleur de bord marque l'entrée comme renseignée.
 ### Brouillard (`0x69`)
 
 Champs : index (0), activation (1), couleur (2), type (3), profondeur (4), décalage (5), table de
-densité packée (6-13, little-endian, 0x20 octets), alpha (14). Le brouillard ne s'applique pas
-au rendu ici : seul le parseur est porté.
+densité packée (6-13, little-endian, 0x20 octets), alpha (14). Le brouillard ne s'applique pas au rendu ici : seul le parseur est porté.
+
+#### Registres de brouillard (ARM9 EU, désassemblage)
+
+Lu dans `build/rom/arm9.bin` (extrait de la ROM du joueur, non committé) et dans Ghidra :
+
+- `func_020c54a4` (`0x020c54b4`) `(enable, type, depthShift, offset)` : si `enable == 0`,
+  `DISP3DCNT &= 0xCF7F` (efface l'activation, bit 7). Sinon `FOG_OFFSET = offset` puis
+  `DISP3DCNT = DISP3DCNT & 0xC0BF | type << 6 | depthShift << 8 | 0x80`. Pool : `0x0400035C`
+  (FOG_OFFSET), `0x04000060` (DISP3DCNT), `0x0000CF7F`.
+- `func_020c5574` (`0x020c5584`) `(table)` : appelle `func_020ca50c(table, 0x04000360)`, qui copie
+  32 octets (8 mots) : écriture de la table de densité FOG_TABLE (32 entrées).
+- Bits de DISP3DCNT : [hypothèse GBATEK] bit 6 = mode couleur (0 alpha seul, 1 couleur + alpha),
+  bit 7 = activation, bits 8–11 = décalage de profondeur. Non vérifié à melonDS.
+- `FOG_COLOR` (`0x04000358`) : écrit dans les lignes de `ComputeFogInfo` (USA), non relu en EU.
+- Le masque `0xCF7F` (désactivation) efface aussi les bits 12–13 : [inconnu], à vérifier.
+
+Pas encore établi : la formule exacte de densité (table de `0x69`) et l'équation côté GPU.
 
 ### Éclairage avancé (`0x6a`)
 
