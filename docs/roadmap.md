@@ -197,7 +197,9 @@ Avancement :
       Captures déterministes `--frame N`, choix de progression `--chapter/--step/--substep`
       (prologue par défaut). Hauteurs de placement conservées sans collision du sol ;
       limites de comportement et de rendu détaillées dans [`app.md`](app.md).
-- [ ] Éclairage de la carte (`.bats`) et brouillard.
+- [ ] Éclairage de la carte (`.bats`) et brouillard. Fait : parseur `.bats`
+      (`dq9_formats::lighting`, 504 scripts de la ROM). Reste : lumières DS, brouillard et
+      teinte appliqués au rendu, après validation de la formule de brouillard à melonDS.
 
 ## J2 — Se déplacer
 

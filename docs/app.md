@@ -121,7 +121,8 @@ Approximé ou absent :
 - **Tri des translucides** : du plus loin au plus proche selon la profondeur du centre de
   chaque maillage × instance ; la DS trie par `Y` à l'écran (ou garde l'ordre d'envoi).
 - **Éclairage** : les sommets à normale reçoivent une lumière blanche fixe ; ni lumières de la
-  carte (`.bats`), ni teinte du moment de la journée (`LightingManager`), ni table de toon.
+  carte (`.bats`), ni teinte du moment de la journée (`LightingManager`), ni table de brillance
+  (`SetShininessTable`, activée par le bit 15 de `SPE_EMI` du matériau).
   La plupart des modèles de carte portent leur éclairage dans les couleurs de sommet.
 - **Non rendu** : brouillard, contours (*edge marking*), anticrénelage, polygones d'ombre
   (mode 3) et fil de fer (alpha 0), panneaux G3D des modèles, ciel (couleur de fond fixe),

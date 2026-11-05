@@ -609,3 +609,15 @@ ov_017::021a2c14 Cast_LoadMap               # data/scenario/<area>.npc: place.bi
 0x020f0994 g_PlaceHandlers                  # kinds 3..22
 0x021075f4 g_NpcTable                       # +0xc 32 entries, +0x8c count, +0x90 cast, +0x94 chains
 0x02108cec g_PlaceContext                   # substep, step, chapter, counter +0xa, map +0xc
+# --- Lighting scripts (docs/re/lighting.md) ---
+0x0207b2dc LightingScript_DeclareAdvancedLighting          # opcode 0x64
+0x0207b314 LightingScript_Nop                              # opcode 0x65
+0x0207b31c LightingScript_CreateAdvancedLightingEntry_Alternate # opcode 0x66
+0x0207b4d0 LightingScript_DeclareBasicLighting             # opcode 0x67
+0x0207b504 LightingScript_CreateBasicLightingEntry         # opcode 0x68
+0x0207b648 LightingScript_CreateFogEntry                   # opcode 0x69
+0x0207b78c LightingScript_CreateAdvancedLightingEntry      # opcode 0x6a
+0x0207b938 ExecuteLightingScript                           # table runner over a .bats with the lighting opcode table
+0x0207b99c LightingInfo_Initialize                         # mode 0, gradient offset 0
+0x0207b9dc LightingInfo_Reset                              # same reset as Initialize
+0x0207ba1c LightingInfo_LoadFromScript                     # ExecuteLightingScript(script, length, this, alloc)

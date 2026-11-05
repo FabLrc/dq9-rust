@@ -52,6 +52,41 @@ fn collision_meshes_parse() {
     assert_eq!(triangles, 109_122);
 }
 
+/// Every lighting script in the ROM decompresses (LZ10) and parses: 504 `.bats` members in the
+/// 14 `ats_*.ambl` archives.
+#[test]
+fn lighting_scripts_parse() {
+    use dq9_formats::lighting::LightingInfo;
+    use nds_rom::Narc;
+
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let mut scripts = 0;
+    for archive_file in rom
+        .files
+        .files
+        .iter()
+        .filter(|file| file.path.starts_with("data/map/ats_") && file.path.ends_with(".ambl"))
+    {
+        let archive = Narc::parse(rom.file(archive_file.id).unwrap())
+            .unwrap_or_else(|error| panic!("{}: {error}", archive_file.path));
+        for entry in archive
+            .names
+            .files
+            .iter()
+            .filter(|entry| entry.path.ends_with(".bats"))
+        {
+            let data = archive.file(entry.id).unwrap();
+            let unpacked = nds_rom::compress::decompress(data)
+                .unwrap_or_else(|error| panic!("{}/{}: {error}", archive_file.path, entry.path));
+            LightingInfo::parse(&unpacked)
+                .unwrap_or_else(|error| panic!("{}/{}: {error}", archive_file.path, entry.path));
+            scripts += 1;
+        }
+    }
+    assert_eq!(scripts, 504);
+}
+
 /// Calls `f(archive path, member name, decompressed bytes)` for every GPC2 member.
 fn for_each_member(rom: &Rom, mut f: impl FnMut(&str, &str, &[u8])) {
     for file in rom.files.files.iter().filter(|f| f.path.ends_with(".gp2")) {

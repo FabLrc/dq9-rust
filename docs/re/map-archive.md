@@ -151,7 +151,7 @@ d'arrivée. Ce n'est pas une comparaison différentielle avec melonDS.
 devient `Z0<e>M0100`, `…01`, `…02`, `…03` selon l'étage (`id % 20` : < 5, < 9, < 13, < 17 ;
 au-delà, inchangé). Nom vide : on passe à l'`.amdj`. Sinon `data/map/ats_<1er caractère>.ambl`,
 où `Zone3D_StepLighting` cherche `<nom>.bats` (`GetFileInNarc`, `0x02075258` : `strcmp`, donc
-sensible à la casse). Le format `.bats` est décrit par le wiki Map-Archive.
+sensible à la casse). Le format `.bats` (LZ10, table de records, opcodes `0x64`..`0x6a`) est décrit dans `lighting.md`.
 
 Sur la ROM, 663 jeux d'archives chargent un éclairage ; deux noms manquent (`D07M0800.bats`,
 `B10M0200.bats`) : la carte se charge sans.
