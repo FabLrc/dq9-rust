@@ -21,7 +21,7 @@ mod transform;
 mod zone;
 
 pub use assemble::{AnimKind, Animation, Block, Context, Instance, Map, Part, PartKind};
-pub use blocks::{BlockEntry, BlockList};
+pub use blocks::{BlockEntry, BlockList, StartPoint};
 pub use collision::{Collision, GroundRecord, Triangle};
 pub use doors::parse as parse_regions;
 pub use doors::{

@@ -131,6 +131,15 @@ fn print(record: &MapRecord<'_>, map: &Map, ctx: &Context) {
         fx(z.world_position[0]),
         fx(z.world_position[1])
     );
+    let s = &map.block_list.start;
+    println!(
+        "start point: ({}, {}, {}) angle {:#x} (fx32 {:?})",
+        fx(s.position[0]),
+        fx(s.position[1]),
+        fx(s.position[2]),
+        s.angle,
+        s.position
+    );
     println!(
         "block list ({} of {}):",
         map.block_list.entries.len(),

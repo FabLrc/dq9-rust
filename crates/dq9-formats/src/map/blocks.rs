@@ -2,11 +2,14 @@
 //! manifests the game loads from the `.amdj`, each with an offset.
 //!
 //! The same table also carries other zone data (kinds `0x66` to `0x7e`, handlers at
-//! `0x020ef388`), not read here; see `docs/re/map-archive.md`.
+//! `0x020ef388`), mostly not read here (`docs/re/map-archive.md`); the exception is the start
+//! point (kind `0x6e`), where the party stands after loading a normal save
+//! (`docs/re/save.md`).
 //!
-//! port: 0x0201c7ac, 0x0201c7d4, 0x0201e26c, 0x0201e314, 0x0201e258, 0x0201e2e8
+//! port: 0x0201c7ac, 0x0201c7d4, 0x0201d4a4, 0x0201e26c, 0x0201e314, 0x0201e258, 0x0201e2e8,
+//! 0x0201e81c, 0x0201e830
 
-use super::{field_str, fx32};
+use super::{field_str, fx32, reduce_angle};
 use crate::table::Table;
 use nds_rom::{Error, Result};
 
@@ -14,6 +17,8 @@ use nds_rom::{Error, Result};
 const KIND_COUNT: u16 = 0x64;
 /// Record kind of one entry (`0x0201c7d4`).
 const KIND_ENTRY: u16 = 0x65;
+/// Record kind of the start point (`0x0201d4a4`).
+const KIND_START: u16 = 0x6e;
 /// Size of each name field of an entry (`0x0201e314`).
 const NAME_LEN: usize = 16;
 
@@ -32,11 +37,24 @@ pub struct BlockEntry {
     pub name3: Vec<u8>,
 }
 
-/// The list: entries and the capacity set by the last count record.
+/// Where the party stands after a normal load: `BlockList+0x70` (`fx32` vector) and `+0x7c`
+/// (angle), written by the `0x6e` record (`0x0201d4a4`) and read by `0x0201e81c` and
+/// `0x0201e830`. All zero without such a record (`0x0201e258` clears the list).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StartPoint {
+    /// World position, `fx32` (value / 4096 = game units).
+    pub position: [i32; 3],
+    /// Heading as the game keeps it: `fx32` radians reduced to `[0, 2π]`, stored in 16 bits
+    /// (`0x0201e830` reads it back as a signed halfword).
+    pub angle: i16,
+}
+
+/// The list: entries, the capacity set by the last count record and the start point.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BlockList {
     pub entries: Vec<BlockEntry>,
     pub capacity: usize,
+    pub start: StartPoint,
 }
 
 impl BlockList {
@@ -81,6 +99,16 @@ impl BlockList {
                             name3: name3.to_vec(),
                         });
                     }
+                }
+                KIND_START => {
+                    if v.len() < 4 {
+                        return Err(Error::Malformed("start record with fewer than 4 values"));
+                    }
+                    // `Vec3fix`, then the fourth value times 4096 and reduced (`0x02030f40`).
+                    self.start = StartPoint {
+                        position: [fx32(&v[0]), fx32(&v[1]), fx32(&v[2])],
+                        angle: reduce_angle(fx32(&v[3])) as i16,
+                    };
                 }
                 _ => {}
             }
@@ -131,5 +159,52 @@ mod tests {
         assert_eq!(list.entries[0].offset, [73, -151, 4096]);
         assert_eq!(list.entries[0].name, b"F07M0000");
         assert!(list.entries[0].name2.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod start_tests {
+    use super::*;
+    use crate::table::{Record, Value};
+
+    fn start(values: Vec<Value<'static>>) -> Table<'static> {
+        Table {
+            records: vec![Record {
+                kind: KIND_START,
+                values,
+            }],
+            string_count: 0,
+        }
+    }
+
+    #[test]
+    fn start_record_converts_to_fx32_and_reduces_the_angle() {
+        let t = start(vec![
+            Value::Float(0.21),
+            Value::Float(0.12),
+            Value::Float(-1.38),
+            Value::Float(3.14),
+        ]);
+        let mut list = BlockList::default();
+        list.load(&t).unwrap();
+        assert_eq!(list.start.position, [860, 491, -5652]);
+        assert_eq!(list.start.angle, 12861);
+        // A negative heading comes back into [0, 2π].
+        let t = start(vec![
+            Value::Int(0),
+            Value::Int(0),
+            Value::Int(0),
+            Value::Float(-1.0),
+        ]);
+        list.load(&t).unwrap();
+        assert!((0..=0x6488).contains(&list.start.angle));
+        list.clear();
+        assert_eq!(list.start, StartPoint::default());
+    }
+
+    #[test]
+    fn short_start_record_is_an_error() {
+        let t = start(vec![Value::Float(0.0); 3]);
+        assert!(BlockList::default().load(&t).is_err());
     }
 }
