@@ -11,11 +11,16 @@
 
 pub mod animation;
 pub mod camera;
+pub mod lighting;
 mod pose;
 pub mod renderer;
 pub mod scene;
 
 pub use animation::AnimatedScene;
 pub use camera::{Camera, CameraInput, CameraMode};
+pub use lighting::Environment;
 pub use renderer::{Renderer, Viewport};
-pub use scene::{Scene, SceneInstance, SceneMaterial, SceneModel, SceneTexture, SceneVertex};
+pub use scene::{
+    MaterialLight, Scene, SceneInstance, SceneMaterial, SceneModel, SceneTexture, SceneVertex,
+    Shade,
+};

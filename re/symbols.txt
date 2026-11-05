@@ -748,3 +748,10 @@ ov_017::021a2c14 Cast_LoadMap               # data/scenario/<area>.npc: place.bi
 0x0207b99c LightingInfo_Initialize                         # mode 0, gradient offset 0
 0x0207b9dc LightingInfo_Reset                              # same reset as Initialize
 0x0207ba1c LightingInfo_LoadFromScript                     # ExecuteLightingScript(script, length, this, alloc)
+# --- Lighting manager, fog and time of day (docs/re/lighting.md) ---
+0x0207ba38 LightingInfo_GetBasicMix                        # (info, slot, &r, &g, &b): copies the three floats of basic_.unk_0[slot]
+0x020c54b4 Gx_SetFog                                       # (enable, type, depthShift, offset): FOG_OFFSET, DISP3DCNT bits 6, 7, 8-11
+0x020c5584 Gx_SetFogTable                                  # (table): copies 32 bytes to FOG_TABLE 0x04000360
+0x020d86e0 Gx_SwapBuffers                                  # (manualSort, wBuffer): SWAP_BUFFERS = manualSort | wBuffer << 1
+0x020f33bc g_DayThresholds                                 # floats 420, 390, 210, 180: end of the day, evening, day and morning starts
+0x02107930 g_LightingManager                               # LightingManager singleton, +0x90 override, +0x94 day timer, +0x98 phase, 0x9c bytes

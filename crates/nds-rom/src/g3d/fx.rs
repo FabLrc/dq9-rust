@@ -45,7 +45,7 @@ pub(crate) fn bits(value: u32, lo: u32, hi: u32) -> u32 {
 /// `VEC_Normalize` (EU `0x020c2f28`): normalises a 1.19.12 vector exactly as the NITRO library
 /// does with the hardware divider (`2^56 / |v|²`) and square root (`sqrt(4 |v|²)`). A zero
 /// vector stays zero.
-pub(crate) fn normalize(v: [i32; 3]) -> [i32; 3] {
+pub fn normalize(v: [i32; 3]) -> [i32; 3] {
     let t = v
         .iter()
         .fold(0i64, |t, &c| t.wrapping_add(i64::from(c) * i64::from(c)));

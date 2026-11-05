@@ -15,7 +15,8 @@ use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
-use crate::scene::{Cull, PolygonMode, Scene, SceneDraw, SceneMaterial, SceneTexture, Wrap};
+use crate::lighting::{EnvUniform, Environment, gradient};
+use crate::scene::{Cull, PolygonMode, Scene, SceneDraw, SceneMaterial, SceneTexture, Shade, Wrap};
 
 /// Depth buffer format.
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -46,6 +47,20 @@ impl Viewport {
 struct MaterialUniform {
     uv_s: [f32; 4],
     uv_t: [f32; 4],
+    params: [f32; 4],
+    diffuse: [f32; 4],
+    ambient: [f32; 4],
+    specular: [f32; 4],
+    emission: [f32; 4],
+}
+
+/// Colours of the background gradient (`Bg` of `background.wgsl`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct BackgroundUniform {
+    top: [f32; 4],
+    mid: [f32; 4],
+    bottom: [f32; 4],
     params: [f32; 4],
 }
 
@@ -85,6 +100,18 @@ struct GpuModel {
     instances: Range<u32>,
 }
 
+/// Format of the polygon id buffer edge marking reads.
+const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
+
+/// Depth and polygon id buffers for one target size.
+struct Targets {
+    size: (u32, u32),
+    depth: wgpu::TextureView,
+    /// The depth buffer read back by the edge pass.
+    depth_sampled: wgpu::TextureView,
+    id: wgpu::TextureView,
+}
+
 /// GPU resources of one scene.
 pub struct Renderer {
     color_format: wgpu::TextureFormat,
@@ -93,7 +120,11 @@ pub struct Renderer {
     material_layout: wgpu::BindGroupLayout,
     pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
     camera_buffer: wgpu::Buffer,
+    env_buffer: wgpu::Buffer,
     camera_group: wgpu::BindGroup,
+    background_buffer: wgpu::Buffer,
+    background_group: wgpu::BindGroup,
+    background_pipeline: wgpu::RenderPipeline,
     textures: Vec<wgpu::TextureView>,
     translucent_textures: Vec<bool>,
     white: wgpu::TextureView,
@@ -104,9 +135,15 @@ pub struct Renderer {
     instance_worlds: Vec<Mat4>,
     /// Buffer slot for each original scene instance.
     instance_slots: Vec<usize>,
-    depth: Option<(wgpu::TextureView, u32, u32)>,
-    /// Background colour.
-    pub clear_color: wgpu::Color,
+    targets: Option<Targets>,
+    edge_buffer: wgpu::Buffer,
+    edge_layout: wgpu::BindGroupLayout,
+    edge_pipeline: wgpu::RenderPipeline,
+    /// The zone's lighting, fog and background, applied at the next [`render`](Self::render).
+    pub environment: Environment,
+    /// Width of the edge marking in target pixels; `None`: one DS pixel (the viewport height
+    /// over 192), as the DS draws it when its 256×192 screen is scaled up.
+    pub edge_pixels: Option<u32>,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -130,14 +167,44 @@ fn address_mode(w: Wrap) -> wgpu::AddressMode {
 fn material_uniform(m: &SceneMaterial) -> MaterialUniform {
     let [s, t] = m.uv_transform;
     let decal = m.mode == PolygonMode::Decal && m.texture.is_some();
+    let l = &m.light;
     MaterialUniform {
         uv_s: [s[0], s[1], s[2], 0.0],
         uv_t: [t[0], t[1], t[2], 0.0],
         params: [
             f32::from(m.alpha) / 31.0,
             f32::from(u8::from(decal)),
+            f32::from(l.polygon_id),
             0.0,
-            0.0,
+        ],
+        diffuse: [
+            l.diffuse[0],
+            l.diffuse[1],
+            l.diffuse[2],
+            match l.shade {
+                Shade::Unlit => 0.0,
+                Shade::Map => 1.0,
+                Shade::Sprite => 2.0,
+                Shade::Character => 3.0,
+            },
+        ],
+        ambient: [
+            l.ambient[0],
+            l.ambient[1],
+            l.ambient[2],
+            f32::from(l.lights),
+        ],
+        specular: [
+            l.specular[0],
+            l.specular[1],
+            l.specular[2],
+            f32::from(u8::from(l.terrain)),
+        ],
+        emission: [
+            l.emission[0],
+            l.emission[1],
+            l.emission[2],
+            f32::from(u8::from(l.fog)),
         ],
     }
 }
@@ -181,6 +248,163 @@ fn upload_texture(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+/// Uniform buffer, bind group layout and pipeline of the edge marking pass.
+fn edge_pipeline(
+    device: &wgpu::Device,
+    color_format: wgpu::TextureFormat,
+) -> (wgpu::Buffer, wgpu::BindGroupLayout, wgpu::RenderPipeline) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("dq9 edge shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("edge.wgsl").into()),
+    });
+    let texture_entry = |binding, sample_type| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("edge"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            texture_entry(1, wgpu::TextureSampleType::Uint),
+            texture_entry(2, wgpu::TextureSampleType::Depth),
+        ],
+    });
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("edge"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("edge"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("edge"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: color_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    (buffer, layout, pipeline)
+}
+
+/// Uniform buffer, bind group and pipeline of the background gradient.
+fn background_pipeline(
+    device: &wgpu::Device,
+    color_format: wgpu::TextureFormat,
+) -> (wgpu::Buffer, wgpu::BindGroup, wgpu::RenderPipeline) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("dq9 background shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("background.wgsl").into()),
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("background"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("background"),
+        size: std::mem::size_of::<BackgroundUniform>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("background"),
+        layout: &layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("background"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("background"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[
+                Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+                Some(wgpu::ColorTargetState {
+                    format: ID_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+            ],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    (buffer, group, pipeline)
+}
+
 impl Renderer {
     /// Uploads `scene` for drawing into targets of `color_format` (use a non-sRGB format: DS
     /// colours are display values).
@@ -206,7 +430,10 @@ impl Renderer {
         };
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera"),
-            entries: &[uniform_entry(0, wgpu::ShaderStages::VERTEX)],
+            entries: &[
+                uniform_entry(0, wgpu::ShaderStages::VERTEX),
+                uniform_entry(1, wgpu::ShaderStages::VERTEX_FRAGMENT),
+            ],
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("material"),
@@ -241,14 +468,28 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let env_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("environment"),
+            size: std::mem::size_of::<EnvUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let camera_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera"),
             layout: &camera_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: env_buffer.as_entire_binding(),
+                },
+            ],
         });
+        let (background_buffer, background_group, background_pipeline) =
+            background_pipeline(device, color_format);
         let white = upload_texture(
             device,
             queue,
@@ -262,6 +503,7 @@ impl Renderer {
                 translucent: false,
             },
         );
+        let (edge_buffer, edge_layout, edge_pipeline) = edge_pipeline(device, color_format);
         let mut renderer = Self {
             color_format,
             shader,
@@ -269,7 +511,11 @@ impl Renderer {
             material_layout,
             pipelines: HashMap::new(),
             camera_buffer,
+            env_buffer,
             camera_group,
+            background_buffer,
+            background_group,
+            background_pipeline,
             textures: scene
                 .textures
                 .iter()
@@ -282,13 +528,12 @@ impl Renderer {
             instance_buffer: None,
             instance_worlds: Vec::new(),
             instance_slots: Vec::new(),
-            depth: None,
-            clear_color: wgpu::Color {
-                r: 0.25,
-                g: 0.35,
-                b: 0.5,
-                a: 1.0,
-            },
+            targets: None,
+            edge_buffer,
+            edge_layout,
+            edge_pipeline,
+            environment: Environment::default(),
+            edge_pixels: None,
         };
         // Instances grouped by model, to draw each model's instances in one call.
         let mut order: Vec<usize> = (0..scene.instances.len()).collect();
@@ -467,8 +712,9 @@ impl Renderer {
     fn pipeline(&mut self, device: &wgpu::Device, key: PipelineKey) -> &wgpu::RenderPipeline {
         let (shader, layout, format) = (&self.shader, &self.pipeline_layout, self.color_format);
         self.pipelines.entry(key).or_insert_with(|| {
-            let vertex_attributes =
-                wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x3];
+            let vertex_attributes = wgpu::vertex_attr_array![
+                0 => Float32x3, 1 => Float32x2, 2 => Float32x3, 7 => Float32x3, 8 => Float32
+            ];
             let instance_attributes = wgpu::vertex_attr_array![
                 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4
             ];
@@ -519,11 +765,23 @@ impl Renderer {
                         "fs_main"
                     }),
                     compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: key.blend.then_some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format,
+                            blend: key.blend.then_some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        // Only opaque polygons give their id to edge marking.
+                        Some(wgpu::ColorTargetState {
+                            format: ID_FORMAT,
+                            blend: None,
+                            write_mask: if key.blend {
+                                wgpu::ColorWrites::empty()
+                            } else {
+                                wgpu::ColorWrites::ALL
+                            },
+                        }),
+                    ],
                 }),
                 multiview_mask: None,
                 cache: None,
@@ -683,29 +941,44 @@ impl Renderer {
         }
     }
 
-    fn depth_view(&mut self, device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
-        if let Some((view, w, h)) = &self.depth
-            && (*w, *h) == (width, height)
+    /// The depth and polygon id buffers for a target of `width` × `height` pixels.
+    fn targets(&mut self, device: &wgpu::Device, width: u32, height: u32) -> &Targets {
+        if self
+            .targets
+            .as_ref()
+            .is_none_or(|t| t.size != (width, height))
         {
-            return view.clone();
-        }
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth"),
-            size: wgpu::Extent3d {
+            let size = wgpu::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.depth = Some((view.clone(), width, height));
-        view
+            };
+            let texture = |format, label| {
+                device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+            };
+            let depth = texture(DEPTH_FORMAT, "depth");
+            let id = texture(ID_FORMAT, "polygon ids");
+            self.targets = Some(Targets {
+                size: (width, height),
+                depth: depth.create_view(&wgpu::TextureViewDescriptor::default()),
+                depth_sampled: depth.create_view(&wgpu::TextureViewDescriptor {
+                    aspect: wgpu::TextureAspect::DepthOnly,
+                    ..Default::default()
+                }),
+                id: id.create_view(&wgpu::TextureViewDescriptor::default()),
+            });
+        }
+        self.targets.as_ref().expect("targets were just created")
     }
 
     /// Records the frame into `encoder`: clears `target` (of `width` × `height` pixels) and
@@ -726,7 +999,24 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&view_proj.to_cols_array()),
         );
-        let depth = self.depth_view(device, width, height);
+        let env_uniform = EnvUniform::new(&self.environment, camera);
+        queue.write_buffer(&self.env_buffer, 0, bytemuck::bytes_of(&env_uniform));
+        let ([top, mid, bottom], center) = gradient(&self.environment.background, camera, aspect);
+        let pad = |c: [f32; 3]| [c[0], c[1], c[2], 1.0];
+        queue.write_buffer(
+            &self.background_buffer,
+            0,
+            bytemuck::bytes_of(&BackgroundUniform {
+                top: pad(top),
+                mid: pad(mid),
+                bottom: pad(bottom),
+                params: [center, 0.0, 0.0, 0.0],
+            }),
+        );
+        let (depth, ids, depth_sampled) = {
+            let t = self.targets(device, width, height);
+            (t.depth.clone(), t.id.clone(), t.depth_sampled.clone())
+        };
         // Translucent draws, back to front by the view depth of their centres.
         let view = camera.view();
         let mut translucent: Vec<(f32, usize, usize, u32)> = Vec::new();
@@ -752,20 +1042,36 @@ impl Renderer {
             .collect();
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("map"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(self.clear_color),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
+            color_attachments: &[
+                Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: f64::from(top[0]),
+                            g: f64::from(top[1]),
+                            b: f64::from(top[2]),
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+                Some(wgpu::RenderPassColorAttachment {
+                    view: &ids,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+            ],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Discard,
+                    store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
             }),
@@ -781,6 +1087,10 @@ impl Renderer {
             0.0,
             1.0,
         );
+        // The gradient behind everything (the game draws it as the first polygon of the frame).
+        pass.set_pipeline(&self.background_pipeline);
+        pass.set_bind_group(0, &self.background_group, &[]);
+        pass.draw(0..3, 0..1);
         let Some(instances) = &self.instance_buffer else {
             return;
         };
@@ -815,6 +1125,64 @@ impl Renderer {
             pass.set_index_buffer(model.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.set_bind_group(1, &gm.bind_group, &[]);
             pass.draw_indexed(draw.indices.clone(), 0, slot..slot + 1);
+        }
+        drop(pass);
+        if let Some(color) = self.environment.edge {
+            // Edge marking of the 3D engine, one DS pixel wide.
+            let step = self
+                .edge_pixels
+                .map_or((viewport.height as f32 / 192.0).round().max(1.0), |w| {
+                    w.max(1) as f32
+                });
+            let wide = color.map(|c| {
+                if c == 0 {
+                    0.0
+                } else {
+                    f32::from(2 * c + 1) / 63.0
+                }
+            });
+            queue.write_buffer(
+                &self.edge_buffer,
+                0,
+                bytemuck::bytes_of(&[wide[0], wide[1], wide[2], step]),
+            );
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("edge"),
+                layout: &self.edge_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.edge_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&ids),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&depth_sampled),
+                    },
+                ],
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("edges"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.edge_pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.draw(0..3, 0..1);
         }
     }
 

@@ -106,6 +106,8 @@ pub struct LoadedMap {
     pub field: Field,
     /// The hero's pose is a game pose (doorway arrival or save), not the computed default.
     pub placed: bool,
+    /// The map's `.bats` lighting script, when it has one.
+    pub lighting: Option<dq9_formats::lighting::LightingInfo>,
 }
 
 fn text(s: &[u8]) -> String {
@@ -185,6 +187,7 @@ pub fn load(
         (None, None) => (collision.spawn().unwrap_or(Vec3::ZERO), 0.0),
     };
     let placed = spawn.is_some() || saved.is_some();
+    let lighting = crate::lighting::script(&assembled, |p| map::rom_file(&rom, p));
     let mut hero = Hero::new(position);
     hero.yaw = yaw;
     let mut runtime = AnimatedScene::build(&assembled, record.id, record.code, story, |p| {
@@ -216,5 +219,6 @@ pub fn load(
         field,
         placed,
         hero_instance,
+        lighting,
     })
 }

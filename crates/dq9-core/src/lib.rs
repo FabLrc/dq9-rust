@@ -7,6 +7,7 @@ use nds_rom::compress::decompress;
 use nds_rom::{Error, Narc, Result};
 
 pub mod field;
+pub mod lighting;
 pub mod state;
 pub mod trigger;
 

@@ -13,7 +13,10 @@ use nds_rom::g3d::{Fx12, G3dFile, Name};
 use nds_rom::{Error, Narc, Result};
 
 use crate::pose::VertexPose;
-use crate::scene::{Builder, Cull, PolygonMode, SceneDraw, TextureSources, Wrap, member, unpack};
+use crate::scene::{
+    Builder, Cull, MaterialLight, PolygonMode, SceneDraw, Shade, TextureSources, Wrap, member,
+    unpack,
+};
 use crate::{
     Camera, Renderer, Scene, SceneInstance, SceneMaterial, SceneModel, SceneTexture, SceneVertex,
 };
@@ -305,6 +308,7 @@ impl AnimatedScene {
             sources: &ordered,
             scene: std::mem::take(&mut self.scene),
             texture_ids: HashMap::new(),
+            lit: false,
         };
         for clip in &clips {
             let f = G3dFile::parse(&clip.bytes)?;
@@ -364,6 +368,7 @@ impl AnimatedScene {
             sources: &sources,
             scene: std::mem::take(&mut self.scene),
             texture_ids: HashMap::new(),
+            lit: false,
         };
         // NpcTable_Build (0x0203d038): world position, Y angle and 0x10a uniform scale.
         let world = Mat4::from_translation(Vec3::from_array(
@@ -411,6 +416,7 @@ impl AnimatedScene {
             position,
             texcoord: [0.0; 2],
             color: [1.0, 0.45, 0.05],
+            ..SceneVertex::default()
         })
         .to_vec();
         let model_index = self.scene.models.len();
@@ -432,6 +438,7 @@ impl AnimatedScene {
                 depth_equal: false,
                 translucent_depth_write: false,
                 uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                light: MaterialLight::default(),
             }],
             draws: vec![SceneDraw {
                 material: 0,
@@ -439,6 +446,8 @@ impl AnimatedScene {
                 center: [0.0, 0.5, 0.0],
             }],
             bounds: Some([Vec3::new(-0.3, 0.0, -0.3), Vec3::new(0.3, 1.0, 0.3)]),
+            lit: false,
+            tinted: false,
         });
         let instance_index = self.scene.instances.len();
         self.scene.instances.push(SceneInstance {
@@ -483,6 +492,11 @@ impl AnimatedScene {
                         if let Some(t) = mat.track(&m.name) {
                             mat.colors(t, (clip.frame >> 12) as u16)?.apply(m);
                             target.materials[i].alpha = m.alpha();
+                            let light = &mut target.materials[i].light;
+                            light.diffuse = m.diffuse();
+                            light.ambient = m.ambient();
+                            light.specular = m.specular();
+                            light.emission = m.emission();
                             vertices_dirty = true;
                         }
                     }
@@ -522,7 +536,12 @@ impl AnimatedScene {
                     Some(o) => o,
                     None => model.rest_pose()?,
                 };
-                state.pose.apply(model, &objects, &mut target.vertices)?;
+                state.pose.apply(
+                    model,
+                    &objects,
+                    &mut target.vertices,
+                    (target.lit, target.tinted),
+                )?;
                 for draw in &mut target.draws {
                     let indices =
                         &target.indices[draw.indices.start as usize..draw.indices.end as usize];
@@ -643,6 +662,12 @@ impl AnimatedScene {
                 depth_equal: false,
                 translucent_depth_write: false,
                 uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                light: MaterialLight {
+                    shade: Shade::Sprite,
+                    // Observed in melonDS: the DS fogs the cast's polygons.
+                    fog: true,
+                    ..MaterialLight::default()
+                },
             }],
             draws: vec![SceneDraw {
                 material: 0,
@@ -650,6 +675,8 @@ impl AnimatedScene {
                 center: [0.0; 3],
             }],
             bounds: None,
+            lit: false,
+            tinted: false,
         });
         let position = Vec3::from_array(npc.placement.position.map(|v| v as f32 / 4096.0));
         self.scene.instances.push(SceneInstance {
@@ -853,6 +880,7 @@ mod tests {
             depth_equal: false,
             translucent_depth_write: false,
             uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            light: MaterialLight::default(),
         };
         let mut scene = Scene::default();
         scene.models.push(SceneModel {
@@ -868,6 +896,8 @@ mod tests {
                 center: [0.0; 3],
             }],
             bounds: None,
+            lit: false,
+            tinted: false,
         });
         let mut sprite = SpriteAnimation {
             model: 0,

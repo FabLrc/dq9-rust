@@ -5,9 +5,12 @@ repère de position du joueur. `dq9-core` consomme les collisions `.col2`
 ([`re/collision.md`](re/collision.md)) pour un déplacement de terrain expérimental ;
 `dq9_core::field` teste les portes, aires et warps des `.bmbl` à chaque pas
 ([`re/map-archive.md`](re/map-archive.md)) et `dq9-app` charge la carte de destination qu'il
-renvoie ; l'éclairage n'est pas encore pris en charge.
+renvoie ; l'éclairage de la carte, le brouillard et l'heure du jour sont appliqués
+([`re/lighting.md`](re/lighting.md)).
 
-- `crates/dq9-core` (sans E/S, compile en wasm) : `CollisionWorld` assemble les `.col2` des
+- `crates/dq9-core` (sans E/S, compile en wasm) : `lighting` (horloge du jour `DayClock`,
+  phase `TimeOfDay`, choix et mélange de l'entrée `.bats`, registres de brouillard, vecteurs
+  de lumière) ; `CollisionWorld` assemble les `.col2` des
   placements visibles ; `Hero` avance au pas fixe, recale le sol et bloque les faces verticales.
   Vitesse et départ sont provisoires ([`re/movement.md`](re/movement.md)).
 - `crates/dq9-render` (sans E/S, compile en wasm) : `Scene::build(map, fichier)` reste
@@ -23,7 +26,8 @@ renvoie ; l'éclairage n'est pas encore pris en charge.
 
 ```powershell
 cargo run -p dq9-app --release -- --map M01            # ROM : --rom, DQ9_ROM, ou le seul *.nds de rom/
-cargo run -p dq9-app --release -- --map C01M09 --time 1 --ds-aspect
+cargo run -p dq9-app --release -- --map C01M09 --time morning --ds-aspect
+cargo run -p dq9-app --release -- --map F01 --clock 389 --screenshot build/scratch/app/f01-dusk.png
 cargo run -p dq9-app --release -- --save rom/dq9.sav   # carte, position, cap et heure de la sauvegarde
 # Une image hors écran en PNG, sans fenêtre, puis sortie :
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/m01.png
@@ -46,9 +50,13 @@ carte lue dans `--save`. En l'absence des deux options, la carte reste `M01`. `-
 `.sav` local et sélectionne la carte du premier slot normal valide ; aucune donnée n'est envoyée
 au réseau. Le héros commence à la position et au cap que le jeu donne après « Continue » (point
 de départ de la carte, `re/save.md` § « Position à la reprise »), posé sur le sol ; l'écran
-`--screenshot` imprime cette pose (`hero: …`) et centre la caméra dessus. `--time` : moment de
-la journée 0 à 3 (`LightingManager+0x98`, choix des variantes et des instances visibles), par
-défaut la phase de l'horloge de la sauvegarde, sinon 0 ;
+`--screenshot` imprime cette pose (`hero: …`) et centre la caméra dessus. `--time` : moment de la
+journée `night`, `morning`, `day`, `evening` ou 0 à 3 (`LightingManager+0x98` : choix des
+variantes, des instances visibles et de l'entrée d'éclairage), par défaut la phase de l'horloge de
+la sauvegarde, sinon la nuit ; `--clock S` : seconde du jour de 420 s (nuit 0, matin 180, jour 210,
+soir 390) ; sa phase remplace `--time`, et les deux dernières secondes d'une phase se fondent
+dans la suivante en zone avancée (champ) ; `--fog OFFSET,SHIFT,COLOR,D0..D31` remplace le
+brouillard (comparaisons à melonDS) ;
 `--ds-aspect` : rendu au format d'un écran DS (256×192), bandes noires autour.
 
 La distribution est celle du prologue **1.1.1 de jour** par défaut. `--chapter`, `--step`,
@@ -64,7 +72,7 @@ Commandes : glisser avec le bouton gauche pour tourner, molette pour zoomer. En 
 `ZQSD`/`WASD` (touches physiques) ou flèches déplacent le héros sur le sol ; `Maj` double sa
 vitesse provisoire. `Tab` passe en vol libre, où ces touches déplacent la caméra ; `Q`/`E`
 (physiques `A`/`E` en AZERTY) déplacent la cible vers le bas/haut. `F` recadre, `R` format DS,
-`T` moment suivant, `PageHaut`/`PageBas` carte précédente/suivante, `Échap` quitter.
+`T` moment suivant (liste « Moment » sur le Web), `PageHaut`/`PageBas` carte précédente/suivante, `Échap` quitter.
 
 ## Lancer dans un navigateur
 
@@ -77,7 +85,7 @@ tools/wasm-bindgen/bin/wasm-bindgen --target web --no-typescript `
 python -m http.server 8000 -d crates/dq9-app/web     # ou tout serveur de fichiers statiques
 ```
 
-Ouvrir `http://localhost:8000/` (paramètres `map`, `time`, `ds=1`, `chapter`, `step`,
+Ouvrir `http://localhost:8000/` (paramètres `map`, `time` (nom ou 0 à 3), `clock`, `ds=1`, `chapter`, `step`,
 `substep`, `night=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
 page. Les deux fichiers sont lus localement dans le navigateur, jamais envoyés ni hébergés ;
 `map` explicite prévaut sur la carte de la sauvegarde.
@@ -132,13 +140,19 @@ Approximé ou absent :
 
 - **Tri des translucides** : du plus loin au plus proche selon la profondeur du centre de
   chaque maillage × instance ; la DS trie par `Y` à l'écran (ou garde l'ordre d'envoi).
-- **Éclairage** : les sommets à normale reçoivent une lumière blanche fixe ; ni lumières de la
-  carte (`.bats`), ni teinte du moment de la journée (`LightingManager`), ni table de brillance
-  (`SetShininessTable`, activée par le bit 15 de `SPE_EMI` du matériau).
-  La plupart des modèles de carte portent leur éclairage dans les couleurs de sommet.
-- **Non rendu** : brouillard, contours (*edge marking*), anticrénelage, polygones d'ombre
-  (mode 3) et fil de fer (alpha 0), panneaux G3D des modèles, ciel (couleur de fond fixe),
-  précision de la DS (couleurs 6 bits, profondeur 24 bits ou W).
+- **Éclairage** : les modèles de carte sont éclairés au sommet par les deux lumières DS du
+  `.bats` (équation de GBATEK : émission + par lumière `couleur × (diffuse·max(0, −L·N) + ambiante
+  + spéculaire·brillance)`, sur 5 bits ; bits 0-3 de `POLYGON_ATTR`), normales du modèle, ambiante
+  de la zone pour le terrain en mode avancé. Les zones de base n'ont pas de lumière : leurs
+  couleurs de sommets sont transformées (teinte, luminosité, contraste) ; sprites et personnages
+  sont multipliés par la diffuse de la zone ; les personnages gardent une lumière fixe en plus (les
+  vraies lumières de la DS passent par leur propre matrice, non portée). Fond : dégradé vertical
+  centré sur l'horizon ; brouillard de la DS (offset, décalage, table de 32 densités, couleur) sur
+  les matériaux au bit 15 de `POLYGON_ATTR` et les sprites ; marquage des contours. La table de
+  brillance (`SetShininessTable`, bit 15 de `SPE_EMI`) n'est pas portée.
+- **Non rendu** : anticrénelage, polygones d'ombre (mode 3) et fil de fer (alpha 0), panneaux
+  G3D des modèles, mode alpha seul du brouillard et alpha de `FOG_COLOR`, précision de la DS
+  (couleurs 6 bits, profondeur W ; la profondeur du brouillard est recalculée sur 24 bits).
 - **PNJ, limites** : les hauteurs des PNJ sont celles des placements ; le snap du sol et le
   déplacement du héros sont approximatifs (pas d'accélération, rayon, modèle animé ni départ
   depuis une sauvegarde). Les portes, aires et warps suivent `dq9_core::field` (comparés à
@@ -169,6 +183,11 @@ Approximé ou absent :
   différents à caméra identique ; `C01M09 --chapter 19 --step 2 --substep 1 --night`
   montre les sprites de la religieuse et du prêtre face à une caméra `--eye/--target`.
   Ce sont des contrôles fonctionnels, pas une comparaison pixel à pixel avec melonDS.
+- Éclairage : captures `M01` (jour, nuit, matin, soir : brouillard et ciel visibles, dégradé
+  différent par moment) ; comparaison à melonDS sur `C01M09` de nuit et brouillard forcé :
+  écart moyen 12,8/255 par canal sans brouillard ; densité de brouillard à 0,01 près sur
+  cinq tables (détail et limites : [`re/lighting.md`](re/lighting.md) § « Comparaison à melonDS »,
+  `scripts/melonds-capture.ps1`). Lumières DS, ciel et fondu de zone avancée non comparés.
 - Navigateur : bundle wasm reconstruit avec `wasm-bindgen`, ROM choisie localement dans
   la page ; `M01` et `C01M09` affichent la carte et les PNJ, sans erreur JavaScript observée.
   Les captures natives des images 0 et 60 de `M01` diffèrent sur 41 143 pixels à caméra

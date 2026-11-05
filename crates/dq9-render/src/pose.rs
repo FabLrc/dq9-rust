@@ -11,7 +11,8 @@ enum Op {
     Render(RenderOp),
     Matrix(Mat4, bool),
     Gpu(GpuCmd),
-    Draw(usize),
+    /// Material index, and whether the mesh sends `COLOR` commands (shape flag bit 1).
+    Draw(usize, bool),
 }
 
 #[derive(Debug)]
@@ -25,11 +26,11 @@ impl VertexPose {
             match op {
                 RenderOp::BindMaterial { material_idx } => material = usize::from(*material_idx),
                 RenderOp::Draw { mesh_idx } => {
-                    ops.push(Op::Draw(material));
                     let mesh = model
                         .meshes
                         .get(usize::from(*mesh_idx))
                         .ok_or(Error::Malformed("pose mesh index"))?;
+                    ops.push(Op::Draw(material, mesh.flags & 2 != 0));
                     for cmd in DisplayList::new(mesh.commands) {
                         let cmd = cmd?;
                         let matrix = |entries: &[Fx12]| {
@@ -72,6 +73,7 @@ impl VertexPose {
         model: &Model<'_>,
         objects: &[Mat4],
         vertices: &mut [SceneVertex],
+        (lit, tinted): (bool, bool),
     ) -> Result<()> {
         let mut cur = Mat4::IDENTITY;
         let mut stack = [Mat4::IDENTITY; 32];
@@ -79,6 +81,7 @@ impl VertexPose {
         let mut material = 0;
         let mut color = [1.0; 3];
         let mut normal = None;
+        let mut mesh_color = false;
         let mut at = 0;
         let slot = |s: usize| {
             if s < 32 {
@@ -89,8 +92,9 @@ impl VertexPose {
         };
         for op in &self.0 {
             match op {
-                Op::Draw(m) => {
+                Op::Draw(m, has_color) => {
                     material = *m;
+                    mesh_color = *has_color;
                     let m = &model.materials[material];
                     color = if m.diffuse_is_vertex_color() {
                         m.diffuse()
@@ -162,8 +166,24 @@ impl VertexPose {
                             .get_mut(at)
                             .ok_or(Error::Malformed("pose vertex count"))?;
                         v.position = cur.transform_point(p.map(Fx12::to_f32));
-                        v.color =
-                            normal.map_or(color, |n| fixed_light(&model.materials[material], n));
+                        match normal {
+                            // Map models: the zone's lights light the vertex at draw time.
+                            Some(n) if lit => {
+                                v.normal = n;
+                                v.color = [1.0; 3];
+                                v.tint = 0.0;
+                            }
+                            Some(n) => {
+                                v.normal = [0.0; 3];
+                                v.color = fixed_light(&model.materials[material], n);
+                                v.tint = 0.0;
+                            }
+                            None => {
+                                v.normal = [0.0; 3];
+                                v.color = color;
+                                v.tint = f32::from(u8::from(lit && tinted && mesh_color));
+                            }
+                        }
                         at += 1;
                     }
                     _ => unreachable!(),
@@ -203,7 +223,8 @@ mod tests {
         for frame in [0, 4, 8] {
             let objects = animation.pose(model, frame).unwrap();
             let reference = Geometry::build_posed(model, &objects).unwrap();
-            plan.apply(model, &objects, &mut vertices).unwrap();
+            plan.apply(model, &objects, &mut vertices, (false, true))
+                .unwrap();
             for (posed, expected) in vertices.iter().zip(&reference.vertices) {
                 assert_eq!(posed.position, expected.position);
             }

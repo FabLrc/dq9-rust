@@ -57,6 +57,12 @@ pub struct SceneVertex {
     pub position: [f32; 3],
     pub texcoord: [f32; 2],
     pub color: [f32; 3],
+    /// Unit normal in model space; zero for a vertex that carries its colour. The renderer
+    /// lights the others with the DS lights of the map ([`Shade::Map`]).
+    pub normal: [f32; 3],
+    /// 1 when the zone's basic lighting transforms this vertex colour (the mesh sends `COLOR`
+    /// commands, `LightingManager::ModelTransformTintBrightnessContrast`), else 0.
+    pub tint: f32,
 }
 
 /// A decoded texture with the palette it was bound with.
@@ -72,6 +78,80 @@ pub struct SceneTexture {
     pub rgba: Vec<u8>,
     /// Some texel has an alpha strictly between 0 and 255 (A3I5, A5I3 formats).
     pub translucent: bool,
+}
+
+/// How the renderer lights a material's vertices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Shade {
+    /// Vertex colour only.
+    #[default]
+    Unlit,
+    /// Map model: vertices with a normal get the DS lighting of the zone, the others the
+    /// zone's colour transform (basic lighting).
+    Map,
+    /// Billboard sprite, multiplied by the zone's sprite diffuse colour.
+    Sprite,
+    /// Character model (colours baked with a stand-in light), multiplied by the zone's model
+    /// diffuse colour.
+    Character,
+}
+
+/// Default `POLYGON_ATTR` of `RenderConfig::Reset` (`0x02050?`: alpha 31, front faces, four
+/// lights), completed by the bits a material's mask selects.
+const DEFAULT_POLYGON_ATTR: u32 = (0x1f << 16) | (1 << 7) | 0xf;
+
+/// What the DS lighting equation needs from a material (`DIF_AMB`, `SPE_EMI`, `POLYGON_ATTR`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaterialLight {
+    pub shade: Shade,
+    pub diffuse: [f32; 3],
+    pub ambient: [f32; 3],
+    pub specular: [f32; 3],
+    pub emission: [f32; 3],
+    /// `POLYGON_ATTR` bits 0-3: the lights that shine on it.
+    pub lights: u8,
+    /// `POLYGON_ATTR` bit 15: fog applies.
+    pub fog: bool,
+    /// `POLYGON_ATTR` bits 24-29.
+    pub polygon_id: u8,
+    /// Terrain model of an advanced zone: its ambient colour is the zone's
+    /// (`LightingManager::ApplyAmbientColorToModel`, `0x02052348`).
+    pub terrain: bool,
+}
+
+impl Default for MaterialLight {
+    fn default() -> Self {
+        Self {
+            shade: Shade::Unlit,
+            diffuse: [1.0; 3],
+            ambient: [0.0; 3],
+            specular: [0.0; 3],
+            emission: [0.0; 3],
+            lights: 0,
+            fog: false,
+            polygon_id: 0,
+            terrain: false,
+        }
+    }
+}
+
+impl MaterialLight {
+    /// Colours and bits of a G3D material, for a map or character model.
+    pub fn from_material(m: &Material, shade: Shade) -> Self {
+        let attr =
+            (m.polygon_attr & m.polygon_attr_mask) | (DEFAULT_POLYGON_ATTR & !m.polygon_attr_mask);
+        Self {
+            shade,
+            diffuse: m.diffuse(),
+            ambient: m.ambient(),
+            specular: m.specular(),
+            emission: m.emission(),
+            lights: (attr & 0xf) as u8,
+            fog: attr & (1 << 15) != 0,
+            polygon_id: ((attr >> 24) & 0x3f) as u8,
+            terrain: false,
+        }
+    }
 }
 
 /// Drawing state of one material.
@@ -95,6 +175,7 @@ pub struct SceneMaterial {
     /// Affine transform of the normalised texture coordinate (rows of a 2×3 matrix): the
     /// material's own texture matrix, else identity; SRT animations replace it per frame.
     pub uv_transform: [[f32; 3]; 2],
+    pub light: MaterialLight,
 }
 
 impl SceneMaterial {
@@ -133,6 +214,12 @@ pub struct SceneModel {
     pub draws: Vec<SceneDraw>,
     /// Model-space bounding box of the vertices.
     pub bounds: Option<[Vec3; 2]>,
+    /// Vertices with a normal are lit by the zone's lights at draw time (map models);
+    /// otherwise their colours are baked.
+    pub lit: bool,
+    /// The zone's basic lighting may transform its vertex colours (the resource is not
+    /// flagged `UNTINTED`).
+    pub tinted: bool,
 }
 
 /// A placed model.
@@ -239,6 +326,7 @@ type ModelCacheKey<'a> = (
     &'a str,
     &'a [dq9_formats::map::Animation],
     Option<usize>,
+    bool,
 );
 
 /// Builder state: the scene so far and its decoded textures by material texture and palette
@@ -247,6 +335,8 @@ pub(crate) struct Builder<'s, 'a> {
     pub(crate) sources: &'s TextureSources<'a>,
     pub(crate) scene: Scene,
     pub(crate) texture_ids: HashMap<(Name, Option<Name>), Option<usize>>,
+    /// Build map models: normals stay in the vertices for the zone's lights.
+    pub(crate) lit: bool,
 }
 
 impl Builder<'_, '_> {
@@ -328,6 +418,14 @@ impl Builder<'_, '_> {
             uv_transform: tex_matrix.map_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], |t| {
                 t.normalized(f32::from(m.width.max(1)), f32::from(m.height.max(1)))
             }),
+            light: MaterialLight::from_material(
+                m,
+                if self.lit {
+                    Shade::Map
+                } else {
+                    Shade::Character
+                },
+            ),
         }
     }
 
@@ -352,6 +450,7 @@ impl Builder<'_, '_> {
                 position: v.position,
                 texcoord: v.texcoord,
                 color: v.color,
+                ..SceneVertex::default()
             })
             .collect();
         let mut draws = Vec::with_capacity(geometry.draw_calls.len());
@@ -360,17 +459,24 @@ impl Builder<'_, '_> {
             if material >= materials.len() {
                 return Err(Error::Malformed("G3D draw call material out of range"));
             }
-            if call.used_normals {
-                // The DS lights these vertices from their normals and the material colours;
-                // the map's lights are not read yet: a fixed light stands in.
-                let m = &model.materials[material];
-                for (out, v) in vertices[call.vertex_range.clone()]
-                    .iter_mut()
-                    .zip(&geometry.vertices[call.vertex_range.clone()])
-                {
-                    if v.normal != [0.0; 3] {
-                        out.color = fixed_light(m, v.normal);
-                    }
+            let tint = model
+                .meshes
+                .get(usize::from(call.mesh_idx))
+                .is_some_and(|mesh| mesh.flags & 2 != 0);
+            let m = &model.materials[material];
+            for (out, v) in vertices[call.vertex_range.clone()]
+                .iter_mut()
+                .zip(&geometry.vertices[call.vertex_range.clone()])
+            {
+                if v.normal == [0.0; 3] {
+                    out.tint = f32::from(u8::from(self.lit && tint));
+                } else if self.lit {
+                    // Lit at draw time by the zone's lights (DS lighting equation).
+                    out.normal = v.normal;
+                    out.color = [1.0; 3];
+                } else {
+                    // Characters: a fixed light stands in for the DS lights.
+                    out.color = fixed_light(m, v.normal);
                 }
             }
             let range = &vertices[call.vertex_range.clone()];
@@ -398,6 +504,8 @@ impl Builder<'_, '_> {
             materials,
             draws,
             bounds,
+            lit: self.lit,
+            tinted: true,
         })
     }
 }
@@ -457,6 +565,7 @@ impl Scene {
                 ..Scene::default()
             },
             texture_ids: HashMap::new(),
+            lit: true,
         };
         let mut archives: HashMap<&str, Option<Narc>> = HashMap::new();
         let mut loaded: HashMap<ModelCacheKey<'_>, Vec<usize>> = HashMap::new();
@@ -480,8 +589,29 @@ impl Scene {
                 }
                 let Some(name) = &part.file else { continue };
                 let models = loaded
-                    .entry((&block.archive, name, &part.animations, part.texture_source))
-                    .or_insert_with(|| load_models(&mut b, &block.archive, narc, name));
+                    .entry((
+                        &block.archive,
+                        name,
+                        &part.animations,
+                        part.texture_source,
+                        part.untinted,
+                    ))
+                    .or_insert_with(|| {
+                        let ids = load_models(&mut b, &block.archive, narc, name);
+                        for &id in &ids {
+                            let model = &mut b.scene.models[id];
+                            if part.untinted {
+                                model.tinted = false;
+                                model.vertices.iter_mut().for_each(|v| v.tint = 0.0);
+                            }
+                            if part.kind == PartKind::Model {
+                                for m in &mut model.materials {
+                                    m.light.terrain = true;
+                                }
+                            }
+                        }
+                        ids
+                    });
                 let world = world_matrix(&inst.world);
                 for &model in models.iter() {
                     b.scene.instances.push(SceneInstance {
@@ -589,6 +719,7 @@ mod tests {
             depth_equal: false,
             translucent_depth_write: false,
             uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            light: MaterialLight::default(),
         };
         let textures = [SceneTexture {
             name: String::new(),

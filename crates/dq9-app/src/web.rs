@@ -33,12 +33,13 @@ pub fn window_attributes(attributes: WindowAttributes) -> WindowAttributes {
         .with_prevent_default(true)
 }
 
-/// `map`, `time` and `ds` from the page's query string.
+/// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day) and `ds` from the page's query string.
 fn options() -> Options {
     let mut options = Options {
         map: None,
         save: None,
         time: None,
+        clock: None,
         ds_aspect: false,
         story: dq9_formats::cast::Story {
             chapter: 1,
@@ -55,7 +56,8 @@ fn options() -> Options {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
         match key {
             "map" if !value.is_empty() => options.map = Some(value.to_owned()),
-            "time" => options.time = Some(value.parse::<u32>().map_or(0, |t| t.min(3))),
+            "time" => options.time = crate::lighting::parse_time(value).ok(),
+            "clock" => options.clock = value.parse().ok(),
             "ds" => options.ds_aspect = value != "0",
             "chapter" => {
                 if let Ok(n) = value.parse() {
@@ -152,6 +154,30 @@ fn watch_save_input(proxy: EventLoopProxy<UserEvent>) {
     on_change.forget();
 }
 
+/// Sends the time of day picked in the page's `<select id=time>` (also set from `?time=`).
+fn watch_time_select(proxy: EventLoopProxy<UserEvent>, initial: u32) {
+    let Some(select) = document()
+        .and_then(|d| d.get_element_by_id("time"))
+        .and_then(|e| e.dyn_into::<web_sys::HtmlSelectElement>().ok())
+    else {
+        return;
+    };
+    select.set_value(&initial.to_string());
+    let target = select.clone();
+    let on_change = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+        if let Ok(time) = target.value().parse::<u32>() {
+            let _ = proxy.send_event(UserEvent::Time(time));
+        }
+    });
+    if select
+        .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+        .is_err()
+    {
+        status("cannot watch the time select");
+    }
+    on_change.forget();
+}
+
 pub fn main() {
     console_error_panic_hook::set_once();
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
@@ -164,6 +190,8 @@ pub fn main() {
     let proxy = event_loop.create_proxy();
     watch_rom_input(proxy.clone());
     watch_save_input(proxy.clone());
+    let options = options();
+    watch_time_select(proxy.clone(), options.time);
     status("pick your Dragon Quest IX ROM (.nds); optionally a .sav, both stay in this browser");
-    event_loop.spawn_app(App::new(proxy, options(), None));
+    event_loop.spawn_app(App::new(proxy, options, None));
 }

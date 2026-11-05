@@ -95,6 +95,9 @@ pub struct Part {
     pub animations: Vec<Animation>,
     /// The `.nsbtx` (index in [`Map::textures`]) whose textures a model's animations use.
     pub texture_source: Option<usize>,
+    /// The resource flag [`UNTINTED`](rf::UNTINTED): the basic lighting leaves its vertex
+    /// colours alone (`0x02014d90`, `0x020151dc` skip `ModelTransformTintBrightnessContrast`).
+    pub untinted: bool,
 }
 
 /// One placement as the game links it (`Block+0x44`, 0x70 bytes each).
@@ -328,6 +331,7 @@ fn parts(manifest: &Manifest, narc: &Narc<'_>, textures: &[String], ctx: &Contex
                 file: None,
                 animations: Vec::new(),
                 texture_source: None,
+                untinted: false,
             },
             Some(r) if r.name.get(3) == Some(&b'A') => {
                 // 0x02015144: a collision even when its file is missing.
@@ -338,6 +342,7 @@ fn parts(manifest: &Manifest, narc: &Narc<'_>, textures: &[String], ctx: &Contex
                     file: member(narc, &name).map(|_| name),
                     animations: Vec::new(),
                     texture_source: None,
+                    untinted: false,
                 }
             }
             Some(r) if r.flags & rf::OBJECT == 0 => model(manifest, r, narc, textures, ctx),
@@ -382,6 +387,7 @@ fn model(
             file: None,
             animations: Vec::new(),
             texture_source: None,
+            untinted: false,
         };
     }
     let texture_source = (0..8)
@@ -394,6 +400,7 @@ fn model(
         file: Some(nsbmd),
         animations: animations(name, flags, &MODEL_ANIMATIONS, narc),
         texture_source,
+        untinted: flags & rf::UNTINTED != 0,
     }
 }
 
@@ -415,6 +422,7 @@ fn object(r: &Resource, narc: &Narc<'_>) -> Part {
         },
         file: found.then_some(nsbmd),
         texture_source: None,
+        untinted: r.flags & rf::UNTINTED != 0,
     }
 }
 

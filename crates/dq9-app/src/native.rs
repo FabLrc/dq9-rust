@@ -12,7 +12,7 @@ use glam::Vec3;
 use winit::event_loop::EventLoop;
 
 use crate::app::{App, Options, UserEvent};
-use crate::{gpu, load, walk};
+use crate::{gpu, lighting, load, walk};
 
 #[derive(Parser)]
 #[command(version, about = "Shows a Dragon Quest IX map (see docs/app.md).")]
@@ -26,9 +26,14 @@ struct Cli {
     /// DS save image; selects its current map when `--map` is absent.
     #[arg(long)]
     save: Option<PathBuf>,
-    /// Time of day (`LightingManager+0x98`, 0-3); defaults to the save's clock phase, else 0.
-    #[arg(long, value_parser = clap::value_parser!(u32).range(0..4))]
+    /// Time of day: `night`, `morning`, `day`, `evening` (or 0-3, `LightingManager+0x98`);
+    /// defaults to the save's clock phase, else the night.
+    #[arg(long, value_parser = lighting::parse_time)]
     time: Option<u32>,
+    /// Second of the 420-second day (night 0, morning 180, day 210, evening 390); its phase
+    /// replaces `--time`, and the last two seconds of a phase fade into the next.
+    #[arg(long)]
+    clock: Option<f32>,
     /// Story chapter (the prologue is 1.1.1).
     #[arg(long, default_value_t = 1)]
     chapter: u8,
@@ -41,6 +46,11 @@ struct Cli {
     /// Use nighttime cast placements (independent of --time's map variant).
     #[arg(long)]
     night: bool,
+    /// Replaces the map's fog (screenshots only, to compare with a DS capture): `OFFSET,SHIFT,
+    /// COLOR,D0,...,D31` with the `FOG_OFFSET` and `FOG_COLOR` register values (decimal or
+    /// `0x` hexadecimal), the `DISP3DCNT` depth shift and the 32 `FOG_TABLE` densities.
+    #[arg(long, value_parser = parse_fog)]
+    fog: Option<dq9_render::lighting::Fog>,
     /// Draw at the DS screen aspect (256×192), letterboxed.
     #[arg(long)]
     ds_aspect: bool,
@@ -95,6 +105,34 @@ fn parse_pair(s: &str) -> Result<(f32, f32), String> {
         x.trim().parse().map_err(|e| format!("{e}"))?,
         z.trim().parse().map_err(|e| format!("{e}"))?,
     ))
+}
+
+fn parse_fog(s: &str) -> Result<dq9_render::lighting::Fog, String> {
+    let values: Vec<u32> = s
+        .split(',')
+        .map(|v| {
+            let v = v.trim();
+            match v.strip_prefix("0x") {
+                Some(hex) => u32::from_str_radix(hex, 16),
+                None => v.parse(),
+            }
+            .map_err(|e| format!("{v:?}: {e}"))
+        })
+        .collect::<Result<_, _>>()?;
+    if values.len() != 35 {
+        return Err("expected OFFSET,SHIFT,COLOR and 32 densities".into());
+    }
+    let mut table = [0u8; 32];
+    for (slot, v) in table.iter_mut().zip(&values[3..]) {
+        *slot = (*v & 0x7f) as u8;
+    }
+    Ok(dq9_render::lighting::Fog {
+        color: dq9_render::lighting::rgb5(values[2] as u16),
+        alpha_only: false,
+        offset: (values[0] & 0x7fff) as u16,
+        shift: (values[1] & 0xf) as u8,
+        table,
+    })
 }
 
 fn parse_vec3(s: &str) -> Result<Vec3, String> {
@@ -153,6 +191,7 @@ pub fn main() -> Result<()> {
         map: cli.map.clone(),
         save,
         time: cli.time,
+        clock: cli.clock,
         ds_aspect: cli.ds_aspect,
         story: cli.story(),
     };
@@ -167,10 +206,8 @@ pub fn main() -> Result<()> {
 /// Renders one frame of the map offscreen and writes it as PNG.
 fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<()> {
     let start = load::start(cli.map.as_deref(), save)?;
-    let time = cli
-        .time
-        .or_else(|| start.state.as_ref().map(|s| s.clock.phase().index()))
-        .unwrap_or(0);
+    let clock = lighting::day_clock(start.state.as_ref().map(|s| s.clock), cli.time, cli.clock);
+    let time = clock.phase().index();
     let mut loaded = load::load(
         rom,
         &start.map,
@@ -236,6 +273,11 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     }
     loaded.runtime.face_camera(&camera)?;
     let mut renderer = Renderer::new(&device, &queue, format, &loaded.runtime.scene);
+    renderer.environment = lighting::environment(loaded.lighting.as_ref(), clock);
+    renderer.edge_pixels = (!cli.ds_aspect).then_some(1);
+    if let Some(fog) = cli.fog {
+        renderer.environment.fog = Some(fog);
+    }
     let (w, h) = cli.size;
     let viewport = if cli.ds_aspect {
         let (x, y, width, height) = letterbox(w, h, DS_ASPECT);

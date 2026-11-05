@@ -6,6 +6,7 @@
 
 mod app;
 mod gpu;
+mod lighting;
 mod load;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;

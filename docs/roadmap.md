@@ -202,9 +202,17 @@ Avancement :
       Captures déterministes `--frame N`, choix de progression `--chapter/--step/--substep`
       (prologue par défaut). Hauteurs de placement conservées sans collision du sol ;
       limites de comportement et de rendu détaillées dans [`app.md`](app.md).
-- [ ] Éclairage de la carte (`.bats`) et brouillard. Fait : parseur `.bats`
-      (`dq9_formats::lighting`, 504 scripts de la ROM). Reste : lumières DS, brouillard et
-      teinte appliqués au rendu, après validation de la formule de brouillard à melonDS.
+- [ ] Éclairage de la carte (`.bats`), brouillard et heure du jour appliqués au rendu (fait,
+      reste la validation melonDS des zones avancées) :
+      parseur `.bats` (`dq9_formats::lighting`, 504 scripts), horloge du jour et choix/mélange
+      de l'entrée par phase (`dq9_core::lighting`, d'après `LightingManager`/`GameState`, EU
+      vérifié), lumières DS, teinte de base, fond en dégradé, brouillard (équation de melonDS) et
+      contours dans `dq9-render` ; `--time night|morning|day|evening`, `--clock`, liste Web.
+      Validé à melonDS (état `C01M09`, `scripts/melonds-capture.ps1`) : registres de brouillard
+      et valeurs de teinte identiques à la RAM, densité de brouillard à 0,01 près sur cinq
+      tables, image à 12,8/255 de moyenne. **Non validé** : lumières DS et ciel en zone avancée
+      (aucun état melonDS sur un champ), brouillard sur un matériau de terrain, mode alpha seul,
+      indice de remplacement et `BeginFade` ([`re/lighting.md`](re/lighting.md)).
 
 ## J2 — Se déplacer
 
@@ -219,7 +227,10 @@ Avancement :
 Critère : depuis une sauvegarde réelle, se promener dans tout Angel Falls, entrer dans les
 maisons et en ressortir ; position comparée à melonDS sur une même séquence d'entrées.
 
-Avancement : `dq9-core` assemble les collisions transformées et fournit un déplacement
+Avancement : l'heure du jour existe comme horloge de 420 s et phase explicite
+(`dq9_core::lighting::DayClock`, port de `GameState::SetDayTimer`/`AdvanceDayTimer`, sans le
+branchement de la mise à jour de scène qui la fait courir sur les cartes de type 0 et 7 : l'application
+l'entre par option). `dq9-core` assemble les collisions transformées et fournit un déplacement
 déterministe au pas fixe avec snap du sol et blocage simplifié des faces verticales
 ([`re/movement.md`](re/movement.md)). L'application affiche un repère joueur et suit la caméra.
 `--save`/le champ Web restaurent la carte, la position et le cap du héros, l'heure et le

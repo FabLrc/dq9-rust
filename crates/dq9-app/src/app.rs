@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
-use dq9_core::state::GameState;
+use dq9_core::state::{DayClock, GameState, TimeOfDay};
 use dq9_core::trigger::State;
 use dq9_core::{CollisionWorld, Hero};
 use dq9_render::camera::{DS_ASPECT, letterbox};
@@ -25,12 +25,11 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::gpu::Gpu;
+use crate::lighting;
 use crate::load::{self, MapEntry};
 
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
-/// Times of day of the map assembly (`LightingManager+0x98`).
-const TIMES: u32 = 4;
 
 /// Events delivered to the loop from outside (async GPU setup, ROM/save picked on the web).
 #[derive(Debug)]
@@ -43,6 +42,9 @@ pub enum UserEvent {
     /// Save picked in the page: it selects the map, the position and the time of day.
     #[cfg(target_arch = "wasm32")]
     Save(Vec<u8>),
+    /// Time of day picked in the page (0 to 3).
+    #[cfg(target_arch = "wasm32")]
+    Time(u32),
 }
 
 /// Start-up options.
@@ -53,6 +55,8 @@ pub struct Options {
     pub save: Option<Vec<u8>>,
     /// Time of day of the map assembly (0-3); the save's clock phase, else 0, when absent.
     pub time: Option<u32>,
+    /// Explicit second of the 420-second day (`--clock`); its phase replaces `time`.
+    pub clock: Option<f32>,
     pub ds_aspect: bool,
     pub story: dq9_formats::cast::Story,
 }
@@ -70,6 +74,8 @@ pub struct App {
     options: Options,
     /// Time of day in use (`LightingManager+0x98`).
     time: u32,
+    /// The one day clock (a save's, else the start of the night): drives the lighting.
+    day: DayClock,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
     rom: Option<Vec<u8>>,
@@ -87,6 +93,8 @@ pub struct App {
     hero: Option<Hero>,
     hero_instance: Option<usize>,
     renderer: Option<Renderer>,
+    /// Lighting, fog and background of the loaded map at the selected time of day.
+    environment: dq9_render::Environment,
     camera: Camera,
     framed: Option<[glam::Vec3; 2]>,
     held: HashSet<KeyCode>,
@@ -114,6 +122,7 @@ impl App {
             proxy,
             options,
             time: 0,
+            day: DayClock::new(0.0, true),
             window: None,
             gpu: None,
             rom: None,
@@ -127,6 +136,7 @@ impl App {
             hero: None,
             hero_instance: None,
             renderer: None,
+            environment: dq9_render::Environment::default(),
             camera: Camera::default(),
             framed: None,
             held: HashSet::new(),
@@ -166,11 +176,12 @@ impl App {
                 return;
             }
         };
-        self.time = self
-            .options
-            .time
-            .or_else(|| start.state.as_ref().map(|s| s.clock.phase().index()))
-            .unwrap_or(0);
+        self.day = lighting::day_clock(
+            start.state.as_ref().map(|s| s.clock),
+            self.options.time,
+            self.options.clock,
+        );
+        self.time = self.day.phase().index();
         self.load(&start.map, true, None, start.state.as_ref());
     }
 
@@ -179,6 +190,16 @@ impl App {
         self.options.save = Some(save);
         if let Some(rom) = &self.rom {
             self.set_rom(rom.clone());
+        }
+    }
+
+    /// Shows the current map at another time of day.
+    fn set_time(&mut self, phase: TimeOfDay) {
+        self.day.set_phase(phase);
+        self.time = phase.index();
+        if let Some((entry, _)) = &self.current {
+            let code = entry.code.clone();
+            self.load(&code, false, None, None);
         }
     }
 
@@ -214,6 +235,7 @@ impl App {
             }
         };
         let hero_start = loaded.hero.position;
+        self.environment = lighting::environment(loaded.lighting.as_ref(), self.day);
         self.collision = loaded.collision;
         self.field = Some(loaded.field);
         self.hero = Some(loaded.hero);
@@ -318,6 +340,9 @@ impl App {
             gpu.config.format,
             &runtime.scene,
         ));
+        if let Some(renderer) = &mut self.renderer {
+            renderer.environment = self.environment.clone();
+        }
     }
 
     fn update_title(&self) {
@@ -372,13 +397,13 @@ impl App {
             }
             KeyCode::KeyR => self.options.ds_aspect = !self.options.ds_aspect,
             KeyCode::KeyT => {
-                self.time = (self.time + 1) % TIMES;
-                let map = self
-                    .current
-                    .as_ref()
-                    .map(|(entry, _)| entry.code.clone())
-                    .unwrap_or_else(|| "M01".into());
-                self.load(&map, false, None, None);
+                let next = match self.day.phase() {
+                    TimeOfDay::Night => TimeOfDay::Morning,
+                    TimeOfDay::Morning => TimeOfDay::Day,
+                    TimeOfDay::Day => TimeOfDay::Evening,
+                    TimeOfDay::Evening => TimeOfDay::Night,
+                };
+                self.set_time(next);
             }
             KeyCode::PageDown => self.cycle_map(1),
             KeyCode::PageUp => self.cycle_map(-1),
@@ -531,6 +556,7 @@ impl App {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
+        renderer.edge_pixels = (!self.options.ds_aspect).then_some(1);
         renderer.render(
             &gpu.device,
             &gpu.queue,
@@ -600,6 +626,8 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Rom(rom) => self.set_rom(rom),
             #[cfg(target_arch = "wasm32")]
             UserEvent::Save(save) => self.set_save(save),
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::Time(time) => self.set_time(lighting::phase(time)),
         }
         if let Some(window) = &self.window {
             window.request_redraw();
