@@ -13,6 +13,7 @@ pub mod animation;
 pub mod camera;
 mod hero;
 pub mod lighting;
+pub mod panel;
 mod pose;
 pub mod renderer;
 pub mod scene;
@@ -22,6 +23,7 @@ pub use animation::AnimatedScene;
 pub use camera::{Camera, CameraInput, CameraMode};
 pub use hero::{Gait, RUN_SPEED};
 pub use lighting::Environment;
+pub use panel::Panel;
 pub use renderer::{Renderer, Viewport};
 pub use scene::{
     MaterialLight, Scene, SceneInstance, SceneMaterial, SceneModel, SceneTexture, SceneVertex,
