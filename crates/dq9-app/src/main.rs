@@ -9,6 +9,8 @@ mod gpu;
 mod load;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+#[cfg(not(target_arch = "wasm32"))]
+mod walk;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

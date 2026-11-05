@@ -2,10 +2,10 @@
 //! assembly (`dq9_formats::map`), then the render scene.
 
 use anyhow::{Context as _, Result};
+use dq9_core::field::{self, Field};
 use dq9_core::{CollisionWorld, Hero};
 use dq9_formats::Table;
 use dq9_formats::cast::Story;
-use dq9_formats::map::Doorway;
 use dq9_formats::map::{self, Context, Map};
 use dq9_formats::maplist::{self, MapList, MapRecord};
 use dq9_formats::save::Save;
@@ -80,7 +80,8 @@ pub struct LoadedMap {
     pub collision: CollisionWorld,
     pub hero: Hero,
     pub hero_instance: usize,
-    pub doorways: Vec<Doorway>,
+    /// Warps, doorways and areas of the map with its trigger file.
+    pub field: Field,
 }
 
 fn text(s: &[u8]) -> String {
@@ -142,6 +143,11 @@ pub fn load(
     })
     .with_context(|| format!("loading animations and cast for {key}"))?;
     let hero_instance = runtime.add_hero_marker(hero.position);
+    let trigger_file = field::trigger_path(&text(record.code))
+        .and_then(|path| map::rom_file(&rom, &path))
+        .map(<[u8]>::to_vec);
+    let field = Field::new(record.id, &assembled.regions, trigger_file)
+        .with_context(|| format!("reading the trigger file of {key}"))?;
     let label = [record.region, record.label]
         .into_iter()
         .flatten()
@@ -158,7 +164,7 @@ pub fn load(
         runtime,
         collision,
         hero,
-        doorways: assembled.doorways,
+        field,
         hero_instance,
     })
 }

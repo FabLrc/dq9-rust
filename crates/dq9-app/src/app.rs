@@ -10,8 +10,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use dq9_core::field::{self, Event, Field, Leader, MapChange};
+use dq9_core::trigger::State;
 use dq9_core::{CollisionWorld, Hero};
-use dq9_formats::map::Doorway;
 use dq9_render::camera::{DS_ASPECT, letterbox};
 use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Renderer, Viewport};
 use glam::{Mat4, Vec2, Vec3};
@@ -24,30 +25,6 @@ use winit::window::{Window, WindowId};
 
 use crate::gpu::Gpu;
 use crate::load::{self, MapEntry};
-
-fn doorway_transition(
-    doorways: &[Doorway],
-    maps: &[MapEntry],
-    before: Vec3,
-    after: Vec3,
-) -> Option<(String, Vec3, f32)> {
-    doorways
-        .iter()
-        .find(|door| {
-            !door.volume.contains(before.to_array()) && door.volume.contains(after.to_array())
-        })
-        .and_then(|door| {
-            maps.iter()
-                .find(|map| map.id == door.destination)
-                .map(|map| {
-                    (
-                        map.code.clone(),
-                        Vec3::from_array(door.arrival),
-                        door.facing,
-                    )
-                })
-        })
-}
 
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
@@ -97,7 +74,12 @@ pub struct App {
     /// CPU state is retained after upload; native and Web advance the same animation clock.
     runtime: Option<AnimatedScene>,
     collision: CollisionWorld,
-    doorways: Vec<Doorway>,
+    /// Regions and trigger file of the current map (`dq9_core::field`).
+    field: Option<Field>,
+    /// Scenario trigger state, kept across maps.
+    state: State,
+    /// Map changes chained since the last fixed step (guards against warp loops).
+    chain: u8,
     hero: Option<Hero>,
     hero_instance: Option<usize>,
     renderer: Option<Renderer>,
@@ -123,6 +105,7 @@ impl std::fmt::Debug for App {
 
 impl App {
     pub fn new(proxy: EventLoopProxy<UserEvent>, options: Options, rom: Option<Vec<u8>>) -> Self {
+        let state = field::initial_state(&options.story);
         let mut app = Self {
             proxy,
             options,
@@ -133,7 +116,9 @@ impl App {
             current: None,
             runtime: None,
             collision: CollisionWorld::default(),
-            doorways: Vec::new(),
+            field: None,
+            state,
+            chain: 0,
             hero: None,
             hero_instance: None,
             renderer: None,
@@ -168,6 +153,7 @@ impl App {
             }
         }
         self.rom = Some(rom);
+        self.state = field::initial_state(&self.options.story);
         let map =
             match load::starting_map(self.options.map.as_deref(), self.options.save.as_deref()) {
                 Ok(map) => map,
@@ -188,19 +174,31 @@ impl App {
     }
 
     /// Loads map `key` at the current time of day; `frame` resets the camera onto it.
-    fn load(&mut self, key: &str, frame: bool, spawn: Option<(Vec3, f32)>) {
-        let Some(rom) = &self.rom else { return };
+    fn load(&mut self, key: &str, frame: bool, spawn: Option<(Vec3, f32)>) -> bool {
+        self.load_map(key, frame, spawn, false)
+    }
+
+    /// [`App::load`]; `transition` is set when the hero arrives through a door or a warp,
+    /// which runs the arrival triggers. Returns whether the map loaded.
+    fn load_map(
+        &mut self,
+        key: &str,
+        frame: bool,
+        spawn: Option<(Vec3, f32)>,
+        transition: bool,
+    ) -> bool {
+        let Some(rom) = &self.rom else { return false };
         let started = Instant::now();
         let mut loaded = match load::load(rom, key, self.options.time, &self.options.story, spawn) {
             Ok(l) => l,
             Err(e) => {
                 status(&format!("{e:#}"));
-                return;
+                return false;
             }
         };
         let hero_start = loaded.hero.position;
         self.collision = loaded.collision;
-        self.doorways = loaded.doorways;
+        self.field = Some(loaded.field);
         self.hero = Some(loaded.hero);
         self.hero_instance = Some(loaded.hero_instance);
         let s = &loaded.runtime.scene;
@@ -232,11 +230,65 @@ impl App {
         self.current = Some((loaded.entry, loaded.label));
         if let Err(e) = loaded.runtime.face_camera(&self.camera) {
             status(&format!("facing cast: {e}"));
-            return;
+            return true;
         }
         self.runtime = Some(loaded.runtime);
         self.upload();
         self.update_title();
+        if let Some(field) = &mut self.field {
+            let events = field.enter(&mut self.state, transition);
+            self.apply_events(events);
+        }
+        true
+    }
+
+    /// Carries out what the field asks for: the first map change (loading its destination
+    /// at the arrival pose), and logs the trigger requests that wait for J3. Returns whether
+    /// the map changed.
+    fn apply_events(&mut self, events: Vec<Event>) -> bool {
+        let mut changed = false;
+        for event in events {
+            match event {
+                Event::MapChange(change) if !changed => {
+                    changed = self.change_map(&change);
+                }
+                Event::MapChange(change) => {
+                    status(&format!(
+                        "map change ignored (already changing): {change:?}"
+                    ));
+                }
+                Event::Request(request) => {
+                    status(&format!(
+                        "trigger request not supported before J3: {request:?}"
+                    ));
+                }
+                Event::Unsupported(code) => {
+                    status(&format!("trigger condition {code:#x} is not modelled"));
+                }
+            }
+        }
+        changed
+    }
+
+    fn change_map(&mut self, change: &MapChange) -> bool {
+        /// Map changes a single step may chain before the loop is cut.
+        const MAX_CHAIN: u8 = 4;
+        if self.chain >= MAX_CHAIN {
+            status(&format!("map change chain cut: {change:?}"));
+            return false;
+        }
+        let from = self.current.as_ref().map(|(e, _)| e.id);
+        status(&format!(
+            "map change {from:?} -> {} at {:?} facing {:?}: {:?}",
+            change.destination, change.position, change.angle, change.cause
+        ));
+        let spawn = change
+            .position
+            .map(|p| (p, change.angle.map_or(0.0, field::yaw_of_angle)));
+        self.chain += 1;
+        let loaded = self.load_map(&change.destination.to_string(), true, spawn, true);
+        self.chain -= 1;
+        loaded
     }
 
     fn upload(&mut self) {
@@ -368,7 +420,7 @@ impl App {
             } else {
                 Vec3::ZERO
             };
-            let mut transition = None;
+            let mut events = Vec::new();
             if let Some(hero) = &mut self.hero {
                 let before = hero.position;
                 hero.step(
@@ -377,15 +429,21 @@ impl App {
                     STEP * if input.fast { 2.0 } else { 1.0 },
                 );
                 self.camera.target += hero.position - before;
-                transition = doorway_transition(&self.doorways, &self.maps, before, hero.position);
+                if let Some(field) = &mut self.field {
+                    let leader = Leader {
+                        position: hero.position,
+                        yaw: hero.yaw,
+                        input: move_direction.normalize_or_zero(),
+                    };
+                    events = field.step(&leader, &mut self.state);
+                }
                 if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance)
                     && let Some(instance) = runtime.scene.instances.get_mut(index)
                 {
                     instance.world = Mat4::from_translation(hero.position);
                 }
             }
-            if let Some((destination, arrival, yaw)) = transition {
-                self.load(&destination, true, Some((arrival, yaw)));
+            if self.apply_events(events) {
                 continue;
             }
             if let Some(runtime) = &mut self.runtime
@@ -577,70 +635,5 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use dq9_formats::map::DoorVolume;
-
-    #[test]
-    fn entering_a_doorway_resolves_map_and_arrival_pose_once() {
-        let doorways = [Doorway {
-            destination: 109,
-            volume: DoorVolume {
-                center: Vec3::ZERO.to_array(),
-                size: [2.0, 2.0, 2.0],
-                angle: 0.0,
-            },
-            arrival: [10.0, 2.0, 30.0],
-            facing: 1.25,
-        }];
-        let maps = [MapEntry {
-            id: 109,
-            code: "C01M09".into(),
-        }];
-        let transition = doorway_transition(
-            &doorways,
-            &maps,
-            Vec3::new(-1.1, 0.0, 0.0),
-            Vec3::new(-0.9, 100.0, 0.0),
-        );
-        assert_eq!(
-            transition,
-            Some(("C01M09".into(), Vec3::new(10.0, 2.0, 30.0), 1.25))
-        );
-        assert_eq!(
-            doorway_transition(
-                &doorways,
-                &maps,
-                Vec3::new(-0.9, 0.0, 0.0),
-                Vec3::new(0.0, 0.0, 0.0),
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn doorway_with_no_loaded_destination_cannot_transition() {
-        let doorways = [Doorway {
-            destination: 109,
-            volume: DoorVolume {
-                center: Vec3::ZERO.to_array(),
-                size: [2.0, 2.0, 2.0],
-                angle: 0.0,
-            },
-            arrival: [0.0; 3],
-            facing: 0.0,
-        }];
-        assert_eq!(
-            doorway_transition(
-                &doorways,
-                &[],
-                Vec3::new(-1.1, 0.0, 0.0),
-                Vec3::new(-0.9, 0.0, 0.0),
-            ),
-            None
-        );
     }
 }

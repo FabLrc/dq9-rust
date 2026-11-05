@@ -12,7 +12,7 @@ use glam::Vec3;
 use winit::event_loop::EventLoop;
 
 use crate::app::{App, Options, UserEvent};
-use crate::{gpu, load};
+use crate::{gpu, load, walk};
 
 #[derive(Parser)]
 #[command(version, about = "Shows a Dragon Quest IX map (see docs/app.md).")]
@@ -53,6 +53,13 @@ struct Cli {
     /// Screenshot size, `WIDTHxHEIGHT`.
     #[arg(long, default_value = "1024x768", value_parser = parse_size)]
     size: (u32, u32),
+    /// Walk without a window: a script of `+x:1.5,-z:3,idle:0.5` (world axes, seconds), logging
+    /// the maps and positions passed, including the doors crossed (`docs/app.md`).
+    #[arg(long, requires = "map", allow_hyphen_values = true)]
+    walk: Option<String>,
+    /// Start of `--walk` as `x,z` (ground height found), instead of the map's default.
+    #[arg(long, value_parser = parse_pair, allow_hyphen_values = true, requires = "walk")]
+    start: Option<(f32, f32)>,
     /// Camera position `x,y,z` (world units); with `--target`, replaces the framing view.
     #[arg(long, value_parser = parse_vec3, requires = "target", allow_hyphen_values = true)]
     eye: Option<Vec3>,
@@ -80,6 +87,14 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
         _ => Err(format!("bad size {v:?}")),
     };
     Ok((parse(w)?, parse(h)?))
+}
+
+fn parse_pair(s: &str) -> Result<(f32, f32), String> {
+    let (x, z) = s.split_once(',').ok_or("expected X,Z")?;
+    Ok((
+        x.trim().parse().map_err(|e| format!("{e}"))?,
+        z.trim().parse().map_err(|e| format!("{e}"))?,
+    ))
 }
 
 fn parse_vec3(s: &str) -> Result<Vec3, String> {
@@ -125,6 +140,12 @@ pub fn main() -> Result<()> {
         .transpose()?;
     if let Some(out) = &cli.screenshot {
         return screenshot(&cli, &rom, save.as_deref(), out);
+    }
+    if let Some(script) = &cli.walk {
+        let script = walk::parse_script(script)?;
+        let map = load::starting_map(cli.map.as_deref(), save.as_deref())?;
+        let mut walker = walk::Walker::new(&rom, &map, cli.time, &cli.story(), cli.start)?;
+        return walker.run(&script);
     }
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let options = Options {
