@@ -191,7 +191,7 @@ pub fn main() {
     watch_rom_input(proxy.clone());
     watch_save_input(proxy.clone());
     let options = options();
-    watch_time_select(proxy.clone(), options.time);
+    watch_time_select(proxy.clone(), options.time.unwrap_or(0));
     status("pick your Dragon Quest IX ROM (.nds); optionally a .sav, both stay in this browser");
     event_loop.spawn_app(App::new(proxy, options, None));
 }
