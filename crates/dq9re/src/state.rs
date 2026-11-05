@@ -90,8 +90,22 @@ fn compare_with_save(state: &State, path: &Path) -> Result<()> {
             c.name, c.slot_offset, c.ram, c.len
         );
     }
+    println!("party members (character record -> member object):");
+    for m in state.compare_party(&slot)? {
+        let verdict = match (m.member, m.differing.is_empty()) {
+            (None, _) => "no member object has its id".to_owned(),
+            (Some(_), true) => "all compared fields identical".to_owned(),
+            (Some(_), false) => format!("differ: {}", m.differing.join(", ")),
+        };
+        unexpected += usize::from(m.member.is_none() || !m.differing.is_empty());
+        let at = m.member.map_or("-".to_owned(), |a| format!("{a:#010x}"));
+        println!(
+            "  #{} character {:<2} -> {at}: {verdict}",
+            m.party_index, m.character
+        );
+    }
     if unexpected > 0 {
-        println!("{unexpected} copies differ: was the game loaded from this save?");
+        println!("{unexpected} copies or members differ: was the game loaded from this save?");
     }
     Ok(())
 }

@@ -103,6 +103,99 @@ pub const SAVE_COPIES: &[SaveCopy] = &[
     copy("misc", 27840, 0x110, GAME_STATE + 0x5e6c),
 ];
 
+/// First of the four party member objects (`GameState_PartyMember`, `0x020108e8`).
+pub const PARTY_MEMBER: u32 = GAME_STATE + 0x474;
+/// Distance between two party member objects.
+pub const PARTY_MEMBER_SIZE: u32 = 0x964;
+/// Party member object field holding the id of [`Slot::party_order`].
+const MEMBER_ID: u32 = 0x568;
+/// Item `Save_UnpackMain` takes out of the held items and the bag on every load
+/// (`func_020838d4`, `Bag_Remove`).
+const ITEM_REMOVED_ON_LOAD: u16 = 0x5612;
+
+/// Plain copies from a character record into its party member object made by
+/// `func_02082d7c`: `(field, member offset, record offset, length)`.
+const MEMBER_COPIES: &[(&str, u32, usize, usize)] = &[
+    ("experience", 0x138, 0x1c, 13 * 4),
+    ("revocations", 0x186, 0x0f, 13),
+    ("equipment and look", 0x488, 0x160, 0x1c),
+    ("record +0x17c", 0x4a4, 0x17c, 0xc0),
+    ("record +0xf6", 0x464, 0xf6, 27),
+    ("skill points", 0x564, 0xf4, 2),
+    ("seeds", 0x850, 0x58, 13 * 12),
+    ("record +0x11a", 0x8ec, 0x11a, 0x24),
+    ("record +0x111", 0x910, 0x111, 9),
+    ("vocation", 0x950, 0x50, 4),
+    ("record +0x54", 0x954, 0x54, 2),
+];
+
+/// One party member of a save compared with its object in RAM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberCheck {
+    /// Position in the party.
+    pub party_index: usize,
+    /// Index of the record ([`Slot::character`]).
+    pub character: usize,
+    /// Address of the member object whose id matches, if any.
+    pub member: Option<u32>,
+    /// Fields whose RAM value differs from what the load computes from the record.
+    pub differing: Vec<&'static str>,
+}
+
+/// What `Save_UnpackMain` (`0x020a95b4`) and `func_02082d7c` put in a party member object,
+/// besides [`MEMBER_COPIES`]: `(field, member offset, bytes)`.
+fn member_fields(c: &[u8], held: [u16; 8], id: u8) -> Vec<(&'static str, u32, Vec<u8>)> {
+    let word = u32::from_le_bytes([c[0x154], c[0x155], c[0x156], c[0x157]]);
+    let levels: Vec<u8> = c[2..15].iter().flat_map(|&l| [l, 0]).collect();
+    // func_020838d4: the first copy of the removed item becomes empty, then one pass moves
+    // each empty word after the next one.
+    let mut items = held;
+    if let Some(k) = items.iter().position(|&w| w == ITEM_REMOVED_ON_LOAD) {
+        items[k] = crate::save::NO_ITEM;
+        for j in 0..7 {
+            if (items[j] as i16) < 0 {
+                items[j] = items[j + 1];
+                items[j + 1] = crate::save::NO_ITEM;
+            }
+        }
+    }
+    vec![
+        (
+            "held items",
+            0x454,
+            items.iter().flat_map(|w| w.to_le_bytes()).collect(),
+        ),
+        ("levels", 0x16c, levels),
+        ("record +1 low bits", 0x56a, vec![c[1] & 0xf]),
+        (
+            "record +1 high bits, +0x13f",
+            0x56b,
+            vec![(c[1] >> 5) | (c[0x13f] & 7) << 4],
+        ),
+        ("member id", MEMBER_ID, u16::from(id).to_le_bytes().to_vec()),
+        (
+            "word +0x154 (bits 10..20)",
+            0x1c,
+            (((word & 0xf_ffff) >> 10) as u16).to_le_bytes().to_vec(),
+        ),
+        (
+            "word +0x154 (bits 20..30)",
+            0x1e,
+            ((((word >> 16) & 0x3fff) >> 4) as u16)
+                .to_le_bytes()
+                .to_vec(),
+        ),
+        // The hero (id 0) always gets 5.
+        (
+            "record +0x13f >> 3",
+            0x94c,
+            u32::from(if id == 0 { 5 } else { c[0x13f] >> 3 })
+                .to_le_bytes()
+                .to_vec(),
+        ),
+    ]
+}
+
 /// Section header: 4-byte name, 32-bit length (header included), 8 more bytes.
 const SECTION_HEADER: usize = 16;
 const FIRST_SECTION: usize = 0x10;
@@ -291,6 +384,55 @@ impl<'a> State<'a> {
             })
             .collect()
     }
+
+    /// Each party member of `slot` compared with the member object that has its id: the
+    /// fields `func_02082d7c` fills from the character record (the name, converted to text,
+    /// and three flag bits are not compared).
+    pub fn compare_party(&self, slot: &Slot<'_>) -> Result<Vec<MemberCheck>> {
+        let standby = usize::from(slot.standby_count());
+        let mut members = Vec::new();
+        for k in 0..4 {
+            let at = PARTY_MEMBER + k * PARTY_MEMBER_SIZE;
+            members.push((at, self.read(at + MEMBER_ID, 2)?));
+        }
+        slot.party_order()
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                let character = standby + i;
+                let record = slot
+                    .character(character)
+                    .ok_or(Error::Malformed("party member past the character records"))?;
+                let held = slot
+                    .held_items(i)
+                    .ok_or(Error::Malformed("party of more than 4"))?;
+                let member = members
+                    .iter()
+                    .find(|(_, w)| u16::from_le_bytes([w[0], w[1]]) == u16::from(id))
+                    .map(|&(at, _)| at);
+                let mut differing = Vec::new();
+                if let Some(at) = member {
+                    let c = record.bytes();
+                    for &(name, off, src, len) in MEMBER_COPIES {
+                        if self.read(at + off, len)? != &c[src..src + len] {
+                            differing.push(name);
+                        }
+                    }
+                    for (name, off, bytes) in member_fields(c, held, id) {
+                        if self.read(at + off, bytes.len())? != bytes.as_slice() {
+                            differing.push(name);
+                        }
+                    }
+                }
+                Ok(MemberCheck {
+                    party_index: i,
+                    character,
+                    member,
+                    differing,
+                })
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -429,5 +571,77 @@ mod tests {
         for w in by_ram.windows(2) {
             assert!(w[0].ram + w[0].len as u32 <= w[1].ram, "{}", w[1].name);
         }
+    }
+
+    #[test]
+    fn removed_item_leaves_a_gap_moved_by_one_pass_only() {
+        let record = [0u8; 572];
+        let held = [
+            1,
+            ITEM_REMOVED_ON_LOAD,
+            2,
+            0xffff,
+            3,
+            0xffff,
+            0xffff,
+            0xffff,
+        ];
+        let fields = member_fields(&record, held, 1);
+        let (_, _, items) = fields.iter().find(|f| f.0 == "held items").unwrap();
+        let words: Vec<u16> = items
+            .chunks(2)
+            .map(|w| u16::from_le_bytes([w[0], w[1]]))
+            .collect();
+        assert_eq!(words, [1, 2, 0xffff, 3, 0xffff, 0xffff, 0xffff, 0xffff]);
+    }
+
+    #[test]
+    fn compare_party_finds_members_by_id() {
+        let mut file = vec![0u8; crate::save::FILE_SIZE];
+        for (i, b) in file.iter_mut().enumerate() {
+            *b = (i * 13 + 5) as u8;
+        }
+        // One character at the inn, then a party of two whose ids are 0 and 1.
+        file[7572] = 1;
+        file[7573..7577].copy_from_slice(&[0, 1, 0xff, 0xff]);
+        file[7577] = 2;
+        let save = crate::save::Save::parse(&file).unwrap();
+        let slot = save.slot(0).unwrap();
+        // Member objects 2 and 0 hold ids 0 and 1; the other two hold no party id.
+        let objects = [(2u32, 0usize), (0, 1)];
+        let fill = |main: &mut [u8], change_level: bool| {
+            for k in 0..4u32 {
+                let at = ((PARTY_MEMBER + k * PARTY_MEMBER_SIZE + MEMBER_ID) & 0x3f_ffff) as usize;
+                main[at..at + 2].copy_from_slice(&0x7fffu16.to_le_bytes());
+            }
+            for (k, i) in objects {
+                let base = (PARTY_MEMBER + k * PARTY_MEMBER_SIZE) & 0x3f_ffff;
+                let c = slot.character(1 + i).unwrap().bytes();
+                let id = slot.party_order()[i];
+                for &(_, off, src, len) in MEMBER_COPIES {
+                    let o = (base + off) as usize;
+                    main[o..o + len].copy_from_slice(&c[src..src + len]);
+                }
+                for (_, off, bytes) in member_fields(c, slot.held_items(i).unwrap(), id) {
+                    let o = (base + off) as usize;
+                    main[o..o + bytes.len()].copy_from_slice(&bytes);
+                }
+                if change_level && i == 1 {
+                    main[(base + 0x16c + 2 * 3) as usize] ^= 1;
+                }
+            }
+        };
+        let data = synthetic_with(|m| fill(m, false));
+        let checks = State::parse(&data).unwrap().compare_party(&slot).unwrap();
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].member, Some(PARTY_MEMBER + 2 * PARTY_MEMBER_SIZE));
+        assert_eq!(checks[1].member, Some(PARTY_MEMBER));
+        assert_eq!(checks[1].character, 2);
+        assert!(checks.iter().all(|c| c.differing.is_empty()));
+
+        let data = synthetic_with(|m| fill(m, true));
+        let checks = State::parse(&data).unwrap().compare_party(&slot).unwrap();
+        assert!(checks[0].differing.is_empty());
+        assert_eq!(checks[1].differing, ["levels"]);
     }
 }

@@ -436,6 +436,8 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x020108e8 GameState_PartyMember    # (GameState, i): GameState+0x474 + i*0x964
 0x02012ff4 Zone3D_GetCurrent        # returns g_Zone3D
 0x0205ec44 QuestManager_Get         # returns g_QuestManager
+0x02082d7c PartyMember_LoadRecord   # member object <- 572-byte character record (fields in docs/re/save.md)
+0x020838d4 PartyMember_DropHeldItem # first held copy of an item -> 0xffff, then one compaction pass
 0x020fb3f0 g_Zone3D                 # current zone object; +0x840 holds the save's Zone block (0x1b30 bytes)
 0x02108844 g_QuestManager           # starts with the save's event block (tracks, global flags)
 0x02109418 g_QuestLog               # QuestLog_Get returns it; save QuestLog block here, QuestTimers at +0x178

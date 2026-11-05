@@ -114,7 +114,7 @@ l'adresse lue dans le code. Table complète : `melonds::SAVE_COPIES`.
 | sac (`7652`, 0x1d4), puis `+0x2b08` (0x128) | `GameState_Party` (`0x02010838` → `GameState+0x2a04`) `+0`, `+0xe04` | identiques |
 | banque, or, mot `11456`, mini-médailles | `GameState+0x396c`, `+0x3970`, `+0x3974`, `+0x3978` (partie `+0xf68..+0xf74`) | identiques |
 | ordre (4) et effectif du groupe | `GameState+0x397c`, `+0x3980` | identiques |
-| membres du groupe (572 octets chacun) | convertis par `func_02082d6c` vers `GameState_PartyMember` (`GameState+0x474 + i×0x964`) | non comparés |
+| membres du groupe (572 octets chacun) | convertis par `PartyMember_LoadRecord` (`0x02082d7c`) vers `GameState_PartyMember` (`GameState+0x474 + i×0x964`), § suivant | tous les champs comparés identiques |
 | personnages en réserve | `GameState+0x3984` (n × 572, copie directe) | démo : 0 en réserve |
 | mots de progression (16) | `GameState+0x5cb0` | identiques |
 | bloc d'événements | `g_QuestManager` (`0x02108844`, rendu par `0x0205ec44`) | identique sauf `+0x180..+0x1cf` remis à zéro |
@@ -127,7 +127,46 @@ Toute la sauvegarde chargée est en `.bss` de l'ARM9 (`0x020f2e60..0x021536e0`) 
 Le tampon de lecture de l'emplacement est aussi en RAM (`slot+0x84` en `0x0214633c`) : une
 recherche d'octets de la sauvegarde y tombe d'abord.
 
-**Écarts dus au jeu** [inconnu : quelle fonction] :
+### Membres du groupe
+
+`Save_UnpackMain` traite le i-ᵉ personnage du groupe (fiche `standby + i`) : il cherche parmi
+les 4 objets membres celui dont le mot `+0x568` vaut `ordre[i]` (sinon un objet libre, mot
+négatif), y charge la fiche, écrit `ordre[i]` en `+0x568`, copie les 8 objets portés
+(`7578 + 18 i`, 16 octets) en `+0x454`, puis retire l'objet `0x5612` des objets portés
+(`PartyMember_DropHeldItem`, `0x020838d4` : la première copie devient `0xffff`, puis **une
+seule passe** décale chaque trou d'un rang) et du sac (`Bag_Remove(…, 0x5612, 99)`). Le membre
+d'id 0 (le héros sur la démo) reçoit 5 en `+0x94c`. L'ordre du groupe n'est donc **pas** une
+liste d'indices de fiches : c'est l'id de l'objet membre de chaque position.
+
+`PartyMember_LoadRecord` (fiche → objet membre) :
+
+| Fiche | Objet membre | Sens connu |
+|---|---|---|
+| `+1` bits 0-3 | `+0x56a` | [inconnu] |
+| `+1` bit 4 | `+0x78` bit 30 | [inconnu] |
+| `+1` bits 5-7, `+0x13f` bits 0-2 | `+0x56b` bits 0-2, 4-6 | [inconnu] |
+| `+2` (13 octets) | `+0x16c` (13 × u16) | niveaux par vocation |
+| `+0xf` (13) | `+0x186` | renaissances |
+| `+0x1c` (13 × u32) | `+0x138` | expérience |
+| `+0x50` (u32), `+0x54` (u16) | `+0x950`, `+0x954` | vocation courante (sert à charger le fichier de la vocation, `0x02082fd4`) ; [inconnu] |
+| `+0x58` (13 × 12) | `+0x850` | graines |
+| `+0xf4` (u16) | `+0x564` | points libres |
+| `+0xf6` (27), `+0x111` (9), `+0x11a` (0x24) | `+0x464`, `+0x910`, `+0x8ec` | compétences / maîtrises [hypothèse] |
+| `+0x13e` bits 0-2 | `+0x18` bits 0-2 (posés, jamais effacés) | [inconnu] |
+| `+0x13f` bits 3-7 | `+0x94c` | [inconnu] (5 sur la démo) |
+| `+0x140` (nom) | `+0x3c`, texte (indices de glyphes convertis par `func_02042774`) | nom |
+| `+0x154` (u32) | `+0x1c` = bits 10..19, `+0x1e` = bits 20..29 | [inconnu] |
+| `+0x160` (0x1c) | `+0x488` | équipement et apparence |
+| `+0x17c` (0xc0) | `+0x4a4` | [inconnu] |
+
+Contrôlé sur la démo : les 4 membres, tous ces champs sauf le nom et les bits de `+0x18`
+(`melonds::State::compare_party`, `dq9re state --save`). Les noms sont bien en ASCII en
+`+0x3c` (« Adenine »…).
+
+### Écarts dus au jeu
+
+[inconnu : quelle fonction]
+
 - Drapeaux globaux `+0x180..+0x1cf` du bloc d'événements (indices 1 952 à 2 591, 80 octets)
   remis à zéro dans le jeu (la démo en avait 211 posés). [hypothèse] drapeaux temporaires
   de zone, effacés au chargement d'une carte.

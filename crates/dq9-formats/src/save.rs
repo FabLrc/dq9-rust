@@ -414,8 +414,9 @@ impl<'a> Slot<'a> {
         self.0[PARTY_COUNT]
     }
 
-    /// Party order: indices from the start of the party in [`Slot::character`] terms,
-    /// shifted by [`Slot::standby_count`] **[hypothesis]**. Truncated to 4.
+    /// Party order: entry `i` is the id that `Save_UnpackMain` (`0x020a95b4`) gives to the
+    /// party member object (`+0x568`) of character `standby_count + i` (0 for the hero on
+    /// the demo save). Truncated to 4.
     pub fn party_order(&self) -> &'a [u8] {
         let n = usize::from(self.party_count()).min(4);
         &self.0[PARTY_ORDER..PARTY_ORDER + n]
@@ -554,6 +555,11 @@ impl EquipSlot {
 }
 
 impl<'a> Character<'a> {
+    /// The 572 bytes of the record.
+    pub fn bytes(&self) -> &'a [u8] {
+        self.0
+    }
+
     /// Name as stored: one byte per character, each the index of a glyph of the message
     /// font (`fi_me.bin`), zero-terminated and padded with zeros.
     pub fn name_raw(&self) -> &'a [u8] {

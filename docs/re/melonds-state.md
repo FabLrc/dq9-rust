@@ -51,7 +51,9 @@ identiques ; des overlays de même adresse ne se ressemblent pas à ce point). `
 `--save` compare chaque copie de `melonds::SAVE_COPIES` (où le chargement d'une sauvegarde
 normale met ses octets, `save.md` § « En RAM ») à l'emplacement courant du `.sav` et signale
 les écarts ; deux copies sont connues pour changer pendant le jeu (« changed by the game »).
-Plusieurs écarts inattendus = le jeu n'a pas été chargé depuis cette sauvegarde.
+Il compare aussi chaque membre du groupe à son objet en RAM (`State::compare_party`, champs
+de `save.md` § « Membres du groupe »). Plusieurs écarts inattendus = le jeu n'a pas été
+chargé depuis cette sauvegarde (sur l'écran titre : aucun objet membre n'a les bons ids).
 
 ### Produire un état
 

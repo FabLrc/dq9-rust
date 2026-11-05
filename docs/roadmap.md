@@ -138,10 +138,11 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       (`dq9_formats::melonds`, `dq9re state`, [`re/melonds-state.md`](re/melonds-state.md) :
       mémoire, code résident et overlays comparés à la ROM ; format d'après ndskit, MIT) ;
       `scripts/melonds-state.ps1` produit un état depuis un `.sav` sans prendre le premier
-      plan. **Sauvegarde chargée → RAM** : toutes les copies de `Save_LoadSlot` retrouvées
-      octet pour octet (`SAVE_COPIES`, `dq9re state --save`, `re/save.md` § « En RAM »).
-      **Reste** : comparer les structures que `dq9-core` calculera (position, triggers,
-      membres du groupe convertis par `func_02082d6c`) à la RAM.
+      plan. **Sauvegarde chargée → RAM** : toutes les copies de `Save_LoadSlot` et les champs
+      des membres du groupe (`PartyMember_LoadRecord`) retrouvés octet pour octet
+      (`SAVE_COPIES`, `compare_party`, `dq9re state --save`, `re/save.md` § « En RAM »).
+      **Reste** : comparer les structures que `dq9-core` calculera (position, triggers) à la
+      RAM.
 - [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-core`,
       `dq9-render`, `dq9-audio`, `dq9-app` ; l'état modélisé des triggers passe de
       `dq9-formats` à `dq9-core`.
