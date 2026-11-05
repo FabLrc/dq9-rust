@@ -506,7 +506,9 @@ struct MapTotals {
     lighting: usize,
     lighting_missing: usize,
     effects: usize,
+    warps: usize,
     doorways: usize,
+    areas: usize,
     blocks: usize,
     unbuilt_blocks: usize,
     resources: usize,
@@ -534,7 +536,13 @@ impl MapTotals {
             self.lighting_missing += usize::from(!found);
         }
         self.effects += usize::from(map.effects.is_some());
-        self.doorways += map.doorways.len();
+        self.warps += map.regions.warps.len();
+        self.doorways += map
+            .regions
+            .zones_of(map::ZONE_DOORWAY)
+            .filter(|z| z.warp.is_some())
+            .count();
+        self.areas += map.regions.zones_of(map::ZONE_AREA).count();
         for block in &map.blocks {
             self.blocks += 1;
             let m = &block.manifest;
@@ -656,7 +664,10 @@ fn maps_assemble() {
             lighting: 663,
             lighting_missing: 2,
             effects: 15,
-            doorways: 1402,
+            // `0x72` warps with a known destination, type 2 zones with one, type 3 areas.
+            warps: 975,
+            doorways: 429,
+            areas: 22,
             blocks: 754,
             unbuilt_blocks: 0,
             resources: 5341,

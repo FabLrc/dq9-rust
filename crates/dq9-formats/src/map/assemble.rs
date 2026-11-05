@@ -156,8 +156,8 @@ pub struct Map {
     /// Atmospheric effects archive queued once the last `.amdj` is loaded
     /// (`ZoneInfo::effects_file`).
     pub effects: Option<String>,
-    /// Map-changing door triggers loaded from the `.bmbl` records.
-    pub doorways: Vec<super::Doorway>,
+    /// Warps, doorways and areas loaded from the `.bmbl` records.
+    pub regions: super::Regions,
 }
 
 /// A member of the mounted archive by path (`GetFileFromNARCInMemory`, `0x020afd1c`): the
@@ -213,7 +213,7 @@ impl Map {
             amdj_loaded: Vec::new(),
             blocks: Vec::new(),
             effects: None,
-            doorways: Vec::new(),
+            regions: super::Regions::default(),
         };
         // 0x02014118: a failed load stops the chain.
         let Some(ambl) = file(&map.files.ambl) else {
@@ -257,7 +257,7 @@ impl Map {
                     let table = Table::parse(&decompressed)?;
                     self.block_list.clear();
                     self.block_list.load(&table)?;
-                    self.doorways = super::doors::parse(&table, maps)?;
+                    self.regions = super::doors::parse(&table, maps)?;
                 }
                 Some(".dat") => self.zone.load_dat(&Table::parse(&lz77(data?)?)?)?,
                 Some(".bpos") => self.block_list.load(&Table::parse(&lz77(data?)?)?)?,

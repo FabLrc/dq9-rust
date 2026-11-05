@@ -23,7 +23,11 @@ mod zone;
 pub use assemble::{AnimKind, Animation, Block, Context, Instance, Map, Part, PartKind};
 pub use blocks::{BlockEntry, BlockList};
 pub use collision::{Collision, GroundRecord, Triangle};
-pub use doors::{DoorVolume, Doorway};
+pub use doors::parse as parse_regions;
+pub use doors::{
+    FLAG_SIDE, FLAG_WARP, Regions, Warp, WarpVolume, ZONE_AREA, ZONE_DOORWAY, Zone, ZoneVolume,
+    ZoneWarp,
+};
 pub use manifest::{Manifest, Placement, Resource, Variant, resource_flags};
 pub use transform::{Transform, fix32_cos, fix32_sin, reduce_angle, sin_cos_entry};
 pub use zone::{LightingFile, ZoneInfo};
