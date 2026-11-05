@@ -8,6 +8,7 @@ mod bytes;
 pub mod compress;
 mod error;
 pub mod fnt;
+pub mod g3d;
 pub mod header;
 pub mod narc;
 pub mod rom;

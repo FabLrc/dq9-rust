@@ -20,7 +20,8 @@ sa licence et comment s'en servir ici. Les liens et chiffres viennent des dépô
    vers PC, GPL-3.0) a déjà résolu le multijoueur en ligne, le mode Tag, la boutique DQVC et
    les quêtes téléchargeables. Source de faits, **pas de code à copier** (voir Licences).
 5. **[apicula](https://github.com/scurest/apicula)** est un lecteur/visualiseur NSBMD/NSBTX/
-   NSBCA en Rust, sous 0BSD : réutilisable tel quel pour l'étape « Graphismes 3D ».
+   NSBCA en Rust, sous 0BSD : ses lecteurs sont portés dans `nds_rom::g3d`
+   ([`re/g3d.md`](re/g3d.md)), crédités en tête du module.
 
 ## Projets consacrés à DQ9
 
