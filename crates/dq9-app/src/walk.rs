@@ -22,21 +22,18 @@ pub struct Walk {
     pub seconds: f32,
 }
 
-/// Parses `+x:1.5,-z:3,idle:0.5`: a signed world axis (`x` east, `z` south, `-z` north) or
-/// `idle`, a colon and a duration in seconds.
+/// Parses `+x:1.5,-z:3,+x-z:0.5,idle:0.5`: one or two signed world axes (`x` east, `z` south,
+/// `-z` north; two make a diagonal) or `idle`, a colon and a duration in seconds.
 pub fn parse_script(text: &str) -> Result<Vec<Walk>> {
     text.split(',')
         .map(|part| {
             let Some((what, seconds)) = part.trim().split_once(':') else {
                 bail!("walk step {part:?} is not `<direction>:<seconds>`");
             };
-            let direction = match what {
-                "idle" => Vec3::ZERO,
-                "+x" => Vec3::X,
-                "-x" => Vec3::NEG_X,
-                "+z" => Vec3::Z,
-                "-z" => Vec3::NEG_Z,
-                _ => bail!("unknown direction {what:?}: +x, -x, +z, -z or idle"),
+            let direction = if what == "idle" {
+                Vec3::ZERO
+            } else {
+                parse_axes(what)?
             };
             let seconds: f32 = seconds.parse()?;
             if seconds.is_nan() || seconds < 0.0 {
@@ -45,6 +42,33 @@ pub fn parse_script(text: &str) -> Result<Vec<Walk>> {
             Ok(Walk { direction, seconds })
         })
         .collect()
+}
+
+/// `+x`, `-z`, `+x-z`…: each axis at most once.
+fn parse_axes(text: &str) -> Result<Vec3> {
+    let mut direction = Vec3::ZERO;
+    let mut seen = [false; 2];
+    let bytes = text.as_bytes();
+    if bytes.is_empty() || !bytes.len().is_multiple_of(2) || bytes.len() > 4 {
+        bail!("unknown direction {text:?}: signed axes such as +x, -z, +x-z, or idle");
+    }
+    for pair in bytes.chunks(2) {
+        let sign = match pair[0] {
+            b'+' => 1.0,
+            b'-' => -1.0,
+            _ => bail!("unknown direction {text:?}: signed axes such as +x, -z, +x-z, or idle"),
+        };
+        let axis = match pair[1] {
+            b'x' => 0,
+            b'z' => 1,
+            _ => bail!("unknown direction {text:?}: signed axes such as +x, -z, +x-z, or idle"),
+        };
+        if std::mem::replace(&mut seen[axis], true) {
+            bail!("axis repeated in {text:?}");
+        }
+        direction[axis * 2] += sign;
+    }
+    Ok(direction)
 }
 
 /// The simulation state of one walk.
@@ -138,9 +162,10 @@ impl<'r> Walker<'r> {
             bail!("map change chain cut at {change:?}");
         }
         let from = self.entry.id;
+        let p = self.hero.position;
         println!(
-            "map change {from} -> {}: {:?} arrival {:?} angle {:?}",
-            change.destination, change.cause, change.position, change.angle
+            "map change {from} -> {}: {:?} with the hero at ({:.3}, {:.3}, {:.3}), arrival {:?} angle {:?}",
+            change.destination, change.cause, p.x, p.y, p.z, change.position, change.angle
         );
         let spawn = change
             .position
@@ -205,6 +230,9 @@ mod tests {
                 },
             ]
         );
+        let diagonal = parse_script("+x-z:1").unwrap();
+        assert_eq!(diagonal[0].direction, Vec3::new(1.0, 0.0, -1.0));
+        assert!(parse_script("+x+x:1").is_err());
         assert!(parse_script("up:1").is_err());
         assert!(parse_script("+x").is_err());
         assert!(parse_script("+x:-1").is_err());
