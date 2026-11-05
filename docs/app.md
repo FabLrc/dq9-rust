@@ -3,8 +3,9 @@
 L'application commune native/Web affiche une carte, ses modèles, textures, animations, PNJ et un
 repère de position du joueur. `dq9-core` consomme les collisions `.col2`
 ([`re/collision.md`](re/collision.md)) pour un déplacement de terrain expérimental ;
-`dq9-app` charge aussi les destinations des portes map-changing `.bmbl`. Leur géométrie reste
-une hypothèse ; l'éclairage n'est pas encore pris en charge.
+`dq9_core::field` teste les portes, aires et warps des `.bmbl` à chaque pas
+([`re/map-archive.md`](re/map-archive.md)) et `dq9-app` charge la carte de destination qu'il
+renvoie ; l'éclairage n'est pas encore pris en charge.
 
 - `crates/dq9-core` (sans E/S, compile en wasm) : `CollisionWorld` assemble les `.col2` des
   placements visibles ; `Hero` avance au pas fixe, recale le sol et bloque les faces verticales.
@@ -30,7 +31,15 @@ cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/villa
     --size 1024x768 --eye=-5,20,40 --target=-20,0,5
 cargo run -p dq9-app --release -- --map M01 --frame 60 --screenshot build/scratch/app/m01-f60.png
 cargo run -p dq9-app --release -- --map C01M09 --chapter 19 --step 2 --substep 1 --night
+# Sans fenêtre : marcher selon un script (axes du monde, secondes) et journaliser les cartes
+# et positions, portes comprises (entrer dans une maison d'Angel Falls et en sortir) :
+cargo run -p dq9-app --release -- --map M01 --start=-19.5,-9 --walk "-z:3,+z:3,idle:0.5"
 ```
+
+`--walk` joue les mêmes pas fixes qu'en fenêtre (`Hero::step`, puis `Field::step` avec la pose
+du héros) : `+x`, `-x`, `+z`, `-z` (deux axes font une diagonale : `+x-z`) ou `idle`, deux
+points et une durée ; `--start x,z` pose le héros au sol de ce point. Chaque changement de
+carte, chaque arrivée et chaque tronçon sont écrits sur la sortie standard.
 
 `--map` : code (`M01`, `C01M09`) ou id (`1100`) de la liste des cartes ; il prévaut sur la
 carte lue dans `--save`. En l'absence des deux options, la carte reste `M01`. `--save` lit un
@@ -129,8 +138,10 @@ Approximé ou absent :
   précision de la DS (couleurs 6 bits, profondeur 24 bits ou W).
 - **PNJ, limites** : les hauteurs des PNJ sont celles des placements ; le snap du sol et le
   déplacement du héros sont approximatifs (pas d'accélération, rayon, modèle animé ni départ
-  depuis une sauvegarde). Les volumes des portes restent une hypothèse non validée à melonDS ;
-  les triggers d'histoire, escaliers, chutes et chemins des PNJ ne sont pas exécutés. Les
+  depuis une sauvegarde). Les portes, aires et warps suivent `dq9_core::field` (comparés à
+  melonDS sur l'église de Stornway) sans l'animation de la porte ; les triggers de zone sont
+  évalués mais leurs demandes de conversation ou d'événement sont seulement journalisées, et
+  les escaliers, chutes et chemins des PNJ ne sont pas exécutés. Les
   visiteurs réseau, l'accessoire `s069` et la teinte additive des palettes (type 22) restent
   absents. Le mélange de plusieurs poses, les effets/actions `.beff`/`.bact` et les modes de
   sprite autres que debout/assis ne sont pas exécutés. Les couleurs MAT sont évaluées ; les

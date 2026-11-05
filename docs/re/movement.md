@@ -26,15 +26,10 @@ l'entrée, plafonne la diagonale, teste les faces verticales pour bloquer le dé
 mouvement par axe en cas de blocage, puis recale la position au sol. L'avatar temporaire rendu par
 l'application est un repère orange, pas le modèle animé du protagoniste.
 
-Les cartes chargent leurs portes map-changing depuis les `.bmbl`. À chaque pas, l'application
-teste le franchissement extérieur → intérieur de leur volume, puis charge la carte de
-destination et applique position et orientation d'arrivée (`dq9_formats::map::Doorway`,
-`dq9-app::doorway_transition`). La forme XZ tournée, ses bords inclus et l'absence de test Y
-restent **[hypothèse]** ; aucune transition n'a encore été comparée à melonDS.
-
-Smoke Web : avec le `.sav` de `build/melonds/dq9.sav`, `S+D` pendant 2,2 s conduit de 109
-(`C01M09`) à 100 (`C01`). La traversée prouve le chemin chargé en exécution, mais pas la
-fidélité de sa géométrie ni une égalité de position avec melonDS.
+Les portes, aires et warps des `.bmbl` sont testés par `dq9_core::field` (`map-archive.md`,
+« Portes, zones et changements de carte ») : présence du meneur à chaque pas, avec hauteur et
+rotation lues sur la ROM, comparées à melonDS. Le module ne modifie pas ce déplacement : il
+reçoit la pose du héros après `Hero::step`.
 
 La vitesse de 4 unités/s (doublée avec Maj) est provisoire : les routines qui choisissent la vitesse,
 l'accélération, le rayon, la rotation du modèle et les transitions d'animation ne sont pas

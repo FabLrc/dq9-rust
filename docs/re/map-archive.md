@@ -112,38 +112,219 @@ Les autres types de la table ne font pas partie de `BlockList` : `0x66`/`0x67` b
 action (portes, voir ci-dessous), `0x7b`/`0x7c` rectangles tournés, `0x7d`/`0x7e` grille des
 `.bpos` de grotte. Formes restantes [inconnu].
 
-### Portes et changements de carte
+### Portes, zones et changements de carte
 
-Les gestionnaires de régions (`0x0201d530`, dispatch `0x0201d638`, insertion
-`0x0201e710`) gardent les zones par type. Le chargeur du héros (`0x02094b5c`) interroge une
-fonction de présence avec sa position (`0x02094b9c`). Les enregistrements lus dans les
-`.bmbl` se présentent sous deux formes map-changing :
+Les enregistrements `0x72`, `0x73` et `0x74` ne servent pas `BlockList` mais la même structure
+(`Zone3D+0x6c`, 0x88 octets, vidée par `BlockList_Clear`) : le `.bmbl` y range aussi les
+régions que le champ teste à chaque image. Implémentation : `dq9_formats::map::Regions`
+(lecture), `dq9_core::field` (tests et effets) ; `cargo dq9re doors <carte>` affiche les
+enregistrements, `--state` les compare à la RAM. Noms : `re/symbols.txt`, section « Map
+regions ».
 
-- `0x72` : centre XYZ (0–2), taille XYZ (3–5), angle (6), code destination (8), arrivée XYZ
-  (11–13), orientation (14) ;
-- `0x73` type 2 : centre XYZ (1–3), taille XYZ (4–6), angle (7), suivi immédiatement du
-  `0x74` d'action : code destination (4), arrivée XYZ (7–9), orientation (10).
+| offset | contenu | écriture |
+|---|---|---|
+| `+0x18` (nombre `+0x1c`, capacité `+0x20`) | **warps** `0x72`, 0x70 octets, dans l'ordre du fichier | `MapRegion_RecWarp` (`0x0201ce90`), `MapRegion_AddWarp` (`0x0201e584`) |
+| `+0x24` (nombre `+0x28`, capacité `+0x2c`) | **zones** `0x73`, 0x74 octets, dans l'ordre du fichier | `MapRegion_RecZone` (`0x0201d540`), `MapRegion_AddZone` (`0x0201e720`) |
+| `+0x3c + 4 × type` | tête de la liste des zones d'un type, **la plus récente d'abord** (suivant à `+0x70`) | `MapRegion_AddZone` |
 
-Le code de destination est résolu par la liste des cartes ; les cibles sans entrée chargée
-sont ignorées. Les autres types de région et les actions `0x74` qui ne désignent pas une
-carte ne sont pas interprétés comme des portes.
+Une zone est ajoutée en tête de sa liste : le jeu parcourt donc les zones d'un type de la
+dernière définie à la première, et la première qui convient l'emporte
+(`Regions::zones_of`).
 
-**[Hypothèse]** L'angle est un radian, la taille est complète, et la présence se teste sur un
-rectangle XZ tourné, bords inclus, sans contrainte sur Y. C'est le modèle de
-`DoorVolume::contains` ; l'orientation de l'arrivée est transmise au héros et à la caméra.
-Le wiki DQIX [Map-Textures](https://github.com/DQIX/wiki/blob/main/Map-Textures.md) a servi
-de piste de format ; la géométrie n'est pas encore validée contre une capture de melonDS.
+**Warp `0x72`** (25 valeurs, 978 sur la ROM dont 976 nomment une carte et 975 une carte de la liste). Les flottants sont
+convertis en `fx32` par `ToVec3fix` (× 4096, tronqué) :
 
-`dq9-app` déclenche la transition au pas fixe quand le héros passe de l'extérieur à l'intérieur
-d'une zone ; il charge la carte cible et place le héros à l'arrivée. Les 742 jeux d'archives
-assemblés dans `maps_assemble` exposent 1 402 portes non dégénérées avec une cible reconnue.
-Le sous-système des triggers d'histoire, les changements de carte déclenchés par scripts, et
-la validation différentielle de l'entrée restent hors de ce portage.
+| valeurs | sens | RAM |
+|---|---|---|
+| 0–2 | centre | `+0x58` |
+| 3–5 | **taille complète** (largeur, hauteur, profondeur) | boîte `+4` (coin haut) et `+0x10` (coin bas) = centre ± taille / 2 ; `+0x54` = (largeur/2)² + (profondeur/2)² |
+| 6 | angle de la boîte, radians, **non réduit** | `+0x52` (16 bits) |
+| 7 | type : 0 (935) ; 1 (43) met en file la tâche 8 de la file du champ si `0x02039820` le permet **[hypothèse : porte à animation]** | `+0` |
+| 8 | destination : code de la liste des cartes (ou entier = id) | `+0x1c` |
+| 9, 10 | −1, 0 ou 1 **[inconnu]** | `+0x64`, `+0x68` |
+| 11–13 | position d'arrivée dans la carte de destination | `+0x20` |
+| 14 | orientation d'arrivée, radians | `+0x50` (16 bits) |
+| 15 | entrée (−1 pour 786 des 978, 0 à 4) **[inconnu]** | `+0x6c` |
+| 16–24 | trois vecteurs, copies de l'arrivée sur presque toutes les portes **[inconnu]** | `+0x2c`, `+0x38`, `+0x44` |
 
-Smoke Web : la sauvegarde `build/melonds/dq9.sav` charge la carte 109 (`C01M09`) ; maintenir
-`S+D` pendant 2,2 s traverse sa porte et le statut passe à `100 C01` (extérieur de Stornway).
-La cible est observée ; le même chemin de chargement reçoit la position et l'orientation
-d'arrivée. Ce n'est pas une comparaison différentielle avec melonDS.
+**Zone `0x73`** (9 valeurs) : type, centre, taille complète, angle de la boîte (radians,
+**réduit** à `[0, 2π]`), orientation (radians, non réduite). Types de la ROM : 2 (670, « porte »
+à destination ou non), 3 (22, aire de la carte, 15 cartes), 0, 1, 4, 5, 6, 8, 9, 10, 11, 12
+(non décodés ici).
+
+| offset | valeur |
+|---|---|
+| `+4` | type |
+| `+8` | centre |
+| `+0x14` | taille complète ; `+0x24` = (largeur/2)² + (profondeur/2)² |
+| `+0x22` | angle de la boîte (réduit) |
+| `+0x20` | orientation : la direction vers laquelle la porte **fait face**, vers l'extérieur |
+| `+0x28` | bits d'exécution (voir `Zone_Holds`), nuls au chargement |
+
+**Action `0x74`** (`MapRegion_RecAction`, `0x0201d648`) : complète **la dernière zone lue**
+(pointeur global, même après d'autres enregistrements) selon son type :
+
+- type 3 : la valeur 0 est le numéro de l'aire (`+0x2c`) ;
+- type 2 : valeur 0 classe (`+0x2c`), 1 numéro (`+0x2d`), 2 drapeaux (12 bits, `+0x2e >> 4`),
+  3 quartet bas de `+0x2e` **[inconnu]** ; avec le drapeau `0x8`, 4 destination (`+0x30`),
+  5 et 6 (−1) **[inconnu]**, 7–9 position d'arrivée (`+0x38`), 10 orientation (`+0x68`), 11
+  (`+0x6a`), 12–20 trois vecteurs **[inconnu]**, et avec `0x20` un flottant (`+0x6c`). Sur la ROM
+  429 portes de type 2 ont une destination.
+- Drapeaux des portes présents dans les données : `0x2`, `0x8` (destination), `0x10` (test du
+  côté, voir plus bas), `0x20`, `0x40` et leurs sommes (0, 2, 8, 10, 16, 18, 24, 26, 32, 40, 42,
+  64, 66, 72, 74, 80, 82, 96, 104 ; deux enregistrements courts portent une valeur aberrante et
+  sont lus sans destination). Les bits `0x1` et `0x4` ne sont jamais dans les données : ce sont
+  des bits d'exécution (`0x4` = « utilisée », posée par l'action `0x6c`, effacée par `0x88`,
+  observé en RAM ci-dessous) ; `0x100` est posé par l'action `0x99`.
+
+#### Tests de présence
+
+Toutes les positions sont des `fx32`, celle du meneur est `Object3D+0x44` de l'objet de
+`GameState+0x397c` (`GetUnknownGameObject`).
+
+| fonction | adresse | test |
+|---|---|---|
+| `Region_InBox` | `0x02031128` | boîte `[haut x y z, bas x y z]`, bords **inclus**, **hauteur testée** |
+| `Region_InRotatedBox` | `0x020321f0` | sans angle : `Region_InBox`. Avec un angle non nul : refuse si la distance au sol au centre dépasse `r²` ; sinon tourne le point autour du centre de `-angle` |
+| `Region_InCylinder` | `0x02032158` | `y` dans `[cy, cy + h]` et distance au sol ≤ largeur |
+| `Zone_Holds` | `0x02094bac` | bit 8 de `+0x28` : jamais ; **profondeur < 1 : cylindre** (rayon = largeur, hauteur = hauteur, à partir de `y` du centre) ; sinon boîte tournée avec l'angle `+0x22` ; bits « une seule fois » `1`/`2`/`4` |
+
+La rotation est celle de `RotationMatrixY(fix32ReduceAngle0To2Pi(-angle))` appliquée par
+`MTX_MultVec43`, dont les matrices sont lues sur la ROM (`MTX_RotY43_` : `[c 0 −s; 0 1 0; s 0
+c]`, vecteur ligne) : **`x' = x cos a − z sin a`, `z' = x sin a + z cos a`**. C'est l'inverse du
+modèle de la première version du portage (`x cos + z sin`), qui était une hypothèse ; la
+hauteur est testée (elle était ignorée) et le test porte sur la **présence** à chaque image, pas
+sur un franchissement extérieur → intérieur.
+
+#### Ce que le champ fait de chaque région
+
+`ov_017::0219755c` (`Field_CheckRegions`), à chaque image, dans cet ordre pour les types lus ici :
+
+1. **Portes de type 2** (`Field_CheckDoorways`, `ov_017::02197a64`). Une porte compte si ses
+   bits `0x1` et `0x4` sont nuls, qu'elle tient le meneur (`Zone_Holds`) et qu'il marche ou
+   regarde **contre** son orientation : le produit scalaire de `(sin f, cos f)` avec la
+   direction de la marche demandée (ou, à l'arrêt, celle du regard `+0x54`) est ≤ 0 ; avec le
+   drapeau `0x10` c'est le côté où se tient le meneur par rapport au centre qui décide. Deux
+   portes au plus. Un compteur (`+0x42ec`) monte d'une unité par image où la marche est
+   droite (produit scalaire en valeur absolue au-delà de `0xccc − 0x170`, environ 45°) et
+   retombe à 0 sinon ; **à 3, l'image suivante déclenche** `Field_TouchDoorways`
+   (`ov_017::02198f84`) : événement **17** (mot 7 = classe | numéro << 16, mot 10 =
+   orientation), puis, sans bit `0x4`, la porte part vers sa destination avec sa propre
+   arrivée, sauf si un trigger a posé un transport (`Save_Warp`), qui la remplace.
+2. **Aires de la carte** (type 3, `Area_CheckLeader`, `ov_017::0219814c`) : la première aire
+   de la liste qui tient le meneur ; changer d'aire déclenche l'événement 5 (aire quittée) puis
+   2 (aire atteinte), mot 1 = numéro (`trigger.md`, « Zones »).
+3. **Aires ajoutées par les triggers** (action `0x8f`, `ov_017::02198e30`) : même règle.
+4. **Warps `0x72`** (`Field_CheckWarps`, `ov_017::0219ca88`) : le meneur dans la boîte
+   (`Region_InRotatedBox`) copie les données du warp dans `Save_Warp` (`Field_WarpFromRegion`,
+   `ov_017::0219c6f4` : carte, position, orientation, entrée), met en file la tâche de porte
+   si le type vaut 1, applique le transport et déclenche l'événement **6** (mot 3 = la carte
+   quittée). Le prédicat que le type 1 teste sur le meneur (`0x02039820`) et la tâche de porte
+   (animation, marche automatique, fondu) ne sont pas lus.
+
+#### Arrivée
+
+La carte de destination se charge, le héros est posé à la position d'arrivée et tourné de
+l'angle d'arrivée. **Convention des angles** : l'orientation d'un objet est un `fx32` en
+radians et sa direction est `(sin a, 0, cos a)` (0 regarde vers +z). La RAM le confirme : le
+héros qui descend (+z) a l'angle 0, celui qui va à gauche 19 544 = 4,77 rad (3π/2 ≈ 4,71), un
+angle négatif d'arrivée est réduit à `[0, 2π]` (−2 645 devient 23 091). L'application utilise
+`yaw = π − angle` (`field::yaw_of_angle`) ; la caméra de l'arrivée suit le héros, ce n'est pas
+vérifié dans le jeu.
+
+`dq9-app` appelle `Field::step` à chaque pas fixe avec la pose du héros et fait ce que
+renvoient les événements : changement de carte (chargement, pose d'arrivée, événements 20 puis
+3 de la carte), demandes de trigger journalisées comme non prises en charge jusqu'à J3. La
+vitesse du héros reste celle du portage du déplacement.
+
+#### Vérification
+
+- **Données** (`maps_assemble`, `dq9-formats/tests/real_rom.rs`) : 742 jeux d'archives
+  distincts exposent 975 warps à destination connue, 429 portes de type 2 à destination et 22
+  aires de type 3 (chiffres du wiki).
+- **RAM** : `cargo dq9re doors --state build/melonds/walk_1.5.ml1` (et `demo`, `before`,
+  `moved`, tous en `C01M09`) : le warp lu (type, boîte haut/bas, centre, destination,
+  arrivée, angles, `r²`) est **identique** aux 0x70 octets de `g_Zone3D+0x6c+0x18`. Dans
+  `C01` (état `walk_1.95`) les 15 zones lues sont identiques aux 0x74 octets de la RAM, sauf
+  les drapeaux des deux portes de `C01M14` (numéros 22 et 24) : la RAM les a à 12 et 14, la
+  lecture à 8 et 10. C'est le bit « utilisée » que pose l'événement 20 de `triggerC01` (action
+  `0x6c`, condition « nuit », la sauvegarde est de nuit) ; `dq9_core::field` le reproduit
+  (`stornway_at_night_marks_its_two_locked_doorways`).
+- **Arrivées** (`dq9-core/tests/field_rom.rs`) : sur 1 426 arrivées (warps et portes), 4
+  tombent dans un warp de la carte de destination avec le test lu dans le code, 25 avec la
+  rotation inverse : le sens de la rotation est fixé. Sur 100 arrivées qui tombent dans une
+  porte de type 2 de la destination, 96 regardent hors de la porte (produit scalaire avec son
+  orientation > 0), ce que la règle « marcher ou regarder contre l'orientation » demande.
+  La taille est bien la taille complète : en demi-étendues les arrivées d'Angel Falls
+  tomberaient dans la porte de retour.
+- **melonDS** : voir la section suivante.
+
+#### Comparaison à melonDS
+
+Sauvegarde de démonstration (`build/melonds/dq9.sav`), scénario 19.2.1, nuit, église de
+Stornway (`C01M09`, 109). `scripts/melonds-state.ps1 -Keys` pilote le jeu avec des touches
+maintenues (durées en temps réel, **± 2 images** : ce ne sont pas des mesures alignées au
+nombre d'images, `movement.md`) ; états `.ml1` relus par `cargo dq9re doors --state`. Il
+faut d'abord fermer le dialogue d'accueil du prêtre (A, A, puis B pour le menu).
+
+| état | touches | carte | position du meneur | angle |
+|---|---|---|---|---|
+| départ | — | 109 | (0,210 ; 0,120 ; −1,380) | 12 861 (π) |
+| `walk_1.5` | bas 1,5 s | 109 | (0,339 ; 0,106 ; 7,277) | 0 |
+| `walk_1.65` | bas 1,65 s | 109 | (0,339 ; 0,106 ; 7,853) | 0 |
+| `walk_1.7` | bas 1,7 s | 109 | (0,339 ; 0,106 ; 8,237) | 0 |
+| `walk_1.75` | bas 1,75 s | **100** (`C01`) | **(14,850 ; 2,458 ; −10,050)** | 23 091 (5,637 rad) |
+| `walk_1.95` | bas 1,95 s | 100 | identique | identique |
+| `door_0.25` | puis haut + droite 0,25 s | 100 | (15,321 ; 2,458 ; −10,561), dans les zones 10 et 11 | 10 431 |
+| `door_2.0` | puis haut + droite 2 s | **109** | **(0,200 ; 0,100 ; 7,900)** | 12 869 (π) |
+
+- **Sortie de l'église** (warp `0x72` de type 0, boîte centrée en z 9,268 de profondeur 1,5,
+  donc de 8,518 à 10,018) : à z = 8,237 la carte n'a pas changé, 0,05 s plus tard elle a changé.
+  Le bord prédit (8,518) est dans l'intervalle ; la lecture en demi-étendues (7,77) est exclue.
+  L'arrivée est exactement celle de l'enregistrement (14,85 ; −10,05), l'angle −2 645 réduit
+  en 23 091, et `Save_Warp` (`GameState+0x3f8`) porte la carte 100, la position (14,85 ; 2,22 ;
+  −10,05), l'angle −2 645, les octets `+7` et `+0xc` à 1 : exactement `Field_WarpFromRegion`.
+  La hauteur passe de 2,22 à 2,458 : le jeu pose le héros sur le sol (2,358 + 0,1) ; le
+  portage trouve 2,459.
+- **Retour par la porte de type 2** (volume centré en (15,475 ; 2,5 ; −11,104), 1,4 × 3 ×
+  1,5, tourné de 5,72 rad) : 0,25 s après l'arrivée, le héros est en (15,321 ; −10,561), **dans
+  les deux zones** selon `dq9_core::field` (la carte n'a pas encore changé : la tâche de porte
+  joue son animation), et 2 s plus tard la carte est 109 à l'arrivée exacte de la porte
+  (0,2 ; 0,1 ; 7,9), orientation π. Le même parcours simulé par `dq9-app --walk` :
+  `cargo run -p dq9-app --release -- --map C01 --start=14.85,-10.05 --walk "+x-z:1.5"` change de
+  carte en (15,369 ; −10,569) vers 109 à (0,200 ; 0,100 ; 7,900), `Doorway { number: 20 }`.
+- Hors portée : l'instant exact du déclenchement (les états sont pris après le geste), la vitesse
+  du héros (3,8 à 5,8 unités/s selon le tronçon, 4 dans le portage), la durée de la tâche de
+  porte, la caméra d'arrivée. Aucun de ces états n'est une comparaison image par image : le
+  critère différentiel de J2 n'est pas validé.
+
+Smoke natif d'Angel Falls (`dq9-app`, sans fenêtre) :
+
+```text
+> cargo run -p dq9-app --release -- --map M01 --start=-19.5,-9 --walk "-z:3,+z:3,idle:0.5"
+start: map 1100 M01 hero (-19.500, -0.800, -9.000) yaw 3.142
+map change 1100 -> 1102: Doorway { class: 0, number: 9 } with the hero at (-19.500, -0.150, -12.267), arrival Some(Vec3(0.39990234, 0.15991211, 6.0998535)) angle Some(-3.1418457)
+arrived: map 1102 M01M02 hero (0.400, 0.160, 6.100) yaw 6.283
+map change 1102 -> 1100: Warp { index: 0, kind: 0 } with the hero at (0.400, 0.158, 7.300), arrival Some(Vec3(-19.569824, -0.099853516, -11.799805)) angle Some(0.0)
+arrived: map 1100 M01 hero (-19.570, -0.100, -11.800) yaw 3.142
+```
+
+La porte de `M01M02` (zone de type 2, z de −14 à −12) s'ouvre à la quatrième image passée à
+l'intérieur (z −12,27), la sortie (warp de type 0, z de 7,25 à 8,75) quand le héros y entre
+(z 7,30).
+
+(`angel_falls_houses_open_and_close` dans `dq9-core/tests/field_rom.rs` rejoue ce parcours.)
+
+#### Limites et inconnues
+
+- Tâche de porte (animation, marche et fondu), prédicat `0x02039820` du type 1, gardes de
+  `Field_CheckRegions` (`+0x424`, tâche modale), états du meneur `+0xbe` (« en marche », ici :
+  une direction est demandée) et touches tenues (ici : la direction demandée).
+- Zones de types 0, 1, 4 à 12 (`Field_CheckRegions` en lit plusieurs : `021982ac`, `021983e0`,
+  `021984f4`, `02198618`, `021986fc`, `02198aa0`), valeurs 9, 10, 15 et 16–24 des warps,
+  valeurs 5, 6, 11 et 12–20 des portes, quartet bas de `+0x2e`, entrée du transport.
+- Les bits « une seule fois » de `+0x28` (ce qui les pose est inconnu : aucun enregistrement) ;
+  les actions `0x6d`, `0x95`, `0x96`… qui touchent les objets de porte ne sont pas modélisées.
 
 ## Éclairage (`ats_<c>.ambl`)
 

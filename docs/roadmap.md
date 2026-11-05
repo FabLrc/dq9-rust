@@ -224,13 +224,20 @@ déterministe au pas fixe avec snap du sol et blocage simplifié des faces verti
 ([`re/movement.md`](re/movement.md)). L'application affiche un repère joueur et suit la caméra.
 `--save`/le champ Web sélectionne la carte du slot normal valide ; la position enregistrée
 exploitable pour le héros n'est pas établie, le départ reste calculé depuis les collisions.
-Les portes map-changing de `.bmbl` sont parsées et une transition Web réelle de 109 (`C01M09`)
-vers 100 (`C01`) est observée ; l'application charge la position et l'orientation d'arrivée.
-La géométrie de déclenchement reste une hypothèse non comparée à melonDS
-([`re/map-archive.md`](re/map-archive.md)). Vitesse fidèle, parcours complet d'Angel Falls,
-autres portes, triggers de scénario et comparaison à nombre d'images égal restent à faire.
-Les états melonDS existants ne sont pas alignés en nombre d'images ; le critère différentiel
-de J2 n'est pas validé.
+Portes, zones et warps du `.bmbl` : lus en `fx32` comme le jeu (`dq9_formats::map::Regions`,
+identiques à la RAM de melonDS dans `C01M09` et `C01`) et testés par `dq9_core::field` : boîte
+tournée (sens de la rotation lu sur la ROM), hauteur, cylindres, portes de type 2 qui exigent
+une marche contre leur orientation pendant quatre images, aires de la carte et aires ajoutées
+par l'action `0x8f`, événements 2, 3, 5, 6, 17 et 20 des triggers (changement de carte rendu à
+l'application, autres demandes journalisées jusqu'à J3), marques `0x6c`/`0x88` des portes.
+`dq9-app` ne fait que réagir aux événements ; entrer dans les maisons d'Angel Falls et en
+sortir fonctionne (`dq9-app --walk`, test `angel_falls_houses_open_and_close`).
+Comparaison à melonDS sur l'église de Stornway : sortie (warp `0x72`) et retour (porte de type
+2) concordent pour les cartes, les arrivées, les angles et le bord de franchissement, à ± 2
+images de pilotage près ([`re/map-archive.md`](re/map-archive.md)). Restent : la tâche de porte
+(animation, marche automatique, fondu), les zones des autres types, la vitesse fidèle, le
+parcours complet d'Angel Falls et la comparaison à nombre d'images égal : les états melonDS
+ne sont pas alignés en nombre d'images, le critère différentiel de J2 n'est pas validé.
 
 ## J3 — Parler et scènes : **v0.1 jouable**
 

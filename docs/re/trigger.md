@@ -2,7 +2,9 @@
 
 Implémentation : `crates/dq9-formats/src/trigger.rs` (format : `parse`, `Trigger::loaded`,
 `Trigger::talk`, `action_name`) et `crates/dq9-core/src/trigger.rs` (état et exécution :
-`first_match`, `fire`, `run_action`, `run_deferred`, `State`). Outil : `cargo dq9re talk`
+`first_match`, `fire`, `run_action`, `run_deferred`, `State`) ; les événements des régions de
+carte (2, 3, 5, 6, 17, 20) sont déclenchés par `crates/dq9-core/src/field.rs` (voir « Zones »
+plus bas). Outil : `cargo dq9re talk`
 déclenche les triggers de conversation de la carte, exécute leurs actions, puis choisit la
 réplique (`dialogue.md`).
 
@@ -72,11 +74,11 @@ Chaque appelant passe une constante (relevée dans `r1` avant chaque appel) :
 | 1 | 1 143 | fin de conversation (`TalkTask_Update`, états de fermeture) | 0 = PNJ, 5 = contexte de la conversation |
 | 2 / 5 | 110 / 0 | le meneur entre dans / sort d'une zone (`ov_017::0219814c`, `02198e30`) | 1 = zone : objet de carte de type 3 ou zone ajoutée par l'action 0x8f |
 | 3 | 249 | arrivée dans une salle après une transition (`ov_017::0219e384`, `0219fc88`, via `FUN_02064a04`) | 3 = salle |
-| 6 | 35 | fin d'une tâche de `ov_017::0219ca88` **[sens inconnu]** | 3 = salle |
+| 6 | 35 | le meneur entre dans la boîte d'un warp `0x72` (`Field_CheckWarps`, `ov_017::0219ca88`) : le transport est prêt (`Save_Warp`), le trigger s'exécute avant le changement de carte | 3 = salle quittée |
 | 9 / 19 | 0 / 11 | `FUN_02064a50` (personnage local) / `FUN_02064aac` (meneur), appelé par `FUN_02053644` quand un compteur d'un personnage atteint sa cible | 1 = zone courante ; octets `+0x2a..+0x2d` = quatre octets du personnage (`+0x178`) **[sens inconnu]** |
 | 11 | 669 | fin d'un événement scripté (`ov_017::021bc77c`) | 2 = numéro de l'événement |
 | 15 / 16 | 47 / 33 | fin d'un combat scripté (`ov_017::021b790c`) ; 16 si un octet d'état vaut 2 **[sens inconnu ; 15 lance presque toujours un événement]** | 6 = numéro de combat (champ 0 de `data/event/eventbattle.bin` : les 40 valeurs y figurent) |
-| 17 | 504 | objets de carte de la liste `+0x36bc` (`ov_017::02198f84`) **[hypothèse : objet examiné]** | 7 = (type `+0x2c`, numéro `+0x2d`), 10 = orientation `+0x20` |
+| 17 | 504 | porte de type 2 touchée : le meneur a marché 3 images contre son orientation, une quatrième la prend (`Field_TouchDoorways`, `ov_017::02198f84`, liste `+0x36bc`) | 7 = (classe `+0x2c`, numéro `+0x2d`), 10 = orientation `+0x20` |
 | 20 | 195 | fin du chargement des triggers de la salle (`Trig_LoadTable`) | 3 = salle |
 | 22 | 41 | overlay 2 (`ov_002::02155960`), cartes H18 et M08 **[sens inconnu]** | — |
 | 23 | 13 | `ov_017::02199138`, carte S08 **[sens inconnu]** | 3 = valeur globale, 9 = premier objet de `+0x36bc` |
@@ -88,6 +90,60 @@ Constats sur les données : l'événement 1 porte les suites des répliques (act
 objets, 0x77 événement, 0x7d/0x7f quêtes, conditions 0xB sur le contexte et 0x10 sur la
 réponse oui/non) ; l'événement 20 prépare la salle (0x95/0x96 objets, 0x8f zones) ;
 l'événement 17 marque l'objet (0x6c) puis fait parler.
+
+## Zones : aires, portes et warps (`dq9_core::field`)
+
+Les événements 2, 5, 6, 17 et 20 ne viennent pas de conversations mais des régions de la
+carte (`.bmbl`, `map-archive.md`, « Portes, zones et changements de carte ») et de l'arrivée
+dans une salle. `Field::step` les évalue à chaque pas fixe avec la position du meneur ;
+`Field::enter` joue 20 puis, après une transition, 3. Les triggers sont relus du fichier à
+chaque événement, filtrés par `Trigger::loaded` d'après la progression de la piste de la salle
+(`FUN_02064ba8` la choisit à l'arrivée, `track_of_room`). Un trigger qui rend un transport
+(actions `0x79`/`0x7a`/`0x7b`…) devient un changement de carte ; les autres demandes
+(`Request::Talk`, `Event`…) sont rendues à l'application, qui les journalise jusqu'à J3.
+
+**Aires de la carte** (zones de type 3, `Area_CheckLeader`, `ov_017::0219814c`) : on cherche
+la première aire de la liste (la plus récemment définie d'abord) qui tient le meneur
+(`Zone_Holds`). Si l'aire change, événement 5 avec le mot 1 = numéro de l'aire quittée, puis 2
+avec celui de l'aire atteinte. Le jeu mémorise l'aire (pointeur) sur l'objet du meneur ; deux
+aires de même numéro sont donc distinctes. 22 sur la ROM, 15 cartes.
+
+**Aires ajoutées par l'action `0x8f`** (`Trig_RunAction`, cas `0x2b`, `Trig_AddArea`
+`0x02064b08`) : `0x8f(n)` puis coin haut (x y z), coin bas (x y z), angle en degrés. Structure
+de 0x30 octets ajoutée **en fin de liste** : `+0` n, `+2` angle `degrés × π / 180 × 4096`
+tronqué en 16 bits puis ramené dans `[0, 2π]` (`0x6488`), `+4` centre = (haut + bas) >> 1,
+`+0x10` rayon² = (largeur/2)² + (**hauteur**/2)² (pas la profondeur : un rectangle haut et
+mince refuse ses extrémités quand il est tourné), `+0x14` coin haut, `+0x20` coin bas. Les
+flottants sont arrondis (demi unité loin de zéro). `ov_017::02198e30` teste le meneur dans
+chacune, la première qui convient l'emporte ; l'aire courante est `+0x491` de l'objet des
+triggers (−1 = aucune), l'événement 5 porte l'aire quittée en mot 1, 2 l'aire atteinte, et
+`+0x4446` du gestionnaire de champ mémorise la dernière atteinte (lue par les actions `0xd1` et `0xd2`). Les 116 occurrences
+sont surtout dans des enregistrements de l'événement 20 (80 d'après le wiki). Sur le prologue
+d'Angel Falls (1.1), l'événement 20 de `M01` ajoute l'aire 10 et aucun trigger de zone n'y
+répond.
+
+**Porte touchée** (événement 17, `Field_TouchDoorways`, `ov_017::02198f84`) : mot 7 = classe
+`+0x2c` (moitié basse) et numéro `+0x2d` (moitié haute), mot 10 = orientation `+0x20`
+(la condition `0x1d` les compare : arg = classe, opérande 0 = numéro, opérande 1 =
+orientation en degrés). Si le trigger a posé un transport, il remplace la destination, la
+position et l'orientation d'arrivée de la porte ; sinon la porte part vers la sienne. Un
+trigger qui s'arrête (action sans cas) abandonne ses actions différées : la porte garde sa
+destination.
+
+**Arrivée** : la salle chargée joue l'événement 20 (fin du chargement des triggers : mot 3 =
+salle, c'est là que les triggers ajoutent leurs aires et marquent leurs portes), puis, après
+une porte ou un transport, l'événement 3 (mot 3 = salle).
+
+**Vérification sur une sauvegarde** : à Stornway (`C01`, 19.2, nuit), l'événement 20
+(condition `0x11(1)` : nuit) joue `0x6c` pour les numéros 24 et 22 ; la RAM d'un état melonDS
+y montre exactement ces deux portes de type 2 (zones 12 et 13, les deux accès de `C01M14`) avec
+les drapeaux 12 et 14 au lieu de 8 et 10, soit le bit `0x4` (`dq9re doors --state`, test
+`stornway_at_night_marks_its_two_locked_doorways`). Les portes de l'église (numéros 18 et 20)
+restent libres, et le héros les prend.
+
+**Non modélisé** : les actions qui touchent les objets de carte (`0x6d`, `0x95`/`0x96`,
+`0x99`…), l'animation de la porte et la marche automatique, les gardes de
+`ov_017::0219755c`, les zones des autres types.
 
 ## Mots (`Trig_CompileWords`, `0x0205ec80`)
 
@@ -225,7 +281,7 @@ synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
 | 0x66 / 0x67, 0x68 / 0x69 | lève / baisse le drapeau `arg` du jeu 0, 1 de la piste | 57 / 8, 251 / 21 |
 | 0x6a | remet à zéro les deux compteurs de conversation du PNJ `arg` | 55 |
 | 0x6b | hôte d'une session : drapeau 0x113a | 53 |
-| 0x6c / 0x88 | lève / baisse le bit 2 de l'objet de carte (type `arg`, numéro, angle) **[hypothèse : objet déjà ouvert]** | 502 / 28 |
+| 0x6c / 0x88 | lève / baisse le bit « utilisée » (`0x4` des drapeaux) des portes de type 2 de classe `arg`, de numéro l'opérande 0 et d'orientation l'opérande 1 (degrés) ; une porte utilisée n'est plus touchée ; `0x6c` n'agit pas sur une porte au bit `0x1` (`Trig_RunAction`, cas 8 et `0x24`). Observé en RAM (« Zones ») | 502 / 28 |
 | 0x6d | retire l'objet de carte | 179 |
 | 0x6e | moment de la journée (`+0x3dc`) = `arg` (< 4) | 47 |
 | 0x6f–0x71, 0x98, 0x9a, 0xa3, ≥ 0xea | aucun cas : **arrête** la liste | — |
@@ -249,7 +305,7 @@ synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
 | 0x8b / 0x8c | ajoute / retire l'opérande (32 bits) à l'or, plafond 9 999 999, plancher 0 | 13 / 0 |
 | 0x8d † | tâche `+0x3b58` si `arg` ≠ 0 **[sens inconnu]** | 236 |
 | 0x8e | drapeau `0xbf1 + rang` de `arg` dans une table de 32 valeurs (`0x020e87d0`), rangs 17 à 31 seulement | 14 |
-| 0x8f | ajoute une zone (événements 2/5) | 116 |
+| 0x8f | ajoute une aire (événements 2/5), voir « Zones » ; s'exécute au fil de la liste, sans être différée | 116 |
 | 0x90 | bits 11–13 de l'entrée de la quête `arg` = `haut` (quête dans l'état 2, pas invité) | 155 |
 | 0x91 † | fenêtre choisie par `arg` **[sens inconnu]** | 49 |
 | 0x92 / 0x93 | drapeau `arg + 0x776` | 0 |

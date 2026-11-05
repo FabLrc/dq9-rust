@@ -611,6 +611,27 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x020ef418 g_BmdjHandlers           # kinds 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x72, {0}
 0x020f051c g_DatHandlers            # kinds 0x64..0x6e, {0}
 
+# --- Map regions: warps, doorways, areas (docs/re/map-archive.md, docs/re/trigger.md) ---
+0x0201cb70 MapRegion_RecWarpTail    # 0x72 values 7..: type, destination (code -> map id), 9, 10, arrival, arrival angle, [entry], 3 more vectors
+0x0201ce90 MapRegion_RecWarp        # bmbl kind 0x72: center, size, angle -> box high/low, radius²; then MapRegion_RecWarpTail; MapRegion_AddWarp
+0x0201d540 MapRegion_RecZone        # bmbl kind 0x73: type, center, size, box angle (reduced), facing, radius²; MapRegion_AddZone
+0x0201d648 MapRegion_RecAction      # bmbl kind 0x74: completes the last zone by its type (2 doorway, 3 area number, ...)
+0x0201e558 MapRegion_Warp           # i-th 0x70-byte warp, else 0
+0x0201e584 MapRegion_AddWarp        # appends a warp (array +0x18, count +0x1c)
+0x0201e720 MapRegion_AddZone        # appends a 0x74-byte zone (array +0x24, count +0x28) and puts it at the head of the list of its type (+0x3c + 4 * type, next at +0x70)
+0x0201e848 MapRegion_ZoneList       # head of the zone list of a type
+0x02031128 Region_InBox             # box [high xyz, low xyz], edges included, Y tested
+0x02032158 Region_InCylinder        # y in [cy, cy + h], ground distance² <= w²
+0x020321f0 Region_InRotatedBox      # angle != 0: refuse beyond radius², turn the point by -angle about the center (RotationMatrixY, MTX_MultVec43), then Region_InBox
+0x02094bac Zone_Holds               # zone test: off bit 8; depth < 1 cylinder else rotated box; once-only bits 1/2/4
+ov_017::0219755c Field_CheckRegions    # per frame: doorways, areas, region types 4/5/8/10..., trigger areas
+ov_017::02197a64 Field_CheckDoorways   # type 2 zones: inside, walking or looking against the facing; 3 frames, then Field_TouchDoorways
+ov_017::02198e30 Field_CheckAddedAreas # areas added by action 0x8f: events 5 (left) and 2 (entered)
+ov_017::02198f84 Field_TouchDoorways   # event 17 (class, number, facing) for the queued doorways, then the door task with the destination
+ov_017::0219b33c Field_QueueTask       # field task queue (+0x36b4 type, +0x36b8 count, +0x36bc objects)
+ov_017::0219c6f4 Field_WarpFromRegion  # Save_Warp from a 0x72 warp: room, position, angle, entry
+ov_017::0219ca88 Field_CheckWarps      # 0x72 warps: leader inside -> Save_Warp; type 1 queues the door task, then event 6
+
 # --- NITRO G3D animation library (docs/re/g3d.md; names from the USA decompilation) ---
 0x020b3bbc ProcessJointAnimationsOnBoneMatrix   # one joint animation: callback; several: weighted blend
 0x020b4078 SetUpRenderCommandHandler            # object 0 starts with an identity accumulated scale
