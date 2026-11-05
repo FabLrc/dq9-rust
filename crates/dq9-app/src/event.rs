@@ -419,8 +419,8 @@ impl EventPlayer {
         self.cutscene.seed(
             Target::Hero,
             Pose {
-                position: stage.hero.position,
-                rotation: Vec3::new(0.0, angle_of_yaw(stage.hero.yaw), 0.0),
+                position: stage.hero.position(),
+                rotation: Vec3::new(0.0, angle_of_yaw(stage.hero.yaw()), 0.0),
                 scale: stage.scene.hero_scale(),
                 ..Pose::default()
             },
@@ -639,8 +639,8 @@ impl EventPlayer {
             match target {
                 Target::Hero => {
                     if node.placed {
-                        stage.hero.position = node.pose.position;
-                        stage.hero.yaw = yaw_of_angle(node.pose.rotation.y);
+                        *stage.hero =
+                            Hero::at(node.pose.position, yaw_of_angle(node.pose.rotation.y));
                     }
                     self.hero_hidden = !node.visible;
                 }

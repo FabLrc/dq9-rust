@@ -191,9 +191,9 @@ visible établi près (554, 559, 560, 571, 712, 815).
 | 1170, 1320 | `X01M01`, `M01` | partiel | natives 545/546 (`run`/`stand` d'un personnage), 328 (caméra) |
 | 1330, 1340, 1380 | `M01M06`, `M01M04`, `M01` | partiel | mouvement 1 d'un acteur déclaré, bulles 541/542/561, `574` (bit des placements de carte) |
 | 21500 + 21507 | `M01M12` | partiel | pas de son ni de lumière/heure (588, 589…), sprites 2D (521), 8 attachements d'os (tête, torse : halo, ailes), natives 238 (teinte), 409/411/413 (effets de fenêtre), 541/542/561, 547, 552 (caméra à trois os), 574, 584, mouvement `nozoki_loop` absent des données |
-| 21510 | `X01M04` | partiel | 574 |
-| 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | partiel | brouillard (804), lumière/heure, teinte 238, 574, 809 |
-| 21591, 21592, 21594, 21597 | `X01M05`, `M01`, `X01M04` | partiel | sprites 2D, 575/574, 581/582, 809, lumière |
+| 21510 | `X01M04` | partiel | 574, attachement d'os |
+| 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | partiel | brouillard (804), lumière/heure, teinte 238, 574, 809, 6 attachements d'os |
+| 21591, 21592, 21594, 21597 | `X01M05`, `M01`, `X01M04` | partiel | sprites 2D (21591), 575/574, 581/582, 809, lumière, attachements d'os (21592, 21597) |
 | 21593, 21595 | `M01` | partiel | sprites 2D, brouillard, teinte 238, bulles, 559, 581/582, 809, mouvement 1 d'un acteur |
 
 La chaîne 21520 → 21596 (quatre cartes) se joue d'un bout à l'autre par les natives 538 ; ce qui
