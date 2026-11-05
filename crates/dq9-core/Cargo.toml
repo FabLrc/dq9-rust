@@ -14,6 +14,7 @@ nds-rom.workspace = true
 
 [dev-dependencies]
 testrom.workspace = true
+crc32fast = "1"
 
 [lints]
 workspace = true

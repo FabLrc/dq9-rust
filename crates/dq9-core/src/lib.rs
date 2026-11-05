@@ -8,6 +8,7 @@ use nds_rom::{Error, Narc, Result};
 
 pub mod field;
 pub mod lighting;
+pub mod script;
 pub mod state;
 pub mod trigger;
 

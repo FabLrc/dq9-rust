@@ -525,6 +525,7 @@ dependencies = [
 name = "dq9-core"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "dq9-formats",
  "glam",
  "nds-rom",
