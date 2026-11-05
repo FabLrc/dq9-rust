@@ -215,9 +215,10 @@ maisons et en ressortir ; position comparée à melonDS sur une même séquence 
 Avancement : `dq9-core` assemble les collisions transformées et fournit un déplacement
 déterministe au pas fixe avec snap du sol et blocage simplifié des faces verticales
 ([`re/movement.md`](re/movement.md)). L'application affiche un repère joueur et suit la caméra.
-La vitesse, le départ depuis une sauvegarde, les portes, triggers et transitions restent à
-implémenter ; les états melonDS existants ne sont pas alignés en nombre d'images : le critère
-différentiel de J2 n'est donc pas validé.
+`--save`/le champ Web sélectionne la carte du slot normal valide ; la position enregistrée
+exploitable pour le héros n'est pas établie, le départ reste calculé depuis les collisions.
+Vitesse fidèle, portes, triggers et transitions restent à implémenter. Les états melonDS
+existants ne sont pas alignés en nombre d'images : le critère différentiel de J2 n'est pas validé.
 
 ## J3 — Parler et scènes : **v0.1 jouable**
 

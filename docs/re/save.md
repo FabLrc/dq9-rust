@@ -94,8 +94,9 @@ recoupée avec les longueurs de copie du code. Accès brut : `Slot::block(Block)
 `Main` en détail (offsets d'emplacement) : personnages `136 + 572 n` ; `7572` personnages en
 réserve ; `7573` ordre du groupe (4) ; `7577` effectif du groupe ; `7578 + 18 n` objets portés
 (8 × u16 + 2 octets) ; `11448` or en main ; `11452` or en banque ; `11460` mini-médailles ;
-`11476` zone (mot courant, ou `0x6d` pour le point de départ) ; `7652` sac (0x1d4 octets, voir
-« Inconnu ») ; réglages et position de départ `11488..11519` ; drapeau d'intermission
+`11476` id de carte courante (109 dans la démo ; `Save_LoadSlot` le copie à
+`GameState+0x7e74`, et la carte observée `C01M09` porte l'id 109) ; `7652` sac (0x1d4 octets,
+voir « Inconnu ») ; réglages et données de départ `11488..11519` ; drapeau d'intermission
 `11530` (tampon `+0x2ca2`).
 
 La somme C (`40..132`) ne couvre pas ces blocs : elle protège le petit bloc copié vers
@@ -114,7 +115,7 @@ l'adresse lue dans le code. Table complète : `melonds::SAVE_COPIES`.
 | sac (`7652`, 0x1d4), puis `+0x2b08` (0x128) | `GameState_Party` (`0x02010838` → `GameState+0x2a04`) `+0`, `+0xe04` | identiques |
 | banque, or, mot `11456`, mini-médailles | `GameState+0x396c`, `+0x3970`, `+0x3974`, `+0x3978` (partie `+0xf68..+0xf74`) | identiques |
 | ordre (4) et effectif du groupe | `GameState+0x397c`, `+0x3980` | identiques |
-| zone (`11476`, u16) ; `11490`, `11491` | `GameState+0x7e74` (aussi partie `+0x2c94`) ; partie `+0xf7d`, `GameState+0x63dc` | identiques |
+| id de carte (`11476`, u16) ; `11490`, `11491` | `GameState+0x7e74` (également partie `+0x2c94`) ; partie `+0xf7d`, `GameState+0x63dc` | identiques ; l'id 109 correspond à la carte `C01M09` dans la liste |
 | `11492`, `11494` (u16, ordre inversé), vecteur `11496` (3 × fx32) + mot `11508`, `11512`, `11516`, `11519` | `g_Zone3D+0x2786`, `+0x2784`, `+0x2774..+0x2784`, `+0x2794`, `+0x2788`, `+0x27d0` | identiques ; le vecteur n'est pas la position du héros à la reprise |
 | membres du groupe (572 octets chacun) | convertis par `PartyMember_LoadRecord` (`0x02082d7c`) vers `GameState_PartyMember` (`GameState+0x474 + i×0x964`), § suivant | tous les champs comparés identiques |
 | personnages en réserve | `GameState+0x3984` (n × 572, copie directe) | démo : 0 en réserve |
@@ -214,7 +215,9 @@ caractère = indice dans la table de glyphes de la police `me`** (`font.md`), te
 
 - Noms : voir plus haut (indices de glyphes) ; les caractères hors police `me` ne sont pas
   contrôlés.
-- Numérotation de la zone (`109` sur la démo) ; sens des mots de position.
+- Signification de la position enregistrée (`11496..11508`) : le vecteur est copié dans
+  `g_Zone3D`, mais ce n'est pas la position du héros à la reprise (`Continue`) ; voir
+  [`movement.md`](movement.md).
 - Bits de `lieux visités` (`0xfe77ffff` sur la démo, l'éditeur ne nomme que les bits 1..=18).
 - Sens des drapeaux eux-mêmes (indices) : le bloc est typé, pas les bits. Les blocs de
   `+0x2c0` (12 octets), `+0x2cc` (0x66 octets) et l'octet `+0x332` hors sélecteur de piste

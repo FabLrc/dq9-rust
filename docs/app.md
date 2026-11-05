@@ -22,6 +22,7 @@ changements de carte et l'éclairage restent absents.
 ```powershell
 cargo run -p dq9-app --release -- --map M01            # ROM : --rom, DQ9_ROM, ou le seul *.nds de rom/
 cargo run -p dq9-app --release -- --map C01M09 --time 1 --ds-aspect
+cargo run -p dq9-app --release -- --save rom/dq9.sav   # charge la carte enregistrée, sans position exacte
 # Une image hors écran en PNG, sans fenêtre, puis sortie :
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/m01.png
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/village.png `
@@ -30,17 +31,21 @@ cargo run -p dq9-app --release -- --map M01 --frame 60 --screenshot build/scratc
 cargo run -p dq9-app --release -- --map C01M09 --chapter 19 --step 2 --substep 1 --night
 ```
 
-`--map` : code (`M01`, `C01M09`, `F01`) ou id (`1100`) de la liste des cartes ; `--time` :
-moment de la journée 0 à 3 (`LightingManager+0x98`, choix des variantes et des instances
-visibles) ; `--ds-aspect` : rendu au format d'un écran DS (256×192), bandes noires autour.
+`--map` : code (`M01`, `C01M09`) ou id (`1100`) de la liste des cartes ; il prévaut sur la
+carte lue dans `--save`. En l'absence des deux options, la carte reste `M01`. `--save` lit un
+`.sav` local et sélectionne la carte du premier slot normal valide ; aucune donnée n'est envoyée
+au réseau. La position exacte du héros n'est pas identifiée dans la sauvegarde normale : il
+commence encore au départ provisoire calculé depuis les collisions. `--time` : moment de la
+journée 0 à 3 (`LightingManager+0x98`, choix des variantes et des instances visibles) ;
+`--ds-aspect` : rendu au format d'un écran DS (256×192), bandes noires autour.
 
 La distribution est celle du prologue **1.1.1 de jour** par défaut. `--chapter`, `--step`,
 `--substep` choisissent le point de l'histoire ; `--night` choisit les placements de nuit,
-indépendamment de `--time` (variante graphique de la carte). Quêtes et drapeaux restent à
-zéro : ces options ne sont pas un chargement de sauvegarde. `--frame N` évalue exactement
-N pas fixes depuis le début des mouvements avant la capture (0 par défaut), avec la même
-mise à jour CPU qu'en fenêtre et sur le Web, sans dépendre du temps de chargement du GPU.
-Les sprites sont orientés vers la caméra de `--eye`/`--target` avant cette évaluation.
+indépendamment de `--time` (variante graphique de la carte). Une sauvegarde ne restaure ici
+que la carte : quête, drapeaux et position exacte du héros ne sont pas chargés. `--frame N`
+évalue exactement N pas fixes depuis le début des mouvements avant la capture (0 par défaut),
+avec la même mise à jour CPU qu'en fenêtre et sur le Web, sans dépendre du temps de chargement
+du GPU. Les sprites sont orientés vers la caméra de `--eye`/`--target` avant cette évaluation.
 
 Commandes : glisser avec le bouton gauche pour tourner, molette pour zoomer. En mode orbite,
 `ZQSD`/`WASD` (touches physiques) ou flèches déplacent le héros sur le sol ; `Maj` double sa
@@ -59,9 +64,10 @@ tools/wasm-bindgen/bin/wasm-bindgen --target web --no-typescript `
 python -m http.server 8000 -d crates/dq9-app/web     # ou tout serveur de fichiers statiques
 ```
 
-Ouvrir `http://localhost:8000/?map=M01` (paramètres `map`, `time`, `ds=1`, `chapter`,
-`step`, `substep`, `night=1`), puis choisir la ROM dans le champ de la page : elle est lue
-dans le navigateur, jamais envoyée ni hébergée.
+Ouvrir `http://localhost:8000/` (paramètres `map`, `time`, `ds=1`, `chapter`, `step`,
+`substep`, `night=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
+page. Les deux fichiers sont lus localement dans le navigateur, jamais envoyés ni hébergés ;
+`map` explicite prévaut sur la carte de la sauvegarde.
 WebGPU quand le navigateur le propose, sinon WebGL 2. `crates/dq9-app/web/pkg/` est généré
 (ignoré par git).
 

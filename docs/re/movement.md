@@ -29,9 +29,10 @@ l'application est un repère orange, pas le modèle animé du protagoniste.
 La vitesse de 4 unités/s (doublée avec Maj) est provisoire : les routines qui choisissent la vitesse,
 l'accélération, le rayon, la rotation du modèle et les transitions d'animation ne sont pas
 modélisées. Le test des murs utilise le centre du joueur et un point à 0,75 unité de hauteur, sans
-rayon de capsule. Il ne traite ni portes, ni escaliers spéciaux, ni chutes, ni scripts, ni changement
-de carte. Le point de départ est le centroïde de la face ascendante la plus proche du centre des
-bornes XZ praticables, et non un point de sauvegarde ou un point d'arrivée de porte.
+rayon de capsule. Les portes, escaliers spéciaux, chutes, scripts et transitions restent absents.
+Une sauvegarde sélectionne la carte par son id `11476` (par ex. 109 = `C01M09`), mais son
+vecteur sauvegardé n'est pas la position du héros : le départ reste le point provisoire calculé
+depuis les collisions, non la position de reprise ni l'arrivée d'une porte.
 
 ## Comparaison melonDS
 

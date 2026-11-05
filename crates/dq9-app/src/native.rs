@@ -20,9 +20,12 @@ struct Cli {
     /// ROM image. Defaults to the only `*.nds` file in `rom/` or the current directory.
     #[arg(long, env = "DQ9_ROM")]
     rom: Option<PathBuf>,
-    /// Map code (`M01`) or id (`1100`).
-    #[arg(long, default_value = "M01")]
-    map: String,
+    /// Explicit map code (`M01`) or id (`1100`); overrides the map from `--save`.
+    #[arg(long)]
+    map: Option<String>,
+    /// DS save image; selects its current map when `--map` is absent.
+    #[arg(long)]
+    save: Option<PathBuf>,
     /// Time of day (`LightingManager+0x98`, 0-3).
     #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..4))]
     time: u32,
@@ -115,12 +118,18 @@ pub fn main() -> Result<()> {
         None => find_rom()?,
     };
     let rom = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let save = cli
+        .save
+        .as_ref()
+        .map(|p| fs::read(p).with_context(|| format!("reading save {}", p.display())))
+        .transpose()?;
     if let Some(out) = &cli.screenshot {
-        return screenshot(&cli, &rom, out);
+        return screenshot(&cli, &rom, save.as_deref(), out);
     }
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let options = Options {
         map: cli.map.clone(),
+        save,
         time: cli.time,
         ds_aspect: cli.ds_aspect,
         story: cli.story(),
@@ -134,8 +143,9 @@ pub fn main() -> Result<()> {
 }
 
 /// Renders one frame of the map offscreen and writes it as PNG.
-fn screenshot(cli: &Cli, rom: &[u8], out: &Path) -> Result<()> {
-    let mut loaded = load::load(rom, &cli.map, cli.time, &cli.story())?;
+fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<()> {
+    let map = load::starting_map(cli.map.as_deref(), save)?;
+    let mut loaded = load::load(rom, &map, cli.time, &cli.story())?;
     let s = &loaded.runtime.scene;
     println!(
         "{} {} ({}), time {}: {} models, {} textures, {} instances, {} triangles",

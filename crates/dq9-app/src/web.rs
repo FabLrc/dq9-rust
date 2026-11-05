@@ -36,7 +36,8 @@ pub fn window_attributes(attributes: WindowAttributes) -> WindowAttributes {
 /// `map`, `time` and `ds` from the page's query string.
 fn options() -> Options {
     let mut options = Options {
-        map: "M01".into(),
+        map: None,
+        save: None,
         time: 0,
         ds_aspect: false,
         story: dq9_formats::cast::Story {
@@ -53,7 +54,7 @@ fn options() -> Options {
     for pair in search.trim_start_matches('?').split('&') {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
         match key {
-            "map" if !value.is_empty() => options.map = value.to_owned(),
+            "map" if !value.is_empty() => options.map = Some(value.to_owned()),
             "time" => options.time = value.parse::<u32>().map_or(0, |t| t.min(3)),
             "ds" => options.ds_aspect = value != "0",
             "chapter" => {
@@ -117,6 +118,39 @@ fn watch_rom_input(proxy: EventLoopProxy<UserEvent>) {
     // The listener lives as long as the page.
     on_change.forget();
 }
+/// Sends the bytes of the optional save picked in `#save` to the event loop.
+fn watch_save_input(proxy: EventLoopProxy<UserEvent>) {
+    let Some(input) = document()
+        .and_then(|d| d.get_element_by_id("save"))
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+    else {
+        status("the page has no <input type=file id=save>");
+        return;
+    };
+    let target = input.clone();
+    let on_change = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+        let Some(file) = target.files().and_then(|f| f.get(0)) else {
+            return;
+        };
+        let proxy = proxy.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+                Ok(buffer) => {
+                    let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+                    let _ = proxy.send_event(UserEvent::Save(bytes));
+                }
+                Err(e) => status(&format!("cannot read the save: {e:?}")),
+            }
+        });
+    });
+    if input
+        .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+        .is_err()
+    {
+        status("cannot watch the save input");
+    }
+    on_change.forget();
+}
 
 pub fn main() {
     console_error_panic_hook::set_once();
@@ -129,6 +163,7 @@ pub fn main() {
     };
     let proxy = event_loop.create_proxy();
     watch_rom_input(proxy.clone());
-    status("pick your Dragon Quest IX ROM (.nds); it stays in this browser");
+    watch_save_input(proxy.clone());
+    status("pick your Dragon Quest IX ROM (.nds); optionally a .sav, both stay in this browser");
     event_loop.spawn_app(App::new(proxy, options(), None));
 }

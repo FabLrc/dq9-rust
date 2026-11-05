@@ -29,7 +29,7 @@ pub const STEP: f32 = 1.0 / 60.0;
 /// Times of day of the map assembly (`LightingManager+0x98`).
 const TIMES: u32 = 4;
 
-/// Events delivered to the loop from outside (async GPU setup, ROM picked on the web).
+/// Events delivered to the loop from outside (async GPU setup, ROM/save picked on the web).
 #[derive(Debug)]
 pub enum UserEvent {
     Gpu(Box<Gpu>),
@@ -37,12 +37,17 @@ pub enum UserEvent {
     /// ROM picked in the page (the native build reads it before starting).
     #[cfg(target_arch = "wasm32")]
     Rom(Vec<u8>),
+    /// Save picked in the page; only its map id is used for startup.
+    #[cfg(target_arch = "wasm32")]
+    Save(Vec<u8>),
 }
 
 /// Start-up options.
 #[derive(Debug, Clone)]
 pub struct Options {
-    pub map: String,
+    /// Explicit map override; save map is used if absent.
+    pub map: Option<String>,
+    pub save: Option<Vec<u8>>,
     pub time: u32,
     pub ds_aspect: bool,
     pub story: dq9_formats::cast::Story,
@@ -136,8 +141,23 @@ impl App {
             }
         }
         self.rom = Some(rom);
-        let map = self.options.map.clone();
+        let map =
+            match load::starting_map(self.options.map.as_deref(), self.options.save.as_deref()) {
+                Ok(map) => map,
+                Err(e) => {
+                    status(&format!("{e:#}"));
+                    return;
+                }
+            };
         self.load(&map, true);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn set_save(&mut self, save: Vec<u8>) {
+        self.options.save = Some(save);
+        if let Some(rom) = &self.rom {
+            self.set_rom(rom.clone());
+        }
     }
 
     /// Loads map `key` at the current time of day; `frame` resets the camera onto it.
@@ -171,7 +191,6 @@ impl App {
         for w in &s.warnings {
             status(&format!("  warning: {w}"));
         }
-        self.options.map = loaded.entry.code.clone();
         if frame || self.framed.is_none() {
             if let Some(bounds) = s.bounds() {
                 self.camera.frame(bounds);
@@ -254,7 +273,11 @@ impl App {
             KeyCode::KeyR => self.options.ds_aspect = !self.options.ds_aspect,
             KeyCode::KeyT => {
                 self.options.time = (self.options.time + 1) % TIMES;
-                let map = self.options.map.clone();
+                let map = self
+                    .current
+                    .as_ref()
+                    .map(|(entry, _)| entry.code.clone())
+                    .unwrap_or_else(|| "M01".into());
                 self.load(&map, false);
             }
             KeyCode::PageDown => self.cycle_map(1),
@@ -463,6 +486,8 @@ impl ApplicationHandler<UserEvent> for App {
             }
             #[cfg(target_arch = "wasm32")]
             UserEvent::Rom(rom) => self.set_rom(rom),
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::Save(save) => self.set_save(save),
         }
         if let Some(window) = &self.window {
             window.request_redraw();
