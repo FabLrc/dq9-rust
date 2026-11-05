@@ -2,6 +2,7 @@
 
 mod cast;
 mod coverage;
+mod doors;
 mod extract;
 mod font;
 mod map;
@@ -155,6 +156,8 @@ enum Command {
     /// assembles them: blocks, parts with their files, instances with world transforms.
     /// With `--state`, compares the result with the map loaded in a melonDS state.
     Map(map::MapArgs),
+    /// The region records (`0x72`, `0x73`/`0x74`: doors, doorways, areas) of a map's `.bmbl`.
+    Doors(doors::DoorsArgs),
     /// What a character archive (`.chr`) holds: members by role, model, motion table with
     /// each motion's frames, speed and animation files.
     Chr(cast::ChrArgs),
@@ -288,6 +291,7 @@ fn main() -> Result<()> {
         } => narc(&rom, &path, out.as_deref(), decompress),
         Command::Maps { state } => maps::run(&rom, state.as_deref()),
         Command::Map(args) => map::run(&rom, &args),
+        Command::Doors(args) => doors::run(&rom, &args),
         Command::Chr(args) => cast::run_chr(&rom, &args),
         Command::Cast(args) => cast::run_cast(&rom, &args),
         Command::Model {

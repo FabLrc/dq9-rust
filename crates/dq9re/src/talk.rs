@@ -164,7 +164,7 @@ fn describe(line: &Line) -> String {
     )
 }
 
-fn ops(ops: &[Op]) -> String {
+pub fn ops(ops: &[Op]) -> String {
     let parts: Vec<String> = ops
         .iter()
         .map(|op| {

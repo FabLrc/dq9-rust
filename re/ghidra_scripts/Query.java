@@ -107,6 +107,11 @@ public class Query extends GhidraScript {
     private void disasm(Address addr, int count) {
         Instruction ins = getInstructionAt(addr);
         if (ins == null) {
+            // Code behind an unrecovered jump table is not disassembled by the analysis.
+            disassemble(addr);
+            ins = getInstructionAt(addr);
+        }
+        if (ins == null) {
             ins = getInstructionAfter(addr);
         }
         for (int i = 0; i < count && ins != null; i++, ins = ins.getNext()) {
