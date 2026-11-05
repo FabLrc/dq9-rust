@@ -239,6 +239,12 @@ images de pilotage près ([`re/map-archive.md`](re/map-archive.md)). Restent : l
 parcours complet d'Angel Falls et la comparaison à nombre d'images égal : les états melonDS
 ne sont pas alignés en nombre d'images, le critère différentiel de J2 n'est pas validé.
 
+Déplacement fidèle (analyse seulement, aucun port) : la chaîne du code est tracée dans
+[`re/movement.md`](re/movement.md) (entrée `0x02038148`, `Character_Update` `0x020332bc`,
+requête `.col2` `0x0204c040`, collision `ov_017::0219344c`, caméra `0x020a213c`). Constantes
+établies : vitesse max `0x189` (≈ 5,76 unités/s), accélération `0x28`, rotation `0x324` ; les
+valeurs provisoires de `dq9-core` (4 unités/s, murs simplifiés) ne sont pas encore remplacées.
+
 ## J3 — Parler et scènes : **v0.1 jouable**
 
 | Tâche | Réutiliser |
