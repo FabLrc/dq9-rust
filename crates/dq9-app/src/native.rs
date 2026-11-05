@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
-use dq9_core::Hero;
 use dq9_render::camera::{DS_ASPECT, letterbox};
 use dq9_render::{Camera, Gait, Renderer, Viewport};
 use glam::Vec3;
