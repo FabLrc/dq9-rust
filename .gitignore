@@ -1,5 +1,7 @@
 # Rust
 /target/
+# wasm-bindgen output of the web build (docs/app.md)
+/crates/dq9-app/web/pkg/
 
 # Copyrighted game data: never commit the ROM or anything extracted from it.
 *.nds

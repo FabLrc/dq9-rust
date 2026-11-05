@@ -8,6 +8,7 @@
 
 use nds_rom::{Error, Result};
 
+use crate::cast::Story;
 use crate::maplist::MapList;
 use crate::save::Slot;
 
@@ -33,6 +34,55 @@ pub const QUEST_MANAGER: u32 = 0x0210_8844;
 pub const QUEST_LOG: u32 = 0x0210_9418;
 /// Current `Zone3D` object (`func_02012ff4` returns it).
 pub const ZONE_3D: u32 = 0x020f_b3f0;
+/// The field's NPC table (`0x0203cf5c` returns it; `ov_017::021a2c14` fills it through
+/// `0x0203d038`): `+0xc` 32 entry pointers, `+0x8c` count, `+0x90` cast list, `+0x94`
+/// placement chains.
+pub const NPC_TABLE: u32 = 0x0210_75f4;
+/// Most entries the NPC table stores.
+pub const NPC_SLOTS: u32 = 0x20;
+
+/// What an NPC entry of the RAM table draws with: `+0x14` sprite (`0x9c` bytes), `+0x18`
+/// model (`0xd8`-byte `Object3D`), `+0x1c` game object (a party member slot).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NpcBody {
+    Sprite(u32),
+    Model(u32),
+    Object(u32),
+}
+
+/// One entry of the RAM NPC table (`0x20` bytes), with its cast record (`+8`, `0x14` bytes)
+/// and placement node (`+0xc`, `0x78` bytes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NpcEntry {
+    pub address: u32,
+    /// `+0`: entry flags (the placement's `+0xc` ORed in).
+    pub flags: u32,
+    /// Cast record: id (`+0`), kind (`+2`), field 4 (`+3`), name (`+4`, 12 bytes).
+    pub id: u16,
+    pub kind: u8,
+    pub byte3: u8,
+    pub name: Vec<u8>,
+    /// Placement node: NPC (`+0`), map (`+2`), position (`+0x10`), angle (`+0x1c`), motion
+    /// byte (`+0x1e`), counter (`+0x44`), quest (`+0x46`); `None` without a node.
+    pub placement: Option<NpcPlacement>,
+    pub body: Option<NpcBody>,
+    /// Position (`fx32`) and angle of the body: sprite `+4`/`+0x14`, `Object3D` `+0x44`/`+0x54`.
+    pub position: Option<[i32; 3]>,
+    pub angle: Option<i32>,
+}
+
+/// The RAM placement node fields [`NpcEntry`] compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NpcPlacement {
+    pub npc: u8,
+    pub map: u16,
+    pub position: [i32; 3],
+    pub angle: i16,
+    pub motion: u8,
+    pub order: u16,
+    pub quest: i16,
+    pub flags: u32,
+}
 
 /// A byte range of a save slot that `Save_LoadSlot` (`0x020aaf94`) and the functions it
 /// calls copy unchanged into RAM when a normal save is loaded.
@@ -511,6 +561,107 @@ impl<'a> State<'a> {
             })
             .collect()
     }
+
+    fn i32x3(&self, addr: u32) -> Result<[i32; 3]> {
+        let b = self.read(addr, 12)?;
+        Ok(core::array::from_fn(|i| {
+            i32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
+        }))
+    }
+
+    /// The story point the placement scripts test: track progress, `Save_IsDaytime`
+    /// (`GameState+0x3dc`), global flags (quest manager `+0x8c`, `0x234` bytes) and quest
+    /// nibbles (`+0x2cc`, `0xcc` quests).
+    pub fn story(&self) -> Result<Story> {
+        let (chapter, step, substep) = self.scenario()?;
+        let flags = self.read(QUEST_MANAGER + 0x8c, 0x234)?;
+        let nibbles = self.read(QUEST_MANAGER + 0x2cc, 0x66)?;
+        Ok(Story {
+            chapter: chapter as u8,
+            step: step as u8,
+            substep: substep as u8,
+            daytime: self.u32(GAME_STATE + 0x3dc)? != 0,
+            flags: (0..flags.len() * 8)
+                .filter(|&i| flags[i / 8] >> (i % 8) & 1 != 0)
+                .map(|i| i as i32)
+                .collect(),
+            quests: (0..0xcc)
+                .map(|q| (q, nibbles[q as usize / 2] >> (4 * (q % 2)) & 0xf))
+                .filter(|&(_, n)| n != 0)
+                .collect(),
+        })
+    }
+
+    /// The entries of the NPC table ([`NPC_TABLE`]), in table order.
+    pub fn npcs(&self) -> Result<Vec<NpcEntry>> {
+        let count = self.u32(NPC_TABLE + 0x8c)?.min(NPC_SLOTS);
+        let mut out = Vec::new();
+        for i in 0..count {
+            let address = self.u32(NPC_TABLE + 0xc + 4 * i)?;
+            if address == 0 {
+                continue;
+            }
+            let flags = self.u32(address)?;
+            let def = self.u32(address + 8)?;
+            let (id, kind, byte3, name) = if def == 0 {
+                (0, 0, 0, Vec::new())
+            } else {
+                let d = self.read(def, 0x10)?;
+                let name = d[4..0x10].split(|&b| b == 0).next().unwrap_or(&[]).to_vec();
+                (u16::from_le_bytes([d[0], d[1]]), d[2], d[3], name)
+            };
+            let node = self.u32(address + 0xc)?;
+            let placement = if node == 0 {
+                None
+            } else {
+                let n = self.read(node, 0x48)?;
+                let h = |o: usize| u16::from_le_bytes([n[o], n[o + 1]]);
+                Some(NpcPlacement {
+                    npc: n[0],
+                    map: h(2),
+                    position: self.i32x3(node + 0x10)?,
+                    angle: h(0x1c) as i16,
+                    motion: n[0x1e],
+                    order: h(0x44),
+                    quest: h(0x46) as i16,
+                    flags: self.u32(node + 0xc)?,
+                })
+            };
+            let [sprite, model, object] =
+                [0x14, 0x18, 0x1c].map(|o| self.u32(address + o).unwrap_or(0));
+            let (body, position, angle) = if sprite != 0 {
+                let a = self.u32(sprite + 0x14)? as i32;
+                (
+                    Some(NpcBody::Sprite(sprite)),
+                    Some(self.i32x3(sprite + 4)?),
+                    Some(a),
+                )
+            } else if model != 0 || object != 0 {
+                let (o, body) = if model != 0 {
+                    (model, NpcBody::Model(model))
+                } else {
+                    (object, NpcBody::Object(object))
+                };
+                let a = self.u32(o + 0x54)? as i32;
+                (Some(body), Some(self.i32x3(o + 0x44)?), Some(a))
+            } else {
+                (None, None, None)
+            };
+            out.push(NpcEntry {
+                address,
+                flags,
+                id,
+                kind,
+                byte3,
+                name,
+                placement,
+                body,
+                position,
+                angle,
+            });
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -748,5 +899,62 @@ mod tests {
         );
         assert_eq!(st.object(0).unwrap(), None);
         assert_eq!(st.object(OBJECT_COUNT).unwrap(), None);
+    }
+
+    #[test]
+    fn npc_table_and_story_read_back() {
+        let (entry, def, node, sprite): (u32, u32, u32, u32) =
+            (0x0230_0000, 0x0230_0100, 0x0230_0200, 0x0230_0300);
+        let data = synthetic_with(|m| {
+            let mut put = |addr: u32, bytes: &[u8]| {
+                let o = (addr & 0x3f_ffff) as usize;
+                m[o..o + bytes.len()].copy_from_slice(bytes);
+            };
+            put(NPC_TABLE + 0x8c, &1u32.to_le_bytes());
+            put(NPC_TABLE + 0xc, &entry.to_le_bytes());
+            put(entry, &0x40u32.to_le_bytes());
+            put(entry + 8, &def.to_le_bytes());
+            put(entry + 0xc, &node.to_le_bytes());
+            put(entry + 0x14, &sprite.to_le_bytes());
+            put(def, &[25, 0, 0, 2, b'n', b'0', b'1', b'6', b'a', 0]);
+            put(node, &[25, 0, 109, 0]);
+            put(node + 0xc, &0x40u32.to_le_bytes());
+            put(node + 0x10, &696i32.to_le_bytes());
+            put(node + 0x1c, &778u16.to_le_bytes());
+            put(node + 0x44, &[0x3d, 0, 0xff, 0xff]);
+            put(sprite + 4, &696i32.to_le_bytes());
+            put(sprite + 0x14, &778u32.to_le_bytes());
+            put(GAME_STATE + 0x3dc, &1u32.to_le_bytes());
+            put(QUEST_MANAGER + 0x8c + 0x27, &[0x80]);
+            put(QUEST_MANAGER + 0x2cc + 2, &[0x13]);
+        });
+        let st = State::parse(&data).unwrap();
+        let npcs = st.npcs().unwrap();
+        assert_eq!(npcs.len(), 1);
+        let n = &npcs[0];
+        assert_eq!(
+            (n.id, n.kind, n.byte3, n.name.as_slice()),
+            (25, 0, 2, &b"n016a"[..])
+        );
+        let p = n.placement.unwrap();
+        assert_eq!(
+            (p.npc, p.map, p.angle, p.order, p.quest),
+            (25, 109, 778, 0x3d, -1)
+        );
+        assert_eq!((p.position, p.flags), ([696, 0, 0], 0x40));
+        assert_eq!(n.body, Some(NpcBody::Sprite(sprite)));
+        assert_eq!((n.position, n.angle), (Some([696, 0, 0]), Some(778)));
+        let story = st.story().unwrap();
+        assert_eq!((story.chapter, story.step, story.substep), (19, 2, 1));
+        assert!(story.daytime);
+        assert_eq!(story.flags.iter().copied().collect::<Vec<_>>(), [0x13f]);
+        assert_eq!(
+            story
+                .quests
+                .iter()
+                .map(|(&q, &n)| (q, n))
+                .collect::<Vec<_>>(),
+            [(4, 3), (5, 1)]
+        );
     }
 }

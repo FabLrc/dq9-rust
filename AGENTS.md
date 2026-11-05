@@ -31,8 +31,9 @@ Tout fait repris d'ailleurs est cité dans la doc et revérifié sur la ROM.
 ## Arborescence
 
 - `crates/nds-rom` : conteneur DS et codecs Nintendo. `crates/dq9-formats` : formats et
-  logique Level-5 (sans E/S). `crates/dq9re` : CLI de RE. `crates/testrom` : localisation de
-  la ROM pour les tests.
+  logique Level-5 (sans E/S). `crates/dq9-render` : rendu wgpu (sans E/S).
+  `crates/dq9-app` : application winit, natif et Web (`docs/app.md`). `crates/dq9re` : CLI
+  de RE. `crates/testrom` : localisation de la ROM pour les tests.
 - `re/symbols.txt` : noms (source de vérité) ; `re/ghidra_scripts/` : scripts Java ;
   `scripts/*.ps1` : outils, import Ghidra, requêtes.
 - `docs/re/<sujet>.md` : une note par format ou sous-système.
@@ -44,7 +45,8 @@ Tout fait repris d'ailleurs est cité dans la doc et revérifié sur la ROM.
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
-cargo build -p nds-rom -p dq9-formats --target wasm32-unknown-unknown
+cargo build -p nds-rom -p dq9-formats -p dq9-render -p dq9-app --target wasm32-unknown-unknown
+cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/m01.png
 cargo dq9re --help                                  # exploration de la ROM
 cargo dq9re coverage                                # avancement, vérifie les marqueurs port:
 powershell -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
@@ -59,7 +61,8 @@ powershell -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
 ## Règles de code
 
 - Rust édition 2024, `rustfmt` largeur 100, `unsafe` interdit, clippy sans avertissement.
-- `nds-rom`, `dq9-formats` et la future `dq9-core` : aucune E/S, compilent en wasm.
+- `nds-rom`, `dq9-formats`, `dq9-render` et la future `dq9-core` : aucune E/S, compilent en
+  wasm. Seule `dq9-app` touche au système (fichiers, fenêtre).
 - Données non fiables : un parseur renvoie une erreur, ne panique jamais.
 - `dq9-core` (à venir) : déterministe, pas fixes de 60 Hz, entrées explicites.
 - **Traçabilité** : chaque comportement réimplémenté cite sa fonction d'origine en

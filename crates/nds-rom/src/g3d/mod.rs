@@ -1,5 +1,6 @@
 //! Nintendo NITRO-System G3D files: `BMD0` models (`.nsbmd`), `BTX0` textures (`.nsbtx`) and
-//! the headers of the animation files (`BCA0`, `BTA0`, `BTP0`, `BMA0`).
+//! the animation files (`BCA0` joints, `BTA0` texture SRT, `BTP0` texture patterns, `BMA0`
+//! material colours), with their evaluation per frame.
 //!
 //! Ported from [apicula](https://github.com/scurest/apicula) (0BSD, © 2019 scurest), module
 //! `nitro` (container, info blocks, MDL0, TEX0, render commands, pivot matrices) and module
@@ -7,14 +8,21 @@
 //! from apicula: values stay exact fixed point ([`fx::Fx12`]) instead of `f64`, `cgmath` is
 //! replaced by [`fx::Mat4`], data is borrowed instead of copied, and every read is
 //! bounds-checked so malformed files yield [`Error`](crate::Error) instead of panicking. The
-//! hardware side (texture formats, display-list commands) follows GBATEK. Format notes:
-//! `docs/re/g3d.md`.
+//! hardware side (texture formats, display-list commands) follows GBATEK. Animation curves,
+//! scaling rules and texture matrices follow the NITRO-System library as the game links it
+//! (USA decompilation `src/NitroSDK/NSBXX/`, cited per module; Nintendo library code, so not
+//! counted as ported game code). Format notes: `docs/re/g3d.md`.
 
+mod curve;
 pub mod fx;
 pub mod geometry;
 pub mod gpu;
+pub mod joint;
+pub mod matanim;
 pub mod model;
 pub mod pattern;
+pub mod pose;
+pub mod srt;
 pub mod tex;
 
 use std::fmt;
@@ -25,8 +33,14 @@ use crate::{Error, Result};
 pub use fx::{Fx12, Mat4};
 pub use geometry::{DrawCall, Geometry, Vertex};
 pub use gpu::{DisplayList, GpuCmd};
-pub use model::{Material, Mesh, Model, Object, RenderOp, SkinTerm};
+pub use joint::{
+    Channel, CurveRef, JointAnimation, JointRotation, JointScale, JointTrack, JointValue,
+};
+pub use matanim::{MaterialAnimation, MaterialColors, MaterialTrack};
+pub use model::{Material, Mesh, Model, Object, ObjectLink, RenderOp, SkinTerm};
 pub use pattern::{Pattern, PatternKeyframe, PatternTrack};
+pub use pose::ObjectTransform;
+pub use srt::{SrtCurve, TexMatrix, TexSrt, TexSrtAnimation, TexSrtTrack};
 pub use tex::{Palette, Tex0, TexFormat, Texture, TextureParams};
 
 /// Sixteen-byte NUL-padded name used for every G3D resource.
@@ -141,7 +155,7 @@ impl FileKind {
     }
 }
 
-/// An animation section, only enumerated: its stamp and the names of its animations.
+/// An animation section: its stamp and the names of its animations.
 #[derive(Debug, Clone)]
 pub struct AnimSection {
     /// `JNT0`, `SRT0`, `PAT0` or `MAT0`.
@@ -161,6 +175,12 @@ pub struct G3dFile<'a> {
     pub animations: Vec<AnimSection>,
     /// Texture pattern animations (`PAT0`), decoded.
     pub patterns: Vec<Pattern>,
+    /// Joint animations (`JNT0`).
+    pub joint_animations: Vec<JointAnimation<'a>>,
+    /// Texture SRT animations (`SRT0`).
+    pub tex_srt_animations: Vec<TexSrtAnimation<'a>>,
+    /// Material colour animations (`MAT0`).
+    pub material_animations: Vec<MaterialAnimation<'a>>,
 }
 
 impl<'a> G3dFile<'a> {
@@ -196,6 +216,9 @@ impl<'a> G3dFile<'a> {
             tex: None,
             animations: Vec::new(),
             patterns: Vec::new(),
+            joint_animations: Vec::new(),
+            tex_srt_animations: Vec::new(),
+            material_animations: Vec::new(),
         };
         for i in 0..count {
             let off = u32_at(data, 16 + 4 * i)? as usize;
@@ -215,10 +238,19 @@ impl<'a> G3dFile<'a> {
                 }
                 b"JNT0" | b"SRT0" | b"PAT0" | b"MAT0" => {
                     let names = read_offset_dict(data, at(off, 8u8)?)?;
-                    if &section == b"PAT0" {
-                        for &(pat_off, name) in &names {
-                            let base = at(off, pat_off)?;
-                            file.patterns.push(pattern::read_pattern(data, base, name)?);
+                    for &(anim_off, name) in &names {
+                        let base = at(off, anim_off)?;
+                        match &section {
+                            b"PAT0" => file.patterns.push(pattern::read_pattern(data, base, name)?),
+                            b"JNT0" => file
+                                .joint_animations
+                                .push(joint::read_joint_animation(data, base, name)?),
+                            b"SRT0" => file
+                                .tex_srt_animations
+                                .push(srt::read_tex_srt_animation(data, base, name)?),
+                            _ => file
+                                .material_animations
+                                .push(matanim::read_material_animation(data, base, name)?),
                         }
                     }
                     file.animations.push(AnimSection {
@@ -318,16 +350,16 @@ mod tests {
 
     #[test]
     fn enumerates_animation_sections() {
-        let body = dict(&[(&[0, 0, 0, 0], "walk")]);
-        let data = file(b"BCA0", &[section(b"JNT0", &body)]);
+        let data = joint::tests::bca(0);
         let f = G3dFile::parse(&data).unwrap();
         assert_eq!(f.kind, FileKind::JointAnim);
         assert_eq!(f.animations.len(), 1);
         assert_eq!(&f.animations[0].stamp, b"JNT0");
-        assert!(f.animations[0].names[0].is("walk"));
-        for len in 0..data.len() {
-            assert!(G3dFile::parse(&data[..len]).is_err());
-        }
+        assert!(f.animations[0].names[0].is("anim"));
+        assert_eq!(f.joint_animations.len(), 1);
+        // An entry that does not point at a `J\0AC` block fails the file.
+        let body = dict(&[(&[0, 0, 0, 0], "walk")]);
+        assert!(G3dFile::parse(&file(b"BCA0", &[section(b"JNT0", &body)])).is_err());
     }
 
     #[test]

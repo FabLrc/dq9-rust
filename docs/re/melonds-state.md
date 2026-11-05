@@ -97,7 +97,8 @@ démarrage direct, BIOS libres) :
   zones que le jeu modifie (`save.md` § « En RAM »). Les écarts sont les mêmes d'un état à
   l'autre.
 - Compteur de VBlank cohérent avec 60 images/s (~2 100 après ~35 s).
-- Positions : à l'arrivée dans l'auberge de Stornway, les 4 objets du groupe (indices 0 à 3,
+- Positions : à l'arrivée dans l'église de Stornway (`C01M09`, id 109, identifié par
+  `dq9re maps --state`), les 4 objets du groupe (indices 0 à 3,
   héros = 0) sont en (0,210 ; 0,120 ; −1,380). Après ~1 s vers le bas puis ~0,6 s vers la
   gauche (touches postées), le héros est en (−2,853 ; 0,106 ; 3,854) et les trois autres le
   suivent en file ; `dq9re state` les affiche. Les objets sont alloués dans le tas
@@ -105,7 +106,7 @@ démarrage direct, BIOS libres) :
   dans la table est l'id de l'ordre du groupe (`save.md` § « Membres du groupe ») : sur la
   démo, ordre `[0, 3, 2, 1]`, et l'id 3 (2ᵉ personnage) pointe vers le 2ᵉ objet alloué.
 - Le vecteur de la sauvegarde copié en `g_Zone3D+0x2774` (−57 ; 0,1 ; −31,5) n'est pas la
-  position du héros dans l'auberge : [inconnu] (position extérieure de retour ?).
+  position du héros dans l'église : [inconnu] (position extérieure de retour ?).
 
 **Correction** : la première version du script perdait parfois la confirmation de
 « Continue » et enregistrait l'**écran titre** (`ov_004`) ; le scénario 19/2/1 y est déjà

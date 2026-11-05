@@ -17,14 +17,16 @@ flowchart TD
 ```
 
 État : `nds-rom`, `dq9-formats` (compression Level-5, GPC2, tables, polices, messages, choix
-des répliques, triggers et leurs actions, scripts d'événements) et `dq9re` existent. Les
-autres crates seront créées quand le format ou le sous-système correspondant aura été
-documenté dans `docs/re/`.
+des répliques, triggers et leurs actions, scripts d'événements, cartes), `dq9-render` (cartes
+en wgpu), `dq9-app` (fenêtre native et Web, `app.md`) et `dq9re` existent. Les autres crates
+seront créées quand le format ou le sous-système correspondant aura été documenté dans
+`docs/re/`.
 
 ## Règles
 
-- **Portabilité** : `nds-rom`, `dq9-formats` et `dq9-core` ne font aucune E/S et compilent
-  pour `wasm32-unknown-unknown` (vérifié en CI). Seule `dq9-app` touche au système.
+- **Portabilité** : `nds-rom`, `dq9-formats`, `dq9-render` et `dq9-core` ne font aucune E/S
+  et compilent pour `wasm32-unknown-unknown` (vérifié en CI, avec `dq9-app`). Seule `dq9-app`
+  touche au système.
 - **Déterminisme** : `dq9-core` avance par pas fixes (60 Hz comme la DS) à partir d'entrées
   explicites, ce qui permet les replays et la comparaison avec l'émulateur.
 - **Données non fiables** : tout parseur renvoie une erreur sur une donnée corrompue, jamais

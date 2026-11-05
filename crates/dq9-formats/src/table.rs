@@ -27,6 +27,104 @@ impl Value<'_> {
             Value::Str(_) => 0,
         }
     }
+
+    /// Float view of a field (`Script::Parameter::ToFloat`): integers converted, strings 0.
+    pub fn float(&self) -> f32 {
+        match *self {
+            Value::Int(v) => v as i32 as f32,
+            Value::Float(f) => f,
+            Value::Str(_) => 0.0,
+        }
+    }
+
+    /// String view of a field (`Tbl_FieldStr`, `0x02030b8c`): `None` unless a string.
+    pub fn str(&self) -> Option<&[u8]> {
+        match *self {
+            Value::Str(s) => s,
+            _ => None,
+        }
+    }
+}
+
+/// Most fields a record passes to its handler (`Tbl_Next` stops decoding at `0x80`).
+pub const MAX_FIELDS: usize = 0x80;
+
+/// The field buffer of `Tbl_Next` (`0x020307e0`), for handlers that read past their record:
+/// each record overwrites only its own fields, so a short record's missing fields keep the
+/// values of earlier records of the same run. The buffer is never cleared (`Tbl_Init`,
+/// `0x02030644`): a field no record of the run has written is stack garbage in the game;
+/// here it reads as integer 0 and [`Fields::read_unset`] reports it.
+#[derive(Debug, Clone)]
+pub struct Fields<'a> {
+    values: [Option<Value<'a>>; MAX_FIELDS],
+    count: usize,
+    read_unset: core::cell::Cell<bool>,
+}
+
+impl Default for Fields<'_> {
+    fn default() -> Self {
+        Self {
+            values: [None; MAX_FIELDS],
+            count: 0,
+            read_unset: core::cell::Cell::new(false),
+        }
+    }
+}
+
+impl<'a> Fields<'a> {
+    /// Decodes `record`'s fields over the previous ones, as `Tbl_Next` does before calling the
+    /// record's handler.
+    pub fn load(&mut self, record: &Record<'a>) {
+        self.count = record.values.len().min(MAX_FIELDS);
+        for (slot, &v) in self.values.iter_mut().zip(&record.values) {
+            *slot = Some(v);
+        }
+    }
+
+    /// Field count of the current record, as passed to the handler.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// Field `i` of the buffer (stale past [`Fields::count`]).
+    pub fn get(&self, i: usize) -> Value<'a> {
+        match self.values.get(i).copied().flatten() {
+            Some(v) => v,
+            None => {
+                self.read_unset.set(true);
+                Value::Int(0)
+            }
+        }
+    }
+
+    /// `Tbl_FieldInt` of field `i`.
+    pub fn int(&self, i: usize) -> i32 {
+        self.get(i).int() as i32
+    }
+
+    /// `Script::Parameter::ToFloat` of field `i`.
+    pub fn float(&self, i: usize) -> f32 {
+        self.get(i).float()
+    }
+
+    /// `Tbl_FieldStr` of field `i`.
+    pub fn str(&self, i: usize) -> Option<&'a [u8]> {
+        match self.get(i) {
+            Value::Str(s) => s,
+            _ => None,
+        }
+    }
+
+    /// Whether a handler read a field that no record of the run had written.
+    pub fn read_unset(&self) -> bool {
+        self.read_unset.get()
+    }
+}
+
+/// `4096 * x` truncated toward zero, the game's float to `fx32` conversion (`_fmul` then
+/// `_ffix`, as in `Script::Parameter::ToVec3fix`).
+pub fn fx32(x: f32) -> i32 {
+    (4096.0 * x) as i32
 }
 
 #[derive(Debug, Clone, PartialEq)]

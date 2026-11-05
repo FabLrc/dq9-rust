@@ -41,6 +41,19 @@ pub struct Model<'a> {
     /// object count.
     pub inv_binds: Vec<[Fx12; 12]>,
     pub render_ops: Vec<RenderOp>,
+    /// Every "multiply by object" render command (`0x06`), in bytecode order: the object
+    /// hierarchy the Maya and Softimage scaling rules walk.
+    pub object_links: Vec<ObjectLink>,
+}
+
+/// One render command `0x06`: multiply the current matrix by `object_idx`, child of
+/// `parent_idx` (itself for a root); bit 0 of `flags` makes the object compensate its parent's
+/// scale and bit 1 records its own scale for its children (Maya SSC only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectLink {
+    pub object_idx: u8,
+    pub parent_idx: u8,
+    pub flags: u8,
 }
 
 pub(crate) fn read_model<'a>(data: &'a [u8], base: usize, name: Name) -> Result<Model<'a>> {
@@ -58,7 +71,7 @@ pub(crate) fn read_model<'a>(data: &'a [u8], base: usize, name: Name) -> Result<
     let inv_binds_off = u32h(16)?;
     let num_objects = u8h(23)?;
 
-    let render_ops = parse_render_cmds(data, at(base, render_cmds_off)?)?;
+    let (render_ops, object_links) = read_render_cmds(data, at(base, render_cmds_off)?)?;
     let meshes = read_meshes(data, at(base, meshes_off)?)?;
     let materials = read_materials(data, at(base, materials_off)?)?;
     let objects = read_objects(data, at(base, 64u8)?)?;
@@ -85,6 +98,7 @@ pub(crate) fn read_model<'a>(data: &'a [u8], base: usize, name: Name) -> Result<
         objects,
         inv_binds,
         render_ops,
+        object_links,
     };
     validate_render_ops(&model)?;
     Ok(model)
@@ -107,6 +121,13 @@ fn validate_render_ops(model: &Model) -> Result<()> {
         if !good {
             return Err(Error::Malformed("G3D render command index out of bounds"));
         }
+    }
+    if model
+        .object_links
+        .iter()
+        .any(|l| usize::from(l.parent_idx) >= model.objects.len())
+    {
+        return Err(Error::Malformed("G3D object parent index out of bounds"));
     }
     Ok(())
 }
@@ -300,10 +321,14 @@ pub struct Object {
     /// 3x3 matrix, column by column for column vectors (the DS row-major order).
     pub rotation: Option<[Fx12; 9]>,
     pub scale: Option<[Fx12; 3]>,
+    /// The inverse of [`scale`](Self::scale), stored next to it for the Maya and Softimage
+    /// scaling rules.
+    pub inv_scale: Option<[Fx12; 3]>,
 }
 
 impl Object {
-    /// The `T * R * S` matrix of this object.
+    /// The `T * R * S` matrix of this object (standard scaling rule; see
+    /// [`Model::rest_pose`] for the model's own rule).
     pub fn matrix(&self) -> Mat4 {
         let mut m = Mat4::IDENTITY;
         if let Some(s) = self.scale {
@@ -367,16 +392,18 @@ fn read_object(data: &[u8], mut cur: usize, name: Name) -> Result<Object> {
     } else {
         None
     };
-    let scale = if flags & 4 == 0 {
-        Some(next32x3(&mut cur)?)
+    let (scale, inv_scale) = if flags & 4 == 0 {
+        let s = next32x3(&mut cur)?;
+        (Some(s), Some(next32x3(&mut cur)?))
     } else {
-        None
+        (None, None)
     };
     Ok(Object {
         name,
         translation,
         rotation,
         scale,
+        inv_scale,
     })
 }
 
@@ -459,8 +486,14 @@ pub enum RenderOp {
 /// Decodes the render command bytecode at `off` into render ops, up to its end command.
 /// apicula `nitro::render_cmds::parse_render_cmds`; billboard, env/projection map and other
 /// commands are skipped.
-pub fn parse_render_cmds(data: &[u8], mut cur: usize) -> Result<Vec<RenderOp>> {
+pub fn parse_render_cmds(data: &[u8], cur: usize) -> Result<Vec<RenderOp>> {
+    Ok(read_render_cmds(data, cur)?.0)
+}
+
+/// [`parse_render_cmds`], also returning the object links of the `0x06` commands.
+fn read_render_cmds(data: &[u8], mut cur: usize) -> Result<(Vec<RenderOp>, Vec<ObjectLink>)> {
     let mut ops = Vec::new();
+    let mut links = Vec::new();
     loop {
         let opcode = u8_at(data, cur)?;
         cur = at(cur, 1u8)?;
@@ -478,7 +511,7 @@ pub fn parse_render_cmds(data: &[u8], mut cur: usize) -> Result<Vec<RenderOp>> {
         let p = slice(data, cur, len)?;
         cur = at(cur, len as u64)?;
         match opcode {
-            0x01 => return Ok(ops),
+            0x01 => return Ok((ops, links)),
             0x03 => ops.push(RenderOp::LoadMatrix { stack_pos: p[0] }),
             0x04 | 0x24 | 0x44 => ops.push(RenderOp::BindMaterial { material_idx: p[0] }),
             0x05 => ops.push(RenderOp::Draw { mesh_idx: p[0] }),
@@ -494,6 +527,11 @@ pub fn parse_render_cmds(data: &[u8], mut cur: usize) -> Result<Vec<RenderOp>> {
                     ops.push(RenderOp::LoadMatrix { stack_pos });
                 }
                 ops.push(RenderOp::MulObject { object_idx: p[0] });
+                links.push(ObjectLink {
+                    object_idx: p[0],
+                    parent_idx: p[1],
+                    flags: p[2],
+                });
                 if let Some(stack_pos) = store {
                     ops.push(RenderOp::StoreMatrix { stack_pos });
                 }
@@ -674,6 +712,30 @@ pub(crate) mod tests {
         assert!(G3dFile::parse(&data).is_err());
     }
 
+    /// A plain material named "mat" (no texture, white, opaque).
+    pub fn sample_material() -> Material {
+        Material {
+            name: Name(*b"mat\0\0\0\0\0\0\0\0\0\0\0\0\0"),
+            texture_name: None,
+            palette_name: None,
+            dif_amb: 0x7fff,
+            spe_emi: 0,
+            polygon_attr: 31 << 16,
+            polygon_attr_mask: 0,
+            tex_image_param: 0,
+            tex_image_param_mask: 0,
+            palette_base: 0,
+            flags: 0,
+            width: 8,
+            height: 8,
+            mag_w: Fx12::ONE,
+            mag_h: Fx12::ONE,
+            tex_scale: None,
+            tex_rotation: None,
+            tex_translation: None,
+        }
+    }
+
     #[test]
     fn pivot_matrices() {
         let (a, b) = (Fx12(100), Fx12(200));
@@ -690,6 +752,7 @@ pub(crate) mod tests {
             translation: Some([Fx12::ONE, Fx12::ZERO, Fx12::ZERO]),
             rotation: Some(pivot_mat(2, 0, Fx12::ZERO, Fx12::ONE)),
             scale: Some([Fx12(2 << 12); 3]),
+            inv_scale: Some([Fx12(1 << 11); 3]),
         };
         // select 2: columns (0,0,1), (0,1,0), (1,0,0) with a = 0, b = 1, c = 1, d = 0.
         let p = o.matrix().transform_point([1.0, 0.0, 0.0]);

@@ -34,8 +34,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      # Platform-independent crates must keep building for the web target.
-      - run: cargo build -p nds-rom -p dq9-formats --target wasm32-unknown-unknown
+      # Platform-independent crates and the app must keep building for the web target.
+      - run: cargo build -p nds-rom -p dq9-formats -p dq9-render -p dq9-app --target wasm32-unknown-unknown
 
   # Porting progress (`cargo dq9re coverage`, no ROM needed): checks the `port:` markers on
   # every run, shows the result in the job summary and, on main, commits the README block.

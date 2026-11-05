@@ -32,7 +32,7 @@ pub enum PartKind {
 }
 
 /// Animation files and the slot or loader they go to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AnimKind {
     /// Skeletal animation (`Part+0x14`, `Object3D` type 0).
     Nsbca,
@@ -76,7 +76,7 @@ const OBJECT_ANIMATIONS: [(u8, AnimKind); 5] = [
 ];
 
 /// An animation file a part loads.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Animation {
     pub kind: AnimKind,
     /// Member of the `.amdj`.

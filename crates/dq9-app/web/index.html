@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dq9-app</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 14px sans-serif; }
+    body { display: flex; flex-direction: column; }
+    header { padding: 6px 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    #status { opacity: 0.8; }
+    canvas#dq9 { flex: 1; width: 100%; min-height: 0; display: block; outline: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <label>ROM (.nds) : <input type="file" id="rom" accept=".nds"></label>
+    <span id="status">chargement…</span>
+  </header>
+  <canvas id="dq9" tabindex="0"></canvas>
+  <script type="module">
+    // Built by `wasm-bindgen --target web --out-dir crates/dq9-app/web/pkg` (docs/app.md).
+    import init from "./pkg/dq9-app.js";
+    init();
+  </script>
+</body>
+</html>

@@ -144,9 +144,9 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       **Position** : objets du groupe et du héros lus en RAM (`GameState+8`, `Object3D+0x44`,
       `dq9re state`), vérifiés en déplaçant le héros. **Reste** : comparer les structures que
       `dq9-core` calculera (position après une même suite d'entrées, triggers) à la RAM.
-- [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-core`,
-      `dq9-render`, `dq9-audio`, `dq9-app` ; l'état modélisé des triggers passe de
-      `dq9-formats` à `dq9-core`.
+- [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-render` et
+      `dq9-app` faites (J1) ; restent `dq9-core`, `dq9-audio` ; l'état modélisé des triggers
+      passe de `dq9-formats` à `dq9-core`.
 
 ## J1 — Voir le monde
 
@@ -175,8 +175,29 @@ Avancement :
       [`re/map-archive.md`](re/map-archive.md), `dq9re map`) : fichiers chargés, blocs
       `.bmdj`, parties et instances avec leur transformation ; les 667 `.ambl` et 669 `.amdj`
       s'assemblent, 5 341 ressources toutes résolues, `C01M09` identique à la RAM (melonDS).
-- [ ] Personnages `.chr` (chargés après l'assemblage, `0x02018f30`, `0x020181fc`…),
-      animations `BCA0`/`BTA0`/`BMA0` (lues par nom seulement), puis `dq9-app` (wgpu).
+- [x] Animations G3D décodées et évaluées image par image (`nds_rom::g3d`,
+      [`re/g3d.md`](re/g3d.md), `dq9re model --anim --frame`) d'après la bibliothèque NITRO de
+      la décompilation : articulations `BCA0` (poses exactes en virgule fixe, règles d'échelle
+      Maya/Softimage), matrices de texture et `BTA0`, couleurs `BMA0`, motifs `BTP0` ; les
+      9 887 fichiers d'animation des cartes et des `.chr` s'évaluent sur toutes leurs images.
+- [x] Rendu et application (`dq9-render`, `dq9-app`, [`app.md`](app.md)) : `dq9-app --map M01`
+      affiche la carte texturée en natif (fenêtre ou `--screenshot` PNG) et dans un navigateur
+      (wasm, ROM choisie dans la page) ; passes opaque/translucide, alpha, faces cachées,
+      matrices de texture, caméra libre à la projection du jeu (`0x0202df78`), 60 Hz fixe ;
+      les 738 jeux d'archives se construisent.
+- [x] Personnages réimplémentés au niveau des données (`dq9_formats::cast`, `chr`, `spr`,
+      [`re/characters.md`](re/characters.md), `dq9re cast`, `dq9re chr`) : script de
+      placement `place.bin` (20 types, chaînes et priorités), distribution `npc.bin`, corps
+      (sprite `.spr`, modèle `chara_sub/*.chr`, monstre `enemy.gp2`), mouvement initial,
+      tables `.bcfg` ; 508 cartes × 19 chapitres résolues, 2 683 `.chr` et 1 298 `.spr` lus,
+      `C01M09` identique à la table des PNJ en RAM (melonDS).
+- [x] Intégration des animations et des PNJ dans `dq9-app` : état CPU `AnimatedScene`,
+      pas fixes partagés natif/Web, poses G3D, SRT, couleurs/alpha MAT et textures PAT ;
+      drapeaux des parties, mouvements initiaux `.chr`, sprites face à la caméra et monstres.
+      Captures déterministes `--frame N`, choix de progression `--chapter/--step/--substep`
+      (prologue par défaut). Hauteurs de placement conservées sans collision du sol ;
+      limites de comportement et de rendu détaillées dans [`app.md`](app.md).
+- [ ] Éclairage de la carte (`.bats`) et brouillard.
 
 ## J2 — Se déplacer
 

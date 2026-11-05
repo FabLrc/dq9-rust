@@ -1,4 +1,5 @@
-//! `dq9re model`: export the textures (PNG) and models (Wavefront OBJ) of G3D files.
+//! `dq9re model`: export the textures (PNG) and models (Wavefront OBJ) of G3D files, optionally
+//! posed and animated by an animation member at one frame.
 
 use std::borrow::Cow;
 use std::fmt::Write as _;
@@ -8,7 +9,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use nds_rom::g3d::tex::decode_texture;
-use nds_rom::g3d::{G3dFile, Geometry, Model, Name, Palette, Tex0, Texture};
+use nds_rom::g3d::{Channel, G3dFile, Geometry, Model, Name, Palette, Tex0, Texture};
 use nds_rom::{Narc, Rom, compress};
 
 /// Decompresses `raw` when it is not a G3D file but a Nintendo compressed stream.
@@ -47,8 +48,11 @@ pub(crate) fn palette_for<'t, 'a>(
 }
 
 fn file_name(name: &Name) -> String {
-    name.to_string()
-        .chars()
+    file_name_str(&name.to_string())
+}
+
+fn file_name_str(name: &str) -> String {
+    name.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
                 c
@@ -59,7 +63,21 @@ fn file_name(name: &Name) -> String {
         .collect()
 }
 
-pub fn run(rom: &Rom, path: &str, member: Option<&str>, out: &Path) -> Result<()> {
+/// An animation member and the frame to show.
+struct Anim<'a> {
+    name: &'a str,
+    file: G3dFile<'a>,
+    frame: u16,
+}
+
+pub fn run(
+    rom: &Rom,
+    path: &str,
+    member: Option<&str>,
+    anim: Option<&str>,
+    frame: u16,
+    out: &Path,
+) -> Result<()> {
     let data = rom.file_by_path(path)?;
     let mut files: Vec<(String, Cow<[u8]>)> = Vec::new();
     if Narc::is_narc(data) {
@@ -82,6 +100,62 @@ pub fn run(rom: &Rom, path: &str, member: Option<&str>, out: &Path) -> Result<()
             unpack(data)?,
         ));
     }
+    let anim_bytes = match anim {
+        Some(anim) => {
+            if !Narc::is_narc(data) {
+                bail!("--anim needs a NARC path");
+            }
+            let narc = Narc::parse(data)?;
+            let i = (0..u16::try_from(narc.len())?)
+                .find(|&i| narc.name(i) == Some(anim))
+                .with_context(|| format!("no member {anim} in {path}"))?;
+            Some(unpack(narc.file(i)?)?)
+        }
+        None => None,
+    };
+    let anim = match (anim, &anim_bytes) {
+        (Some(name), Some(bytes)) => {
+            let file = G3dFile::parse(bytes).with_context(|| format!("animation {name}"))?;
+            println!("{name}: {:?} at frame {frame}", file.kind);
+            for j in &file.joint_animations {
+                let animated = j
+                    .tracks
+                    .iter()
+                    .filter(|t| {
+                        matches!(t.translation, Channel::Animated(_))
+                            || matches!(t.rotation, Channel::Animated(_))
+                            || matches!(t.scale, Channel::Animated(_))
+                    })
+                    .count();
+                println!(
+                    "  joint animation {}: {} frames, flags {:#x}, {} tracks ({animated} animated)",
+                    j.name,
+                    j.frame_count,
+                    j.flags,
+                    j.tracks.len()
+                );
+            }
+            for (kind, name, frames, tracks) in file
+                .tex_srt_animations
+                .iter()
+                .map(|a| ("texture SRT", a.name, a.frame_count, a.tracks.len()))
+                .chain(
+                    file.material_animations
+                        .iter()
+                        .map(|a| ("material", a.name, a.frame_count, a.tracks.len())),
+                )
+                .chain(
+                    file.patterns
+                        .iter()
+                        .map(|a| ("pattern", a.name, a.num_frames, a.tracks.len())),
+                )
+            {
+                println!("  {kind} animation {name}: {frames} frames, {tracks} tracks");
+            }
+            Some(Anim { name, file, frame })
+        }
+        _ => None,
+    };
     if files.is_empty() {
         bail!("no .nsbmd/.nsbtx member selected in {path}");
     }
@@ -99,7 +173,7 @@ pub fn run(rom: &Rom, path: &str, member: Option<&str>, out: &Path) -> Result<()
             export_textures(tex0, &g3d.models, out)?;
         }
         for model in &g3d.models {
-            export_model(model, out)?;
+            export_model(model, anim.as_ref(), out)?;
         }
     }
     Ok(())
@@ -135,9 +209,45 @@ fn export_textures(tex0: &Tex0, models: &[Model], out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn export_model(model: &Model, out: &Path) -> Result<()> {
-    let geometry = Geometry::build(model).with_context(|| format!("model {}", model.name))?;
-    let base = file_name(&model.name);
+fn export_model(model: &Model, anim: Option<&Anim>, out: &Path) -> Result<()> {
+    let ctx = || format!("model {}", model.name);
+    let mut model = model.clone();
+    let mut tex_matrices = model.tex_matrices();
+    let mut base = file_name(&model.name);
+    let mut geometry = match anim {
+        None => Geometry::build(&model).with_context(ctx)?,
+        Some(a) => {
+            base = format!("{base}_{}_f{}", file_name_str(a.name), a.frame);
+            for (i, m) in tex_matrices.iter_mut().enumerate() {
+                for srt in &a.file.tex_srt_animations {
+                    if let Some(mtx) = srt.matrix(&model, i, a.frame).with_context(ctx)? {
+                        *m = Some(mtx);
+                    }
+                }
+            }
+            for mat in &mut model.materials {
+                for ma in &a.file.material_animations {
+                    if let Some(c) = ma.material_colors(mat, a.frame).with_context(ctx)? {
+                        c.apply(mat);
+                    }
+                }
+                for pat in &a.file.patterns {
+                    if let Some((tex, pal)) = pat.track(&mat.name).and_then(|t| pat.at(t, a.frame))
+                    {
+                        mat.texture_name = Some(tex);
+                        mat.palette_name = pal.or(mat.palette_name);
+                    }
+                }
+            }
+            let pose = match a.file.joint_animations.first() {
+                Some(j) => j.pose(&model, a.frame).with_context(ctx)?,
+                None => model.rest_pose().with_context(ctx)?,
+            };
+            Geometry::build_posed(&model, &pose).with_context(ctx)?
+        }
+    };
+    geometry.apply_tex_matrices(&model, &tex_matrices);
+    let model = &model;
     let mut obj = format!("# {} (dq9re model)\nmtllib {base}.mtl\n", model.name);
     let mut mtl = String::new();
     for m in &model.materials {

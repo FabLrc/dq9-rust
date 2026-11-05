@@ -1,0 +1,212 @@
+//! Native entry point: command line, ROM file, window or offscreen screenshot.
+
+use std::fs::{self, File};
+use std::io::BufWriter;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context as _, Result, bail};
+use clap::Parser;
+use dq9_render::camera::{DS_ASPECT, letterbox};
+use dq9_render::{Camera, Renderer, Viewport};
+use glam::Vec3;
+use winit::event_loop::EventLoop;
+
+use crate::app::{App, Options, UserEvent};
+use crate::{gpu, load};
+
+#[derive(Parser)]
+#[command(version, about = "Shows a Dragon Quest IX map (see docs/app.md).")]
+struct Cli {
+    /// ROM image. Defaults to the only `*.nds` file in `rom/` or the current directory.
+    #[arg(long, env = "DQ9_ROM")]
+    rom: Option<PathBuf>,
+    /// Map code (`M01`) or id (`1100`).
+    #[arg(long, default_value = "M01")]
+    map: String,
+    /// Time of day (`LightingManager+0x98`, 0-3).
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..4))]
+    time: u32,
+    /// Story chapter (the prologue is 1.1.1).
+    #[arg(long, default_value_t = 1)]
+    chapter: u8,
+    /// Story step.
+    #[arg(long, default_value_t = 1)]
+    step: u8,
+    /// Story substep.
+    #[arg(long, default_value_t = 1)]
+    substep: u8,
+    /// Use nighttime cast placements (independent of --time's map variant).
+    #[arg(long)]
+    night: bool,
+    /// Draw at the DS screen aspect (256×192), letterboxed.
+    #[arg(long)]
+    ds_aspect: bool,
+    /// Render one frame offscreen into this PNG and exit, without a window.
+    #[arg(long)]
+    screenshot: Option<PathBuf>,
+    /// Evaluate exactly N fixed animation updates before taking the screenshot.
+    #[arg(long, default_value_t = 0)]
+    frame: u32,
+    /// Screenshot size, `WIDTHxHEIGHT`.
+    #[arg(long, default_value = "1024x768", value_parser = parse_size)]
+    size: (u32, u32),
+    /// Camera position `x,y,z` (world units); with `--target`, replaces the framing view.
+    #[arg(long, value_parser = parse_vec3, requires = "target", allow_hyphen_values = true)]
+    eye: Option<Vec3>,
+    /// Point looked at, `x,y,z`.
+    #[arg(long, value_parser = parse_vec3, requires = "eye", allow_hyphen_values = true)]
+    target: Option<Vec3>,
+}
+
+impl Cli {
+    fn story(&self) -> dq9_formats::cast::Story {
+        dq9_formats::cast::Story {
+            chapter: self.chapter,
+            step: self.step,
+            substep: self.substep,
+            daytime: !self.night,
+            ..dq9_formats::cast::Story::default()
+        }
+    }
+}
+
+fn parse_size(s: &str) -> Result<(u32, u32), String> {
+    let (w, h) = s.split_once('x').ok_or("expected WIDTHxHEIGHT")?;
+    let parse = |v: &str| match v.parse::<u32>() {
+        Ok(n) if (1..=8192).contains(&n) => Ok(n),
+        _ => Err(format!("bad size {v:?}")),
+    };
+    Ok((parse(w)?, parse(h)?))
+}
+
+fn parse_vec3(s: &str) -> Result<Vec3, String> {
+    let v: Vec<f32> = s
+        .split(',')
+        .map(|c| c.trim().parse::<f32>().map_err(|e| format!("{c:?}: {e}")))
+        .collect::<Result<_, _>>()?;
+    match v.as_slice() {
+        &[x, y, z] => Ok(Vec3::new(x, y, z)),
+        _ => Err("expected x,y,z".into()),
+    }
+}
+
+fn find_rom() -> Result<PathBuf> {
+    for dir in [Path::new("rom"), Path::new(".")] {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        let roms: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("nds")))
+            .collect();
+        match roms.as_slice() {
+            [one] => return Ok(one.clone()),
+            [] => {}
+            _ => bail!("several *.nds in {}; pass --rom", dir.display()),
+        }
+    }
+    bail!("no *.nds found in rom/ or the current directory; pass --rom or set DQ9_ROM")
+}
+
+pub fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let path = match &cli.rom {
+        Some(p) => p.clone(),
+        None => find_rom()?,
+    };
+    let rom = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    if let Some(out) = &cli.screenshot {
+        return screenshot(&cli, &rom, out);
+    }
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+    let options = Options {
+        map: cli.map.clone(),
+        time: cli.time,
+        ds_aspect: cli.ds_aspect,
+        story: cli.story(),
+    };
+    let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
+    if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
+        app.look_at(eye, target);
+    }
+    event_loop.run_app(&mut app)?;
+    Ok(())
+}
+
+/// Renders one frame of the map offscreen and writes it as PNG.
+fn screenshot(cli: &Cli, rom: &[u8], out: &Path) -> Result<()> {
+    let mut loaded = load::load(rom, &cli.map, cli.time, &cli.story())?;
+    let s = &loaded.runtime.scene;
+    println!(
+        "{} {} ({}), time {}: {} models, {} textures, {} instances, {} triangles",
+        loaded.entry.id,
+        loaded.entry.code,
+        loaded.label,
+        loaded.time,
+        s.models.len(),
+        s.textures.len(),
+        s.instances.len(),
+        s.triangle_count()
+    );
+    for w in &s.warnings {
+        println!("  warning: {w}");
+    }
+    let (device, queue) = pollster::block_on(async {
+        let instance = gpu::instance().await;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .context("no GPU adapter")?;
+        let info = adapter.get_info();
+        println!("adapter: {} ({:?})", info.name, info.backend);
+        gpu::device(&adapter).await
+    })?;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let mut camera = Camera::default();
+    match (cli.eye, cli.target, s.bounds()) {
+        (Some(eye), Some(target), _) => camera.look_at(eye, target),
+        (_, _, Some(bounds)) => camera.frame(bounds),
+        _ => {}
+    }
+    camera.far = camera.far.max(camera.distance * 4.0);
+    loaded.runtime.face_camera(&camera)?;
+    for _ in 0..cli.frame {
+        loaded.runtime.step(&camera)?;
+    }
+    loaded.runtime.face_camera(&camera)?;
+    let mut renderer = Renderer::new(&device, &queue, format, &loaded.runtime.scene);
+    let (w, h) = cli.size;
+    let viewport = if cli.ds_aspect {
+        let (x, y, width, height) = letterbox(w, h, DS_ASPECT);
+        Viewport {
+            x,
+            y,
+            width,
+            height,
+        }
+    } else {
+        Viewport::full(w, h)
+    };
+    let rgba = renderer
+        .render_to_rgba(&device, &queue, (w, h), viewport, &camera)
+        .context("reading the frame back")?;
+    if let Some(dir) = out.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let file = File::create(out).with_context(|| format!("creating {}", out.display()))?;
+    let mut encoder = png::Encoder::new(BufWriter::new(file), w, h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header()?.write_image_data(&rgba)?;
+    println!(
+        "camera: eye {:.2},{:.2},{:.2} target {:.2},{:.2},{:.2}",
+        camera.eye().x,
+        camera.eye().y,
+        camera.eye().z,
+        camera.target.x,
+        camera.target.y,
+        camera.target.z
+    );
+    println!("wrote {}", out.display());
+    Ok(())
+}

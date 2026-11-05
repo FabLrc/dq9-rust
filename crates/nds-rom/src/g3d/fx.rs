@@ -42,6 +42,54 @@ pub(crate) fn bits(value: u32, lo: u32, hi: u32) -> u32 {
     (value >> lo) & ((1u32 << (hi - lo)) - 1)
 }
 
+/// `VEC_Normalize` (EU `0x020c2f28`): normalises a 1.19.12 vector exactly as the NITRO library
+/// does with the hardware divider (`2^56 / |v|²`) and square root (`sqrt(4 |v|²)`). A zero
+/// vector stays zero.
+pub(crate) fn normalize(v: [i32; 3]) -> [i32; 3] {
+    let t = v
+        .iter()
+        .fold(0i64, |t, &c| t.wrapping_add(i64::from(c) * i64::from(c)));
+    let sqrt = isqrt64((t as u64).wrapping_mul(4)) as i32;
+    let inv = hw_div64(1 << 56, t);
+    let prod = inv.wrapping_mul(i64::from(sqrt));
+    v.map(|c| (((i128::from(prod) * i128::from(c)) >> 32) as i32).wrapping_add(0x1000) >> 13)
+}
+
+/// The hardware square root unit in 64-bit mode: `floor(sqrt(x))`.
+fn isqrt64(x: u64) -> u32 {
+    let x = u128::from(x);
+    let mut r = (x as f64).sqrt() as u128;
+    while r * r > x {
+        r -= 1;
+    }
+    while (r + 1) * (r + 1) <= x {
+        r += 1;
+    }
+    r as u32
+}
+
+/// The hardware divider in 64/64 or 64/32 mode: truncating signed division; a zero
+/// denominator gives `-1` for a non-negative numerator and `1` otherwise (GBATEK).
+fn hw_div64(num: i64, den: i64) -> i64 {
+    if den == 0 {
+        if num >= 0 { -1 } else { 1 }
+    } else {
+        num.wrapping_div(den)
+    }
+}
+
+/// `FX_DivAsync` + `FX_GetDivResult` (EU `0x020c2d00`, `0x020c2c6c`): `num / den` in 1.19.12,
+/// rounded to nearest, through the hardware divider (`(num << 32) / den`).
+pub(crate) fn fx_div(num: i32, den: i32) -> i32 {
+    let q = hw_div64(i64::from(num) << 32, i64::from(den));
+    (q.wrapping_add(0x80000) >> 20) as i32
+}
+
+/// `(a * b) >> 12` on 64 bits, truncated to 32 like the NITRO library's `FX_Mul`.
+pub(crate) fn mul64(a: i32, b: i32) -> i32 {
+    ((i64::from(a) * i64::from(b)) >> 12) as i32
+}
+
 /// 4x4 `f32` matrix for column vectors, stored `m[column][row]` (OpenGL layout).
 ///
 /// Composition follows apicula: `current = current * object`, points are `M * p`. The DS stores
@@ -141,6 +189,23 @@ mod tests {
         assert_eq!(sext(0x3FF, 10), -1);
         assert_eq!(sext(0x1FF, 10), 511);
         assert_eq!(bits(0b1011_0000, 4, 8), 0b1011);
+    }
+
+    #[test]
+    fn hardware_math() {
+        assert_eq!(normalize([0x2000, 0, 0]), [0x1000, 0, 0]);
+        assert_eq!(normalize([0, 0, 0]), [0, 0, 0]);
+        let n = normalize([0x1000, 0x1000, 0]);
+        assert!(
+            (n[0] - 2896).abs() <= 1 && n[0] == n[1] && n[2] == 0,
+            "{n:?}"
+        );
+        assert_eq!(fx_div(0x1000, 0x2000), 0x800);
+        assert_eq!(fx_div(-0x3000, 0x1000), -0x3000);
+        assert_eq!(fx_div(0x1000, 0), ((-1i64 + 0x80000) >> 20) as i32);
+        assert_eq!(isqrt64(u64::MAX), u32::MAX);
+        assert_eq!(isqrt64(15), 3);
+        assert_eq!(mul64(0x1800, -0x2000), -0x3000);
     }
 
     #[test]

@@ -527,3 +527,85 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x020ef388 g_BlockListHandlers      # kinds 0x64..0x7e (0x64/0x65 blocks, others zone data), {0}
 0x020ef418 g_BmdjHandlers           # kinds 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x72, {0}
 0x020f051c g_DatHandlers            # kinds 0x64..0x6e, {0}
+
+# --- NITRO G3D animation library (docs/re/g3d.md; names from the USA decompilation) ---
+0x020b3bbc ProcessJointAnimationsOnBoneMatrix   # one joint animation: callback; several: weighted blend
+0x020b4078 SetUpRenderCommandHandler            # object 0 starts with an identity accumulated scale
+0x020b45f0 MaterialBindProc                     # material words, texture SRT, material animations, texture matrix
+0x020b4c9c RenderCommand_6                      # multiply by object: joint animation or rest pose, scaling rule
+0x020b77a8 NSBXX_PatternAnimation_GetKeyframe   # PAT0 keyframe: guess ratio * frame, walk back then forward
+0x020b7850 InitializeModelAnimationFromJAC      # object i -> track (tag_i >> 24)
+0x020b78cc JACAnimationProcessingCallback       # clamps time to [0, frames << 12)
+0x020b7bb0 CalculateBoneMatrixRenderDataFromJAC # JNT0 track walk: absent / rest / animated parts
+0x020b7f64 CalculateTranslationAmountFrameAligned
+0x020b80c4 CalculateTranslationAmountSmooth
+0x020b8220 CalculateScalingAmountFrameAligned
+0x020b8414 CalculateScalingAmountSmooth
+0x020b85a8 CalculateRotationFrameAligned
+0x020b89c0 CalculateRotationSmooth
+0x020b8d04 GetMatrixFromIndex                   # JNT0 rotation: pivot (bit 15) or basis matrix
+0x020b8e70 GetColorFromMaterialAnimation        # MAT0 RGB555 sample, per-channel blends
+0x020b8fd8 GetAlphaFromMaterialAnimation
+0x020b9198 MAMAnimationProcessingCallback       # MAT0 -> DIF_AMB, SPE_EMI, POLYGON_ATTR alpha
+0x020b9288 SampleScalarFromMATTrack             # SRT0 scale / translation sample
+0x020b9388 SampleSinCosFromMATTrack             # SRT0 rotation (sin, cos) sample
+0x020b9494 CalculateTextureTransformFromMAT
+0x020b9668 MATAnimationProcessingCallback       # SRT0: texgen 1, matrix loaded
+0x020b98c8 MPTAnimationProcessingCallback       # PAT0: texture, palette unless index 0xff
+0x020b99c0 BoneMatrixDataSubmissionProc_Type0   # scaling rule 0: T R S
+0x020b9a3c BoneMatrixScaleCalculationProc_Type0
+0x020b9a7c BoneMatrixDataSubmissionProc_Type1   # scaling rule 1 (Maya SSC)
+0x020b9b40 BoneMatrixScaleCalculationProc_Type1
+0x020ba12c MaterialTextureMatrixLoadProc_Type0  # texture matrix mode 0 (Maya)
+0x020ba274 BoneMatrixDataSubmissionProc_Type2   # scaling rule 2 (Softimage)
+0x020ba3a0 BoneMatrixScaleCalculationProc_Type2
+0x020ba5bc MaterialTextureMatrixLoadProc_Type1  # texture matrix mode 1 (Softimage 3D)
+0x020bac84 MaterialTextureMatrixLoadProc_Type2  # texture matrix mode 2 (3ds Max)
+0x020bb2ac MaterialTextureMatrixLoadProc_Type3  # texture matrix mode 3 (XSI), all DQ9 models
+
+# --- Camera projection (docs/app.md) ---
+0x0202df78 Camera_Init                          # half FOV 15 deg (0xf000), near 1, far 400 (fx32)
+0x0202e9b4 Camera_SetHalfFovDegrees             # +0x58 degrees fx32; +0x5c/+0x60 sin, cos (radians = x * 0x47 / 4096)
+
+# --- Characters (docs/re/characters.md) ---
+ov_017::021a2c14 Cast_LoadMap               # data/scenario/<area>.npc: place.bin, npc.bin, NpcTable_Build, ground snap
+0x02018fcc Zone3D_GroundHeight              # ray y+1..y-10 over the collision, hit + 0x199
+0x0203cbe8 NpcSprite_FaceCamera             # stand_* by (NPC angle - camera angle), 8 sectors (0x020e7948)
+0x0203cf5c NpcTable_Get                     # returns g_NpcTable
+0x0203d038 NpcTable_Build                   # one 0x20-byte entry per cast member: sprite / chara_sub model / enemy.gp2 monster
+0x0203e2d4 NpcTable_RestorePositions        # positions kept for this map (+0x9e list)
+0x0203fcf0 NpcSprite_LoadSheet              # "data/ani/%s" when the name ends in 'r'
+0x020415a8 NpcModel_SetMotionIndex          # +0xc4, Object3D::MaybeSetBCFGAnimation
+0x020415c0 NpcModel_SetMotionName           # +0xcc, Object3D::MaybeSetRegularAnimation
+0x02064d58 Cast_RecMember                   # npc.bin kind 3: id, kind, name; kept if placed, prepended
+0x02064e3c Cast_RunNpcBin                   # Tbl_* over npc.bin with g_CastHandlers
+0x02064e98 Cast_AddVisitors                 # R0* maps: visitors from the save's zone block
+0x0206bf3c Place_InitNode                   # 0x78-byte placement node; +0x38 = 0x7a, +0x46 = -1
+0x0206c020 Place_RecBlock                   # kind 3: map, npc, x, y, z, angle, (motion)
+0x0206c108 Place_RecPoint                   # kind 4: exact story point, time, map, npc, place
+0x0206c2d0 Place_RecSpan                    # kind 5: from..to (c*1000+s*10+ss), time, map, npc, place
+0x0206c4f8 Place_RecTalkZone                # kind 6: x/z max, x/z min, label -> node +0x40
+0x0206c624 Place_RecArea                    # kind 7: area +0x24, mode 7
+0x0206c704 Place_RecSegment                 # kind 8: direction, distance around the position, mode 8
+0x0206c83c Place_RecPath9                   # kind 9: closed path +0x34, mode 9
+0x0206c948 Place_RecPath10                  # kind 10: closed path +0x34, mode 10
+0x0206ca4c Place_RecFlags                   # kind 11: OR into node +0xc
+0x0206cae8 Place_RecLinkedNpc               # kind 12: node +0xb
+0x0206cb58 Place_RecSpeed                   # kind 13: node +0x38
+0x0206cbdc Place_RecQuest                   # kind 14: quest condition, time, map, npc, place
+0x0206cf68 Place_RecQuestSpan               # kind 21: quest condition and span
+0x0206d3e4 Place_RecSeated                  # kind 15: +0x3c angle, flag 0x800
+0x0206d474 Place_RecProp                    # kind 16: +0x48, flag 0x2000 (s069.chr)
+0x0206d4f0 Place_RecFlagCondition           # kind 17: (flag, set) pairs, class 0
+0x0206d744 Place_RecState                   # kind 18: +0xa bits 3-5, +0x60
+0x0206d7f4 Place_RecModelOverride           # kind 19: data/<chr> and motion name
+0x0206d8f8 Place_RecExtra                   # kind 20: +0x5c
+0x0206d9e8 Place_RecTint                    # kind 22: RGB555 added to the model palette
+0x0206da90 Place_Run                        # Tbl_* over place.bin with g_PlaceHandlers
+0x0206db30 Place_FindChain                  # chain of an NPC id
+0x0206db58 Place_Insert                     # priority classes 0-5, earliest start, file order
+0x0206dd78 Place_Remove                     # detaches an NPC's chain
+0x020f05f8 g_CastHandlers                   # {1, nop}, {2, nop}, {3, Cast_RecMember}, {0}
+0x020f0994 g_PlaceHandlers                  # kinds 3..22
+0x021075f4 g_NpcTable                       # +0xc 32 entries, +0x8c count, +0x90 cast, +0x94 chains
+0x02108cec g_PlaceContext                   # substep, step, chapter, counter +0xa, map +0xc

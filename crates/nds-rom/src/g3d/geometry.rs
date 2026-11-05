@@ -1,13 +1,15 @@
 //! Runs a model's render ops and display lists into indexed triangles in model space.
 //!
-//! Ported from apicula `primitives` (triangle-only output). Texture matrices and
-//! billboards are not applied.
+//! Ported from apicula `primitives` (triangle-only output). Texture coordinates are the
+//! display lists' own; [`Geometry::apply_tex_matrices`] applies texture matrices. Billboards
+//! are not applied.
 
 use std::ops::Range;
 
 use super::fx::{Fx12, Mat4, bits};
 use super::gpu::{DisplayList, GpuCmd};
 use super::model::{Model, RenderOp, SkinTerm};
+use super::srt::TexMatrix;
 use crate::{Error, Result};
 
 /// One output vertex.
@@ -56,10 +58,9 @@ pub struct Geometry {
 }
 
 impl Geometry {
-    /// Builds the model in its rest pose (object matrices from [`Model::objects`]).
+    /// Builds the model in its rest pose ([`Model::rest_pose`]).
     pub fn build(model: &Model) -> Result<Geometry> {
-        let objects: Vec<Mat4> = model.objects.iter().map(|o| o.matrix()).collect();
-        Self::build_posed(model, &objects)
+        Self::build_posed(model, &model.rest_pose()?)
     }
 
     /// Builds the model with the given object matrices (one per object, e.g. animated).
@@ -81,6 +82,23 @@ impl Geometry {
             b.op(op)?;
         }
         Ok(b.out)
+    }
+
+    /// Transforms the texture coordinates of every draw call whose material has a matrix in
+    /// `matrices` (indexed by material, e.g. [`Model::tex_matrices`] or animated ones), in the
+    /// material's texel space.
+    pub fn apply_tex_matrices(&mut self, model: &Model, matrices: &[Option<TexMatrix>]) {
+        for call in &self.draw_calls {
+            let idx = usize::from(call.material_idx);
+            let (Some(Some(m)), Some(mat)) = (matrices.get(idx), model.materials.get(idx)) else {
+                continue;
+            };
+            let (w, h) = (f32::from(mat.width.max(1)), f32::from(mat.height.max(1)));
+            for v in &mut self.vertices[call.vertex_range.clone()] {
+                let [s, t] = m.apply([v.texcoord[0] * w, v.texcoord[1] * h]);
+                v.texcoord = [s / w, t / h];
+            }
+        }
     }
 }
 

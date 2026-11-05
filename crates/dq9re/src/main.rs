@@ -1,5 +1,6 @@
 //! `dq9re`: command-line tooling for reverse engineering the Dragon Quest IX ROM.
 
+mod cast;
 mod coverage;
 mod extract;
 mod font;
@@ -144,14 +145,29 @@ enum Command {
     /// assembles them: blocks, parts with their files, instances with world transforms.
     /// With `--state`, compares the result with the map loaded in a melonDS state.
     Map(map::MapArgs),
+    /// What a character archive (`.chr`) holds: members by role, model, motion table with
+    /// each motion's frames, speed and animation files.
+    Chr(cast::ChrArgs),
+    /// Who stands where on a map at a story point (`<area>.npc`): NPCs with what they are
+    /// drawn with, position, facing and initial motion. With `--state`, uses the state's
+    /// story point and compares with its NPC table.
+    Cast(cast::CastArgs),
     /// Export the textures (PNG) and models (OBJ + MTL, model space) of G3D files: a
-    /// `.nsbmd`/`.nsbtx` file or the members of a NARC such as `data/map/M01.amdj`.
+    /// `.nsbmd`/`.nsbtx` file or the members of a NARC such as `data/map/M01.amdj`. With
+    /// `--anim`, models are posed (joints), retextured (texture SRT) and recoloured (material)
+    /// by that animation member of the same NARC at `--frame`.
     Model {
         /// Path inside the ROM filesystem.
         path: String,
         /// Only this NARC member, e.g. `M01M0003.nsbmd`.
         #[arg(long)]
         member: Option<String>,
+        /// Animation member of the same NARC (`.nsbca`, `.nsbta`, `.nsbma`, `.nsbtp`).
+        #[arg(long)]
+        anim: Option<String>,
+        /// Frame of `--anim`.
+        #[arg(long, default_value_t = 0)]
+        frame: u16,
         #[arg(long, default_value = "build/g3d")]
         out: PathBuf,
     },
@@ -261,7 +277,15 @@ fn main() -> Result<()> {
         } => narc(&rom, &path, out.as_deref(), decompress),
         Command::Maps { state } => maps::run(&rom, state.as_deref()),
         Command::Map(args) => map::run(&rom, &args),
-        Command::Model { path, member, out } => model::run(&rom, &path, member.as_deref(), &out),
+        Command::Chr(args) => cast::run_chr(&rom, &args),
+        Command::Cast(args) => cast::run_cast(&rom, &args),
+        Command::Model {
+            path,
+            member,
+            anim,
+            frame,
+            out,
+        } => model::run(&rom, &path, member.as_deref(), anim.as_deref(), frame, &out),
         Command::Cat {
             path,
             out,

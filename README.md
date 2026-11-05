@@ -5,19 +5,20 @@ pour Windows, macOS, Linux et le Web, avec le multijoueur de la DS rendu possibl
 Le jeu est rétro-analysé et ses ressources sont lues depuis **votre propre ROM** ; aucune
 donnée du jeu n'est incluse dans ce dépôt.
 
-**État** : formats et logique de dialogue/scénario réimplémentés (archives, textes, polices,
-choix des répliques, triggers, scripts d'événements) ; pas encore de jeu affiché. Prochain
-objectif : une **v0.1 jouable** (prologue d'Angel Falls). Plan complet : `docs/roadmap.md`.
+**État** : cartes texturées avec PNJ et animations affichées en natif et dans le navigateur
+(`dq9-app`, caméra libre) ; formats et logique de dialogue/scénario réimplémentés. Pas encore
+de déplacement jouable ni de scènes interactives. Prochain objectif : une **v0.1 jouable**
+(prologue d'Angel Falls). Plan complet : `docs/roadmap.md`, lancement : `docs/app.md`.
 
 <!-- coverage:start -->
-**Avancement : 1,2 %** des fonctions de jeu traduites (152 / 12 092), 1,7 % du code (44 Ko / 2 506 Ko).
+**Avancement : 1,6 %** des fonctions de jeu traduites (204 / 12 092), 2,1 % du code (53 Ko / 2 506 Ko).
 Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (définition dans `docs/roadmap.md`).
 
 <details><summary>Détail par module</summary>
 
 | Module | Fonctions traduites | Code traduit |
 |---|---:|---:|
-| ARM9 | 144 / 5 500 (2,6 %) | 41 Ko / 827 Ko (4,8 %) |
+| ARM9 | 196 / 5 500 (3,5 %) | 50 Ko / 827 Ko (5,9 %) |
 | ITCM | 0 / 34 (0,0 %) | 0 Ko / 6 Ko (0,0 %) |
 | ov_000 | 0 / 826 (0,0 %) | 0 Ko / 190 Ko (0,0 %) |
 | ov_001 | 0 / 515 (0,0 %) | 0 Ko / 70 Ko (0,0 %) |
@@ -56,6 +57,8 @@ Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (dé
 |---|---|
 | `crates/nds-rom` | ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC. Sans E/S, compile en wasm. |
 | `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives `.gp2`, tables d'enregistrements, polices, messages, choix des répliques, triggers, scripts `.stb`. Sans E/S, compile en wasm. |
+| `crates/dq9-render` | Rendu wgpu des cartes, proche du moteur 3D de la DS ; caméra libre. Sans E/S, compile en wasm. |
+| `crates/dq9-app` | Application (winit + wgpu, natif et Web) : `cargo run -p dq9-app --release -- --map M01` (`docs/app.md`). |
 | `crates/dq9re` | CLI de rétro-ingénierie (`cargo dq9re --help`). |
 | `crates/testrom` | Localise la ROM pour les tests sur données réelles. |
 | `re/symbols.txt` | Noms retrouvés, source de vérité appliquée au projet Ghidra. |
@@ -63,8 +66,8 @@ Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (dé
 | `docs/` | Feuille de route, architecture, ressources externes, notes de RE (`re/`). |
 | `rom/` | Votre ROM (ignorée par git). |
 
-Les crates `dq9-core`, `dq9-render`, `dq9-audio` et `dq9-app` seront créées au fil de la
-feuille de route (`docs/architecture.md`).
+Les crates `dq9-core` et `dq9-audio` seront créées au fil de la feuille de route
+(`docs/architecture.md`).
 
 ## Mise en place
 
@@ -92,7 +95,7 @@ powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save partie.
 cargo test --workspace                        # tests sur la vraie ROM inclus si elle est présente
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
-cargo build -p nds-rom -p dq9-formats --target wasm32-unknown-unknown
+cargo build -p nds-rom -p dq9-formats -p dq9-render -p dq9-app --target wasm32-unknown-unknown
 cargo dq9re coverage --readme README.md       # avancement (sans ROM), réécrit le bloc ci-dessus
 ```
 
@@ -135,6 +138,7 @@ Consigner une découverte :
 |---|---|
 | `docs/roadmap.md` | jalons jusqu'au portage complet, définition du « 100 % » |
 | `docs/architecture.md` | crates cibles et règles (portabilité, déterminisme, traçabilité) |
+| `docs/app.md` | lancer `dq9-app` (natif, navigateur), rendu et ses approximations |
 | `docs/ressources-externes.md` | décompilation, wiki, portage PC, outils DS, licences |
 | `docs/re/rom-layout.md` | structure de la ROM, overlays, systèmes de fichiers |
 | [`docs/re/nitro-sdk.md`](docs/re/nitro-sdk.md) | premier lot de 50 routines NitroSDK ARM9 identifiées, non portées |

@@ -1,0 +1,48 @@
+[package]
+name = "dq9-app"
+description = "Dragon Quest IX port: window, input and ROM loading (native and Web)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+nds-rom.workspace = true
+dq9-formats.workspace = true
+dq9-render.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+glam.workspace = true
+anyhow.workspace = true
+web-time.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+clap = { workspace = true, features = ["env"] }
+pollster.workspace = true
+png = "0.18.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+console_error_panic_hook.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "console",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "File",
+    "FileList",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "Location",
+    "Window",
+] }
+
+[lints]
+workspace = true

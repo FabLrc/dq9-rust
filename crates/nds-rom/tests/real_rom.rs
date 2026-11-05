@@ -127,8 +127,12 @@ fn map_g3d_files() {
             patterns += 1;
             for key in pat.tracks.iter().flat_map(|t| &t.keyframes) {
                 let t = pat.texture_names[usize::from(key.texture_idx)];
-                let p = pat.palette_names[usize::from(key.palette_idx)];
-                pairs.entry(t).or_default().insert(p);
+                if let Some(p) = key.palette() {
+                    pairs
+                        .entry(t)
+                        .or_default()
+                        .insert(pat.palette_names[usize::from(p)]);
+                }
             }
         }
     });
@@ -184,9 +188,159 @@ fn map_g3d_files() {
     );
     // Only one texture is neither `<name>_pl` nor paired by a material or pattern animation.
     assert_eq!(unresolved, ["c04m01gds28"]);
-    // [unknown] Two models (one shared by five maps) exceed their header box by > 1 unit.
+    // Every model fits its header box once the Softimage scaling rule is applied (M10M0600
+    // and S14M01E1 nest scaled objects; a plain `T R S` puts them outside).
+    assert!(outside_bbox.is_empty(), "{outside_bbox:?}");
+}
+
+/// Every animation file (`.nsbca`, `.nsbta`, `.nsbma`, `.nsbtp`) of the map archives and of the
+/// character archives (`*.chr`) decodes, and every frame of every track evaluates; the joint
+/// animations also pose the models of their own archive.
+#[test]
+fn animation_files() {
+    use nds_rom::compress;
+    use nds_rom::g3d::{Fx12, G3dFile, Geometry};
+    use std::collections::BTreeMap;
+
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let mut files: BTreeMap<String, usize> = BTreeMap::new();
+    let (mut joints, mut srts, mut mats, mut pats) = (0, 0, 0, 0);
+    let (mut tracks, mut evaluations, mut smooth, mut remapped) = (0, 0, 0, 0);
+    let mut rules: BTreeMap<(u8, u8), usize> = BTreeMap::new();
+    let (mut posed, mut posed_vertices) = (0, 0);
+    for file in &rom.files.files {
+        let p = &file.path;
+        let map = p.starts_with("data/map/") && (p.ends_with(".ambl") || p.ends_with(".amdj"));
+        if !(map || p.ends_with(".chr")) {
+            continue;
+        }
+        let narc = Narc::parse(rom.file(file.id).unwrap()).unwrap();
+        let mut members = Vec::new();
+        for i in 0..narc.len() as u16 {
+            let name = narc.name(i).unwrap_or_default().to_owned();
+            let Some(ext) = [".nsbca", ".nsbta", ".nsbma", ".nsbtp", ".nsbmd"]
+                .into_iter()
+                .find(|e| name.ends_with(e))
+            else {
+                continue;
+            };
+            let raw = narc.file(i).unwrap();
+            let data = if G3dFile::is_g3d(raw) {
+                raw.to_vec()
+            } else {
+                compress::decompress(raw).unwrap_or_else(|e| panic!("{p} {name}: {e}"))
+            };
+            if ext != ".nsbmd" {
+                let kind = if map { "map" } else { "chr" };
+                *files.entry(format!("{kind} {ext}")).or_default() += 1;
+            }
+            members.push((name, data));
+        }
+        let parsed: Vec<_> = members
+            .iter()
+            .map(|(name, data)| {
+                let g = G3dFile::parse(data).unwrap_or_else(|e| panic!("{p} {name}: {e}"));
+                (name, g)
+            })
+            .collect();
+        let models: Vec<_> = parsed.iter().flat_map(|(_, g)| &g.models).collect();
+        for (name, g) in &parsed {
+            let ctx = format!("{p} {name}");
+            for a in &g.joint_animations {
+                joints += 1;
+                tracks += a.tracks.len();
+                for (i, t) in a.tracks.iter().enumerate() {
+                    remapped += usize::from(t.data_index() != i);
+                    for f in 0..i32::from(a.frame_count) {
+                        let mut times = vec![f << 12];
+                        if a.interpolates() {
+                            times.push((f << 12) | 0x800);
+                            smooth += 1;
+                        }
+                        for time in times {
+                            a.track_transform(i, &Default::default(), Fx12(time))
+                                .unwrap_or_else(|e| panic!("{ctx} track {i} t {time:#x}: {e}"));
+                            evaluations += 1;
+                        }
+                    }
+                }
+                for m in &models {
+                    if a.tracks.len() > m.objects.len() {
+                        continue;
+                    }
+                    *rules.entry((m.scaling_rule, m.tex_mtx_mode)).or_default() += 1;
+                    let pose = a.pose(m, a.frame_count / 2).unwrap();
+                    let geo = Geometry::build_posed(m, &pose)
+                        .unwrap_or_else(|e| panic!("{ctx} on {}: {e}", m.name));
+                    assert!(
+                        geo.vertices
+                            .iter()
+                            .all(|v| v.position.iter().all(|x| x.is_finite()))
+                    );
+                    posed += 1;
+                    posed_vertices += geo.vertices.len();
+                }
+            }
+            for a in &g.tex_srt_animations {
+                srts += 1;
+                tracks += a.tracks.len();
+                for i in 0..a.tracks.len() {
+                    for f in 0..a.frame_count {
+                        a.srt(i, f)
+                            .unwrap_or_else(|e| panic!("{ctx} track {i} frame {f}: {e}"));
+                        evaluations += 1;
+                    }
+                }
+                for m in &models {
+                    for mi in 0..m.materials.len() {
+                        a.matrix(m, mi, 0).unwrap();
+                    }
+                }
+            }
+            for a in &g.material_animations {
+                mats += 1;
+                tracks += a.tracks.len();
+                for i in 0..a.tracks.len() {
+                    for f in 0..a.frame_count {
+                        a.colors(i, f)
+                            .unwrap_or_else(|e| panic!("{ctx} track {i} frame {f}: {e}"));
+                        evaluations += 1;
+                    }
+                }
+            }
+            for a in &g.patterns {
+                pats += 1;
+                tracks += a.tracks.len();
+                for i in 0..a.tracks.len() {
+                    for f in 0..a.num_frames {
+                        assert!(a.at(i, f).is_some(), "{ctx} track {i} frame {f}");
+                        evaluations += 1;
+                    }
+                }
+            }
+        }
+    }
+    let files: Vec<_> = files.into_iter().collect();
+    let expected = [
+        ("chr .nsbca", 5347),
+        ("chr .nsbma", 1594),
+        ("chr .nsbta", 692),
+    ]
+    .into_iter()
+    .chain([("chr .nsbtp", 45), ("map .nsbca", 299), ("map .nsbma", 512)])
+    .chain([("map .nsbta", 873), ("map .nsbtp", 525)]);
     assert_eq!(
-        outside_bbox,
-        BTreeSet::from(["M10M0600".into(), "S14M01E1".into()])
+        files,
+        expected.map(|(f, n)| (f.to_owned(), n)).collect::<Vec<_>>()
     );
+    // One animation per file.
+    assert_eq!((joints, srts, mats, pats), (5646, 1565, 2106, 570));
+    assert_eq!((tracks, evaluations, smooth), (98684, 6732887, 1671958));
+    // Track `i` always drives object `i`.
+    assert_eq!(remapped, 0);
+    // Joint animations posing a model of their own archive (`.chr` with model and motions),
+    // by (scaling rule, texture matrix mode): Softimage scaling, XSI texture matrices.
+    assert_eq!((posed, posed_vertices), (2965, 891520));
+    assert_eq!(rules, BTreeMap::from([((0, 3), 10), ((2, 3), 2955)]));
 }

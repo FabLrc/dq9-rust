@@ -1,8 +1,11 @@
 //! `PAT0` texture pattern animations (`BTP0` files): which texture and palette each material
-//! shows over time. Ported from apicula `nitro::pattern`.
+//! shows over time. Format from apicula `nitro::pattern`; keyframe lookup ported from the
+//! NITRO-System library as the game links it (USA decompilation
+//! `src/NitroSDK/NSBXX/PatternAnimation.cpp`, `NSBXX_PatternAnimation_GetKeyframe`, EU
+//! `0x020b77a8`; `MPTAnimationProcessingCallback`, EU `0x020b98c8`).
 
 use super::{Name, at, read_dict};
-use crate::bytes::{slice, u8_at, u16_at, u32_at};
+use crate::bytes::{slice, u8_at, u16_at};
 use crate::{Error, Result};
 
 /// One pattern animation.
@@ -21,15 +24,58 @@ pub struct PatternTrack {
     /// Material name.
     pub material: Name,
     pub keyframes: Vec<PatternKeyframe>,
+    /// Keyframes per frame (1.3.12), the library's first guess of the keyframe index.
+    pub ratio: i16,
 }
 
 /// From `frame` on, the material shows `texture_names[texture_idx]` with
-/// `palette_names[palette_idx]`.
+/// `palette_names[palette_idx]` (`0xFF`: the palette stays).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PatternKeyframe {
     pub frame: u16,
     pub texture_idx: u8,
     pub palette_idx: u8,
+}
+
+impl PatternKeyframe {
+    /// Palette index, `None` when the keyframe keeps the current palette.
+    pub fn palette(&self) -> Option<u8> {
+        (self.palette_idx != 0xFF).then_some(self.palette_idx)
+    }
+}
+
+impl Pattern {
+    /// The track animating the material named `material` (the library matches by name).
+    pub fn track(&self, material: &Name) -> Option<usize> {
+        self.tracks.iter().position(|t| &t.material == material)
+    }
+
+    /// The keyframe track `track_idx` shows at `frame`: the last one starting at or before
+    /// it, else the first. `None` for a missing or empty track.
+    pub fn keyframe(&self, track_idx: usize, frame: u16) -> Option<&PatternKeyframe> {
+        let track = self.tracks.get(track_idx)?;
+        let keys = &track.keyframes;
+        let last = keys.len().checked_sub(1)?;
+        // The library starts from `ratio * frame`; it does not bound that guess, we clamp it.
+        let guess = (i32::from(track.ratio).wrapping_mul(i32::from(frame)) as u32 >> 12) as usize;
+        let mut i = guess.min(last);
+        while i != 0 && keys[i].frame >= frame {
+            i -= 1;
+        }
+        while i < last && keys[i + 1].frame <= frame {
+            i += 1;
+        }
+        Some(&keys[i])
+    }
+
+    /// Texture and palette names track `track_idx` shows at `frame` (palette `None`: kept).
+    pub fn at(&self, track_idx: usize, frame: u16) -> Option<(Name, Option<Name>)> {
+        let k = self.keyframe(track_idx, frame)?;
+        Some((
+            self.texture_names[usize::from(k.texture_idx)],
+            k.palette().map(|p| self.palette_names[usize::from(p)]),
+        ))
+    }
 }
 
 fn names(data: &[u8], off: usize, count: usize) -> Result<Vec<Name>> {
@@ -54,14 +100,15 @@ pub(crate) fn read_pattern(data: &[u8], base: usize, name: Name) -> Result<Patte
     let tracks = read_dict(data, at(base, 12u8)?, 8)?
         .into_iter()
         .map(|(v, material)| {
-            let count = u32_at(v, 0)? as usize;
-            let keys = slice(data, at(base, u16_at(v, 6)?)?, count.saturating_mul(4))?;
+            // Keyframe count (the next half-word is unused), ratio, keyframe offset.
+            let count = usize::from(u16_at(v, 0)?);
+            let keys = slice(data, at(base, u16_at(v, 6)?)?, count * 4)?;
             let keyframes = keys
                 .as_chunks::<4>()
                 .0
                 .iter()
                 .map(|k| {
-                    if k[2] >= num_tex || k[3] >= num_pal {
+                    if k[2] >= num_tex || (k[3] >= num_pal && k[3] != 0xFF) {
                         return Err(Error::Malformed("G3D pattern keyframe index"));
                     }
                     Ok(PatternKeyframe {
@@ -74,6 +121,7 @@ pub(crate) fn read_pattern(data: &[u8], base: usize, name: Name) -> Result<Patte
             Ok(PatternTrack {
                 material,
                 keyframes,
+                ratio: u16_at(v, 4)? as i16,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -123,6 +171,22 @@ mod tests {
         assert!(pat.palette_names[0].is("fir_pl"));
         assert_eq!(pat.tracks[0].keyframes[1].frame, 15);
         assert_eq!(pat.tracks[0].keyframes[1].texture_idx, 1);
+        let shown = |frame| {
+            let (t, p) = pat.at(0, frame).unwrap();
+            (t.to_string(), p.map(|p| p.to_string()))
+        };
+        assert_eq!(shown(0), ("fir01".into(), Some("fir_pl".into())));
+        assert_eq!(shown(14).0, "fir01");
+        assert_eq!(shown(15).0, "fir02");
+        assert_eq!(shown(29).0, "fir02");
+        assert_eq!(pat.track(&pat.tracks[0].material), Some(0));
+        assert!(pat.at(1, 0).is_none());
+        // A large ratio guess is clamped and walked back.
+        let mut fast = pat.clone();
+        fast.tracks[0].ratio = 0x7fff;
+        assert_eq!(fast.keyframe(0, 14).unwrap().frame, 0);
+        fast.tracks[0].keyframes[1].palette_idx = 0xFF;
+        assert_eq!(fast.at(0, 20).unwrap().1, None);
         for len in 16..data.len() {
             let mut cut = data[..len].to_vec();
             cut[8..12].copy_from_slice(&(len as u32).to_le_bytes());

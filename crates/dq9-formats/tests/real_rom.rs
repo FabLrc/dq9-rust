@@ -631,3 +631,214 @@ fn maps_assemble() {
         }
     );
 }
+
+/// Every `.chr` archive reads by role: its model, its motion table and each motion's
+/// animation files; monster archives (`.cchr` of `enemy.gp2`) too.
+#[test]
+fn character_archives_read_by_role() {
+    use dq9_formats::chr::{self, Chr, Role};
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let (mut archives, mut models, mut tables, mut motions, mut with_files) = (0, 0, 0, 0, 0);
+    let (mut orphans, mut long_names, mut npc_motions, mut npc_without_files) = (0, 0, 0, 0);
+    for file in rom.files.files.iter().filter(|f| f.path.ends_with(".chr")) {
+        let chr =
+            Chr::parse(rom.file(file.id).unwrap()).unwrap_or_else(|e| panic!("{}: {e}", file.path));
+        archives += 1;
+        models += usize::from(chr.model.is_some());
+        tables += usize::from(chr.motion_table.is_some());
+        let found = chr.motions();
+        motions += found.len();
+        with_files += found.iter().filter(|m| !m.files.is_empty()).count();
+        long_names += found.iter().filter(|m| m.motion.name.len() > 15).count();
+        // NPC models (`chara_sub`): animation members no motion of the table names.
+        if file.path.starts_with("data/chara_sub/") {
+            npc_motions += found.len();
+            npc_without_files += found.iter().filter(|m| m.files.is_empty()).count();
+            for i in 0..chr.narc.len() as u16 {
+                if let Some(Role::Animation { motion, .. }) = chr.narc.name(i).map(chr::role)
+                    && chr.motion_index(motion.as_bytes()).is_none()
+                {
+                    orphans += 1;
+                }
+            }
+        }
+    }
+    println!(
+        "{archives} archives, {models} models, {tables} motion tables, {motions} motions \
+         ({with_files} with files), chara_sub: {npc_motions} motions, {npc_without_files} without \
+         files, {orphans} orphan animations; {long_names} long names"
+    );
+    let enemy = Gpc2::parse(rom.file_by_path("data/pack_lv5/enemy.gp2").unwrap()).unwrap();
+    let mut monsters = 0;
+    for entry in enemy.entries.iter().filter(|e| e.name.ends_with(".mon")) {
+        let mon = enemy.member(entry).unwrap();
+        let narc = nds_rom::Narc::parse(&mon).unwrap();
+        for i in 0..narc.len() as u16 {
+            if narc.name(i).is_some_and(|n| n.contains(".cchr")) {
+                let data = nds_rom::compress::decompress(narc.file(i).unwrap()).unwrap();
+                let chr = Chr::parse(&data).unwrap_or_else(|e| panic!("{}: {e}", entry.name));
+                assert!(
+                    chr.model.is_some() && chr.motion_table.is_some(),
+                    "{}",
+                    entry.name
+                );
+                monsters += 1;
+            }
+        }
+    }
+    // 1 911 `.nsbmd` and 2 512 `.bcfg` members: one archive holds two of each.
+    assert_eq!(
+        (archives, models, tables, motions, with_files),
+        (2683, 1910, 2511, 6466, 3782)
+    );
+    // NPC models: the `step_*` motions name stretches of `walk` and have no file.
+    assert_eq!((npc_motions, npc_without_files, orphans), (1055, 626, 7));
+    // Names fit the game's 16-byte copy.
+    assert_eq!(long_names, 0);
+    assert_eq!(monsters, 601);
+}
+
+/// The cast of every map with a `.npc` archive, at the start of every chapter by day and by
+/// night: every NPC is drawn with a sheet or archive that exists and reads.
+#[test]
+fn casts_resolve_to_existing_archives() {
+    use dq9_formats::cast::{self, Appearance, Story};
+    use dq9_formats::chr::Chr;
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+    let list = MapList::parse(&table).unwrap();
+    let enemy = Gpc2::parse(rom.file_by_path("data/pack_lv5/enemy.gp2").unwrap()).unwrap();
+    let exists = |p: &str| map::rom_file(&rom, p).is_some();
+    let (mut maps, mut casts, mut npcs, mut unset) = (0, 0, 0, 0);
+    let mut kinds = std::collections::BTreeMap::<&str, usize>::new();
+    let mut archives = HashSet::new();
+    for record in &list.records {
+        let Some(archive) = map::rom_file(&rom, &cast::archive_path(record.code)) else {
+            continue;
+        };
+        maps += 1;
+        for chapter in 1..=19 {
+            for daytime in [true, false] {
+                let story = Story {
+                    chapter,
+                    step: 1,
+                    substep: 1,
+                    daytime,
+                    ..Story::default()
+                };
+                let c = cast::load(archive, record.id, &story).unwrap();
+                casts += 1;
+                unset += usize::from(c.read_unset);
+                for npc in &c.npcs {
+                    npcs += 1;
+                    let a = npc.appearance(exists);
+                    let (kind, path) = match &a {
+                        Appearance::None => ("none", None),
+                        Appearance::Sprite { sheet } => ("sprite", Some(sheet.clone())),
+                        Appearance::Model { chr } => ("model", Some(chr.clone())),
+                        Appearance::Monster { member } => ("monster", Some(member.clone())),
+                    };
+                    *kinds.entry(kind).or_default() += 1;
+                    let Some(path) = path else { continue };
+                    let ok = match a {
+                        Appearance::Monster { member } => enemy.find(&member).is_some(),
+                        Appearance::Model { chr } => map::rom_file(&rom, &chr)
+                            .is_some_and(|d| Chr::parse(d).is_ok_and(|c| c.model.is_some())),
+                        _ => exists(&path),
+                    };
+                    assert!(
+                        ok,
+                        "{}: NPC {} drawn with missing {path}",
+                        record.id, npc.member.id
+                    );
+                    archives.insert(path);
+                    if let Some(extra) = npc.placement.chr {
+                        let extra = format!("data/{}", String::from_utf8_lossy(extra));
+                        assert!(exists(&extra), "{extra}");
+                    }
+                }
+            }
+        }
+    }
+    let kinds: Vec<_> = kinds.into_iter().collect();
+    assert_eq!(
+        (maps, casts, npcs, archives.len()),
+        (508, 19304, 36170, 238)
+    );
+    assert_eq!(
+        kinds,
+        [
+            ("model", 2511),
+            ("monster", 370),
+            ("none", 12122),
+            ("sprite", 21167)
+        ]
+    );
+    // No record reads a field before a record of its file has set it.
+    assert_eq!(unset, 0);
+
+    // Stornway church (C01M09) as the game built it in `build/melonds/demo.ml1`: story
+    // 19.2.1 at night, quest 4 done; same nodes, positions and record counters as in RAM.
+    let story = Story {
+        chapter: 19,
+        step: 2,
+        substep: 1,
+        quests: [(4, 3)].into(),
+        ..Story::default()
+    };
+    let archive = map::rom_file(&rom, "data/scenario/C01.npc").unwrap();
+    let c = cast::load(archive, 109, &story).unwrap();
+    let got: Vec<_> = c
+        .npcs
+        .iter()
+        .map(|n| {
+            let p = &n.placement;
+            (n.member.id, p.position, p.angle, p.order, p.quest)
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (25, [696, 1433, -14499], 778, 0x3d, -1),
+            (10, [-2703, 409, 12369], 12861, 0x21, 4)
+        ]
+    );
+}
+
+/// Every sprite sheet but two reads to its end; every step shows an existing frame.
+#[test]
+fn sprite_sheets_read() {
+    use dq9_formats::spr::Sprite;
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let (mut sheets, mut frames, mut with_stand) = (0, 0, 0);
+    let (mut bad_frames, mut bad_next, mut failed) = (0, 0, Vec::new());
+    for file in rom.files.files.iter().filter(|f| f.path.ends_with(".spr")) {
+        sheets += 1;
+        let Ok(s) = Sprite::parse(rom.file(file.id).unwrap()) else {
+            failed.push(file.path.as_str());
+            continue;
+        };
+        frames += s.frames.len();
+        with_stand += usize::from(s.find(b"stand_down") != 0);
+        for a in &s.animations {
+            bad_frames += a
+                .steps
+                .iter()
+                .filter(|st| st.frame as usize >= s.frames.len())
+                .count();
+            bad_next += a
+                .steps
+                .iter()
+                .filter(|st| st.next as usize >= a.steps.len())
+                .count();
+        }
+    }
+    // The two that do not read are a menu frame and a menu sheet, not loose NPC sheets.
+    assert_eq!(failed, ["data/ani/waku.spr", "data/menu/dqa_rox.spr"]);
+    assert_eq!((sheets, frames, with_stand), (1300, 4262, 193));
+    // Single-step static sheets (`spr`) name step 1 next, past their one step.
+    assert_eq!((bad_frames, bad_next), (0, 1960));
+}
