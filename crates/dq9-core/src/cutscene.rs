@@ -544,6 +544,13 @@ impl Cutscene {
         self.fades = Fades::new();
     }
 
+    /// Starts the camera where the field's is (until the script moves it).
+    pub fn seed_camera(&mut self, eye: Vec3, target: Vec3, half_fov: f32) {
+        self.cam.eye = eye;
+        self.cam.target = target;
+        self.cam.half_fov = half_fov;
+    }
+
     /// Declares the pose a target starts from (the hero, a map NPC) before its first command.
     pub fn seed(&mut self, target: Target, pose: Pose) {
         let node = self.nodes.entry(target).or_default();

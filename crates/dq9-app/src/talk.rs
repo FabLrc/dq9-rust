@@ -243,11 +243,6 @@ impl Talk {
         std::mem::take(&mut self.closed)
     }
 
-    /// An event message is on screen.
-    pub fn event_message_open(&self) -> bool {
-        self.event_message
-    }
-
     /// The colour (straight alpha) the fade of the event draws over the screen, if any.
     pub fn set_fade(&mut self, color: Option<[f32; 4]>) {
         self.fade = color;

@@ -6,6 +6,7 @@
 
 mod app;
 mod audio;
+mod event;
 mod gpu;
 mod lighting;
 mod load;

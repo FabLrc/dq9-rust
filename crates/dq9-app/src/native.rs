@@ -13,7 +13,8 @@ use glam::Vec3;
 use winit::event_loop::EventLoop;
 
 use crate::app::{App, Options, UserEvent};
-use crate::talk::{self, Talk};
+use crate::event::{EventPlayer, Outcome, Stage};
+use crate::talk::{self, Button, Talk};
 use crate::{gpu, lighting, load, walk};
 
 #[derive(Parser)]
@@ -87,18 +88,59 @@ struct Cli {
     /// Point looked at, `x,y,z`.
     #[arg(long, value_parser = parse_vec3, requires = "eye", allow_hyphen_values = true)]
     target: Option<Vec3>,
+    /// Start a scripted event (`data/event/evNNNNN.gp2`, `docs/re/stb.md`) on the map its
+    /// event-list record names. With `--screenshot`, plays `--frame N` fixed steps of it.
+    #[arg(long)]
+    event: Option<u16>,
+    /// Start the opening scene of a story stage `MAJOR.MINOR` (`1.1`: the prologue's first
+    /// cutscene) and use the stage as the story point.
+    #[arg(long, value_parser = parse_stage, conflicts_with = "event")]
+    stage: Option<(u32, u32)>,
+    /// With an event and `--screenshot`: steps at which the action key is pressed to read
+    /// the messages, `300,900`.
+    #[arg(long, value_delimiter = ',')]
+    press: Vec<u32>,
 }
 
 impl Cli {
     fn story(&self) -> dq9_formats::cast::Story {
-        dq9_formats::cast::Story {
+        let mut story = dq9_formats::cast::Story {
             chapter: self.chapter,
             step: self.step,
             substep: self.substep,
             daytime: !self.night,
             ..dq9_formats::cast::Story::default()
+        };
+        if let Some((major, minor)) = self.stage {
+            story.chapter = major as u8;
+            story.step = minor as u8;
+        }
+        story
+    }
+
+    /// The event to start: `--event`, or the opening scene of `--stage`.
+    fn event_id(&self, rom: &[u8]) -> Result<Option<u16>> {
+        if let Some(event) = self.event {
+            return Ok(Some(event));
+        }
+        let Some((major, minor)) = self.stage else {
+            return Ok(None);
+        };
+        let rom = nds_rom::Rom::parse(rom).context("parsing the ROM")?;
+        match dq9_core::script::load::stage_opening(&rom, major, minor) {
+            Some(event) => Ok(Some(event)),
+            None => bail!("no opening scene at story stage {major}.{minor}"),
         }
     }
+}
+
+/// `MAJOR.MINOR` of a story stage.
+fn parse_stage(s: &str) -> Result<(u32, u32), String> {
+    let (major, minor) = s.split_once('.').ok_or("expected MAJOR.MINOR")?;
+    Ok((
+        major.parse().map_err(|e| format!("{major:?}: {e}"))?,
+        minor.parse().map_err(|e| format!("{minor:?}: {e}"))?,
+    ))
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -197,6 +239,7 @@ pub fn main() -> Result<()> {
         let mut walker = walk::Walker::new(&rom, &map, time, &cli.story(), cli.start)?;
         return walker.run(&script);
     }
+    let event = cli.event_id(&rom)?;
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let options = Options {
         map: cli.map.clone(),
@@ -205,6 +248,7 @@ pub fn main() -> Result<()> {
         clock: cli.clock,
         ds_aspect: cli.ds_aspect,
         mute: cli.mute,
+        event,
         story: cli.story(),
     };
     let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
@@ -217,19 +261,32 @@ pub fn main() -> Result<()> {
 
 /// Renders one frame of the map offscreen and writes it as PNG.
 fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<()> {
+    let event = cli.event_id(rom)?;
+    let place = event.and_then(|e| crate::event::place(rom, e));
     let start = load::start(cli.map.as_deref(), save)?;
     let clock = lighting::day_clock(start.state.as_ref().map(|s| s.clock), cli.time, cli.clock);
     let time = clock.phase().index();
+    // An event happens on the map its record names, the hero at its start.
+    let (map, spawn) = match place {
+        Some(place) => (
+            place.map.to_string(),
+            place
+                .position
+                .map(|(p, angle)| (Vec3::from_array(p), dq9_core::field::yaw_of_angle(angle))),
+        ),
+        None => (start.map.clone(), None),
+    };
     let mut loaded = load::load(
         rom,
-        &start.map,
+        &map,
         time,
         &cli.story(),
-        None,
+        spawn,
         start.state.as_ref(),
         &start.look,
     )?;
     let script = cli.walk.as_deref().map(walk::parse_script).transpose()?;
+    let mut hidden = false;
     let mut hero = loaded.hero;
     if let Some(at) = cli.start {
         hero = walk::start_hero(&loaded.collision, &start.map, at)?;
@@ -295,21 +352,71 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     camera.far = camera.far.max(camera.distance * 4.0);
     loaded.runtime.face_camera(&camera)?;
     // The same fixed steps as the window: the hero follows the `--walk` script (standing once
-    // it has ended, or without one) and plays the motion its speed asks for.
-    for frame in 0..cli.frame {
-        let direction = script
-            .as_deref()
-            .map_or(Vec3::ZERO, |s| walk::direction_at(s, frame));
-        let before = hero.position();
-        hero.step(&loaded.collision, Input::from_direction(direction), 0, 1);
-        let moved = hero.position() - before;
-        let speed = Vec3::new(moved.x, 0.0, moved.z).length() / crate::app::STEP;
-        loaded.runtime.set_hero_gait(Gait::from_speed(speed));
-        loaded.runtime.step(&camera)?;
+    // it has ended, or without one) and plays the motion its speed asks for; an event plays
+    // its script instead.
+    if let Some(event) = event {
+        talk.set_rom(rom);
+        let presses = &cli.press;
+        let mut state = dq9_core::field::initial_state(&cli.story());
+        let mut player = EventPlayer::new();
+        player.queue(event);
+        for frame in 0..cli.frame {
+            if presses.contains(&frame) {
+                talk.press(Button::Confirm);
+            }
+            let mut stage = Stage {
+                rom,
+                world: &state,
+                scene: &mut loaded.runtime,
+                hero: &mut hero,
+                collision: &loaded.collision,
+                camera: &mut camera,
+                talk: &mut talk,
+            };
+            if let Some(next) = player.pending_start() {
+                if crate::event::place(rom, next).is_some_and(|p| p.map != loaded.entry.id) {
+                    println!("event {next} is on another map: the screenshot stops here");
+                    break;
+                }
+                player.prepare(rom, next, &mut stage);
+            }
+            for outcome in player.step(&mut stage) {
+                if let Outcome::Ended(id) = outcome {
+                    // Trigger 11 is the field's; the map's triggers are not loaded here.
+                    println!("frame {frame}: event {id} ended");
+                    let _ = &mut state;
+                }
+            }
+            talk.step();
+            loaded.runtime.step(&camera)?;
+        }
+        println!(
+            "events: {} not executed: {:?}; natives without effect: {:?}",
+            player.coverage().events,
+            player.coverage().missing,
+            player.unimplemented()
+        );
+        hidden = player.hero_hidden();
+    } else {
+        for frame in 0..cli.frame {
+            let direction = script
+                .as_deref()
+                .map_or(Vec3::ZERO, |s| walk::direction_at(s, frame));
+            let before = hero.position();
+            hero.step(&loaded.collision, Input::from_direction(direction), 0, 1);
+            let moved = hero.position() - before;
+            let speed = Vec3::new(moved.x, 0.0, moved.z).length() / crate::app::STEP;
+            loaded.runtime.set_hero_gait(Gait::from_speed(speed));
+            loaded.runtime.step(&camera)?;
+        }
     }
-    let world = loaded
-        .runtime
-        .hero_world(hero.position(), dq9_core::field::angle_of_yaw(hero.yaw()));
+    let world = if hidden {
+        glam::Mat4::from_scale(Vec3::ZERO)
+    } else {
+        loaded
+            .runtime
+            .hero_world(hero.position(), dq9_core::field::angle_of_yaw(hero.yaw()))
+    };
     loaded.runtime.scene.instances[loaded.hero_instance].world = world;
     if script.is_some() || cli.start.is_some() {
         println!(
@@ -325,12 +432,14 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     loaded.runtime.face_camera(&camera)?;
     let mut renderer = Renderer::new(&device, &queue, format, &loaded.runtime.scene);
     renderer.environment = lighting::environment(loaded.lighting.as_ref(), clock);
-    renderer.edge_pixels = (!cli.ds_aspect).then_some(1);
+    // Events are framed for one DS screen.
+    let ds_aspect = cli.ds_aspect || event.is_some();
+    renderer.edge_pixels = (!ds_aspect).then_some(1);
     if let Some(fog) = cli.fog {
         renderer.environment.fog = Some(fog);
     }
     let (w, h) = cli.size;
-    let viewport = if cli.ds_aspect {
+    let viewport = if ds_aspect {
         let (x, y, width, height) = letterbox(w, h, DS_ASPECT);
         Viewport {
             x,

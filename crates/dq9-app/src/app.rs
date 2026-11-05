@@ -17,7 +17,7 @@ use dq9_core::camera::FieldCamera;
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
 use dq9_core::fx::reduce_angle;
 use dq9_core::state::{DayClock, GameState, TimeOfDay};
-use dq9_core::trigger::State;
+use dq9_core::trigger::{Request, State};
 use dq9_core::{CollisionWorld, Hero, Input};
 use dq9_formats::hero::HeroLook;
 use dq9_render::camera::{DS_ASPECT, letterbox};
@@ -31,6 +31,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::audio::Audio;
+use crate::event::{EventPlayer, Outcome, Stage};
 use crate::gpu::Gpu;
 use crate::lighting;
 use crate::load::{self, MapEntry};
@@ -68,6 +69,8 @@ pub struct Options {
     pub ds_aspect: bool,
     /// No music, and no sound device opened until `M` unmutes.
     pub mute: bool,
+    /// An event to start as soon as the map is loaded (`--event`).
+    pub event: Option<u16>,
     pub story: dq9_formats::cast::Story,
 }
 
@@ -103,6 +106,10 @@ pub struct App {
     hero: Option<Hero>,
     /// NPC conversations and the message window.
     talk: Talk,
+    /// Script events: the event task and what it did to the scene.
+    events: EventPlayer,
+    /// Set while an event loads its map: the map's own `Request::Event`s are not queued.
+    quiet_events: bool,
     hero_instance: Option<usize>,
     /// The protagonist's look (the save's hero, else a new game's), kept across maps.
     look: HeroLook,
@@ -157,6 +164,8 @@ impl App {
             chain: 0,
             hero: None,
             talk: Talk::default(),
+            events: EventPlayer::new(),
+            quiet_events: false,
             hero_instance: None,
             look: HeroLook::new_game(),
             renderer: None,
@@ -213,6 +222,9 @@ impl App {
         self.time = self.day.phase().index();
         self.look = start.look.clone();
         self.load(&start.map, true, None, start.state.as_ref());
+        if let Some(event) = self.options.event {
+            self.events.queue(event);
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -339,6 +351,12 @@ impl App {
                         "map change ignored (already changing): {change:?}"
                     ));
                 }
+                Event::Request(Request::Event(id)) if !self.quiet_events => {
+                    self.events.queue(id);
+                }
+                Event::Request(Request::Event(id)) => {
+                    status(&format!("event {id} ignored while an event loads its map"));
+                }
                 Event::Request(request) => {
                     status(&format!(
                         "trigger request not supported before J3: {request:?}"
@@ -464,6 +482,95 @@ impl App {
         }
     }
 
+    /// An event is next in line: loads its map when it is elsewhere, then has the player add
+    /// the models its script needs.
+    fn begin_event(&mut self, event: u16) {
+        let Some(rom) = self.rom.as_deref() else {
+            return;
+        };
+        let place = crate::event::place(rom, event);
+        let here = self.current.as_ref().map(|(entry, _)| entry.id);
+        if let Some(place) = place
+            && Some(place.map) != here
+        {
+            let spawn = place
+                .position
+                .map(|(p, angle)| (Vec3::from_array(p), field::yaw_of_angle(angle)));
+            status(&format!("event {event} happens on map {}", place.map));
+            self.quiet_events = true;
+            let loaded = self.load_map(&place.map.to_string(), true, spawn, None, false);
+            self.quiet_events = false;
+            if !loaded {
+                status(&format!("event {event}: map {} did not load", place.map));
+            }
+        }
+        let (Some(rom), Some(scene), Some(hero)) = (
+            self.rom.as_deref(),
+            self.runtime.as_mut(),
+            self.hero.as_mut(),
+        ) else {
+            return;
+        };
+        let mut stage = Stage {
+            rom,
+            world: &self.state,
+            scene,
+            hero,
+            collision: &self.collision,
+            camera: &mut self.camera,
+            talk: &mut self.talk,
+        };
+        if self.events.prepare(rom, event, &mut stage) {
+            self.upload();
+        }
+    }
+
+    /// One fixed step while an event runs: the player is locked out and the script drives
+    /// the actors, the camera and the message window. Returns `false` when the scene broke.
+    fn step_event(&mut self) -> bool {
+        if let Some(event) = self.events.pending_start() {
+            self.begin_event(event);
+        }
+        let outcomes = {
+            let (Some(rom), Some(scene), Some(hero)) = (
+                self.rom.as_deref(),
+                self.runtime.as_mut(),
+                self.hero.as_mut(),
+            ) else {
+                return true;
+            };
+            let mut stage = Stage {
+                rom,
+                world: &self.state,
+                scene,
+                hero,
+                collision: &self.collision,
+                camera: &mut self.camera,
+                talk: &mut self.talk,
+            };
+            self.events.step(&mut stage)
+        };
+        self.talk.step();
+        for outcome in outcomes {
+            // The game fires trigger event 11 when an event ends (`EventTask_Update`).
+            if let Outcome::Ended(id) = outcome
+                && let Some(field) = &mut self.field
+            {
+                let events = field.event_ended(id, &mut self.state);
+                self.apply_events(events);
+            }
+        }
+        if let Some(runtime) = &mut self.runtime
+            && let Err(e) = runtime.step(&self.camera)
+        {
+            status(&format!("animation update failed: {e}"));
+            self.runtime = None;
+            self.renderer = None;
+            return false;
+        }
+        true
+    }
+
     fn axis(&self, plus: &[KeyCode], minus: &[KeyCode]) -> f32 {
         let any = |keys: &[KeyCode]| keys.iter().any(|k| self.held.contains(k));
         f32::from(i8::from(any(plus)) - i8::from(any(minus)))
@@ -497,6 +604,12 @@ impl App {
         self.last = now;
         while self.accumulator >= STEP {
             self.accumulator -= STEP;
+            if self.events.pending_start().is_some() || self.events.is_active() {
+                if !self.step_event() {
+                    return;
+                }
+                continue;
+            }
             let mut events = Vec::new();
             if !self.talk.is_active() && self.talk.confirm_pending() {
                 if let (Some(rom), Some(hero), Some(field), Some((entry, _))) =
@@ -614,19 +727,33 @@ impl App {
             self.renderer = None;
             return;
         }
+        if let (Some(gpu), Some(renderer), Some(runtime)) =
+            (&self.gpu, &mut self.renderer, &self.runtime)
+        {
+            // Instances an event moved.
+            for index in self.events.take_dirty() {
+                if let Some(instance) = runtime.scene.instances.get(index) {
+                    renderer.update_instance_world(&gpu.queue, index, instance.world);
+                }
+            }
+        }
         if let (Some(gpu), Some(renderer), Some(runtime), Some(hero), Some(index)) = (
             &self.gpu,
             &mut self.renderer,
             &self.runtime,
             &self.hero,
             self.hero_instance,
-        ) && !renderer.update_instance_world(
-            &gpu.queue,
-            index,
-            runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw())),
         ) {
-            status("hero instance is unavailable");
+            let world = if self.events.hero_hidden() {
+                glam::Mat4::from_scale(Vec3::ZERO)
+            } else {
+                runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()))
+            };
+            if !renderer.update_instance_world(&gpu.queue, index, world) {
+                status("hero instance is unavailable");
+            }
         }
+        let ds_aspect = self.options.ds_aspect || self.events.is_active();
         let (Some(gpu), Some(renderer)) = (&mut self.gpu, &mut self.renderer) else {
             return;
         };
@@ -643,7 +770,7 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let (w, h) = (gpu.config.width, gpu.config.height);
-        let viewport = if self.options.ds_aspect {
+        let viewport = if ds_aspect {
             let (x, y, width, height) = letterbox(w, h, DS_ASPECT);
             Viewport {
                 x,
@@ -659,7 +786,7 @@ impl App {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
-        renderer.edge_pixels = (!self.options.ds_aspect).then_some(1);
+        renderer.edge_pixels = (!ds_aspect).then_some(1);
         renderer.render(
             &gpu.device,
             &gpu.queue,

@@ -42,6 +42,7 @@ fn options() -> Options {
         clock: None,
         ds_aspect: false,
         mute: false,
+        event: None,
         story: dq9_formats::cast::Story {
             chapter: 1,
             step: 1,
@@ -77,6 +78,7 @@ fn options() -> Options {
                 }
             }
             "night" => options.story.daytime = value == "0",
+            "event" => options.event = value.parse().ok(),
             _ => {}
         }
     }

@@ -9,6 +9,9 @@
 //! `start..end` of the archive's type-0 package file (`InternalLoadFromCHRArchive`,
 //! `0x0203644c`). Playing swaps the clips of the model's [`ModelAnimation`], so the generic
 //! 60 Hz step advances them.
+//!
+//! A model without any polygon (the camera rigs of the opening, `ev01000cc000.chr`) has no
+//! instance: it only keeps its skeleton and motions, so the camera can follow its bones.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,7 +21,7 @@ use glam::{Mat4, Vec3};
 use nds_rom::g3d::{Fx12, G3dFile};
 use nds_rom::{Error, Result};
 
-use super::{AnimatedScene, Clip, ModelAnimation};
+use super::{AnimatedScene, Clip};
 use crate::hero::object_worlds;
 use crate::scene::{Builder, SceneInstance, TextureSources};
 
@@ -97,14 +100,30 @@ fn clip(spec: &ClipSpec, once: bool, factor: f32) -> Result<Clip> {
     Ok(clip)
 }
 
-/// One scripted model in the scene.
+/// The skeleton and clips of a model that is not drawn.
+#[derive(Debug)]
+struct Ghost {
+    bytes: Arc<[u8]>,
+    clips: Vec<Clip>,
+}
+
+/// One scripted model.
 #[derive(Debug)]
 pub(crate) struct ActorRig {
-    pub(crate) instance: usize,
-    /// Index in [`AnimatedScene::models`].
-    anim: usize,
+    /// Scene instance and index in [`AnimatedScene::models`] of the drawn model.
+    drawn: Option<(usize, usize)>,
+    ghost: Option<Ghost>,
     motions: Vec<Motion>,
-    playing: Option<String>,
+}
+
+impl ActorRig {
+    fn clips<'a>(&'a self, models: &'a [super::ModelAnimation]) -> &'a [Clip] {
+        match (&self.drawn, &self.ghost) {
+            (Some((_, anim)), _) => &models[*anim].clips,
+            (None, Some(ghost)) => &ghost.clips,
+            (None, None) => &[],
+        }
+    }
 }
 
 impl AnimatedScene {
@@ -138,6 +157,18 @@ impl AnimatedScene {
         let built = builder.model("event actor", "model.nsbmd", model);
         self.scene = builder.scene;
         let built = built?;
+        let bytes: Arc<[u8]> = model_bytes.into();
+        if built.vertices.is_empty() || built.indices.is_empty() {
+            self.actors.push(ActorRig {
+                drawn: None,
+                ghost: Some(Ghost {
+                    bytes,
+                    clips: Vec::new(),
+                }),
+                motions,
+            });
+            return Ok(self.actors.len() - 1);
+        }
         let model_id = self.scene.models.len();
         self.scene.models.push(built);
         let instance = self.scene.instances.len();
@@ -154,23 +185,21 @@ impl AnimatedScene {
             .flat_map(|m| m.clips.iter())
             .map(|spec| clip(spec, false, 1.0))
             .collect::<Result<Vec<_>>>()?;
-        let bytes: Arc<[u8]> = model_bytes.into();
         self.attach(model_id, bytes, 0, all, &sources, None)?;
         let anim = self.models.len() - 1;
         self.models[anim].clips.clear();
         self.models[anim].vertices_dirty = true;
         self.actors.push(ActorRig {
-            instance,
-            anim,
+            drawn: Some((instance, anim)),
+            ghost: None,
             motions,
-            playing: None,
         });
         Ok(self.actors.len() - 1)
     }
 
-    /// The scene instance of an actor.
+    /// The scene instance of an actor; `None` for a model without polygons.
     pub fn actor_instance(&self, actor: usize) -> Option<usize> {
-        self.actors.get(actor).map(|a| a.instance)
+        self.actors.get(actor)?.drawn.map(|(instance, _)| instance)
     }
 
     /// The names of the motions an actor can play.
@@ -199,29 +228,22 @@ impl AnimatedScene {
         else {
             return false;
         };
-        let state = &mut self.models[rig.anim];
-        state.clips = clips;
-        state.vertices_dirty = true;
-        rig.playing = Some(name.to_owned());
-        true
-    }
-
-    /// Stops the actor's motion on its current pose.
-    pub fn stop_actor(&mut self, actor: usize) {
-        if let Some(rig) = self.actors.get_mut(actor) {
-            for clip in &mut self.models[rig.anim].clips {
-                clip.once = true;
-                clip.wraps = clip.wraps.max(1);
+        match (&rig.drawn, &mut rig.ghost) {
+            (Some((_, anim)), _) => {
+                let state = &mut self.models[*anim];
+                state.clips = clips;
+                state.vertices_dirty = true;
             }
-            rig.playing = None;
+            (None, Some(ghost)) => ghost.clips = clips,
+            (None, None) => return false,
         }
+        true
     }
 
     /// Times the actor's motion reached its end (looping ones included) since it started.
     pub fn actor_wraps(&self, actor: usize) -> u32 {
         self.actors.get(actor).map_or(0, |a| {
-            self.models[a.anim]
-                .clips
+            a.clips(&self.models)
                 .iter()
                 .map(|c| c.wraps)
                 .max()
@@ -236,8 +258,23 @@ impl AnimatedScene {
         let Some(rig) = self.actors.get(actor) else {
             return Ok(None);
         };
-        let state = &self.models[rig.anim];
-        bone_world(state, bone)
+        let bytes = match (&rig.drawn, &rig.ghost) {
+            (Some((_, anim)), _) => &self.models[*anim].bytes,
+            (None, Some(ghost)) => &ghost.bytes,
+            (None, None) => return Ok(None),
+        };
+        bone_world(bytes, rig.clips(&self.models), bone)
+    }
+
+    /// One 60 Hz step of the motions of the models that are not drawn.
+    pub(super) fn advance_ghosts(&mut self) {
+        for rig in &mut self.actors {
+            if let Some(ghost) = &mut rig.ghost {
+                for clip in &mut ghost.clips {
+                    clip.advance();
+                }
+            }
+        }
     }
 
     /// The instance of the map NPC `id` (`<map>.npc` field 0), whatever it is drawn with.
@@ -250,14 +287,17 @@ impl AnimatedScene {
     }
 }
 
-fn bone_world(state: &ModelAnimation, bone: &str) -> Result<Option<Mat4>> {
-    let file = G3dFile::parse(&state.bytes)?;
-    let model = &file.models[state.model_index];
+fn bone_world(bytes: &[u8], clips: &[Clip], bone: &str) -> Result<Option<Mat4>> {
+    let file = G3dFile::parse(bytes)?;
+    let model = file
+        .models
+        .first()
+        .ok_or(Error::Malformed("actor archive without model"))?;
     let Some(index) = model.objects.iter().position(|o| o.name.is(bone)) else {
         return Ok(None);
     };
     let mut objects = None;
-    for clip in &state.clips {
+    for clip in clips {
         let anim = G3dFile::parse(&clip.bytes)?;
         if let Some(joint) = anim.joint_animations.first() {
             objects = Some(joint.pose_at(model, Fx12(clip.frame))?);

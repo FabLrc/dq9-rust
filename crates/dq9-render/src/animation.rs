@@ -477,6 +477,7 @@ impl AnimatedScene {
     pub fn step(&mut self, camera: &Camera) -> Result<()> {
         self.face_camera(camera)?;
         self.frame += 1;
+        self.advance_ghosts();
         for model in &mut self.models {
             for clip in &mut model.clips {
                 clip.advance();
