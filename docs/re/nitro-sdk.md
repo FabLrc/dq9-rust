@@ -1,6 +1,6 @@
-# NitroSDK ARM9 : premier lot vérifié (50 routines)
+# NitroSDK ARM9 : premier et second lots vérifiés (86 routines)
 
-Ces **50 routines de `Module::Main` européen** sont classées **Plateforme**, non
+Ces **86 routines de `Module::Main` européen** sont classées **Plateforme**, non
 portées : elles seront remplacées, pas traduites. Aucun code SDK ou ROM n'est
 reproduit ici. Les compteurs de fonctions traduites n'augmentent pas.
 
@@ -104,9 +104,100 @@ l'identité d'une routine SDK autonome. Les anonymes voisins restent non identif
 
 ## Effet sur l'inventaire
 
-Le lot représente **10 168 octets**, pools inclus. Avant régénération, les
-50 entrées étaient Jeu : déplacement attendu **12 142 → 12 092 Jeu** et
-**2 632 → 2 682 Plateforme**, total **14 780** et **6 exclusions** inchangés.
-Ces valeurs attendues doivent être confirmées par la régénération CLI du parent ;
-ce ne sont ni 50 ports Rust ni un nouveau résultat de couverture publié ici.
-L'identification globale du SDK reste ouverte pour toutes les autres routines.
+Mesure après le second lot, `cargo dq9re coverage` : **Jeu 12 056**, **Plateforme 2 718**,
+total **14 780**, **6 exclusions**. Le premier lot attendait 2 682 en Plateforme ; le second
+ajoute 36 routines (2 682 + 36 = 2 718), et chaque ligne ajoutée correspond à la taille et
+au nom source de la table `VERIFIED_SDK`. Les totaux restent ceux du parent : seules les
+routines déjà comptées en Jeu passent en Plateforme.
+
+## Second lot : primitives matérielles identifiées par comportement
+
+Ce lot ajoute **36 routines** (9 CP15, 27 G3X/affichage), soit **1 228 octets** de code.
+Chacune est une routine feuille dont le corps n'est qu'une primitive matérielle : aucun appel
+vers du code Level-5, aucune structure de jeu. Elles sont classées `Plateforme` dans
+`crates/dq9re/src/coverage.rs` (`VERIFIED_SDK`), avec la clé `func_<adresse USA>` : la
+comparaison ne se fait pas sur le nom descriptif. Les noms descriptifs sont dans
+`re/symbols.txt`, section « behaviour-identified hardware primitives ».
+
+Les noms canoniques du SDK probables sont des **[hypothèse]** : les routines ne sont pas
+identifiées par référence à la source, seulement par leur comportement observé.
+
+### Méthode
+
+- Désassemblage Capstone (ARM et Thumb) de la section ARM9 Main en adresses EUR, puis
+  balayage de 80 candidats feuilles. Critère : aucune instruction `bl`/`blx`, aucune sortie
+  hors de la routine, et un accès I/O (littéral dans `0x04000000..0x04FFFFFF`), `p15`,
+  `swi` ou `msr`.
+- Chaque candidat retenu a été désassemblé en entier. Les corps finissant par `bx ip` via un
+  littéral (appels terminaux) ne sont pas des feuilles au sens de la règle et sont exclus.
+- Adresses EUR : USA + `0x8` ou + `0x10` selon la plage (décalages de `AGENTS.md`, vérifiés sur `re/functions.txt`).
+- Sémantique : d'après l'encodage des registres. Les bits de GBATEK marqués `[hypothèse]`
+  ne sont pas vérifiés point par point dans ce lot ; `[inconnu]` signale un bit non tranché.
+
+### Routines CP15 (9)
+
+| Adresse EUR | Taille | Source | Nom descriptif | Encodage | Sémantique | Feuille |
+|---|---|---|---|---|---|---|
+| `0x020c89d4` | `0x10` | `func_020c89c4` | `Cp15_EnableIRam` | registre de contrôle, `orr #0x40000` | bit 18 : activation de la I-RAM | oui, pas de `bl`, retour `bx lr` |
+| `0x020c89e4` | `0x10` | `func_020c89d4` | `Cp15_EnableDRam` | registre de contrôle, `orr #0x10000` | bit 16 : activation de la D-RAM | oui, pas de `bl`, retour `bx lr` |
+| `0x020c89f4` | `0x14` | `func_020c89e4` | `Cp15_GetDtcmBase` | `mrc p15,0,r0,c9,c1,0`, `and #0xfffff000` | base de la région DTCM | oui, pas de `bl`, retour `bx lr` |
+| `0x020c8a08` | `0x10` | `func_020c89f8` | `Cp15_EnableProtectionUnit` | registre de contrôle, `orr #1` | bit 0 : activation de l'unité de protection `[hypothèse]` | oui, pas de `bl`, retour `bx lr` |
+| `0x020c8a18` | `0x10` | `func_020c8a08` | `Cp15_DisableProtectionUnit` | registre de contrôle, `bic #1` | bit 0 effacé `[hypothèse]` | oui, pas de `bl`, retour `bx lr` |
+| `0x020c8a28` | `0x14` | `func_020c8a18` | `Cp15_UpdateDataPermission` | `mrc p15,0,r2,c5,c0,2`, `bic r2,r2,r0`, `orr r2,r2,r1`, `mcr p15,0,r2,c5,c0,2` | lecture-modification-écriture du registre de permissions d'accès données : efface les bits de r0, pose ceux de r1 | oui, pas de `bl`, retour `bx lr` |
+| `0x020c8a3c` | `0x8` | `func_020c8a2c` | `Cp15_WriteMpuDataRegion1` | `mcr p15,0,r0,c6,c1,0` | région de protection données 1 | oui, pas de `bl`, retour `bx lr` |
+| `0x020c8a44` | `0x8` | `func_020c8a34` | `Cp15_WriteMpuDataRegion2` | `mcr p15,0,r0,c6,c2,0` | région de protection données 2 | oui, pas de `bl`, retour `bx lr` |
+| `0x020c9c00` | `0xc` | `func_020c9bf0` | `Cp15_WaitForInterrupt` | `mov r0,#0`, `mcr p15,0,r0,c7,c0,4` | attente d'interruption | oui, pas de `bl`, retour `bx lr` |
+
+### Routines G3X et affichage (27)
+
+| Adresse EUR | Taille | Source | Nom descriptif | Registres | Sémantique | Feuille |
+|---|---|---|---|---|---|---|
+| `0x02020978` | `0x34` | `func_02020968` | `Disp_WriteBg0CntB` | `0x04001008` : `ldrh`, `and #0x43`, OU de r0..r4 aux décalages 14/7/8/2/13, `strh` | empaquetage de BG0CNT moteur B : taille, couleur, base d'écran, base de caractères, débordement | oui, pas de `bl`, `push`/`pop` |
+| `0x020209ac` | `0x34` | `func_0202099c` | `Disp_WriteBg1CntB` | `0x0400100a`, même empaquetage | BG1CNT moteur B | oui, pas de `bl`, `push`/`pop` |
+| `0x0208c9dc` | `0x34` | `func_0208c9cc` | `Disp_WriteBg0CntB_Alt` | `0x04001008`, `and #0x43`, `push {r4,lr}`/`pop {r4,pc}` | même registre que `Disp_WriteBg0CntB` ; disposition des arguments non tracée `[inconnu]` | oui, pas de `bl`, `pop {r4,pc}` |
+| `0x020938dc` | `0x24` | `func_020938cc` | `Disp_IsPowcnt1Bit15Clear` | lecture `0x04000304` bit 15 | renvoie 1 si le bit est à 0 (inversé) | oui, pas de `bl`, retour `bx lr` |
+| `0x020c384c` | `0x28` | `func_020c383c` | `Disp_SetDispstatLyc` | écriture `0x04000004` : LYC bits 8–15, bit 7 depuis r0 bit 8 | ligne de comparaison VCount ; bit 7 `[inconnu]` | oui, pas de `bl`, retour `bx lr` |
+| `0x020c3874` | `0x34` | `func_020c3864` | `Disp_SetDispstatVBlankIrq` | `0x04000004` bit 3 (`orr`/`bic #8`) | activation de l'IRQ VBlank `[hypothèse]` | oui, pas de `bl`, retour `bx lr` |
+| `0x020c3994` | `0x1c` | `func_020c3984` | `Disp_SetDispcntBMode` | `0x04001000` : `bic #7`, puis `orr r0` | mode BG, bits 0–2 de DISPCNT B | oui, pas de `bl`, retour `bx lr` |
+| `0x020c5598` | `0x28` | `func_020c5588` | `G3_SetClearColorDepth` | `0x04000350` (CLEAR_COLOR), `0x04000354` (CLEAR_DEPTH) | couleur et profondeur de fond 3D ; bit 15 = drapeau de brouillard `[hypothèse]` | oui, pas de `bl`, retour `bx lr` |
+| `0x020c5660` | `0x30` | `func_020c5650` | `G3_GetGxstatMatrixLevel` | lecture `0x04000600` (GXSTAT) | -1 si bit 14 ; sinon niveau de pile de matrices, bits 8–12 `[hypothèse]` | oui, pas de `bl`, retour `bx lr` |
+| `0x020c5690` | `0x30` | `func_020c5680` | `G3_GetGxstatBit13` | lecture `0x04000600` | -1 si bit 14 ; sinon bit 13 `[inconnu]` | oui, pas de `bl`, retour `bx lr` |
+| `0x020c56c0` | `0x2c` | `func_020c56b0` | `G3_GetBoxTestResult` | lecture `0x04000600` | -1 si bit 0 ; sinon bit 1 (résultat de test de boîte `[hypothèse]`) | oui, pas de `bl`, retour `bx lr` |
+| `0x020cedf0` | `0x1c` | `func_020cede0` | `Disp_IsPowcnt1Bit0Set` | lecture `0x04000304` bit 0 (`tst #1`, `movne #1`) | renvoie 1 si le bit 0 de POWCNT1 est à 1 ; rôle matériel `[inconnu]` | oui, pas de `bl`, retour `bx lr` |
+| `0x020daf30` | `0x1c` | `func_020daf20` | `Disp_SetDispcntBBits8To12` | écriture `0x04001000` bits 8–12 | activation des BG du moteur B | oui, pas de `bl`, retour `bx lr` |
+| `0x020daf64` | `0x18` | `func_020daf54` | `Disp_GetDispcntBBits8To12` | lecture `0x04001000` bits 8–12 | lecture de la même plage | oui, pas de `bl`, retour `bx lr` |
+| `0x020dc018` | `0x18` | `func_020dc008` | `Disp_GetDispcntBBits8To12_Copy` | lecture `0x04001000` bits 8–12 | corps identique à `Disp_GetDispcntBBits8To12` | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2b88` | `0x1c` | `func_020e2b78` | `Disp_SetDispcntBBits13To15` | écriture `0x04001000` bits 13–15 | fenêtres WIN0, WIN1, OBJWIN du moteur B | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2bbc` | `0x18` | `func_020e2bac` | `Disp_GetDispcntBBits13To15` | lecture `0x04001000` bits 13–15 | lecture de la même plage | oui, pas de `bl`, retour `bx lr` |
+| `0x020e29c8` | `0x34` | `func_020e29b8` | `Disp_SetWin1RectB` | H `0x04001042`, V `0x04001046` (moteur B) | rectangle de WIN1, arguments x1,y1,x2,y2 | oui, pas de `bl`, retour `bx lr` |
+| `0x020e29fc` | `0x34` | `func_020e29ec` | `Disp_SetWin0RectB` | H `0x04001040`, V `0x04001044` (moteur B) | rectangle de WIN0 | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2a30` | `0x34` | `func_020e2a20` | `Disp_SetWin1RectA` | H `0x04000042`, V `0x04000046` (moteur A) | rectangle de WIN1 | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2a64` | `0x34` | `func_020e2a54` | `Disp_SetWin0RectA` | H `0x04000040`, V `0x04000044` (moteur A) | rectangle de WIN0 | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2a98` | `0x28` | `func_020e2a88` | `Disp_SetWininB1Bits` | WININ B `0x04001048` bits 8–13 | masques de WIN1, drapeau d'effet bit 13 | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2ac0` | `0x28` | `func_020e2ab0` | `Disp_SetWininB0Bits` | WININ B `0x04001048` bits 0–5 | masques de WIN0, drapeau d'effet bit 5 | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2ae8` | `0x28` | `func_020e2ad8` | `Disp_SetWininA1Bits` | WININ A `0x04000048` bits 8–13 | masques de WIN1 (moteur A) | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2b10` | `0x28` | `func_020e2b00` | `Disp_SetWininA0Bits` | WININ A `0x04000048` bits 0–5 | masques de WIN0 (moteur A) | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2b38` | `0x28` | `func_020e2b28` | `Disp_SetWinoutBBits` | WINOUT B `0x0400104a` bits 0–5 | masques hors fenêtre (moteur B) | oui, pas de `bl`, retour `bx lr` |
+| `0x020e2b60` | `0x28` | `func_020e2b50` | `Disp_SetWinoutABits` | WINOUT A `0x0400004a` bits 0–5 | masques hors fenêtre (moteur A) | oui, pas de `bl`, retour `bx lr` |
+
+### Candidats restants (non classés)
+
+- `0x020c9bfc` : contrôle de banque WRAMCNT (`0x04000247`), hors G3X et affichage.
+- `0x020292ec` (0x98) : écritures de géométrie G3 `0x04000444..0x040004C0`, arguments
+  multiples en virgule fixe ; non décidé.
+- `0x020c54a4` : deux chemins de registres plus une branche sur `r0` ; composite.
+- `0x020db9a8` : lit le champ `[r0,#0x54]` d'une structure de jeu.
+- `0x02074b04`, `0x02074b64` : sauvegarde de l'état BG dans une structure.
+- `0x02074c18`, `0x02074e54` : vidage d'une structure de 0x23c octets.
+- Appels terminaux via littéral (`bx ip`) : `0x020c516c` (FIFO son), `0x020c555c`
+  (`0x04000330`), `0x020c5574` (`0x04000360`), `0x020dbfe0` (`0x0400106c`), `0x020dbff4`
+  (`0x0400006c`). Ce sont des enveloppes de primitives, pas des feuilles au sens de la règle.
+- Écritures son `0x04000400..0x040004FF` : hors G3X et affichage.
+- `0x020cd5a4`, `0x020cd5e4` (DIVCNT), `0x020d1478`, `0x020d14c0` (EXMEMCNT), `0x020d6cac`
+  (IME), `0x020d86e0` (`0x04000540`) : registres matériels hors périmètre de ce lot.
+- Routines `swi`/`msr` : `0x0200bbe0`, `0x0200bc78`, `0x0200bd10`, `0x0200bdb4`,
+  `0x0200bedc`, `0x0200d894`, `0x0200d8a8`, `0x0200d8bc`, `0x020c0338`, `0x020c08ac`,
+  `0x020c8b54`, `0x02000970`, `0x02000ab0` : à classer après lecture du contexte d'appel.
+
+Ces candidats restent non classés. Le compte de Plateforme n'augmente que par les routines
+listées ci-dessus.

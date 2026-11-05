@@ -50,7 +50,7 @@ remplacées par un équivalent documenté, et les tests différentiels passent.
   fonctions qui y commencent). Une adresse qui n'est pas un début de fonction est une erreur.
 - Classement automatique : overlays 30/31 et fichiers `src/NitroSDK/` de la décompilation,
   C runtime, démarrage et stubs BIOS en Plateforme ; overlays 7, 19, 22, 29 hors jeu ; le
-  reste en Jeu, sauf la whitelist de 50 routines ARM9 européennes vérifiées
+  reste en Jeu, sauf la whitelist de 86 routines ARM9 européennes vérifiées
   individuellement par module Main, adresse, taille et nom source exact
   ([preuves](re/nitro-sdk.md)). **Le NitroSDK de l'ARM9 principal reste partiellement
   identifié** : la part Plateforme grandira à mesure qu'il sera reconnu.
@@ -106,6 +106,8 @@ Les overlays 10, 28 et 32 (`pitfall`, `sub_hoge`, `sound`) sont à identifier.
 - [x] Premier lot de **50 routines NitroSDK ARM9** identifié et classé Plateforme,
       non porté ; noms canoniques et preuves individuelles dans
       [`re/nitro-sdk.md`](re/nitro-sdk.md). Le classement global du SDK reste ouvert.
+- [x] Second lot de **36 primitives matérielles ARM9** (9 CP15, 27 G3X/affichage) classées
+      Plateforme par comportement : Plateforme 2 718, Jeu 12 056 ([preuves](re/nitro-sdk.md)).
 
 ## J0 — Accélérateurs
 
@@ -116,8 +118,8 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       nulles et chevauchement explicites, pas de mode ARM/Thumb inventé.
 - [x] **`dq9re functions` / `dq9re coverage`** : liste des fonctions aux adresses
       européennes, classement, marqueurs `port:`, avancement dans le README par la CI.
-- [ ] **Classement du NitroSDK** de l'ARM9 principal : poursuivre au-delà du
-      [premier lot de 50 routines vérifiées](re/nitro-sdk.md), sans attribution par
+- [ ] **Classement du NitroSDK** de l'ARM9 principal : poursuivre au-delà des
+      [86 routines vérifiées](re/nitro-sdk.md) (Plateforme 2 718), sans attribution par
       préfixe ni voisinage, pour affiner la catégorie Plateforme.
 - [ ] **Natives des scripts** : reporter dans `stb.md` les rôles lus par le wiki
       ([Engine-Functions](https://github.com/DQIX/wiki/blob/main/Engine-Functions.md)) en
