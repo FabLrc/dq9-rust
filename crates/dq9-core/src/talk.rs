@@ -9,9 +9,9 @@
 //! - [`Dialogue`] plays a script one 60 Hz step at a time ([`Dialogue::step`]) and exposes
 //!   what the window shows ([`Dialogue::view`]).
 //!
-//! Not marked `port:` : `Talk_NearestNpc` is modelled without the object flags and the
+//! No port marker: `Talk_NearestNpc` is modelled without the object flags and the
 //! hero-busy tests, and the window state machine is rebuilt from the observed behaviour of
-//! the message interpreter (`0x02065990`) rather than translated.
+//! the message interpreter (`0x020659a0`) rather than translated.
 
 use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
@@ -291,7 +291,7 @@ pub enum EndKind {
     Add,
 }
 
-/// A speaker's name laid out for its plate (`0x0206ad74` measures the name the same way).
+/// A speaker's name laid out for its plate (`0x0206ad84` measures the name the same way).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plate {
     pub text: Vec<u8>,
@@ -344,7 +344,7 @@ pub struct Script {
 pub const DEFAULT_LINES: usize = 3;
 
 /// Builds the script of compiled `tokens`, wrapping lines at `max_width` pixels the way
-/// `0x0206b974` does: a line breaks at the last space (or after a `-`) when the next glyph
+/// `0x0206b984` does: a line breaks at the last space (or after a `-`) when the next glyph
 /// would pass the width, the space being dropped; a word without break point overflows.
 pub fn layout(tokens: &[Token], tags: LeadingTags, font: &Font, max_width: i32) -> Script {
     const NO_GLYPH: u8 = 0xFF;

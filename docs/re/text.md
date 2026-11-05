@@ -21,9 +21,9 @@ balises laissées à d'autres systèmes **[non localisés]** :
 | Balise | Hypothèse |
 |---|---|
 | `<RIKKA>`, `<LUIDA>`, `<DAMA>`, `<RENKIN>` | noms de personnages / lieux (Rikka, Luida…) remplacés ailleurs ; `RIKKA` apparaît dans l'ARM9 à `0x020f0ab1` |
-| `<CEN>` | centrage de ligne |
-| `<TC#>`, `<PLTT=#>` | couleur du texte / palette |
-| `<W=#>`, `<CURSOR=#>`, `<TRI-L>`, `<TRI-R>`, `<LG>` | mise en page des menus |
+| `<CEN>` | **balise de tête**, consommée avant la compilation par `Msg_ConsumeLeadingTags` (`0x0206a3d0`, avec `<N_TURN>`, `<EXC>`, `<QES>`, `<WIN>`, `<GYOU=n>`, `<MOJI=l,h>`, `<COLOR=r,g,b>`, `<RECT=x,y,l,h>`, `<SKIP>`) : `message::leading_tags` ; la fenêtre des cartons de narration, voir [`dialogue.md`](dialogue.md) § « Fenêtre de message » |
+| `<TC#>`, `<PLTT=#>` | couleur du texte / palette ; `<TC…>` n'existe pas dans les textes anglais, `<PLTT=>` seulement dans des menus |
+| `<W=#>`, `<CURSOR=#>`, `<TRI-L>`, `<TRI-R>`, `<LG>` | mise en page des menus (5 chaînes de menus pour `<W=>`, aucune réplique de PNJ) |
 
 S'y ajoutent deux fautes de frappe dans les données (`<ADDRESSE>`, et un bloc fermé par
 `<END_IF_MALE>` au lieu de `<ENDIF_MALE>`), et des `<END>`/`<END_R_TURN>` qui suivent une
@@ -38,8 +38,9 @@ texte. **[À vérifier en émulateur : ces messages passent peut-être par un au
   glyphe, dans l'ordre de la table, dont la chaîne commence à la position courante.
 - Retour à la ligne : les deux caractères `\n` (barre oblique inverse + `n`), ou `\r\n`/`\n`
   réels ; tous deviennent le code `0xFF18`.
-- `//Nom//` en début de réplique : nom de l'orateur **[hypothèse : affiché dans un cadre]** ;
-  `*:` = orateur anonyme.
+- `//Nom//` en début de page : nom de l'orateur, dans une plaque au-dessus de la fenêtre
+  (`MsgWin_ParseSpeakerName`, `dialogue.md`) ; `*:` = orateur anonyme, dessiné tel quel (glyphes
+  `*` et `:`).
 
 ## Pipeline (ARM9)
 

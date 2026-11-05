@@ -5,7 +5,8 @@
 //!
 //! Controls: drag with the left button to turn, wheel to zoom, `WASD`/arrows to move, `Q`/`E`
 //! down/up, `Shift` faster, `Tab` orbit/fly, `F` reframe, `R` DS aspect (256×192), `T` next
-//! time of day, `PageUp`/`PageDown` previous/next map.
+//! time of day, `PageUp`/`PageDown` previous/next map, `Enter`/`Space` talk to the NPC in front
+//! of the hero and advance the message window, `Backspace`/`X` answer No.
 
 use std::collections::HashSet;
 use std::sync::Arc;

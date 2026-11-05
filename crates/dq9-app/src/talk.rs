@@ -2,7 +2,7 @@
 //! the hero (`dq9_core::talk`), the line is chosen and prepared from the ROM, and the game's
 //! message window is drawn over the map with the ROM's font (`dq9_render::ui`).
 //!
-//! Layout numbers come from `MessageShow` (`0x0204500c`): window rectangle `(2, 0x74, 0xfc,
+//! Layout numbers come from `MessageShow` (`0x0204501c`): window rectangle `(2, 0x74, 0xfc,
 //! 0x4a)`, three lines of 20 pixels, name plate `advance + 26 - (advance & 7)` wide and 22 high.
 //! The margins of the text, the plate and prompt positions, the fill colour and the wait arrow
 //! are **[hypothèses]** (`docs/re/dialogue.md`, § « Fenêtre »).

@@ -39,6 +39,10 @@ cargo run -p dq9-app --release -- --map C01M09 --chapter 19 --step 2 --substep 1
 # Sans fenêtre : marcher selon un script (axes du monde, secondes) et journaliser les cartes
 # et positions, portes comprises (entrer dans une maison d'Angel Falls et en sortir) :
 cargo run -p dq9-app --release -- --map M01 --start=-19.5,-9 --walk "-z:3,+z:3,idle:0.5"
+# Une capture après des entrées : marcher puis parler au PNJ en face (« Conversations ») :
+cargo run -p dq9-app --release -- --map M01 --step 2 --start=5.4,2.5 `
+    --input "+x:0.05,a,idle:1.2" --eye=4,3,14 --target=6,-2.5,2.5 --ds-aspect `
+    --screenshot build/scratch/app/hugo.png
 ```
 
 Avec `--screenshot`, `--walk` et `--start` pilotent le héros pendant les `--frame N` pas fixes
@@ -54,8 +58,30 @@ cargo run -p dq9-app --release -- --map M01 --frame 10 `
 
 `--walk` joue les mêmes pas fixes qu'en fenêtre (`Hero::step`, puis `Field::step` avec la pose
 du héros) : `+x`, `-x`, `+z`, `-z` (deux axes font une diagonale : `+x-z`) ou `idle`, deux
-points et une durée ; `--start x,z` pose le héros au sol de ce point. Chaque changement de
-carte, chaque arrivée et chaque tronçon sont écrits sur la sortie standard.
+points et une durée ; `--start x,z` pose le héros au sol de ce point (aussi avec
+`--screenshot`, face à +z). Chaque changement de carte, chaque arrivée et chaque tronçon sont
+écrits sur la sortie standard.
+
+### Conversations
+
+Dans la fenêtre : `Entrée`, `Espace` ou `Z` (touche A) parle au PNJ en face du héros (le plus
+« regardé » à moins de 1,5 unité, ou dans sa zone de conversation : `dq9_core::talk::nearest`),
+avance dans le texte (pendant la frappe, affiche jusqu'à la prochaine attente) et ferme à la
+fin ; `Retour` ou `X` (touche B) répond Non ; `↑`/`↓` ou `W`/`S` déplacent le curseur des
+questions. Le héros ne bouge pas pendant une conversation. La réplique est celle que le jeu
+choisit (`dialogue.md`) pour la carte, le chapitre, l'étape, les quêtes et le moment du jour de
+l'état de l'application, en anglais. Sur le Web la ROM chargée suffit : mêmes touches.
+
+`--input "SCRIPT"` (avec `--screenshot`) joue des entrées avant la capture, avec les mêmes pas
+fixes : les tronçons de `--walk` (`+x:0.5`, `idle:2`) et les boutons `a` (action : parler,
+avancer), `b` (annuler), `up`, `down`, chacun d'un pas. Le héros reste à sa dernière position
+(le repère orange de la capture) ; un script qui change de carte est une erreur. Exemple : la
+capture de Hugo ci-dessus (étape 2 d'Angel Falls, `<N_TURN>//Hugo// …`).
+
+Le dessin du cadre, du nom, du texte et de la flèche vient de `dq9_render::ui` ; les
+constantes de mise en page sont celles de `MsgWin_Show` quand elles ont été lues, sinon des
+hypothèses (`dialogue.md`, § « Fenêtre de message »). La fenêtre est dessinée sur l'image 3D, dans
+le plus grand rectangle 4:3 de la cible (tout l'écran en 4:3, bandes sur les côtés sinon).
 
 `--map` : code (`M01`, `C01M09`) ou id (`1100`) de la liste des cartes ; il prévaut sur la
 carte lue dans `--save`. En l'absence des deux options, la carte reste `M01`. `--save` lit un
@@ -84,7 +110,7 @@ Commandes : glisser avec le bouton gauche pour tourner, molette pour zoomer. En 
 `ZQSD`/`WASD` (touches physiques) ou flèches déplacent le héros sur le sol ; `Maj` double sa
 vitesse provisoire. `Tab` passe en vol libre, où ces touches déplacent la caméra ; `Q`/`E`
 (physiques `A`/`E` en AZERTY) déplacent la cible vers le bas/haut. `F` recadre, `R` format DS,
-`T` moment suivant (liste « Moment » sur le Web), `PageHaut`/`PageBas` carte précédente/suivante, `Échap` quitter.
+`T` moment suivant (liste « Moment » sur le Web), `PageHaut`/`PageBas` carte précédente/suivante, `Entrée`/`Espace` parler, `Échap` quitter.
 
 ## Lancer dans un navigateur
 
@@ -172,7 +198,9 @@ Approximé ou absent :
 - **Non rendu** : anticrénelage, polygones d'ombre (mode 3) et fil de fer (alpha 0), panneaux
   G3D des modèles, mode alpha seul du brouillard et alpha de `FOG_COLOR`, précision de la DS
   (couleurs 6 bits, profondeur W ; la profondeur du brouillard est recalculée sur 24 bits).
-- **PNJ, limites** : les hauteurs des PNJ sont celles des placements ; le snap du sol et le
+- **PNJ, limites** : les PNJ ne s'arrêtent ni ne se tournent vers le héros pendant qu'il leur
+  parle (les sprites suivent la caméra ; l'orientation des modèles n'a pas d'API dans
+  `AnimatedScene`) ; les hauteurs des PNJ sont celles des placements ; le snap du sol et le
   déplacement du héros sont approximatifs (pas d'accélération ni rayon).
   Les portes, aires et warps suivent `dq9_core::field` (comparés à
   melonDS sur l'église de Stornway) sans l'animation de la porte ; les triggers de zone sont

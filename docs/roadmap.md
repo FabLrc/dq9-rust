@@ -285,17 +285,35 @@ valeurs provisoires de `dq9-core` (4 unités/s, murs simplifiés) ne sont pas en
 | deux écrans DS : écran haut (carte) et bas, disposition configurable | — |
 | son minimal : musique SDAT (séquenceur SSEQ + mixage SWAV) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
 
-Avancement de l'interpréteur `.stb` : `dq9_core::script` traduit `Stb_Run` et ses auxiliaires
-(`ov_017::021d4980…021d6148`, marqueurs `port:`), joue les entrées 200, 100 et 300 d'un
-événement une mise à jour à la fois (`Script::step`) et rend des `Event` typés (fondus,
-messages, acteurs, caméra, son, déclarations de distribution) ; l'application répond par des
-`Signal` (message fermé, acteur au repos, caméra au repos…). Le `Director` démarre l'événement
-d'une requête `Request::Event` des triggers et enchaîne la native 538. Les 30 scripts du
-prologue (étapes 1.1 à 1.3) vont à leur terme sans erreur (`cargo dq9re script 1.1-3`, test
-réel `prologue_scripts_run_to_completion`) ; 24 natives de rôle inconnu sont rapportées une
-fois et ignorées. Restent : exécuter les `Event` (dialogue, acteurs, caméra : autres
-chantiers), comparer l'ordre et les durées à melonDS, l'appelant de l'entrée 200 et les
-natives sans rôle (`re/stb.md`, § Interpréteur).
+Avancement :
+
+- [ ] **Fenêtre de dialogue** (`dq9_core::talk`, `dq9_render::ui`, `dq9-app/src/talk.rs`,
+      [`re/dialogue.md`](re/dialogue.md) § « Fenêtre de message ») : A dans `dq9-app` (natif et
+      Web, `Entrée`/`Espace`) parle au PNJ en face du héros (partenaire de `Talk_NearestNpc`,
+      déclencheur « parler » de la carte, réplique choisie par `dialogue::select`) ; fenêtre
+      du jeu (cadre `win0..7.spr`, police `me`, plaque `//Nom//`, coupure des lignes, pages,
+      flèche d'attente, défilement à la 4ᵉ ligne, Oui/Non avec branches `<YES>`/`<NO>` et
+      sauts `<JP_x>`/`<LB_x>`), balises de tête (`<CEN>`, `<WIN>`, `<GYOU=>`, `<MOJI=>`,
+      `<COLOR=>`, `<RECT=>`) ; les 37 988 répliques anglaises se jouent jusqu'à la fermeture
+      (test réel) ; capture `--input` d'une réplique de Hugo, d'Aquila (question) et d'Erinn.
+      **Reste** : valider sur melonDS les constantes de mise en page non lues (marges, plaque,
+      fenêtre Oui/Non, fond, flèche), PNJ tournés vers le héros et immobiles, ballons, nom du
+      héros de la sauvegarde, langues autres que l'anglais, `<TC#>` et `<W=#>` (absentes du
+      chemin des conversations).
+- [ ] **Triggers branchés** : l'événement 0 « parler » (`Field::talk`) est branché sur la
+      conversation ; restent « examiner », les zones d'autres types et les événements `.stb`
+      (`Request::Event`) demandés par les triggers.
+- [ ] **Interpréteur `.stb`** : `dq9_core::script` traduit `Stb_Run` et ses auxiliaires
+      (`ov_017::021d4980…021d6148`, marqueurs `port:`), joue les entrées 200, 100 et 300 d'un
+      événement une mise à jour à la fois (`Script::step`) et rend des `Event` typés (fondus,
+      messages, acteurs, caméra, son, déclarations de distribution) ; l'application répond par des
+      `Signal` (message fermé, acteur au repos, caméra au repos…). Le `Director` démarre l'événement
+      d'une requête `Request::Event` des triggers et enchaîne la native 538. Les 30 scripts du
+      prologue (étapes 1.1 à 1.3) vont à leur terme sans erreur (`cargo dq9re script 1.1-3`, test
+      réel `prologue_scripts_run_to_completion`) ; 24 natives de rôle inconnu sont rapportées une
+      fois et ignorées. Restent : exécuter les `Event` (dialogue, acteurs, caméra : autres
+      chantiers), comparer l'ordre et les durées à melonDS, l'appelant de l'entrée 200 et les
+      natives sans rôle (`re/stb.md`, § Interpréteur).
 
 **v0.1** : nouvelle partie avec un héros par défaut (modèle animé fait en J1 ; reste le choix
 de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,

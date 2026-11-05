@@ -143,6 +143,20 @@
 0x0210782c g_FontInfo               # fi_*.bin pointers [s7, me]
 0x02107834 g_FontBitmap             # fd_*.bin pointers [s7, me]
 
+# --- Message window (docs/re/dialogue.md, § Fenêtre de message) ---
+0x0202f25c MsgWin_LoadFrames        # loads the 8 border pieces data/ani/win0..7.spr (SPRSprite x8, 0x88 bytes each) from a NARC
+0x02042b4c MsgWin_SetFramelessRect  # font cell 12x16, rect (2, 0x92, 0xfc, 0x4a), frame off (+0x19b1 = 0)
+0x02042ba8 MsgWin_SetRect           # (x, y, w, h): window rectangle on the 256x192 screen, text origin y + 8
+0x02044f4c MsgWin_AppendShow        # <ADD> path of MsgWin_Show: Msg_Prepare without clearing the window
+0x0204501c MsgWin_Show              # MessageShow: resets the window (3 lines, rect (2, 0x74, 0xfc, 0x4a)), runs Msg_Prepare and the layout
+0x02065930 MsgWin_StepAutoPage      # wait state 4: counts down +0x195f then restarts the page
+0x020659a0 MsgWin_Update            # message interpreter: types glyphs, runs the 0xFFxx codes, wait states +0x9a0
+0x020676f0 MsgWin_UpdatePrompt      # wait state 6: reads the keys, stores the answer at +0x954
+0x0206a3d0 Msg_ConsumeLeadingTags   # <N_TURN> <EXC> <QES> <WIN> <CEN> <GYOU=> <MOJI=> <COLOR=> <RECT=> <SKIP> at the start of a message
+0x0206ad84 MsgWin_ParseSpeakerName  # //Name// at the start of a page: name plate width = advance + 26 - (advance & 7), height 22
+0x0206b984 MsgWin_WrapLines         # line breaking: at the last space or after '-' when the next glyph passes the width
+ov_017::021a4700 Talk_AngleToTarget # signed fx32 angle between the hero's facing and the direction to a point
+
 # --- Message preparation passes (docs/re/text.md) ---
 0x020424bc Msg_FindTagEnd           # first '>' not followed by another '>'
 0x02067ea8 Msg_Prepare              # runs the 6 passes below on a message

@@ -149,3 +149,156 @@ Deux tables d'enregistrements :
 - `<carte>place.bin` : placement par salle (`1200`… = salle). Type 3 :
   `[salle, pnj, x, y, z, angle]` ; type 5 : placement conditionnel ; type 6 : zone de
   conversation ; type 19 : `[pnj, modèle .chr, animation]`… **[à documenter]**.
+
+## Partenaire : `Talk_NearestNpc` (`ov_017::021a4e88`)
+
+Appelée avec 1 par la touche d'action (`Talk_FindPartner`, `ov_017::021a476c`, paramètre `1`)
+et avec 0 sans elle. Décompilée et relue sur la ROM européenne (constantes des mots littéraux
+`0x021a51a0` = `0x3244`, `0x021a4cdc` = `0x1922`) :
+
+- **Candidats** : les objets de PNJ (32 emplacements). Un PNJ est candidat quand
+  - **une de ses zones de conversation** (`place.bin` type 6, liste `+0x40` du nœud de
+    placement, dans l'ordre du fichier) contient le héros, **strictement** sur x et z :
+    `x < x_max ∧ z < z_max ∧ x > x_min ∧ z > z_min` (la hauteur n'est pas testée) ; ou
+  - le héros est à moins de `0x1800` (1,5) sur x **et** sur z du PNJ. Si le placement porte un
+    enregistrement de type 20 (`[f2, 0, f3, f1]`, `+0x5c` du nœud), le centre est décalé de
+    `(f2, f3)` et la portée devient `f1 + 0x1000` (portée de distance `f1 + 0x1400`).
+- **Choix** : l'angle entre la direction du héros et celle du PNJ
+  (`ov_017::021a4700` : `FX_Atan2` de la différence normalisée, puis
+  `fix32SignedAngleDistance`, en valeur absolue) doit être ≤ `0x3244` = **π** (`0x6488` =
+  2π) : aucun PNJ n'est donc écarté pour son angle, seul le plus **face** au héros gagne.
+  Un PNJ de zone est accepté dès que son angle n'est pas pire que le meilleur déjà retenu ;
+  un PNJ libre doit en plus avoir un genre ≠ 1 (**les « choses à examiner » ne se parlent que
+  depuis une zone**), être à moins de `0x1c00` (1,75, `VEC_Distance` en 3D) et faire
+  strictement mieux que le meilleur PNJ libre.
+- **Contexte** : l'identifiant de la zone du PNJ retenu, 0 pour un PNJ libre.
+- Les drapeaux de l'objet (`0x200`…) et l'état « héros occupé » (`func_020535c8`…) écartent
+  d'autres cas : **non modélisés**.
+
+`dq9_core::talk::nearest` reprend ces règles, avec deux écarts : la distance de 1,75 est
+mesurée au sol (les hauteurs des PNJ de l'application sont celles des placements, non
+recalées), et `local_b4` (la portée de distance) n'est pas conservée d'un PNJ au
+suivant (le jeu ne la réinitialise pas dans sa boucle : un PNJ à enregistrement 20 élargit
+la portée des suivants, une bizarrerie non reproduite). Pas de marqueur `port:` : la fonction
+n'est pas entièrement réimplémentée. Test `the_partner_is_in_range_and_the_most_faced` et
+`zones_give_the_context_and_things_need_them` (données synthétiques).
+
+### Lancement de la conversation (`Talk_Start`, `ov_017::021a4cf0`)
+
+Le PNJ retenu est mis en `GameState+0x5724`, puis `Trig_Fire(événement 0)` reçoit
+`[0] = PNJ`, `[5] = contexte`. Aucun trigger ne tient (`Trig_Fire` rend 0) : la tâche de
+conversation démarre avec le contexte de la zone. Un trigger tient : seules ses actions
+différées s'exécutent, et c'est l'action `0x76` qui lance la conversation (avec son propre
+contexte). `dq9_core::field::Field::talk` rend `NoTrigger`, `Fired(événements)` ou
+`Unsupported(condition)` ; l'application démarre la conversation sur `NoTrigger` et sur un
+`Request::Talk` du PNJ, et transmet les autres événements (changement de carte, demandes
+non supportées avant l'interpréteur `.stb`).
+
+## Fenêtre de message
+
+Sources : `MsgWin_Show` (`0x0204501c`), `MsgWin_Update` (`0x020659a0`, l'interpréteur des
+codes `0xFFxx`), `MsgWin_WrapLines` (`0x0206b984`), `MsgWin_ParseSpeakerName`
+(`0x0206ad84`), `Msg_ConsumeLeadingTags` (`0x0206a3d0`), `MsgWin_LoadFrames` (`0x0202f25c`) ;
+wiki Text-Markup (adresses USA, vérifiées une à une sur la ROM EU : EU = USA + `0x10`).
+
+### Géométrie (écran 256 × 192)
+
+| Fait | Source |
+|---|---|
+| fenêtre `(x, y, l, h) = (2, 0x74, 0xfc, 0x4a)` = `(2, 116, 252, 74)` ; 3 lignes (`+0x9a4 = 3`, `<GYOU=n>`) de 20 pixels (`+0x1864 = 0x14`), cellule de police 12 × 16 (`<MOJI=w,h>`) | `MsgWin_Show` (`MsgWin_SetRect(win, 2, 0x74, 0xfc, 0x4a)`) |
+| variante sans cadre : rectangle `(2, 0x92, 0xfc, 0x4a)`, `+0x19b1 = 0` | `MsgWin_SetFramelessRect` |
+| cadre = **8 morceaux 8 × 8** `data/ani/win0..7.spr` : coin haut-gauche, bord haut, coin haut-droit, bord droit, coin bas-droit, bord bas, coin bas-gauche, bord gauche ; palette de 4 couleurs par morceau, indice 0 transparent | `MsgWin_LoadFrames` (`sprintf("ARC:win%d.spr")`), contenu des fichiers |
+| chaque morceau a une marge transparente d'un pixel : ils se posent **tous les 6 pixels** (bords) sous les coins | motifs des 8 fichiers |
+| plaque de nom (`//Nom//`) : largeur `a + 26 − (a & 7)` avec `a` = avance du nom (somme des `largeur + 1`), hauteur 22 | `MsgWin_ParseSpeakerName` (`+0x934`, `+0x936`) |
+| `<CEN>` : octet `+0x19b8` ; `<WIN>` : `+0x19b1 = 0` (cadre non dessiné) ; `<RECT=x,y,l,h>` : rectangle (x ≤ 256, y ≤ 192, l et h négatifs → reste de l'écran) ; `<COLOR=r,g,b>` : couleur du texte en BGR555 (composantes bornées à 255, négative → 255) ; `<SKIP>` : `+0x19bb = 0` | `Msg_ConsumeLeadingTags` |
+
+**[Hypothèses, non lues]** : marges du texte dans la fenêtre (12 et 10 pixels), largeur de
+césure (228), position de la plaque (6 pixels du bord gauche, 4 pixels de recouvrement),
+position et taille de la fenêtre Oui/Non, couleur de fond (bleu nuit translucide), choix de
+`arrow2.spr` pour la flèche d'attente, sens exact de `<CEN>` (boîte centrée verticalement,
+lignes centrées : `MessageCountLines` multiplie `lignes − 1` par la hauteur de ligne pour
+centrer la fenêtre). La capture d'une fenêtre dans melonDS n'a pas été faite : ces choix se
+corrigent d'après une capture, ils sont des constantes de `dq9-app/src/talk.rs`.
+
+`*:` n'est **pas** retiré du flux : il est dessiné (glyphes `*` de 7 pixels puis `:` de 1
+pixel de la police). `MsgWin_ParseSpeakerName` cherche `//`, `*:` et `*<:>` : avec `//`, le nom
+et l'espace qui suit sont sautés ; avec `*:` seul l'octet `+0x912` vaut 3 (animation de la
+flèche **[inconnu]**). Le nom est lu à chaque page : il apparaît après `<PAGE>`
+(`//Cap<1>n Max Meddlin//` …).
+
+### Mise en page (`MsgWin_WrapLines`)
+
+Avance d'un glyphe = crénage + largeur + 1 ; un espace = largeur des espaces + 1. Quand le
+glyphe suivant dépasserait la largeur (`largeur_max < x + crénage + largeur`) et qu'une
+coupure a été vue, la ligne est coupée à la **dernière coupure** — après une espace (qui
+disparaît) ou après un glyphe `-` — et la fin passe à la ligne suivante. Sans coupure
+possible, le mot déborde. `\n`, `<PAGE>` et `//…// ` remettent la position à zéro.
+La quatrième ligne d'une page **fait défiler** la fenêtre (`+0x19b4`, `+0x1868`) : un pixel
+par tick jusqu'à la hauteur de ligne (20) puis `func_0206b61c` (EU `0x0206b62c`), sans
+attendre de touche **[hypothèse : un pixel par tick]**. `dq9-core` attend 20 pas, puis
+fait remonter les lignes d'un coup (pas de défilement lissé).
+
+### Codes et états d'attente (`+0x9a0`)
+
+| Code | Effet lu dans `MsgWin_Update` |
+|---|---|
+| `0xFF01` `<END>`, `0xFF02` | état 0 : le texte reste, le jeu attend la touche puis ferme |
+| `0xFF03` `<CLOSE>` | état 0 puis fermeture immédiate (`func_02043204`, `func_02043124`) |
+| `0xFF0A` `<ADD>` | état 3 : la fenêtre reste pour le message suivant de la scène |
+| `0xFF0B` `<AUTO=n>` | état 4 : compte à rebours puis page suivante |
+| `0xFF0C`, `0xFF0D` | état 1 : attente de la touche (flèche), puis la page est effacée |
+| `0xFF1A` `<TIME=n>` | compte `+0x186c + 4 × slot` décrémenté à chaque tick |
+| `0xFF1D`, `0xFF1E`, `0xFF1F` | état 2 : attente de la touche (avec ou sans curseur) |
+| `0xFF04`–`0xFF07`, `0xFF08` | état 6 : choix ; `0xFF05` (`<NOYES>`) place le curseur sur Non ; réponse dans `+0x954` (haut/bas déplacent, A valide, B annule = −2) |
+| `0xFF14`–`0xFF17` | **aucune arme** dans l'interpréteur : simples repères |
+| `0xFF26`/`0xFF27`, `0xFF28`/`0xFF29` | `+0x19b1` (cadre) et `+0x19b8` (centrage) |
+| `0xFF2A`…`0xFF2F`, `0xFF0E`, `0xFF10`–`0xFF13`, `0xFF34`–`0xFF48`, `0xFF4B`… | tours du PNJ, ballons, secousse, quêtes, sons : **non modélisés** |
+
+**Les repères `<YES>`/`<NO>` sont des cibles de saut [hypothèse étayée]** : l'interpréteur
+les ignore en lecture linéaire, et les textes en alternent les branches (`<YESNO><YES>A<END>
+<NO>B<END>`, `<YESNO><NO>B<END><YES>A`). Après la réponse, `dq9-core` reprend la lecture
+**après le premier repère de la réponse qui suit la question**, la boîte effacée ; sans repère,
+elle reprend au prochain `<END>`. `<JP_x>` saute après `<LB_x>` (le moteur recherche le
+code `0xFFD0 + n` dans tout le flux) : des questions reviennent par ce moyen (« Voulez-vous
+une explication ? »). Test réel `every_npc_line_plays_to_its_end` : les 37 988 répliques
+anglaises (toutes les lignes de `<carte><lettre>0.gp2`) se compilent, se mettent en page et
+se jouent jusqu'à la fermeture, en répondant Oui et Non tour à tour (775 n'affichent aucun
+glyphe : `<END>` seul, `<ADD>`…).
+
+### Vitesse du texte **[hypothèse]**
+
+`MsgWin_Update` avance de `ticks` caractères par appel (`+0x80 += ticks × 0x10`, retenue
+`>> 4`) ; `ticks` = `GetTickCount` (2 par mise à jour de 33 ms, `stb-natives.md`) : un
+glyphe par tick de 1/60 s. La touche d'action pendant la frappe affiche le texte jusqu'à
+la prochaine attente (hypothèse d'après `+0x19c5`, qui force 16 caractères par appel).
+
+## Implémentation
+
+- `dq9_formats::message::leading_tags` : balises de tête (`Msg_ConsumeLeadingTags`).
+- `dq9_core::talk` : `nearest`, `TalkCounts` (compteurs `NpcTalkCount`, remis à zéro de
+  la carte à l'entrée d'une carte), `compile_message`/`layout`/`prepare` (les six passes avec
+  le nom du héros « Hero » et les conditions sexe/solo, puis mise en page), `Dialogue::step`
+  (une touche par pas fixe de 60 Hz) et `Dialogue::view`.
+- `dq9_render::ui` : atlas (police en alpha, morceaux de cadre, flèche), quads en pixels DS,
+  pipeline wgpu dessinant sur l'image 3D finie, dans le plus grand 4:3 de la cible.
+- `dq9-app/src/talk.rs` : choix de la réplique (`<carte><lettre>0.gp2`, `NNN_en.bin`,
+  `dialogue::select` avec l'état des triggers : étape, sous-étape, quêtes, jour/nuit), fenêtre,
+  plaque de nom, fenêtre Oui/Non ; entrées `Entrée`/`Espace`/`Z` (A), `Retour`/`X` (B),
+  haut/bas ; `--input` pour les captures.
+
+## Reste
+
+- PNJ immobiles et tournés vers le héros pendant la conversation (`<N_TURN>` et
+  `TextConsumeLeadingTags` les gèrent : la rotation est `func_02033834`, l'objet modèle n'a pas
+  d'API d'orientation dans `AnimatedScene`) ; ballons `<EXC>`/`<QES>`.
+- Services (`<INN=n>`, `<SHOP=n>`…), quêtes (`<QUEST=n>`), sons, secousse, `<AUTO>`,
+  `<PAGE_T>` (attend la touche ici), `<ALL_RECOVER>`.
+- Les constantes de mise en page ci-dessus à confirmer sur une capture melonDS ; la langue
+  est l'anglais (`NNN_en.bin`), le nom du héros « Hero » (le nom de la sauvegarde n'est pas
+  lu) ; les conditions `<IF_…>` autres que sexe/solo prennent leur première branche.
+- `<TC#>`, `<PLTT=#>`, `<W=#>`, `<CURSOR=#>`, `<TRI-L/R>`, `<LG>` : comptées dans les textes
+  anglais (`dq9re text --lang en`), `<TC…>` et `<TRI…>` n'y apparaissent jamais, `<PLTT=>`
+  4 fois, `<CURSOR=>` et `<LG>` 1 fois, `<W=>` 5 fois, toutes dans des chaînes de menus
+  (`profstr`, `str_bres`, `str_da12`…) : hors du chemin des répliques de PNJ et des textes
+  d'événements du prologue, non prises en charge ; la balise de tête réellement utilisée
+  par le prologue est `<CEN>`.

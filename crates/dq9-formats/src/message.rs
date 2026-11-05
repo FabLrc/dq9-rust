@@ -619,7 +619,7 @@ pub fn compile(text: &[u8]) -> Vec<Token> {
 }
 
 /// What the tags at the very start of a message ask of the message window: the ones the game
-/// consumes before compiling (`0x0206a3c0`, called first by `Msg_Compile`), instead of
+/// consumes before compiling (`0x0206a3d0`, called first by `Msg_Compile`), instead of
 /// turning them into codes. Meaning of the window fields: `docs/re/dialogue.md`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeadingTags {
@@ -666,7 +666,7 @@ fn tag_args(args: &[u8]) -> Vec<i32> {
     args[..end].split(|&b| b == b',').map(atoi).collect()
 }
 
-/// Consumes the leading layout tags of `text` (the loop of `0x0206a3c0`): returns what they
+/// Consumes the leading layout tags of `text` (the loop of `0x0206a3d0`): returns what they
 /// ask for and the rest of the text. A tag without its `>` ends the loop with the text left
 /// at that tag. Matching ignores case (the normal pass upper-cases tags).
 pub fn leading_tags(text: &[u8]) -> (LeadingTags, &[u8]) {
