@@ -27,7 +27,7 @@ renvoie ; l'éclairage de la carte, le brouillard et l'heure du jour sont appliq
 
 ```powershell
 cargo run -p dq9-app --release -- --map M01            # ROM : --rom, DQ9_ROM, ou le seul *.nds de rom/
-cargo run -p dq9-app --release -- --map C01M09 --time morning --ds-aspect
+cargo run -p dq9-app --release -- --map C01M09 --time morning --layout side
 cargo run -p dq9-app --release -- --map F01 --clock 389 --screenshot build/scratch/app/f01-dusk.png
 cargo run -p dq9-app --release -- --save rom/dq9.sav   # carte, position, cap et heure de la sauvegarde
 # Une image hors écran en PNG, sans fenêtre, puis sortie :
@@ -41,7 +41,7 @@ cargo run -p dq9-app --release -- --map C01M09 --chapter 19 --step 2 --substep 1
 cargo run -p dq9-app --release -- --map M01 --start=-19.5,-9 --walk "-z:3,+z:3,idle:0.5"
 # Une capture après des entrées : marcher puis parler au PNJ en face (« Conversations ») :
 cargo run -p dq9-app --release -- --map M01 --step 2 --start=5.4,2.5 `
-    --input "+x:0.05,a,idle:1.2" --eye=4,3,14 --target=6,-2.5,2.5 --ds-aspect `
+    --input "+x:0.05,a,idle:1.2" --eye=4,3,14 --target=6,-2.5,2.5 --layout top `
     --screenshot build/scratch/app/hugo.png
 ```
 
@@ -80,8 +80,8 @@ capture de Hugo ci-dessus (étape 2 d'Angel Falls, `<N_TURN>//Hugo// …`).
 
 Le dessin du cadre, du nom, du texte et de la flèche vient de `dq9_render::ui` ; les
 constantes de mise en page sont celles de `MsgWin_Show` quand elles ont été lues, sinon des
-hypothèses (`dialogue.md`, § « Fenêtre de message »). La fenêtre est dessinée sur l'image 3D, dans
-le plus grand rectangle 4:3 de la cible (tout l'écran en 4:3, bandes sur les côtés sinon).
+hypothèses (`dialogue.md`, § « Fenêtre de message »). La fenêtre est dessinée sur l'écran du haut,
+dans la zone qu'il occupe (`screens.rs`).
 
 `--map` : code (`M01`, `C01M09`) ou id (`1100`) de la liste des cartes ; il prévaut sur la
 carte lue dans `--save`. En l'absence des deux options, la carte reste `M01`. `--save` lit un
@@ -95,7 +95,7 @@ la sauvegarde, sinon la nuit ; `--clock S` : seconde du jour de 420 s (nuit 0, m
 soir 390) ; sa phase remplace `--time`, et les deux dernières secondes d'une phase se fondent
 dans la suivante en zone avancée (champ) ; `--fog OFFSET,SHIFT,COLOR,D0..D31` remplace le
 brouillard (comparaisons à melonDS) ;
-`--ds-aspect` : rendu au format d'un écran DS (256×192), bandes noires autour.
+`--layout stacked|side|top` : disposition des écrans DS (section « Écrans DS »).
 
 La distribution est celle du prologue **1.1.1 de jour** par défaut. `--chapter`, `--step`,
 `--substep` choisissent le point de l'histoire ; `--night` choisit les placements de nuit,
@@ -112,7 +112,7 @@ marche à 5,76 unités/s comme `Character_Update`, bloqué par les murs et posé
 carte ([`re/movement.md`](re/movement.md)) ; `Q`/`E` (physiques `A`/`E` en AZERTY) sont les
 boutons `L`/`R` du jeu : ils tournent la caméra de ± 45° au plus autour de son yaw d'entrée sur
 la carte, ensemble ils la ramènent. `Tab` passe en vol libre, où les touches de déplacement
-déplacent la caméra et `Q`/`E` la cible vers le bas/haut ; `Maj` accélère la caméra. `F` recadre, `R` format DS,
+déplacent la caméra et `Q`/`E` la cible vers le bas/haut ; `Maj` accélère la caméra. `F` recadre, `R` change la disposition des écrans (`stacked`, `side`, `top`),
 `T` moment suivant (liste « Moment » sur le Web), `M` coupe/rétablit la musique, `PageHaut`/`PageBas` carte précédente/suivante, `Entrée`/`Espace` parler, `Échap` quitter.
 
 **Musique** : à chaque chargement de carte, `dq9-app` joue la séquence de `bgm.sdat` que le jeu
@@ -220,7 +220,7 @@ tools/wasm-bindgen/bin/wasm-bindgen --target web --no-typescript `
 python -m http.server 8000 -d crates/dq9-app/web     # ou tout serveur de fichiers statiques
 ```
 
-Ouvrir `http://localhost:8000/` (paramètres `map`, `time` (nom ou 0 à 3), `clock`, `ds=1`, `chapter`, `step`,
+Ouvrir `http://localhost:8000/` (paramètres `map`, `time` (nom ou 0 à 3), `clock`, `layout` (`stacked`, `side` ou `top`), `chapter`, `step`,
 `substep`, `night=1`, `mute=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
 page. Les deux fichiers sont lus localement dans le navigateur, jamais envoyés ni hébergés ;
 `map` explicite prévaut sur la carte de la sauvegarde.
@@ -307,6 +307,22 @@ Approximé ou absent :
   absents. Le mélange de plusieurs poses, les effets/actions `.beff`/`.bact` et les modes de
   sprite autres que debout/assis ne sont pas exécutés. Les couleurs MAT sont évaluées ; les
   sommets à normales restent soumis à la lumière fixe décrite ci-dessus, pas aux lumières DS.
+
+## Écrans DS
+
+La fenêtre montre les deux écrans de la DS (`crates/dq9-app/src/screens.rs`) :
+
+- **Haut** : le champ en 3D, avec la caméra et la projection du jeu (`0x0202df78`, demi-angle
+  vertical de 15°). L'écran fait 256×192 ; seule la taille du rectangle varie avec la fenêtre.
+- **Bas** : fond uni (`dq9_render::Panel`), sans contenu. Le contenu de l'écran tactile n'est
+  pas identifié **[inconnu]** ; aucune donnée de la ROM n'y est affichée.
+- **Fenêtre de message** : dessinée sur l'écran du haut (`talk.rs`, `dialogue.md`).
+
+Dispositions : `stacked` (défaut, écran du haut au-dessus de celui du bas), `side` (côte à côte),
+`top` (écran du haut seul). Chaque écran est mis à l'échelle entière (1, 2, 3…) quand la fenêtre
+le permet, sinon à l'échelle fractionnaire ; les écrans sont centrés. Natif : `--layout`, et `R`
+passe à la disposition suivante. Web : le select « Écrans » ou `?layout=`. Les anciens
+`--ds-aspect` et `ds=` sont supprimés.
 
 ## Vérification
 

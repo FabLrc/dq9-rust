@@ -325,6 +325,10 @@ Avancement :
       les attachements d'os, les mouvements des PNJ de la carte, ~20 natives d'effets (liste dans
       `app.md`), comparer l'ordre, les durées et les poses à melonDS, l'appelant de l'entrée 200
       et les natives sans rôle (`re/stb.md`, § Interpréteur).
+- **Deux écrans DS** (`dq9-app/src/screens.rs`, `dq9_render::Panel`) : écran haut = champ 3D avec
+  la caméra du jeu (`0x0202df78`) ; écran bas = fond uni, contenu tactile non identifié
+  **[inconnu]** ; dispositions `stacked`, `side`, `top` (`--layout`, touche `R`, select Web).
+  Partiel : rien n'est encore affiché sur l'écran du bas.
 
 **v0.1** : nouvelle partie avec un héros par défaut (modèle animé fait en J1 ; reste le choix
 de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,
