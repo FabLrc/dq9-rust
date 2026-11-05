@@ -1,7 +1,10 @@
 # Produces a melonDS savestate of the game resumed from a save file, then checks it with
 # `dq9re state --save` (resident code vs the ROM, save copies vs RAM).
 # Usage: powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save build/sav/demo.sav
-#        [-Out partie.ml1] [-Settle 8] [-Keep]
+#        [-Out partie.ml1] [-Settle 8] [-Keys "Down:1.5,Up+Right:0.4,idle:0.5"] [-Keep]
+# -Keys holds DS keys (Up, Down, Left, Right, A, B; `+` joins keys held together, `idle` holds
+# none) for the given seconds once the game is in the field, before the state is saved. Timing
+# is wall clock (about two frames of jitter); the arrows must be mapped in melonDS.toml.
 # Boots the ROM in a portable melonDS (build/melonds/, from tools/melonds/), taps START on the
 # title screen, then "Continue your adventure" until the title screen is gone, waits -Settle
 # seconds in the field, saves state slot 1 (File > Save state > 1) and closes melonDS (unless
@@ -13,6 +16,8 @@ param(
     [Parameter(Mandatory)] [string] $Save,
     [string] $Out,
     [double] $Settle = 8,
+    [string] $Keys,
+    [string] $Shots,
     [switch] $Keep
 )
 $ErrorActionPreference = 'Stop'
@@ -62,6 +67,16 @@ public static class Win {
         PostMessage(h, 0x201, (IntPtr)1, XY(x, y)); Thread.Sleep(120);
         PostMessage(h, 0x202, IntPtr.Zero, XY(x, y));
     }
+    // Arrow keys carry the "extended key" bit; without it Qt reads them as keypad keys.
+    static long Extended(uint vk) { return vk >= 0x25 && vk <= 0x28 ? 0x01000000L : 0; }
+    public static void KeyDown(IntPtr h, uint vk) {
+        long scan = MapVirtualKey(vk, 0) << 16;
+        PostMessage(h, 0x100, (IntPtr)vk, (IntPtr)(scan | 1 | Extended(vk)));
+    }
+    public static void KeyUp(IntPtr h, uint vk) {
+        long scan = MapVirtualKey(vk, 0) << 16;
+        PostMessage(h, 0x101, (IntPtr)vk, (IntPtr)(scan | 0xC0000001L | Extended(vk)));
+    }
     public static void Key(IntPtr h, uint vk) {
         long scan = MapVirtualKey(vk, 0) << 16;
         PostMessage(h, 0x100, (IntPtr)vk, (IntPtr)(scan | 1)); Thread.Sleep(80);
@@ -76,6 +91,13 @@ public static class Win {
             return true;
         }, IntPtr.Zero);
         return found;
+    }
+    public static void Save(IntPtr h, string path) {
+        Size s = Client(h);
+        using (Bitmap b = new Bitmap(s.Width, s.Height)) {
+            using (Graphics g = Graphics.FromImage(b)) { IntPtr dc = g.GetHdc(); PrintWindow(h, dc, 3); g.ReleaseHdc(dc); }
+            b.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+        }
     }
     public static Color Pixel(IntPtr h, int x, int y) {
         Size s = Client(h);
@@ -134,6 +156,23 @@ try {
         Start-Sleep -Seconds 2.5
     }
     Start-Sleep -Seconds $Settle
+
+    # Held keys, each part for its wall-clock duration.
+    if ($Keys) {
+        $vk = @{ up = 0x26; down = 0x28; left = 0x25; right = 0x27; a = 0x58; b = 0x5A }
+        foreach ($part in $Keys.Split(',')) {
+            $name, $secs = $part.Trim().Split(':')
+            $held = @()
+            if ($name -ne 'idle') { $held = $name.Split('+') | ForEach-Object { $vk[$_.ToLower()] } }
+            if ($Shots) { [Win]::Save($h, "$Shots-before.png") }
+            $held | ForEach-Object { [Win]::KeyDown($h, [uint32]$_) }
+            Start-Sleep -Milliseconds ([int]([double]$secs * 1000) / 2)
+            if ($Shots) { [Win]::Save($h, "$Shots-during.png") }
+            Start-Sleep -Milliseconds ([int]([double]$secs * 1000) / 2)
+            $held | ForEach-Object { [Win]::KeyUp($h, [uint32]$_) }
+        }
+        Start-Sleep -Seconds 0.5
+    }
 
     # File > Save state > 1, with the keyboard inside Qt's popups (9 enabled items above it).
     [Win]::Tap($h, 14, 12)
