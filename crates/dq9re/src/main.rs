@@ -12,6 +12,7 @@ mod model;
 mod msg;
 mod save;
 mod script;
+mod sseq;
 mod state;
 mod stb;
 mod talk;
@@ -181,6 +182,9 @@ enum Command {
     Cast(cast::CastArgs),
     /// The parts the hero (new game, or a save's) is drawn with: look, items, part names.
     Hero(hero::HeroArgs),
+    /// Renders a music sequence of `bgm.sdat` (or a map's music) to a WAV file and reports its
+    /// tempo, duration and levels; without an id, lists the sequences.
+    Sseq(sseq::SseqArgs),
     /// Export the textures (PNG) and models (OBJ + MTL, model space) of G3D files: a
     /// `.nsbmd`/`.nsbtx` file or the members of a NARC such as `data/map/M01.amdj`. With
     /// `--anim`, models are posed (joints), retextured (texture SRT) and recoloured (material)
@@ -316,6 +320,7 @@ fn main() -> Result<()> {
         Command::Chr(args) => cast::run_chr(&rom, &args),
         Command::Cast(args) => cast::run_cast(&rom, &args),
         Command::Hero(args) => hero::run(&rom, &args),
+        Command::Sseq(args) => sseq::run(&rom, &args),
         Command::Model {
             path,
             member,

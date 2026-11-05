@@ -803,3 +803,11 @@ ov_017::021a2c14 Cast_LoadMap               # data/scenario/<area>.npc: place.bi
 0x020d86e0 Gx_SwapBuffers                                  # (manualSort, wBuffer): SWAP_BUFFERS = manualSort | wBuffer << 1
 0x020f33bc g_DayThresholds                                 # floats 420, 390, 210, 180: end of the day, evening, day and morning starts
 0x02107930 g_LightingManager                               # LightingManager singleton, +0x90 override, +0x94 day timer, +0x98 phase, 0x9c bytes
+
+# --- Sound: which music plays (docs/re/sdat.md) ---
+0x0209c3c4 Bgm_Select                  # (mgr, sequence): same sequence returns, else stops the old and loads the new into the BGM slot (+0xb4)
+0x0209cb00 Bgm_SlotToSequence          # music slot (0..46) -> sequence through g_BgmSlotTable; night turns 3 into 4 and 5 into 6
+0x0209cc4c Bgm_FindOverride            # mapbgm.bin: first entry of the map whose story flag is set (and night-only bit); sequence in bits 16-21
+0x0209cd60 Bgm_SequenceForMap          # (map id): map list slot 6 through Bgm_SlotToSequence, then Bgm_FindOverride; 5900s remap via the zone's fields
+0x020e8ee8 g_BgmSlotTable              # 47 x s8: slot -> sequence of bgm.sdat, -1 none; identity but 0, 9, 25, 39, 42
+ov_001::02163aec StbNat_SelectZoneBgm arm # native 736: Bgm_SequenceForMap of the current zone, then Bgm_Select

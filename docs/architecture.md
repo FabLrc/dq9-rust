@@ -19,13 +19,12 @@ flowchart TD
 État : `nds-rom`, `dq9-formats` (compression Level-5, GPC2, tables, polices, messages, choix
 des répliques, parsing des triggers et de leurs actions, scripts d'événements, cartes),
 `dq9-core` (requêtes de sol et mouvement provisoire ; état et exécution des triggers),
-`dq9-render` (cartes en wgpu), `dq9-app` (fenêtre native et
-Web, `app.md`) et `dq9re` existent. `dq9-audio` sera créée quand son sous-système aura été
-documenté dans `docs/re/`.
+`dq9-render` (cartes en wgpu), `dq9-audio` (séquenceur SDAT et mixeur, `re/sdat.md`),
+`dq9-app` (fenêtre native et Web, `app.md`) et `dq9re` existent.
 
 ## Règles
 
-- **Portabilité** : `nds-rom`, `dq9-formats`, `dq9-render` et `dq9-core` ne font aucune E/S
+- **Portabilité** : `nds-rom`, `dq9-formats`, `dq9-render`, `dq9-audio` et `dq9-core` ne font aucune E/S
   et compilent pour `wasm32-unknown-unknown` (vérifié en CI, avec `dq9-app`). Seule `dq9-app`
   touche au système.
 - **Déterminisme** : `dq9-core` avance par pas fixes (60 Hz comme la DS) à partir d'entrées

@@ -113,7 +113,14 @@ carte ([`re/movement.md`](re/movement.md)) ; `Q`/`E` (physiques `A`/`E` en AZERT
 boutons `L`/`R` du jeu : ils tournent la caméra de ± 45° au plus autour de son yaw d'entrée sur
 la carte, ensemble ils la ramènent. `Tab` passe en vol libre, où les touches de déplacement
 déplacent la caméra et `Q`/`E` la cible vers le bas/haut ; `Maj` accélère la caméra. `F` recadre, `R` format DS,
-`T` moment suivant (liste « Moment » sur le Web), `PageHaut`/`PageBas` carte précédente/suivante, `Entrée`/`Espace` parler, `Échap` quitter.
+`T` moment suivant (liste « Moment » sur le Web), `M` coupe/rétablit la musique, `PageHaut`/`PageBas` carte précédente/suivante, `Entrée`/`Espace` parler, `Échap` quitter.
+
+**Musique** : à chaque chargement de carte, `dq9-app` joue la séquence de `bgm.sdat` que le jeu
+choisit pour elle (`re/sdat.md` : fente musique de `maplist9.bin`, variante de nuit, surcharges de
+`mapbgm.bin`), par `cpal` en natif et par WebAudio sur le Web (le navigateur n'autorise le son
+qu'après un geste : la musique démarre au premier clic ou à la première touche). `--mute`
+(`?mute=1` sur le Web) n'ouvre aucun périphérique audio ; `dq9re sseq <n> --wav f.wav` rend une
+séquence sans fenêtre.
 
 ## Lancer dans un navigateur
 
@@ -127,7 +134,7 @@ python -m http.server 8000 -d crates/dq9-app/web     # ou tout serveur de fichie
 ```
 
 Ouvrir `http://localhost:8000/` (paramètres `map`, `time` (nom ou 0 à 3), `clock`, `ds=1`, `chapter`, `step`,
-`substep`, `night=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
+`substep`, `night=1`, `mute=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
 page. Les deux fichiers sont lus localement dans le navigateur, jamais envoyés ni hébergés ;
 `map` explicite prévaut sur la carte de la sauvegarde.
 WebGPU quand le navigateur le propose, sinon WebGL 2. `crates/dq9-app/web/pkg/` est généré

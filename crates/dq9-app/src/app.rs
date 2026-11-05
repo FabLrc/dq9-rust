@@ -7,7 +7,7 @@
 //! in orbit mode, the camera in fly mode), `Q`/`E` the game's `L`/`R` camera buttons in orbit
 //! mode (both together return the camera) and down/up in fly mode, `Shift` faster camera, `Tab`
 //! orbit/fly, `F` reframe, `R` DS aspect (256×192), `T` next
-//! time of day, `PageUp`/`PageDown` previous/next map, `Enter`/`Space` talk to the NPC in front
+//! time of day, `M` mute the music, `PageUp`/`PageDown` previous/next map, `Enter`/`Space` talk to the NPC in front
 //! of the hero and advance the message window, `Backspace`/`X` answer No.
 
 use std::collections::HashSet;
@@ -30,6 +30,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use crate::audio::Audio;
 use crate::gpu::Gpu;
 use crate::lighting;
 use crate::load::{self, MapEntry};
@@ -65,6 +66,8 @@ pub struct Options {
     /// Explicit second of the 420-second day (`--clock`); its phase replaces `time`.
     pub clock: Option<f32>,
     pub ds_aspect: bool,
+    /// No music, and no sound device opened until `M` unmutes.
+    pub mute: bool,
     pub story: dq9_formats::cast::Story,
 }
 
@@ -104,6 +107,7 @@ pub struct App {
     /// The protagonist's look (the save's hero, else a new game's), kept across maps.
     look: HeroLook,
     renderer: Option<Renderer>,
+    audio: Audio,
     /// Lighting, fog and background of the loaded map at the selected time of day.
     environment: dq9_render::Environment,
     camera: Camera,
@@ -135,6 +139,7 @@ impl std::fmt::Debug for App {
 impl App {
     pub fn new(proxy: EventLoopProxy<UserEvent>, options: Options, rom: Option<Vec<u8>>) -> Self {
         let state = field::initial_state(&options.story);
+        let audio = Audio::new(options.mute);
         let mut app = Self {
             proxy,
             options,
@@ -155,6 +160,7 @@ impl App {
             hero_instance: None,
             look: HeroLook::new_game(),
             renderer: None,
+            audio,
             environment: dq9_render::Environment::default(),
             camera: Camera::default(),
             field_camera: FieldCamera::default(),
@@ -301,6 +307,8 @@ impl App {
         self.camera_home = self.camera.yaw;
         self.field_camera = FieldCamera::default();
         self.camera.target = hero_start;
+        let flags = |flag: u16| self.state.flags.contains(&i32::from(flag));
+        self.audio.set_map(rom, loaded.entry.id, self.time, &flags);
         self.current = Some((loaded.entry, loaded.label));
         if let Err(e) = loaded.runtime.face_camera(&self.camera) {
             status(&format!("facing cast: {e}"));
@@ -439,6 +447,7 @@ impl App {
                     self.camera.frame(bounds);
                 }
             }
+            KeyCode::KeyM => self.audio.toggle_mute(),
             KeyCode::KeyR => self.options.ds_aspect = !self.options.ds_aspect,
             KeyCode::KeyT => {
                 let next = match self.day.phase() {
@@ -745,6 +754,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                self.audio.gesture();
                 if let PhysicalKey::Code(code) = event.physical_key {
                     self.key(event_loop, code, event.state == ElementState::Pressed);
                 }
@@ -754,7 +764,10 @@ impl ApplicationHandler<UserEvent> for App {
                 state,
                 button: MouseButton::Left,
                 ..
-            } => self.dragging = state == ElementState::Pressed,
+            } => {
+                self.audio.gesture();
+                self.dragging = state == ElementState::Pressed;
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some((x, y)) = self.cursor
                     && self.dragging

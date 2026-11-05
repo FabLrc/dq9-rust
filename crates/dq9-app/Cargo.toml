@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 nds-rom.workspace = true
+dq9-audio.workspace = true
 dq9-core.workspace = true
 dq9-formats.workspace = true
 dq9-render.workspace = true
@@ -23,6 +24,7 @@ web-time.workspace = true
 clap = { workspace = true, features = ["env"] }
 pollster.workspace = true
 png = "0.18.1"
+cpal = "0.18.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
@@ -32,6 +34,12 @@ console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = [
     "Blob",
     "console",
+    "AudioBuffer",
+    "AudioContext",
+    "AudioContextState",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioProcessingEvent",
     "Document",
     "Element",
     "Event",
@@ -43,6 +51,7 @@ web-sys = { workspace = true, features = [
     "HtmlInputElement",
     "HtmlSelectElement",
     "Location",
+    "ScriptProcessorNode",
     "Window",
 ] }
 

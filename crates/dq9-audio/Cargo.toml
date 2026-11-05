@@ -1,0 +1,18 @@
+[package]
+name = "dq9-audio"
+description = "Dragon Quest IX port: SDAT sequence player (SSEQ sequencer and software mixer), no I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dq9-formats.workspace = true
+nds-rom.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+testrom.workspace = true

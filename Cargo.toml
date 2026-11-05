@@ -12,6 +12,7 @@ repository = "https://github.com/FabLrc/dq9-online"
 [workspace.dependencies]
 nds-rom = { path = "crates/nds-rom" }
 anyhow = "1"
+dq9-audio = { path = "crates/dq9-audio" }
 dq9-core = { path = "crates/dq9-core" }
 dq9-formats = { path = "crates/dq9-formats" }
 testrom = { path = "crates/testrom" }
@@ -40,6 +41,10 @@ all = { level = "warn", priority = -1 }
 
 [profile.dev.package."*"]
 # Dependencies are rarely debugged; optimize them so tools stay fast on a 256 MiB ROM.
+opt-level = 3
+
+[profile.dev.package.dq9-audio]
+# The mixer runs in a real-time callback: keep it fast in debug builds too.
 opt-level = 3
 
 [profile.test]

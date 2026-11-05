@@ -33,7 +33,7 @@ pub fn window_attributes(attributes: WindowAttributes) -> WindowAttributes {
         .with_prevent_default(true)
 }
 
-/// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day) and `ds` from the page's query string.
+/// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day), `ds` and `mute` from the page's query string.
 fn options() -> Options {
     let mut options = Options {
         map: None,
@@ -41,6 +41,7 @@ fn options() -> Options {
         time: None,
         clock: None,
         ds_aspect: false,
+        mute: false,
         story: dq9_formats::cast::Story {
             chapter: 1,
             step: 1,
@@ -59,6 +60,7 @@ fn options() -> Options {
             "time" => options.time = crate::lighting::parse_time(value).ok(),
             "clock" => options.clock = value.parse().ok(),
             "ds" => options.ds_aspect = value != "0",
+            "mute" => options.mute = value != "0",
             "chapter" => {
                 if let Ok(n) = value.parse() {
                     options.story.chapter = n;

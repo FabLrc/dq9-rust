@@ -56,6 +56,9 @@ struct Cli {
     /// Draw at the DS screen aspect (256×192), letterboxed.
     #[arg(long)]
     ds_aspect: bool,
+    /// No music (and no sound device is opened); `M` in the window unmutes.
+    #[arg(long)]
+    mute: bool,
     /// Render one frame offscreen into this PNG and exit, without a window.
     #[arg(long)]
     screenshot: Option<PathBuf>,
@@ -201,6 +204,7 @@ pub fn main() -> Result<()> {
         time: cli.time,
         clock: cli.clock,
         ds_aspect: cli.ds_aspect,
+        mute: cli.mute,
         story: cli.story(),
     };
     let mut app = App::new(event_loop.create_proxy(), options, Some(rom));

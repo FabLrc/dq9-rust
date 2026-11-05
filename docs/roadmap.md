@@ -285,7 +285,7 @@ suivi), comparaison position par position à nombre d'images égal.
 | interpréteur `.stb` dans `dq9-core` (attente par image, appels de fonctions) — **fait** (`dq9_core::script`, voir Avancement) | `stb.rs` (fait) ; wiki Event-Scripts |
 | natives : personnages (200), caméra (300), messages (400), scène et fondus (500, 100–122) | wiki Engine-Functions ; `ov_001` |
 | deux écrans DS : écran haut (carte) et bas, disposition configurable | — |
-| son minimal : musique SDAT (séquenceur SSEQ + mixage SWAV) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
+| son minimal : musique SDAT (séquenceur SSEQ + mixage SWAV) — **fait pour la musique de champ** : `dq9-audio` (séquenceur, enveloppes DS, ondes ADPCM, PSG, bruit), musique de la carte lue dans `maplist9.bin` + `mapbgm.bin`, sortie cpal/WebAudio (`--mute`, touche `M`), `dq9re sseq` ; reste : effets sonores, jingles `ME_`, fondus du gestionnaire, comparaison à l'oreille/melonDS ([`re/sdat.md`](re/sdat.md)) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
 
 Avancement :
 

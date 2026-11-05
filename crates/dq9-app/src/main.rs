@@ -5,6 +5,7 @@
 //! `<input type=file>` on the web), opens the window and drives `dq9-render`.
 
 mod app;
+mod audio;
 mod gpu;
 mod lighting;
 mod load;
