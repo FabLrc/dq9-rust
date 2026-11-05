@@ -10,6 +10,7 @@ pub mod field;
 pub mod lighting;
 pub mod script;
 pub mod state;
+pub mod talk;
 pub mod trigger;
 
 const GROUND_RISE: f32 = 1.0;

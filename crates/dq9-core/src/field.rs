@@ -34,6 +34,7 @@ use crate::trigger::{
 /// One turn as `fx32` (`0x6488`).
 const TWO_PI: i32 = 0x6488;
 /// Events of `docs/re/trigger.md`.
+const EVENT_TALK: i32 = 0;
 const EVENT_ENTER_AREA: i32 = 2;
 const EVENT_ARRIVAL: i32 = 3;
 const EVENT_LEAVE_AREA: i32 = 5;
@@ -281,6 +282,18 @@ pub struct MapChange {
     /// Entry point of the destination (`0x72` value 15, trigger action 0x85…) **[inconnu]**.
     pub entry: Option<i32>,
     pub cause: Cause,
+}
+
+/// What the talk event (event 0) did, see [`Field::talk`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum TalkTrigger {
+    /// No trigger holds: the conversation starts with the zone's context.
+    NoTrigger,
+    /// A trigger ran; its requests replace the conversation (a [`Request::Talk`] starts it with
+    /// the context the trigger gives).
+    Fired(Vec<Event>),
+    /// The trigger reached a condition that is not modelled and was not evaluated.
+    Unsupported(u16),
 }
 
 /// What [`Field`] asks of the application.
@@ -593,14 +606,27 @@ impl Field {
         words: &[(usize, u32)],
         state: &mut State,
     ) -> std::result::Result<Vec<Request>, Unsupported> {
+        self.fire_matched(event, words, state)
+            .map(Option::unwrap_or_default)
+    }
+
+    /// [`Field::fire`], telling whether a trigger matched at all: `None` when none did (what
+    /// `Trig_Fire` reports as 0), `Some(requests)` when one ran, possibly without a request
+    /// (its action list stopped, or it only changed progress).
+    fn fire_matched(
+        &mut self,
+        event: i32,
+        words: &[(usize, u32)],
+        state: &mut State,
+    ) -> std::result::Result<Option<Vec<Request>>, Unsupported> {
         let Some(bytes) = self.trigger_file.as_deref() else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         let Ok(table) = Table::parse(bytes) else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         let Ok(all) = dq9_formats::trigger::parse(&table) else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         let track = &state.tracks[state.track];
         let (chapter, step) = (i32::from(track.chapter), i32::from(track.step));
@@ -615,7 +641,7 @@ impl Field {
         let matched = first_match(&triggers, event, &*state);
         let result = match matched {
             Err(e) => Err(e),
-            Ok(None) => Ok(Vec::new()),
+            Ok(None) => Ok(None),
             Ok(Some(trigger)) => {
                 let mut deferred = Vec::new();
                 let mut completed = true;
@@ -642,15 +668,32 @@ impl Field {
                         }
                     }
                 }
-                if completed {
-                    Ok(run_deferred(&deferred, state))
+                Ok(Some(if completed {
+                    run_deferred(&deferred, state)
                 } else {
-                    Ok(Vec::new())
-                }
+                    Vec::new()
+                }))
             }
         };
         state.event = [0; 12];
         result
+    }
+
+    /// Event 0 of the map's triggers: the hero talks to NPC `npc`, standing in its talk zone
+    /// `context` (0 outside any), after `Talk_Start` (`ov_017::021a4cf0`). The event words
+    /// are 0 = NPC and 5 = zone; conditions on the hero's zone read `state.zones`
+    /// (`crate::talk::zones_containing`).
+    pub fn talk(&mut self, npc: u16, context: u16, state: &mut State) -> TalkTrigger {
+        let words = [(0, u32::from(npc)), (5, u32::from(context))];
+        match self.fire_matched(EVENT_TALK, &words, state) {
+            Ok(None) => TalkTrigger::NoTrigger,
+            Ok(Some(requests)) => {
+                let mut events = Vec::new();
+                self.collect(Ok(requests), None, &mut events);
+                TalkTrigger::Fired(events)
+            }
+            Err(Unsupported(code)) => TalkTrigger::Unsupported(code),
+        }
     }
 
     /// Turns the outcome of a fired event into events. A warp request replaces `fallback`,
