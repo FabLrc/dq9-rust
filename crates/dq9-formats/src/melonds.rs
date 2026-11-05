@@ -8,6 +8,7 @@
 
 use nds_rom::{Error, Result};
 
+use crate::maplist::MapList;
 use crate::save::Slot;
 
 /// Start of main RAM in the ARM9 address space.
@@ -406,6 +407,42 @@ impl<'a> State<'a> {
         Ok(core::array::from_fn(|i| {
             i32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
         }))
+    }
+
+    /// Current map id and its area (`Zone3D+0`, `+4`, set by `Zone3D::SwitchZone`,
+    /// `0x0201384c`).
+    pub fn current_map(&self) -> Result<(u16, u16)> {
+        let b = self.read(ZONE_3D, 6)?;
+        Ok((
+            u16::from_le_bytes([b[0], b[1]]),
+            u16::from_le_bytes([b[4], b[5]]),
+        ))
+    }
+
+    /// Indices of the map records in RAM (`GameState+0x468`: pointer, count) that differ
+    /// from `list`, ignoring the bytes the game leaves undefined (see
+    /// [`crate::maplist::MapRecord::to_bytes`]); a count mismatch is an error.
+    pub fn compare_map_list(&self, list: &MapList<'_>) -> Result<Vec<usize>> {
+        let ptr = self.u32(GAME_STATE + 0x468)?;
+        let count = self.u32(GAME_STATE + 0x46c)? as usize;
+        if count != list.records.len() {
+            return Err(Error::Malformed("map list count differs from RAM"));
+        }
+        let ram = self.read(ptr, count * 16)?;
+        Ok(list
+            .records
+            .iter()
+            .zip(ram.as_chunks::<16>().0)
+            .enumerate()
+            .filter(|(_, (record, ram))| {
+                let mut ram = **ram;
+                ram[4] &= 1;
+                ram[5 + record.code.len()..0xc].fill(0);
+                ram[0xf] = 0;
+                record.to_bytes() != ram
+            })
+            .map(|(i, _)| i)
+            .collect())
     }
 
     /// For each of [`SAVE_COPIES`], the offsets (relative to the copy) where RAM differs from

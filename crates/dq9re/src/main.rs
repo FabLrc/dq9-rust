@@ -3,6 +3,7 @@
 mod coverage;
 mod extract;
 mod font;
+mod maps;
 mod msg;
 mod save;
 mod state;
@@ -131,6 +132,12 @@ enum Command {
         #[arg(long, short)]
         decompress: bool,
     },
+    /// List the maps of `data/map/maplist9.bin` as the game loads them, or check them
+    /// against the copy in a melonDS state's RAM and show the state's current map.
+    Maps {
+        #[arg(long)]
+        state: Option<PathBuf>,
+    },
     /// Build `re/functions.txt` from a checkout of the USA decompilation (DQIX/dqix-decomp):
     /// every function, at European addresses, classified game / platform / excluded.
     Functions {
@@ -235,6 +242,7 @@ fn main() -> Result<()> {
             out,
             decompress,
         } => narc(&rom, &path, out.as_deref(), decompress),
+        Command::Maps { state } => maps::run(&rom, state.as_deref()),
         Command::Cat {
             path,
             out,

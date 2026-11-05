@@ -1,7 +1,7 @@
 //! Level-5 record tables: the container of most `.bin` files (dialogue, menus, parameters,
 //! maps), `.bmmp` and `.bcfg`. Layout and evidence in `docs/re/table.md`.
 //!
-//! port: 0x02030744, 0x02030784, 0x020307e0, 0x02030b8c
+//! port: 0x02030744, 0x02030784, 0x020307e0, 0x02030b1c, 0x02030b8c
 
 use nds_rom::{Error, Result};
 
@@ -15,6 +15,18 @@ pub enum Value<'a> {
     Str(Option<&'a [u8]>),
     Int(u32),
     Float(f32),
+}
+
+impl Value<'_> {
+    /// Integer view of a field (`Tbl_FieldInt`, `0x02030b1c`): floats are converted
+    /// (`0x0200c5fc`, [assumed truncating, like the ARM EABI helper]), strings read as 0.
+    pub fn int(&self) -> u32 {
+        match *self {
+            Value::Int(v) => v,
+            Value::Float(f) => f as i32 as u32,
+            Value::Str(_) => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

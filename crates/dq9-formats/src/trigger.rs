@@ -70,15 +70,6 @@ pub fn operand_count(code: u16) -> usize {
     }
 }
 
-/// Integer view of a field (`Tbl_FieldInt`).
-fn int(value: &Value) -> u32 {
-    match *value {
-        Value::Int(v) => v,
-        Value::Float(f) => f as i32 as u32,
-        Value::Str(_) => 0,
-    }
-}
-
 /// Parses the rules of a trigger file. Only record kind 1 defines triggers; kinds 100 and
 /// 101 have no-op handlers and other kinds none.
 pub fn parse<'a>(table: &Table<'a>) -> Result<Vec<Trigger<'a>>> {
@@ -89,16 +80,16 @@ pub fn parse<'a>(table: &Table<'a>) -> Result<Vec<Trigger<'a>>> {
             return Err(Error::Malformed("trigger record with fewer than 6 fields"));
         }
         let mut trigger = Trigger {
-            room: int(&v[0]) as i32,
-            from: (int(&v[1]) as i32, int(&v[2]) as i32),
-            to: (int(&v[3]) as i32, int(&v[4]) as i32),
-            event: int(&v[5]) as i32,
+            room: v[0].int() as i32,
+            from: (v[1].int() as i32, v[2].int() as i32),
+            to: (v[3].int() as i32, v[4].int() as i32),
+            event: v[5].int() as i32,
             conditions: Vec::new(),
             actions: Vec::new(),
         };
         let mut words = &v[6..];
         while let Some((word, rest)) = words.split_first() {
-            let word = int(word);
+            let word = word.int();
             let code = (word >> 16) as u16;
             let n = operand_count(code);
             let operands = rest
@@ -138,7 +129,7 @@ impl Trigger<'_> {
         self.actions
             .iter()
             .find(|a| a.code == 0x76)
-            .map(|a| (a.arg, i32::from((int(&a.operands[0]) >> 16) as i16)))
+            .map(|a| (a.arg, i32::from((a.operands[0].int() >> 16) as i16)))
     }
 }
 
@@ -411,13 +402,13 @@ impl World for State {
 /// High and low halves of an operand, both sign-extended (the high one like the game's
 /// `asr`; callers that store the low one unsigned use [`low`]).
 fn halves(op: &Op, i: usize) -> (i32, i32) {
-    let v = int(&op.operands[i]);
+    let v = op.operands[i].int();
     (i32::from((v >> 16) as i16), i32::from(v as u16 as i16))
 }
 
 /// Low halfword of operand `i` (the compiler's `strh` of a single-field operand).
 fn low(op: &Op, i: usize) -> u16 {
-    int(&op.operands[i]) as u16
+    op.operands[i].int() as u16
 }
 
 fn quest_allowed(world: &dyn World, quest: i32) -> bool {
@@ -510,7 +501,7 @@ fn degrees_to_angle(degrees: i32) -> u16 {
 /// candidates of the mask. Candidates: the party (0x32) or the local character (0x52),
 /// without status bit 0.
 fn equipment(op: &Op, world: &dyn World, mask: &mut u8) -> bool {
-    let w = |i: usize| int(&op.operands[i]);
+    let w = |i: usize| op.operands[i].int();
     let (hi, lo) = (|v: u32| (v >> 16) as u16, |v: u32| v as u16);
     let first = [op.arg, hi(w(0)), lo(w(0)), hi(w(1))];
     let second = [lo(w(1)), hi(w(2)), lo(w(2)), lo(w(3))];
@@ -584,14 +575,14 @@ fn eval(op: &Op, world: &dyn World, mask: &mut u8) -> Option<bool> {
             let word = world.event(7);
             word as u16 == op.arg
                 && (word >> 16) as u16 == low(op, 0)
-                && world.event(10) as u16 == degrees_to_angle(int(&op.operands[1]) as i32)
+                && world.event(10) as u16 == degrees_to_angle(op.operands[1].int() as i32)
         }
         0x1e => world.event(8) == u32::from(op.arg),
         0x1f => i32::from(world.raw(Raw::Quest490) as i8) == i32::from(op.arg as i16),
         0x20 | 0x21 => {
             // The operand's bytes, most significant first, 0 = any. 0x20: in order against
             // the event bytes +0x2a..+0x2e; 0x21: each matches a distinct event byte.
-            let want = int(&op.operands[0]).to_be_bytes().map(|b| b as i8);
+            let want = op.operands[0].int().to_be_bytes().map(|b| b as i8);
             let have: [i8; 4] = std::array::from_fn(|i| event_byte(world, 0x2a + i));
             if op.code == 0x20 {
                 want.iter().zip(have).all(|(&w, h)| w == 0 || w == h)
@@ -621,7 +612,7 @@ fn eval(op: &Op, world: &dyn World, mask: &mut u8) -> Option<bool> {
         }),
         0x2e => {
             // Compiled as [code, arg, operand high = limit, operand low = mode].
-            let (limit, at_most) = ((int(&op.operands[0]) >> 16) as i32, low(op, 0) != 0);
+            let (limit, at_most) = ((op.operands[0].int() >> 16) as i32, low(op, 0) != 0);
             world.character(0).is_some_and(|h| {
                 h.attrs.get(usize::from(op.arg)).is_some_and(|&v| {
                     let diff = i32::from(v) - i32::from(h.base);
@@ -732,7 +723,7 @@ fn eval(op: &Op, world: &dyn World, mask: &mut u8) -> Option<bool> {
         0x51 => world.session().active == (arg != 0),
         0x54 => world.raw(Raw::Save64de) as u8 as i32 == arg,
         0x55 => {
-            let (gold, limit) = (world.gold(), int(&op.operands[0]));
+            let (gold, limit) = (world.gold(), op.operands[0].int());
             if arg == 0 {
                 gold < limit
             } else {
@@ -852,7 +843,7 @@ const RANKED: [i16; 32] = [
 
 /// High half of operand `i`, as the compiler stores it (`asr #16`, then `strh`).
 fn high(op: &Op, i: usize) -> u16 {
-    (int(&op.operands[i]) >> 16) as u16
+    (op.operands[i].int() >> 16) as u16
 }
 
 fn set(flags: &mut BTreeSet<i32>, index: i32, on: bool) {
@@ -995,10 +986,10 @@ pub fn run_action<'a>(op: &Op<'a>, state: &mut State) -> Flow<'a> {
         0x8b => {
             state.gold = state
                 .gold
-                .saturating_add(int(&op.operands[0]))
+                .saturating_add(op.operands[0].int())
                 .min(GOLD_MAX)
         }
-        0x8c => state.gold = state.gold.saturating_sub(int(&op.operands[0])),
+        0x8c => state.gold = state.gold.saturating_sub(op.operands[0].int()),
         0x8e => {
             let rank = RANKED
                 .iter()

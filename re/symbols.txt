@@ -441,3 +441,16 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x020fb3f0 g_Zone3D                 # current zone object; +0x840 holds the save's Zone block (0x1b30 bytes)
 0x02108844 g_QuestManager           # starts with the save's event block (tracks, global flags)
 0x02109418 g_QuestLog               # QuestLog_Get returns it; save QuestLog block here, QuestTimers at +0x178
+
+# --- Map list (docs/re/maplist.md) ---
+0x02011594 GameState_MapList        # returns GameState+0x468: {records, count, capacity}, 16-byte map records
+0x020995c0 MapList_RecNop64         # kind 0x64 handler: nothing
+0x020995c8 MapList_RecNop65         # kind 0x65 handler: nothing
+0x020995d0 MapList_RecCount         # kind 0x66: allocates count*16 bytes, capacity = count
+0x02099608 MapList_RecMap           # kind 0x67: packs 22 values into a map record, appended if it has a code
+0x02099898 MapList_RecNop68         # kind 0x68 handler: nothing
+0x020998a0 MapList_RecNop69         # kind 0x69 handler: nothing
+0x020998d4 MapList_Load             # Tbl_* over data/map/maplist9.bin with g_MapListRecordHandlers
+0x02099960 MapList_Find             # first record whose id (+0) matches, else 0
+0x02099a00 MapList_Append           # copies a record while count < capacity
+0x020f1524 g_MapListRecordHandlers  # {0x64, nop}, {0x65, nop}, {0x66, count}, {0x67, map}, {0x68, nop}, {0x69, nop}, {0}

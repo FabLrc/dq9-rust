@@ -163,6 +163,13 @@ Afficher une carte et ses personnages dans une fenêtre (natif et wasm).
 Critère : `dq9-app --map M01` affiche le village d'Angel Falls avec ses PNJ animés, en natif
 et dans un navigateur.
 
+Avancement :
+
+- [x] Liste des cartes `maplist9.bin` réimplémentée (`dq9_formats::maplist`,
+      [`re/maplist.md`](re/maplist.md), `dq9re maps`) : 1 010 enregistrements identiques à la
+      RAM d'un état melonDS ; carte courante lue en `g_Zone3D+0`.
+- [ ] Archives `.ambl`/`.amdj`, puis `BMD0`/`BTX0`.
+
 ## J2 — Se déplacer
 
 | Tâche | Réutiliser |

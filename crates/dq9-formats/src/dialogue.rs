@@ -8,7 +8,6 @@
 //!
 //! port: ov_017::021ba810, ov_017::021b9bcc, ov_017::021b9d00, ov_017::021b9e30
 //! port: ov_017::021ba124, ov_017::021ba280, ov_017::021ba3dc, ov_017::021ba524
-//! port: 0x02030b1c
 
 use nds_rom::{Error, Result};
 
@@ -66,16 +65,6 @@ pub struct Line<'a> {
     pub text: Option<&'a [u8]>,
 }
 
-/// Integer view of a field (`FUN_02030b1c`): floats are converted, strings read as 0.
-fn int(value: &Value) -> i32 {
-    match *value {
-        Value::Int(v) => v as i32,
-        // FUN_0200c5fc, float to int [assumed truncating, like the ARM EABI helper].
-        Value::Float(f) => f as i32,
-        Value::Str(_) => 0,
-    }
-}
-
 /// Parses the records of a dialogue file. Records of unknown kinds are kept (with
 /// `kind: None`) so that indices match the table.
 pub fn parse<'a>(table: &Table<'a>) -> Result<Vec<Line<'a>>> {
@@ -101,14 +90,14 @@ pub fn parse<'a>(table: &Table<'a>) -> Result<Vec<Line<'a>>> {
             let (night, rest) = if v.len() < 5 {
                 (None, &v[2..])
             } else {
-                (Some(int(&v[2]) != 0), &v[3..])
+                (Some(v[2].int() != 0), &v[3..])
             };
             Ok(Line {
                 kind,
-                a: int(&v[0]),
-                b: int(&v[1]),
+                a: v[0].int() as i32,
+                b: v[1].int() as i32,
                 night,
-                slot: int(&rest[0]),
+                slot: rest[0].int() as i32,
                 text: match rest[1] {
                     Value::Str(s) => s,
                     _ => None,

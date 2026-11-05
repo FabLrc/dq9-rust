@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use dq9_formats::dialogue::{self, Kind, Session, TalkState};
+use dq9_formats::maplist::{self, MapList};
 use dq9_formats::stb::{Instr, Script};
 use dq9_formats::trigger::{self, Member, State};
 use dq9_formats::{Font, FontId, Gpc2, Table, Value, level5};
@@ -430,4 +431,26 @@ fn message_pipeline_leaves_only_glyphs() {
         leftovers.keys().map(String::as_str).collect::<Vec<_>>(),
         expected
     );
+}
+
+#[test]
+fn map_list_loads() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+    let list = MapList::parse(&table).unwrap();
+    assert_eq!(list.records.len(), 1_010);
+    let mut ids = HashSet::new();
+    let (mut shipped, mut with_archive) = (0, 0);
+    for r in list.records.iter().filter(|r| r.id != 0) {
+        assert!(ids.insert(r.id), "map id {} twice", r.id);
+        let code = std::str::from_utf8(r.code).unwrap();
+        shipped += 1;
+        if rom.file_by_path(&format!("data/map/{code}.amdj")).is_ok() {
+            with_archive += 1;
+        }
+    }
+    // Ids are unique on shipped maps. 155 of the 179 without a `.amdj` are grotto floors
+    // (kind 6), whose maps are generated.
+    assert_eq!((shipped, with_archive), (871, 692));
 }

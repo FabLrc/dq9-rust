@@ -10,14 +10,14 @@ choix des répliques, triggers, scripts d'événements) ; pas encore de jeu affi
 objectif : une **v0.1 jouable** (prologue d'Angel Falls). Plan complet : `docs/roadmap.md`.
 
 <!-- coverage:start -->
-**Avancement : 0,7 %** des fonctions de jeu traduites (89 / 12 092), 1,4 % du code (38 Ko / 2 506 Ko).
+**Avancement : 0,8 %** des fonctions de jeu traduites (97 / 12 092), 1,5 % du code (39 Ko / 2 506 Ko).
 Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (définition dans `docs/roadmap.md`).
 
 <details><summary>Détail par module</summary>
 
 | Module | Fonctions traduites | Code traduit |
 |---|---:|---:|
-| ARM9 | 81 / 5 500 (1,4 %) | 35 Ko / 827 Ko (4,1 %) |
+| ARM9 | 89 / 5 500 (1,6 %) | 35 Ko / 827 Ko (4,2 %) |
 | ITCM | 0 / 34 (0,0 %) | 0 Ko / 6 Ko (0,0 %) |
 | ov_000 | 0 / 826 (0,0 %) | 0 Ko / 190 Ko (0,0 %) |
 | ov_001 | 0 / 515 (0,0 %) | 0 Ko / 70 Ko (0,0 %) |
