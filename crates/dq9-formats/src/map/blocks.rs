@@ -178,6 +178,7 @@ mod start_tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // a raw heading value, not π
     fn start_record_converts_to_fx32_and_reduces_the_angle() {
         let t = start(vec![
             Value::Float(0.21),
