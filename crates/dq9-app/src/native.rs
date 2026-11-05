@@ -6,12 +6,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
+use dq9_core::Hero;
 use dq9_render::camera::{DS_ASPECT, letterbox};
 use dq9_render::{Camera, Gait, Renderer, Viewport};
 use glam::Vec3;
 use winit::event_loop::EventLoop;
 
 use crate::app::{App, Options, UserEvent};
+use crate::talk::{self, Talk};
 use crate::{gpu, lighting, load, walk};
 
 #[derive(Parser)]
@@ -67,12 +69,18 @@ struct Cli {
     /// the maps and positions passed, including the doors crossed (`docs/app.md`).
     #[arg(long, requires = "map", allow_hyphen_values = true)]
     walk: Option<String>,
-    /// Start of `--walk` as `x,z` (ground height found), instead of the map's default.
-    #[arg(long, value_parser = parse_pair, allow_hyphen_values = true, requires = "walk")]
+    /// Start of `--walk` or `--screenshot` as `x,z` (ground height found, facing +z), instead
+    /// of the map's default.
+    #[arg(long, value_parser = parse_pair, allow_hyphen_values = true)]
     start: Option<(f32, f32)>,
     /// Camera position `x,y,z` (world units); with `--target`, replaces the framing view.
     #[arg(long, value_parser = parse_vec3, requires = "target", allow_hyphen_values = true)]
     eye: Option<Vec3>,
+    /// With `--screenshot`: inputs played before the capture, as `--walk` (`+x:1.5,-z:3,idle:1`)
+    /// plus the buttons `a` (action: talk, advance), `b` (cancel), `up` and `down`; each button
+    /// is one step. `+x:2,a,idle:3` walks east, talks to the NPC in front and types 3 seconds.
+    #[arg(long, requires = "screenshot", allow_hyphen_values = true)]
+    input: Option<String>,
     /// Point looked at, `x,y,z`.
     #[arg(long, value_parser = parse_vec3, requires = "eye", allow_hyphen_values = true)]
     target: Option<Vec3>,
@@ -222,6 +230,15 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     if let Some(at) = cli.start {
         hero = walk::start_hero(&loaded.collision, &start.map, at)?;
     }
+    let mut talk = Talk::default();
+    if let Some(input) = &cli.input {
+        // The inputs start where `--start` puts the hero and leave it where they end.
+        loaded.hero = hero;
+        talk.set_rom(rom);
+        let steps = talk::parse_inputs(input)?;
+        talk::play(&steps, &mut loaded, rom, &cli.story(), &mut talk)?;
+        hero = loaded.hero;
+    }
     println!(
         "hero: ({:.3}, {:.3}, {:.3}) yaw {:.3} ({})",
         hero.position.x,
@@ -265,7 +282,7 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         (Some(eye), Some(target), _) => camera.look_at(eye, target),
         (_, _, Some(bounds)) => {
             camera.frame(bounds);
-            if loaded.placed {
+            if loaded.placed || cli.input.is_some() {
                 camera.target = hero.position;
             }
         }
@@ -321,7 +338,16 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         Viewport::full(w, h)
     };
     let rgba = renderer
-        .render_to_rgba(&device, &queue, (w, h), viewport, &camera)
+        .render_to_rgba_with(
+            &device,
+            &queue,
+            (w, h),
+            viewport,
+            &camera,
+            |encoder, view| {
+                talk.draw(&device, &queue, format, encoder, view, (w, h));
+            },
+        )
         .context("reading the frame back")?;
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir)?;

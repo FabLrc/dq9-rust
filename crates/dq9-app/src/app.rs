@@ -28,6 +28,7 @@ use winit::window::{Window, WindowId};
 use crate::gpu::Gpu;
 use crate::lighting;
 use crate::load::{self, MapEntry};
+use crate::talk::{Button, Talk};
 
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
@@ -92,6 +93,8 @@ pub struct App {
     /// Map changes chained since the last fixed step (guards against warp loops).
     chain: u8,
     hero: Option<Hero>,
+    /// NPC conversations and the message window.
+    talk: Talk,
     hero_instance: Option<usize>,
     /// The protagonist's look (the save's hero, else a new game's), kept across maps.
     look: HeroLook,
@@ -137,6 +140,7 @@ impl App {
             state,
             chain: 0,
             hero: None,
+            talk: Talk::default(),
             hero_instance: None,
             look: HeroLook::new_game(),
             renderer: None,
@@ -171,6 +175,7 @@ impl App {
                 return;
             }
         }
+        self.talk.set_rom(&rom);
         self.rom = Some(rom);
         self.state = field::initial_state(&self.options.story);
         let start = match load::start(self.options.map.as_deref(), self.options.save.as_deref()) {
@@ -251,6 +256,7 @@ impl App {
         self.environment = lighting::environment(loaded.lighting.as_ref(), self.day);
         self.collision = loaded.collision;
         self.field = Some(loaded.field);
+        self.talk.enter_map(loaded.npcs);
         self.hero = Some(loaded.hero);
         self.hero_instance = Some(loaded.hero_instance);
         let s = &loaded.runtime.scene;
@@ -394,7 +400,16 @@ impl App {
         if !self.held.insert(code) {
             return; // key repeat
         }
+        if self.talk.is_active() {
+            match code {
+                KeyCode::ArrowUp | KeyCode::KeyW => self.talk.press(Button::Up),
+                KeyCode::ArrowDown | KeyCode::KeyS => self.talk.press(Button::Down),
+                _ => {}
+            }
+        }
         match code {
+            KeyCode::Enter | KeyCode::Space | KeyCode::KeyZ => self.talk.press(Button::Confirm),
+            KeyCode::Backspace | KeyCode::KeyX => self.talk.press(Button::Cancel),
             KeyCode::Escape => event_loop.exit(),
             KeyCode::Tab => {
                 self.camera.mode = match self.camera.mode {
@@ -437,6 +452,19 @@ impl App {
         self.last = now;
         while self.accumulator >= STEP {
             self.accumulator -= STEP;
+            let mut events = Vec::new();
+            if !self.talk.is_active() && self.talk.confirm_pending() {
+                if let (Some(rom), Some(hero), Some(field), Some((entry, _))) =
+                    (&self.rom, &self.hero, &mut self.field, &self.current)
+                {
+                    events = self
+                        .talk
+                        .begin(rom, &entry.code, hero, field, &mut self.state);
+                }
+                self.talk.discard_input();
+            }
+            self.talk.step();
+            let talking = self.talk.is_active();
             let mut input = CameraInput {
                 forward: self.axis(
                     &[KeyCode::KeyW, KeyCode::ArrowUp],
@@ -453,12 +481,12 @@ impl App {
                     || self.held.contains(&KeyCode::ShiftRight),
             };
             let walking = self.camera.mode == CameraMode::Orbit;
-            if walking {
+            if walking || talking {
                 input.forward = 0.0;
                 input.right = 0.0;
             }
             self.camera.step(&input, STEP);
-            let move_direction = if walking {
+            let move_direction = if walking && !talking {
                 let (sin, cos) = self.camera.yaw.sin_cos();
                 let forward = Vec3::new(sin, 0.0, -cos);
                 let right = Vec3::new(cos, 0.0, sin);
@@ -475,7 +503,6 @@ impl App {
             } else {
                 Vec3::ZERO
             };
-            let mut events = Vec::new();
             if let Some(hero) = &mut self.hero {
                 let before = hero.position;
                 hero.step(
@@ -490,7 +517,7 @@ impl App {
                         yaw: hero.yaw,
                         input: move_direction.normalize_or_zero(),
                     };
-                    events = field.step(&leader, &mut self.state);
+                    events.extend(field.step(&leader, &mut self.state));
                 }
                 if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance) {
                     // Motion from the distance covered this step (`dq9-render::hero`).
@@ -583,6 +610,14 @@ impl App {
             (&view, (w, h)),
             viewport,
             &self.camera,
+        );
+        self.talk.draw(
+            &gpu.device,
+            &gpu.queue,
+            gpu.config.format,
+            &mut encoder,
+            &view,
+            (w, h),
         );
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(frame);

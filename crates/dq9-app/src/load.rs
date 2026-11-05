@@ -4,6 +4,7 @@
 use anyhow::{Context as _, Result};
 use dq9_core::field::{self, Field};
 use dq9_core::state::GameState;
+use dq9_core::talk::Talkable;
 use dq9_core::{CollisionWorld, Hero};
 use dq9_formats::Table;
 use dq9_formats::cast::Story;
@@ -123,6 +124,8 @@ pub struct LoadedMap {
     pub placed: bool,
     /// The map's `.bats` lighting script, when it has one.
     pub lighting: Option<dq9_formats::lighting::LightingInfo>,
+    /// The NPCs the hero can talk to, at the story point.
+    pub npcs: Vec<Talkable>,
 }
 
 fn text(s: &[u8]) -> String {
@@ -220,6 +223,15 @@ pub fn load(
         .map(<[u8]>::to_vec);
     let field = Field::new(record.id, &assembled.regions, trigger_file)
         .with_context(|| format!("reading the trigger file of {key}"))?;
+    let npcs = match map::rom_file(&rom, &dq9_formats::cast::archive_path(record.code)) {
+        Some(bytes) => dq9_formats::cast::load(bytes, record.id, story)
+            .with_context(|| format!("reading the cast of {key}"))?
+            .npcs
+            .iter()
+            .map(Talkable::from_cast)
+            .collect(),
+        None => Vec::new(),
+    };
     let label = [record.region, record.label]
         .into_iter()
         .flatten()
@@ -240,5 +252,6 @@ pub fn load(
         placed,
         hero_instance,
         lighting,
+        npcs,
     })
 }
