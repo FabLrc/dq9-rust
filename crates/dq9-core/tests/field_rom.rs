@@ -234,3 +234,44 @@ fn angel_falls_houses_open_and_close() {
     let mut village = house.arrive(&left);
     assert_eq!(village.walk(Vec3::ZERO, 120), None);
 }
+
+/// Stornway at night, progress 19.2 (a melonDS state of the game at that point): the load
+/// event marks the doorways 22 and 24 used (`mark_object`), exactly the two whose flags the
+/// game's RAM shows with bit 2 set (`dq9re doors --state`: 12 and 14 against 8 and 10).
+#[test]
+fn stornway_at_night_marks_its_two_locked_doorways() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let story = dq9_formats::cast::Story {
+        chapter: 19,
+        step: 2,
+        substep: 1,
+        daytime: false,
+        ..Default::default()
+    };
+    let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+    let list = MapList::parse(&table).unwrap();
+    let ctx = Context {
+        time_of_day: 0,
+        grotto_environ: 1,
+    };
+    let map = Map::assemble(
+        list.find(100).unwrap(),
+        &table,
+        &list,
+        |p| map::rom_file(&rom, p),
+        &ctx,
+    )
+    .unwrap();
+    let file = map::rom_file(&rom, "data/scenario/triggerC01.bin").map(<[u8]>::to_vec);
+    let mut field = Field::new(100, &map.regions, file).unwrap();
+    let mut state = field::initial_state(&story);
+    field.enter(&mut state, true);
+    let used: Vec<u8> = field
+        .doorway_flags()
+        .into_iter()
+        .filter(|&(_, _, flags)| flags & 4 != 0)
+        .map(|(_, number, _)| number)
+        .collect();
+    assert_eq!(used, [24, 22]);
+}

@@ -580,3 +580,46 @@ fn yaw_of_the_games_angle_matches_the_heros_convention() {
     );
     assert!((angle_of_yaw(yaw_of_angle(0.7)) - 0.7).abs() < 1e-6);
 }
+
+#[test]
+fn actions_6c_and_88_mark_and_unmark_the_matching_doorway() {
+    // Doorway class 0, number 9, facing 0°: marked used by the load event, released when
+    // the leader enters area 7. Another number is left alone.
+    let file = trigger_file(&[
+        record(
+            20,
+            vec![word(9, 1100), word(0x6c, 0), Cell::I(9), Cell::I(0)],
+        ),
+        record(
+            20,
+            vec![word(9, 1100), word(0x6c, 0), Cell::I(8), Cell::I(0)],
+        ),
+        record(2, vec![word(7, 7), word(0x88, 0), Cell::I(9), Cell::I(0)]),
+    ]);
+    let mut regions = door_regions();
+    regions
+        .zones
+        .push(area(7, [20.0, 0.0, 0.0], [2.0, 2.0, 2.0]));
+    let mut f = field(&regions, Some(file));
+    let mut state = State::default();
+    f.enter(&mut state, false);
+    assert_eq!(f.doorway_flags(), [(0, 9, FLAG_WARP | DOORWAY_USED)]);
+    // Marked: walking in does nothing.
+    for _ in 0..10 {
+        assert!(f.step(&at(0.0, 0.0, 0.5, NORTH), &mut state).is_empty());
+    }
+    f.step(&at(20.0, 0.0, 0.0, IDLE), &mut state);
+    assert_eq!(f.doorway_flags(), [(0, 9, FLAG_WARP)]);
+}
+
+#[test]
+fn a_marked_doorway_with_the_wrong_facing_is_not_matched() {
+    // 90° is not the doorway's facing (0 radians).
+    let file = trigger_file(&[record(
+        20,
+        vec![word(9, 1100), word(0x6c, 0), Cell::I(9), Cell::I(90)],
+    )]);
+    let mut f = field(&door_regions(), Some(file));
+    f.enter(&mut State::default(), false);
+    assert_eq!(f.doorway_flags(), [(0, 9, FLAG_WARP)]);
+}

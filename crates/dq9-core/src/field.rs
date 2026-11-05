@@ -27,7 +27,8 @@ use glam::Vec3;
 use nds_rom::Result;
 
 use crate::trigger::{
-    Flow, Request, State, TRACKS, Unsupported, first_match, run_action, run_deferred, track_of_room,
+    Flow, Request, State, TRACKS, Unsupported, degrees_to_angle, first_match, run_action,
+    run_deferred, track_of_room,
 };
 
 /// One turn as `fx32` (`0x6488`).
@@ -573,6 +574,15 @@ impl Field {
         self.collect(fired, Some(own), events);
     }
 
+    /// The doorways in the game's list order as `(class, number, flags)`, flags with their
+    /// runtime bits.
+    pub fn doorway_flags(&self) -> Vec<(u8, u8, u16)> {
+        self.doorways
+            .iter()
+            .map(|s| (s.zone.class, s.zone.number, s.flags))
+            .collect()
+    }
+
     /// Fires `event` with parameter words `words` (index, value): the first matching
     /// trigger's actions run until one stops the list, adding the areas of action 0x8f as
     /// they come; the deferred actions of a list that ran to its end are then applied.
@@ -610,11 +620,18 @@ impl Field {
                 let mut deferred = Vec::new();
                 let mut completed = true;
                 for action in &trigger.actions {
-                    if action.code == 0x8f {
-                        if let Some(area) = AddedArea::new(action) {
-                            self.added.push(area);
+                    match action.code {
+                        0x8f => {
+                            if let Some(area) = AddedArea::new(action) {
+                                self.added.push(area);
+                            }
+                            continue;
                         }
-                        continue;
+                        0x6c | 0x88 => {
+                            mark_doorways(&mut self.doorways, action, action.code == 0x6c);
+                            continue;
+                        }
+                        _ => {}
                     }
                     match run_action(action, state) {
                         Flow::Next => {}
@@ -682,6 +699,31 @@ impl Field {
             events.push(Event::MapChange(change));
         }
         changed
+    }
+}
+
+/// Actions 0x6c and 0x88 (`Trig_RunAction` cases 8 and `0x24`): set or clear the « used »
+/// bit of the doorways of class `arg`, number operand 0 and facing operand 1 (degrees).
+/// A used doorway is skipped; setting it leaves a doorway with the runtime bit 0 alone.
+fn mark_doorways(doorways: &mut [Slot], op: &Op<'_>, used: bool) {
+    let (Some(number), Some(angle)) = (op.operands.first(), op.operands.get(1)) else {
+        return;
+    };
+    let number = number.int() as u16;
+    let angle = degrees_to_angle(angle.int() as i32);
+    for slot in doorways {
+        let zone = &slot.zone;
+        if u16::from(zone.class) != op.arg
+            || u16::from(zone.number) != number
+            || zone.volume.facing as u16 != angle
+        {
+            continue;
+        }
+        if !used {
+            slot.flags &= !DOORWAY_USED;
+        } else if slot.flags & DOORWAY_DISABLED == 0 {
+            slot.flags |= DOORWAY_USED;
+        }
     }
 }
 

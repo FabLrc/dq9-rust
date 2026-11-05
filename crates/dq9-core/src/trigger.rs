@@ -363,7 +363,7 @@ fn event_byte(world: &dyn World, offset: usize) -> i8 {
 /// Degrees to the 16-bit angle stored by the compiler for condition 0x1d: radians brought
 /// once into `0..=2π`, times 4096, truncated (`Trig_CompileWords`, `0x0205ee24`; single
 /// precision like the game's soft-float calls).
-fn degrees_to_angle(degrees: i32) -> u16 {
+pub fn degrees_to_angle(degrees: i32) -> u16 {
     use std::f32::consts::PI;
     let mut r = PI * degrees as f32 / 180.0;
     if r > 2.0 * PI {
