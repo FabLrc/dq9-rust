@@ -727,6 +727,21 @@ ov_017::0218e674 Field_UpdateParty         # 0218e210 for each party member
 ov_017::0219344c Character_CollideWorld    # gravity +0x51 per frame (max 0x1000), col2 query per part
 ov_017::02192b48 Character_ResolveTriangles # ground ray (+0x199), step window 0x800/0x1800, wall push 020315c8
 
+# --- Collision geometry (docs/re/collision.md, docs/re/movement.md) ---
+0x02017da0 Zone3D_PieceTriangles      # (zone, piece, out, box max xyz, box min xyz): triangles of one placed .col2 meeting the box, 0x18-byte records
+0x020310ac Box6_Overlap               # boxes [max xyz, min xyz], edges included
+0x02031198 Triangle_FromFix16         # 4 x fix16 vectors (3 vertices, normal) to 4 x fx32
+0x020312cc Triangles_RayFloor         # highest floor (normal y > 0x800) a segment crosses, then the plane point (Ray_Plane)
+0x020315c8 Triangles_PushSphere       # wall push in two passes: faces the axis crosses, then closest points; corner-trap revert
+0x02031b94 Ray_TriangleFront          # segment against a triangle from its front: 0 miss, -1 outside, 1 hit (weights, t)
+0x02031d30 Triangle_ClosestPoint      # vertex / edge / face region of the point
+0x020320a0 Ray_Plane                  # t = (d - n.a) / (n.(b - a)), point if 0 <= t <= 1
+0x02033eec Character_SetWall          # +0xe4 = wall triangle (3 vertices, normal), +0xe0 bit 6
+0x02033f54 Character_GetWall          # +0xe4 or 0
+ov_017::0218df50 Field_PushFromParty  # leader pushed out of the other party members (not ported)
+ov_017::0218dfd8 Field_PushFromNpcs   # leader pushed out of the NPC cylinders (not ported)
+ov_017::02193290 Character_CollideObjects # zone objects' 8-triangle colliders within 1 unit (not ported)
+
 # --- Characters (docs/re/characters.md) ---
 ov_017::021a2c14 Cast_LoadMap               # data/scenario/<area>.npc: place.bin, npc.bin, NpcTable_Build, ground snap
 0x02018fcc Zone3D_GroundHeight              # ray y+1..y-10 over the collision, hit + 0x199

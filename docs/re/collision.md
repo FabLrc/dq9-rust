@@ -4,7 +4,7 @@ Le lecteur `dq9_formats::map::Collision::parse` décode les octets **décompress
 de l'index de grille et des records de sol des fichiers `.col2` européens. Dans les archives,
 les membres `.col2` portent un en-tête de compression Nintendo ; l'appelant les décompresse
 avec `nds_rom::compress::decompress` avant de les parser. Le parseur n'effectue aucune E/S.
-Le parseur est maintenant consommé par `dq9-core` pour les requêtes de sol et le mouvement
+Le parseur est consommé par `dq9-core` pour les requêtes de sol et le mouvement
 ([`movement.md`](movement.md)). La construction reste sans E/S ; les archives et les membres
 sont fournis par l'appelant.
 
@@ -17,7 +17,7 @@ bornes et leurs cohérences avant de construire le résultat.
 | Décalage | Donnée | Décodage |
 |---|---|---|
 | `0x00` | version | `u32`, valeur 3 |
-| `0x04` | `shift` | `u32`, de 0 à 5 ; échelle probable `2^shift` **[inféré]** |
+| `0x04` | `shift` | `u32`, de 0 à 5 ; sommets et bornes valent `entier << shift` en `fx32` |
 | `0x08` | limites | six `i16`, min x/y/z puis max x/y/z |
 | `0x14` | nombre de triangles | `u32` |
 | `0x18` | dimensions de cellule | `u16` taille, `u16` inconnu |
@@ -51,24 +51,42 @@ membre `.col2`, puis vérifie par `Collision::parse` les 1 178 maillages (109 12
 Les tests synthétiques vérifient décodage, sections tronquées et incohérence des plages. La
 ROM n'est pas une fixture et n'est pas nécessaire à la CI.
 
-Restent inconnus ou inférés : origine et correspondance spatiale des cellules, attributs de
-triangles (sauf leur index de record dans les sept bits de poids fort, lui-même **[inféré]**),
-sens exact des deux derniers demi-mots des records et facteur `2^shift` (cohérent avec les
-mesures, mais **[inféré]**). Certains petits maillages sont vraisemblablement des volumes
+Reste inconnu : le sens exact des deux derniers demi-mots des records ; le facteur `2^shift` est
+confirmé par le code (`0x0204bf54` : bornes `<< shift` ; `ov_017::02192b48` : sommets × `1 << shift`).
+Certains petits maillages sont vraisemblablement des volumes
 verticaux, pas des surfaces praticables. Le lecteur expose ces données sans leur attribuer de
 physique.
 
 ## Utilisation par J2
 
-`dq9-core::CollisionWorld::build` assemble les collisions de chaque placement visible, applique
-la transformation d'instance et l'échelle `2^shift` [inférée]. Les requêtes de sol parcourent
-les faces ascendantes directement : l'origine et le placement de la grille ne sont pas établis.
-Le déplacement expérimental et ses limites sont décrits dans [`movement.md`](movement.md).
+`dq9_core::CollisionWorld` garde les maillages `Collision` tels que lus et leurs placements
+(`Piece` : maillage, position et angle `fx32` du placement) ; le jeu travaille dans le repère de
+chaque pièce, sommets = entiers du fichier `<< shift`. Le déplacement, le rayon du sol et la
+poussée des murs sont décrits dans [`movement.md`](movement.md).
 
-## Correction : mot d'attributs et grille (J2)
+## Grille, mot d'attributs et requête (J2, `0x0204c040`)
 
-Le code `0x0204c040` (voir [`movement.md`](movement.md)) établit l'origine de la grille (minimum
-de la boîte de l'en-tête, rangées décalées d'une demi-cellule sur les rangées impaires,
-indice `rangée × gridX + colonne + rangée / 2`) et le sens du mot d'attributs : six quartets de
-boîte englobante puis `(record << 1) | marque`. Le lecteur `Collision::parse` n'expose pas encore
-ces champs.
+Le code de requête établit (relu dans `dq9_core::collision::query` et vérifié par des tests
+synthétiques) :
+
+- **Objet `.col2` en mémoire** (`0x0204bf54`, 0x4c octets) : `+0` en-tête, `+4` triangles,
+  `+8` comptes de cellules (`u8`), `+0xc` débuts (`u16`), `+0x10` indices (`u16`), `+0x14`
+  records (version 3), `+0x18` bornes maximales `<< shift`, `+0x24` minimales `<< shift`,
+  `+0x48` nombre de cellules `gridX × gridZ + gridZ / 2`.
+- **Test de bornes** : la boîte de la requête (en coordonnées de la pièce) doit recouper les
+  bornes du maillage (bords inclus), puis elle est décalée de `shift` (décalage arithmétique) ;
+  un triangle est retenu si sa boîte la recoupe.
+- **Boîte d'un triangle** : le mot d'attributs (`+0x18`) est formé des octets `0x18..0x1a` :
+  six quartets d'indices (dans les 9 coordonnées du triangle) du min x/y/z puis du max
+  x/y/z ; l'octet `0x1b` est `(indice de record << 1) | marque temporaire`. Cela explique les
+  valeurs « permutations de `0x543210` » du wiki.
+- **Grille décalée** : au plus 7 cellules, toutes sont balayées ; sinon rangée =
+  `⌊FX_Div(zc − minZ, taille) / 4096⌋` (tronqué vers 0), colonne = idem sur `x` (avec
+  `+ taille / 2` sur les rangées impaires), `zc` et `xc` étant les centres de la boîte ; la
+  cellule centrale a l'indice `rangée × gridX + colonne + rangée / 2` et ses voisines (six
+  autour d'une rangée paire, sept selon la position sur une rangée impaire, qui compte
+  `gridX + 1` cellules) sont aussi lues. Une valeur légèrement hors grille (moins d'une cellule
+  en deçà) tombe, par la troncature, dans la première colonne ou rangée.
+- 0x60 triangles au plus par pièce et par requête, 0xc0 candidats examinés.
+
+Le lecteur `Collision::parse` expose déjà ces mots (`Triangle::attributes`).

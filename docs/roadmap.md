@@ -244,9 +244,11 @@ maisons et en ressortir ; position comparée à melonDS sur une même séquence 
 Avancement : l'heure du jour existe comme horloge de 420 s et phase explicite
 (`dq9_core::lighting::DayClock`, port de `GameState::SetDayTimer`/`AdvanceDayTimer`, sans le
 branchement de la mise à jour de scène qui la fait courir sur les cartes de type 0 et 7 : l'application
-l'entre par option). `dq9-core` assemble les collisions transformées et fournit un déplacement
-déterministe au pas fixe avec snap du sol et blocage simplifié des faces verticales
-([`re/movement.md`](re/movement.md)). L'application affiche le héros animé (J1) et suit la caméra.
+l'entre par option). `dq9-core` porte le déplacement du chef de groupe d'après `ov_017::0218e210`
+([`re/movement.md`](re/movement.md)) : pavé et caps, rotation du modèle (`0x324`), vitesse
+(`0x189`, accélération `0x28`), requête `.col2` par grille, rayon du sol, sphère contre les murs,
+chute, glissement le long des murs, en `fx32` au bit près ; la rotation `L`/`R` de la caméra
+(`FieldCamera`) est portée sans sa hauteur ni sa distance. L'application affiche le héros animé (J1) et suit la caméra.
 `--save`/le champ Web restaurent la carte, la position et le cap du héros, l'heure et le
 scénario du slot normal valide (`dq9_core::state::GameState`, [`re/save.md`](re/save.md)
 § « Position à la reprise » : le groupe est posé au point de départ `0x6e` de la carte ;
@@ -264,15 +266,15 @@ sortir fonctionne (`dq9-app --walk`, test `angel_falls_houses_open_and_close`).
 Comparaison à melonDS sur l'église de Stornway : sortie (warp `0x72`) et retour (porte de type
 2) concordent pour les cartes, les arrivées, les angles et le bord de franchissement, à ± 2
 images de pilotage près ([`re/map-archive.md`](re/map-archive.md)). Restent : la tâche de porte
-(animation, marche automatique, fondu), les zones des autres types, la vitesse fidèle, le
+(animation, marche automatique, fondu), les zones des autres types, le
 parcours complet d'Angel Falls et la comparaison à nombre d'images égal : les états melonDS
 ne sont pas alignés en nombre d'images, le critère différentiel de J2 n'est pas validé.
 
-Déplacement fidèle (analyse seulement, aucun port) : la chaîne du code est tracée dans
-[`re/movement.md`](re/movement.md) (entrée `0x02038148`, `Character_Update` `0x020332bc`,
-requête `.col2` `0x0204c040`, collision `ov_017::0219344c`, caméra `0x020a213c`). Constantes
-établies : vitesse max `0x189` (≈ 5,76 unités/s), accélération `0x28`, rotation `0x324` ; les
-valeurs provisoires de `dq9-core` (4 unités/s, murs simplifiés) ne sont pas encore remplacées.
+Déplacement fidèle : porté dans `dq9-core` (`fx`, `movement`, `collision`, `camera`), constantes
+comparées à la ROM par `tests/movement_rom.rs` ; vitesse mesurée sous melonDS dans
+[`re/movement.md`](re/movement.md). Restent : personnages et objets de zone qui poussent le
+héros, aimantation sur les zones orientées, échelles, caméra complète (hauteur, distance,
+suivi), comparaison position par position à nombre d'images égal.
 
 ## J3 — Parler et scènes : **v0.1 jouable**
 

@@ -56,8 +56,8 @@ cargo run -p dq9-app --release -- --map M01 --frame 10 `
     --eye=-1.74,0.3,-3.5 --target=-1.74,-0.5,1.22 --screenshot build/scratch/app/hero.png
 ```
 
-`--walk` joue les mêmes pas fixes qu'en fenêtre (`Hero::step`, puis `Field::step` avec la pose
-du héros) : `+x`, `-x`, `+z`, `-z` (deux axes font une diagonale : `+x-z`) ou `idle`, deux
+`--walk` joue les mêmes pas fixes qu'en fenêtre (`Hero::step` avec les touches du pavé que
+la direction demandée presse, caméra au yaw 0, puis `Field::step` avec la pose du héros) : `+x`, `-x`, `+z`, `-z` (deux axes font une diagonale : `+x-z`) ou `idle`, deux
 points et une durée ; `--start x,z` pose le héros au sol de ce point (aussi avec
 `--screenshot`, face à +z). Chaque changement de carte, chaque arrivée et chaque tronçon sont
 écrits sur la sortie standard.
@@ -107,9 +107,12 @@ avec la même mise à jour CPU qu'en fenêtre et sur le Web, sans dépendre du t
 du GPU. Les sprites sont orientés vers la caméra de `--eye`/`--target` avant cette évaluation.
 
 Commandes : glisser avec le bouton gauche pour tourner, molette pour zoomer. En mode orbite,
-`ZQSD`/`WASD` (touches physiques) ou flèches déplacent le héros sur le sol ; `Maj` double sa
-vitesse provisoire. `Tab` passe en vol libre, où ces touches déplacent la caméra ; `Q`/`E`
-(physiques `A`/`E` en AZERTY) déplacent la cible vers le bas/haut. `F` recadre, `R` format DS,
+`ZQSD`/`WASD` (touches physiques) ou flèches sont le pavé du jeu : le héros tourne, accélère et
+marche à 5,76 unités/s comme `Character_Update`, bloqué par les murs et posé sur le sol de la
+carte ([`re/movement.md`](re/movement.md)) ; `Q`/`E` (physiques `A`/`E` en AZERTY) sont les
+boutons `L`/`R` du jeu : ils tournent la caméra de ± 45° au plus autour de son yaw d'entrée sur
+la carte, ensemble ils la ramènent. `Tab` passe en vol libre, où les touches de déplacement
+déplacent la caméra et `Q`/`E` la cible vers le bas/haut ; `Maj` accélère la caméra. `F` recadre, `R` format DS,
 `T` moment suivant (liste « Moment » sur le Web), `PageHaut`/`PageBas` carte précédente/suivante, `Entrée`/`Espace` parler, `Échap` quitter.
 
 ## Lancer dans un navigateur
