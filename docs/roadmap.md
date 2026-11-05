@@ -141,8 +141,9 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       plan. **Sauvegarde chargée → RAM** : toutes les copies de `Save_LoadSlot` et les champs
       des membres du groupe (`PartyMember_LoadRecord`) retrouvés octet pour octet
       (`SAVE_COPIES`, `compare_party`, `dq9re state --save`, `re/save.md` § « En RAM »).
-      **Reste** : comparer les structures que `dq9-core` calculera (position, triggers) à la
-      RAM.
+      **Position** : objets du groupe et du héros lus en RAM (`GameState+8`, `Object3D+0x44`,
+      `dq9re state`), vérifiés en déplaçant le héros. **Reste** : comparer les structures que
+      `dq9-core` calculera (position après une même suite d'entrées, triggers) à la RAM.
 - [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-core`,
       `dq9-render`, `dq9-audio`, `dq9-app` ; l'état modélisé des triggers passe de
       `dq9-formats` à `dq9-core`.

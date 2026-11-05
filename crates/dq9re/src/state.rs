@@ -29,6 +29,17 @@ pub fn run(path: &Path, peek: &[String], save: Option<&Path>, rom: Option<&Path>
         println!("SDK VBlank count: {}", state.vblank_count()?);
         let (chapter, step, substep) = state.scenario()?;
         println!("scenario: chapter {chapter} step {step} substep {substep}");
+        let hero = state.protagonist_index()?;
+        for index in 0..4 {
+            if let Some(at) = state.object(index)? {
+                let p = state.object_position(at)?.map(|v| f64::from(v) / 4096.0);
+                let who = if index == hero { " (protagonist)" } else { "" };
+                println!(
+                    "object {index} at {at:#010x}: position ({:.3}, {:.3}, {:.3}){who}",
+                    p[0], p[1], p[2]
+                );
+            }
+        }
         let rom_path = rom
             .map(Path::to_path_buf)
             .or_else(|| crate::find_rom().ok());

@@ -24,6 +24,8 @@ pub const DTCM_BASE: u32 = 0x027E_0000;
 pub const VBLANK_COUNT: u32 = 0x027F_FC3C;
 /// Address of the `GameState` singleton (`GameState::GetInstance` reads it from a literal pool).
 pub const GAME_STATE: u32 = 0x020f_33d8;
+/// Entries of the game object table at `GameState+8` (party, NPCs, monsters).
+pub const OBJECT_COUNT: u32 = 0xe9;
 /// Quest manager whose start is the save's event block (`func_0205ec44` returns it).
 pub const QUEST_MANAGER: u32 = 0x0210_8844;
 /// Quest log (`QuestLog_Get`, `0x02094d7c`).
@@ -77,6 +79,20 @@ pub const SAVE_COPIES: &[SaveCopy] = &[
     copy("Main +0x2c38", MAIN + 0x2c38, 4, GAME_STATE + 0x3974),
     copy("mini medals", MAIN + 0x2c3c, 4, GAME_STATE + 0x3978),
     copy("Main +0x2c44", MAIN + 0x2c44, 7, GAME_STATE + 0x5691),
+    copy("area", MAIN + 0x2c4c, 2, GAME_STATE + 0x7e74),
+    copy("Main +0x2c5a", MAIN + 0x2c5a, 1, GAME_STATE + 0x3981),
+    copy("Main +0x2c5b", MAIN + 0x2c5b, 1, GAME_STATE + 0x63dc),
+    copy("Main +0x2c5c", MAIN + 0x2c5c, 2, ZONE_3D + 0x2786),
+    copy("Main +0x2c5e", MAIN + 0x2c5e, 2, ZONE_3D + 0x2784),
+    copy(
+        "Main +0x2c60 (vector, word)",
+        MAIN + 0x2c60,
+        16,
+        ZONE_3D + 0x2774,
+    ),
+    copy("Main +0x2c70", MAIN + 0x2c70, 4, ZONE_3D + 0x2794),
+    copy("Main +0x2c74", MAIN + 0x2c74, 1, ZONE_3D + 0x2788),
+    copy("Main +0x2c77", MAIN + 0x2c77, 1, ZONE_3D + 0x27d0),
     copy("Main +0x2c78", MAIN + 0x2c78, 6, GAME_STATE + 0x74fe),
     copy("Main +0x2c88", MAIN + 0x2c88, 0x1a, QUEST_LOG + 0x4a8),
     copy("progress words", 11568, 0x10, GAME_STATE + 0x5cb0),
@@ -367,6 +383,31 @@ impl<'a> State<'a> {
         ))
     }
 
+    /// Address of game object `index` (`GameState+8`, table of [`OBJECT_COUNT`] pointers read
+    /// by `Chara_Get`, `0x0200fd80`), `None` for an empty entry or an index past the table.
+    pub fn object(&self, index: u32) -> Result<Option<u32>> {
+        if index >= OBJECT_COUNT {
+            return Ok(None);
+        }
+        let ptr = self.u32(GAME_STATE + 8 + 4 * index)?;
+        Ok((ptr != 0).then_some(ptr))
+    }
+
+    /// Index of the protagonist's object (`GameState+0x3ac`, read by
+    /// `GameState::GetProtagonist`, `0x0200fddc`).
+    pub fn protagonist_index(&self) -> Result<u32> {
+        self.u32(GAME_STATE + 0x3ac)
+    }
+
+    /// World position of a game object: `Object3D::position_` (`+0x44`, three fx32 with
+    /// 12 fractional bits), the start of every game object.
+    pub fn object_position(&self, object: u32) -> Result<[i32; 3]> {
+        let b = self.read(object + 0x44, 12)?;
+        Ok(core::array::from_fn(|i| {
+            i32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
+        }))
+    }
+
     /// For each of [`SAVE_COPIES`], the offsets (relative to the copy) where RAM differs from
     /// `slot`: all empty when the state's game was loaded from that slot and the copies have
     /// not been changed since (except those marked `runtime`).
@@ -643,5 +684,32 @@ mod tests {
         let checks = State::parse(&data).unwrap().compare_party(&slot).unwrap();
         assert!(checks[0].differing.is_empty());
         assert_eq!(checks[1].differing, ["levels"]);
+    }
+
+    #[test]
+    fn protagonist_position_follows_the_object_table() {
+        let object = 0x022b_0000u32;
+        let data = synthetic_with(|m| {
+            let put = |m: &mut [u8], addr: u32, v: i32| {
+                let o = (addr & 0x3f_ffff) as usize;
+                m[o..o + 4].copy_from_slice(&v.to_le_bytes());
+            };
+            put(m, GAME_STATE + 8 + 4 * 2, object as i32);
+            put(m, GAME_STATE + 0x3ac, 2);
+            put(m, object + 0x44, -0x3_9000);
+            put(m, object + 0x48, 0x199);
+            put(m, object + 0x4c, 0x1_f800);
+        });
+        let st = State::parse(&data).unwrap();
+        let index = st.protagonist_index().unwrap();
+        assert_eq!(index, 2);
+        let at = st.object(index).unwrap().unwrap();
+        assert_eq!(at, object);
+        assert_eq!(
+            st.object_position(at).unwrap(),
+            [-0x3_9000, 0x199, 0x1_f800]
+        );
+        assert_eq!(st.object(0).unwrap(), None);
+        assert_eq!(st.object(OBJECT_COUNT).unwrap(), None);
     }
 }

@@ -31,6 +31,9 @@ Un état troncaté ou sans `NDSG`/`CP15` assez longs est refusé (jamais de pani
 | `0x020f33d8` | instance de `GameState` : la valeur est le mot du littéral lu par `GameState::GetInstance` (`0x0200f398`) | ARM9 européen, vérifié en RAM |
 | `GameState+0x5cb0 / 4 / 8` | chapitre, étape, sous-étape (`Save_Chapter`, `Save_ScenarioStep`, `Save_ScenarioSubstep`) | `re/symbols.txt` |
 | `0x02108844`, `0x02109418`, `0x020fb3f0` | `g_QuestManager` (bloc d'événements), `g_QuestLog`, `g_Zone3D` | `save.md` § « En RAM » |
+| `GameState+8` | table de 0xe9 pointeurs d'objets de jeu (groupe, PNJ, monstres) : `Chara_Get` (`0x0200fd80`) | ARM9 européen ; `GameState.h` de la décompilation USA |
+| `GameState+0x3ac` | indice de l'objet du protagoniste (`GameState::GetProtagonist`, `0x0200fddc`) | idem |
+| objet `+0x44` | position dans le monde, 3 × fx32 (`Object3D::position_`) | décompilation USA (`Object3D.h`), vérifié en déplaçant le héros |
 
 `State::read(addr, len)` adresse la RAM principale (miroir tous les 4 Mio), le DTCM à
 `0x027e0000` et l'ITCM (miroir tous les 32 Kio) ; une lecture ne traverse pas deux mémoires.
@@ -54,6 +57,11 @@ les écarts ; deux copies sont connues pour changer pendant le jeu (« changed b
 Il compare aussi chaque membre du groupe à son objet en RAM (`State::compare_party`, champs
 de `save.md` § « Membres du groupe »). Plusieurs écarts inattendus = le jeu n'a pas été
 chargé depuis cette sauvegarde (sur l'écran titre : aucun objet membre n'a les bons ids).
+
+Pour piloter le jeu (déplacements), associer d'abord des touches dans `melonDS.toml`
+(`[Instance0.Keyboard]`, codes Qt : `Up = 16777235`, `Down = 16777237`, `Left = 16777234`,
+`Right = 16777236`, `A = 88` (X), `B = 90` (Z)) ; des `WM_KEYDOWN`/`WM_KEYUP` postés à la
+fenêtre suffisent alors, sans premier plan. Les modificateurs (Maj+F1) ne passent pas ainsi.
 
 ### Produire un état
 
@@ -89,6 +97,15 @@ démarrage direct, BIOS libres) :
   zones que le jeu modifie (`save.md` § « En RAM »). Les écarts sont les mêmes d'un état à
   l'autre.
 - Compteur de VBlank cohérent avec 60 images/s (~2 100 après ~35 s).
+- Positions : à l'arrivée dans l'auberge de Stornway, les 4 objets du groupe (indices 0 à 3,
+  héros = 0) sont en (0,210 ; 0,120 ; −1,380). Après ~1 s vers le bas puis ~0,6 s vers la
+  gauche (touches postées), le héros est en (−2,853 ; 0,106 ; 3,854) et les trois autres le
+  suivent en file ; `dq9re state` les affiche. Les objets sont alloués dans le tas
+  (`0x022bbbdc`, puis tous les `0x116c0`), d'où le passage obligé par la table. L'indice
+  dans la table est l'id de l'ordre du groupe (`save.md` § « Membres du groupe ») : sur la
+  démo, ordre `[0, 3, 2, 1]`, et l'id 3 (2ᵉ personnage) pointe vers le 2ᵉ objet alloué.
+- Le vecteur de la sauvegarde copié en `g_Zone3D+0x2774` (−57 ; 0,1 ; −31,5) n'est pas la
+  position du héros dans l'auberge : [inconnu] (position extérieure de retour ?).
 
 **Correction** : la première version du script perdait parfois la confirmation de
 « Continue » et enregistrait l'**écran titre** (`ov_004`) ; le scénario 19/2/1 y est déjà

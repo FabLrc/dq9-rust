@@ -114,6 +114,8 @@ l'adresse lue dans le code. Table complète : `melonds::SAVE_COPIES`.
 | sac (`7652`, 0x1d4), puis `+0x2b08` (0x128) | `GameState_Party` (`0x02010838` → `GameState+0x2a04`) `+0`, `+0xe04` | identiques |
 | banque, or, mot `11456`, mini-médailles | `GameState+0x396c`, `+0x3970`, `+0x3974`, `+0x3978` (partie `+0xf68..+0xf74`) | identiques |
 | ordre (4) et effectif du groupe | `GameState+0x397c`, `+0x3980` | identiques |
+| zone (`11476`, u16) ; `11490`, `11491` | `GameState+0x7e74` (aussi partie `+0x2c94`) ; partie `+0xf7d`, `GameState+0x63dc` | identiques |
+| `11492`, `11494` (u16, ordre inversé), vecteur `11496` (3 × fx32) + mot `11508`, `11512`, `11516`, `11519` | `g_Zone3D+0x2786`, `+0x2784`, `+0x2774..+0x2784`, `+0x2794`, `+0x2788`, `+0x27d0` | identiques ; le vecteur n'est pas la position du héros à la reprise |
 | membres du groupe (572 octets chacun) | convertis par `PartyMember_LoadRecord` (`0x02082d7c`) vers `GameState_PartyMember` (`GameState+0x474 + i×0x964`), § suivant | tous les champs comparés identiques |
 | personnages en réserve | `GameState+0x3984` (n × 572, copie directe) | démo : 0 en réserve |
 | mots de progression (16) | `GameState+0x5cb0` | identiques |
