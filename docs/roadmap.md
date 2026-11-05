@@ -271,8 +271,8 @@ parcours complet d'Angel Falls et la comparaison à nombre d'images égal : les 
 ne sont pas alignés en nombre d'images, le critère différentiel de J2 n'est pas validé.
 
 Déplacement fidèle : porté dans `dq9-core` (`fx`, `movement`, `collision`, `camera`), constantes
-comparées à la ROM par `tests/movement_rom.rs` ; vitesse mesurée sous melonDS dans
-[`re/movement.md`](re/movement.md). Restent : personnages et objets de zone qui poussent le
+comparées à la ROM par `tests/movement_rom.rs` ; vitesse mesurée sous melonDS (une mesure, ± 1 image,
+compatible : [`re/movement.md`](re/movement.md)). Restent : personnages et objets de zone qui poussent le
 héros, aimantation sur les zones orientées, échelles, caméra complète (hauteur, distance,
 suivi), comparaison position par position à nombre d'images égal.
 

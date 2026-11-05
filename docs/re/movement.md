@@ -173,8 +173,19 @@ table de 129 entrées `0x020ed460` (`round(4096 · atan(i/128))`, vérifiée), s
 
 Les états existants `build/melonds/before.ml1` et `moved.ml1`, produits dans `C01M09`, exposent
 le compteur VBlank et la position du héros : (0,210 ; 0,120 ; −1,380), puis (−2,853 ; 0,106 ;
-3,854), à 1969 VBlank d'écart ; ces captures ne sont pas des points de mesure alignés et ne
-valident pas la vitesse. La mesure de vitesse est consignée plus bas.
+3,854), à 1969 VBlank d'écart ; ils ne sont pas alignés et ne valident pas la vitesse.
+
+**Mesure de vitesse** (`scripts/melonds-state.ps1 -Save build/sav/demo.sav -Settle 8 -Keys
+"A:0.2,idle:1.5 ×4, B:0.2,idle:1.5 ×3, Down:0.4"`) : les quatre `A` font défiler le dialogue de
+l'église de Stornway jusqu'au menu, les trois `B` le ferment ; le héros, à (0,210 ; −1,380)
+face au nord, reçoit `Bas` pendant 0,4 s puis 0,5 s de repos avant l'état. Position lue en RAM
+(`GameState+0x3ac` → objet, `+0x44`) : **Δz = 2,361**, cap final 0 (face au sud). Le port, même
+position et même cap de départ, mêmes entrées : Δz = 2,095 pour 24 images de touche à 60 Hz
+(2,287 pour 26) et 2,168 à 2,360 pour 11 à 13 mises à jour à 30 Hz (`ticks = 2`) : l'écart à la
+mesure est de l'ordre de l'image de gigue des messages postés (0,096 unité par image) ; le
+modèle provisoire (4 unités/s, sans accélération ni demi-tour) donnait 1,6. Une seconde mesure
+(`Bas` 0,9 s) n'a pas bougé le héros (le dialogue n'a pas été fermé à temps) : **une seule
+mesure, de ± 1 image** ; la validation image par image reste à faire.
 
 ## Reste à faire
 
