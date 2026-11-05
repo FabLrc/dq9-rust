@@ -251,8 +251,17 @@ ov_017::0219814c Area_CheckLeader  # fires events 2 (enter) / 5 (leave) for map 
 ov_017::021bc77c EventTask_Update  # event task (+8 = event id from action 0x77); fires event 11 at its end
 
 # --- Event scripts (docs/re/stb.md) ---
+ov_001::021538d4 Event_InitStb      # Stb_Init with a 0x80-value stack and 0x200 frames, then Event_InstallNatives
+ov_001::02153948 Event_StartEntry   # Stb_Start(entry), then Event_UpdateActors; -1 (no such entry) gives 0
+ov_001::02153994 Event_Resume       # Stb_Resume, then Event_UpdateActors; at the script's end Event_End and 1
 ov_001::021539d8 Event_BuildScene   # builds the cast declared by natives 566/567, applies the 568 flags
 ov_001::02154974 Event_TeardownScene # releases the declared cast, undoes the 568 flags
+ov_001::02154c64 Event_QueueLoads   # queues the loads of the files declared by 566/567/569, five per call
+ov_001::02154de4 EventState_Build   # once the files are in: Event_BuildScene, then Stb_Start(+0x4a = 100); next state 4
+ov_001::02155d54 EventState_Run     # per update: Event_Resume; state 0xe when skipped (sets +0x15c), 0xf at the end
+ov_001::02156108 EventState_Finish  # Stb_Start(+0x4e = 300); next state 0xb
+ov_001::0215a954 Event_End          # camera and actor queues released after the script's end
+ov_001::0215a9b4 Event_UpdateActors # the 24 actor queues (0215a134) and the camera queues (02158ae4), once per update
 ov_001::0215ab20 Stb_Actor          # actor slot 0..23 of the event (null outside), stride * slot + table
 ov_001::0215ae1c StbNat_CountFaceButtonsHeld arm # native 0
 ov_001::0215afec StbNat_RandomInt arm # native 7
@@ -380,10 +389,12 @@ ov_001::021639ac StbNat_PlaySecondarySe arm # native 732
 ov_001::02164004 StbNat_SetLightIntensity arm # native 578
 ov_001::02164080 StbNat_SetDayTimerStopped arm # native 579
 ov_001::021640b4 StbNat_MoveCameraFov arm # native 580
+ov_001::02164114 Event_InstallNatives # g_StbNatives into a 1000-entry table (a duplicate id hangs), Stb_SetNatives
 ov_001::02164d6c g_StbNatives       # {handler, id} x304, ended by {0, -1}
 ov_017::021d4980 Stb_ToInt          # value must be an int
 ov_017::021d49ac Stb_Truthy
 ov_017::021d4a38 Stb_Push           # (type, value)
+ov_017::021d4a64 Stb_CopySlot       # copies a (type, value) pair
 ov_017::021d4a78 Stb_PushInt
 ov_017::021d4a98 Stb_PushStr
 ov_017::021d4ab8 Stb_PushAddr
@@ -392,8 +403,10 @@ ov_017::021d4af8 Stb_Call           # new frame from a function record (code, ?,
 ov_017::021d4b9c Stb_Return
 ov_017::021d4bc8 Stb_CallNative     # natives[first arg](args + 1, n - 1, n)
 ov_017::021d4c04 Stb_Init           # checks "SB2", code base = file + header word 2
+ov_017::021d4cc0 Stb_SetNatives     # (table, count) of the native handlers
 ov_017::021d4ccc Stb_Resume
 ov_017::021d4ce4 Stb_Start          # runs entry id (header words 3/4), default record if id < 0
+ov_017::021d4df8 Stb_HasEntry       # whether header table 3/4 holds an entry number
 ov_017::021d4e38 Stb_Run            # interpreter: [op, a, b] instructions
 ov_017::021d60f4 StbArg_Int         # argument as int (float truncated by FUN_0200c5fc)
 ov_017::021d6110 StbArg_Float       # argument as float (int converted by FUN_0200c670)

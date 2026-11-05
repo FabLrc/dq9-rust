@@ -97,6 +97,10 @@ Les overlays 10, 28 et 32 (`pitfall`, `sub_hoge`, `sound`) sont à identifier.
       immédiates et différées sur un état modélisé (`trigger.md`).
 - [x] Scripts d'événements `.stb` : format, machine à pile, désassembleur (`stb.md`,
       `dq9re stb`).
+- [x] Interpréteur des scripts d'événements dans `dq9-core` : machine à pile traduite de
+      `ov_017`, entrées 200/100/300, attentes par signaux, événements typés, `Director`
+      branché sur les requêtes des triggers ; les 30 scripts du prologue vont à leur terme
+      (`stb.md`, § Interpréteur, `dq9re script`).
 - [x] Recensement des ressources externes (`ressources-externes.md`).
 - [x] Inventaire statique des 228 natives STB employées : arguments, effets établis,
       preuves par adresses et limites (`re/stb-natives.md`) ; noms descriptifs dans
@@ -276,10 +280,22 @@ valeurs provisoires de `dq9-core` (4 unités/s, murs simplifiés) ne sont pas en
 |---|---|
 | fenêtre de dialogue à l'écran : police, cadre, nom de l'orateur, défilement, Oui/Non ; balises de mise en page restantes (`<CEN>`, `<TC#>`, `<W=#>`… de `text.md`) | `message.rs`, `font.rs` (fait) ; wiki Text-Markup |
 | triggers branchés sur le jeu réel (parler, examiner, entrer dans une zone) | `trigger.rs` (fait) |
-| interpréteur `.stb` dans `dq9-core` (attente par image, appels de fonctions) | `stb.rs` (fait) ; wiki Event-Scripts |
+| interpréteur `.stb` dans `dq9-core` (attente par image, appels de fonctions) — **fait** (`dq9_core::script`, voir Avancement) | `stb.rs` (fait) ; wiki Event-Scripts |
 | natives : personnages (200), caméra (300), messages (400), scène et fondus (500, 100–122) | wiki Engine-Functions ; `ov_001` |
 | deux écrans DS : écran haut (carte) et bas, disposition configurable | — |
 | son minimal : musique SDAT (séquenceur SSEQ + mixage SWAV) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
+
+Avancement de l'interpréteur `.stb` : `dq9_core::script` traduit `Stb_Run` et ses auxiliaires
+(`ov_017::021d4980…021d6148`, marqueurs `port:`), joue les entrées 200, 100 et 300 d'un
+événement une mise à jour à la fois (`Script::step`) et rend des `Event` typés (fondus,
+messages, acteurs, caméra, son, déclarations de distribution) ; l'application répond par des
+`Signal` (message fermé, acteur au repos, caméra au repos…). Le `Director` démarre l'événement
+d'une requête `Request::Event` des triggers et enchaîne la native 538. Les 30 scripts du
+prologue (étapes 1.1 à 1.3) vont à leur terme sans erreur (`cargo dq9re script 1.1-3`, test
+réel `prologue_scripts_run_to_completion`) ; 24 natives de rôle inconnu sont rapportées une
+fois et ignorées. Restent : exécuter les `Event` (dialogue, acteurs, caméra : autres
+chantiers), comparer l'ordre et les durées à melonDS, l'appelant de l'entrée 200 et les
+natives sans rôle (`re/stb.md`, § Interpréteur).
 
 **v0.1** : nouvelle partie avec un héros par défaut (modèle animé fait en J1 ; reste le choix
 de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,

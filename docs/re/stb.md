@@ -3,6 +3,7 @@
 Implémentation : `crates/dq9-formats/src/stb.rs` (`Script::parse`, `Instr`,
 `Function::native_calls`). Outil : `cargo dq9re stb data/event/ev03030.gp2 [--lang fr]`
 désassemble le script et affiche le texte des messages à côté des appels de la native 400.
+L'interpréteur qui exécute ces scripts est dans `dq9-core` (§ [Interpréteur](#interpréteur-dq9-core-j3)).
 
 Ce sont les scènes scriptées lancées par l'action de trigger 0x77 (`trigger.md`) :
 caméra, déplacements des personnages, dialogues, combats.
@@ -148,6 +149,92 @@ Les fonctions utilitaires sont compilées dans le fichier, pas fournies par le m
 `ev03030` : attente de `n` images (`while (n >= 0) { n -= 1; yield; }`, `fn@0x58`) et
 affichage d'un message avec attente de sa fin (`fn@0xe3c`).
 
+## Interpréteur (`dq9-core`, J3)
+
+Implémentation : `crates/dq9-core/src/script.rs` et `script/` ; essai headless :
+`cargo dq9re script <archive|événement|étape> [--quiet]` (`data/event/ev01130.gp2`, `1130`,
+`1.1-3`), qui joue les scripts avec une application factice qui termine toute attente
+aussitôt.
+
+| Module | Rôle |
+|---|---|
+| `script/vm.rs` | la machine (`Stb_Run` et ses auxiliaires), sans natives ; marqueurs `port:` |
+| `script/natives.rs` | numéro de native → `Event`, et l'état que les scripts interrogent |
+| `script/event.rs` | les `Event` : fondus, messages, acteurs, caméra, son, déclarations de distribution |
+| `script/load.rs` | numéro d'événement → archive, entrées et textes ; étapes du scénario |
+| `script.rs` | `Script` (entrées jouées une à une, `step`, `signal`) et `Director` (tâche d'événement) |
+
+**Machine.** Traduction fonction par fonction de `ov_017::021d4980…021d4e38` (les adresses sont
+dans les commentaires et dans le `port:` de `vm.rs`) : valeurs `(type, mot)` de 8 octets, une
+seule zone pour globales, pile et cadres, les types 3 (adresse) étant ici des indices de cette
+zone, si bien qu'une native écrit son résultat comme `StbArg_SetInt` : par l'adresse reçue,
+sans toucher au type. Limites de la ROM : pile de 0x80 valeurs, globales comprises, et 0x200
+cadres (`Event_InitStb`, `ov_001::021538d4`). Le jeu n'en vérifie pas la première ; ici un
+dépassement, un type incorrect (`FUN_0200159c(-1)`, l'erreur fatale du jeu), une division
+entière par zéro, une adresse hors zone ou une boucle de plus d'un million d'instructions sans
+`yield` arrêtent le script par une `Fault`, jamais par une panique. **[inconnu]** : l'effet
+d'une division par zéro sur la DS (la routine `_s32_div_f` n'est pas analysée) ; **[hypothèse]**
+`sin`/`cos` : le jeu convertit en double et appelle une routine logicielle (`0200c578`,
+`02009424`, `02008dcc`), reproduite par `f64::sin`, qui peut différer au dernier bit.
+
+L'interpréteur est une machine à reprise : `Vm::run` s'arrête au `yield` (0x17) et repart à
+l'instruction suivante, comme `Stb_Resume`. Les opérations 0x10 à 0x12, 0x15 et 0x17 sont sans
+effet tant que le mot `+0x40` est positionné (`Vm::set_skip`) ; l'op 0x1c le remet à zéro et
+suspend. Aucun code ne positionne `+0x40` hors de l'interpréteur dans ce qui a été lu :
+**[hypothèse]** c'est le saut d'une scène (le test de saut `ov_001::02156858` fait passer
+`EventState_Run` à l'état 0xe et pose `+0x15c`, lu par la native 595). Non utilisé par
+l'application.
+
+**Tâche d'événement.** Les fonctions du pilote sont dans `ov_001` (noms dans
+`re/symbols.txt`) : `Event_InitStb` crée la machine, `Event_StartEntry` (`Stb_Start` puis
+`Event_UpdateActors`), `Event_Resume` (`Stb_Resume`, puis files des 24 acteurs et de la
+caméra ; à la fin `Event_End`). L'ordre établi par les données (les 30 scripts de 1.1 à 1.3) :
+
+1. entrée **200** (`prepare`) : seule à appeler 566/567/568 (74 + 25 + 20 appels) ;
+2. `Event_QueueLoads`, puis `Event_BuildScene` construisent la distribution déclarée ;
+3. entrée **100** (`main`, champ `+0x4a`, `EventState_Build`) : toute la mise en scène ;
+4. entrée **300** (`finish`, champ `+0x4e`, `EventState_Finish`) : remises en état.
+
+Les trois numéros viennent de l'enregistrement de l'événement (valeurs 9 à 11 de la liste, 100,
+200, 300 partout). **[inconnu]** : l'appel de l'entrée 200 n'a pas été trouvé (`Stb_Start` n'a
+que deux appelants dans `ov_001`, pour 100 et 300) ; son rang avant la construction est établi
+par les données seulement. Une entrée absente du script (le plus souvent 300) ne fait rien
+(`Stb_Start` rend -1). La native 538 enchaîne l'événement suivant (`EventTask_Update`) : le
+`Director` le rejoue avant les autres événements en attente, et `Event::Ended` signale à
+l'application qu'elle doit tirer le déclencheur 11, comme le fait la tâche.
+
+**Attentes.** Aucune native ne bloque : le script boucle sur une sortie adresse avec `yield`.
+Le script lève donc lui-même ce qui devient occupé en enfilant du travail (405 après 400, 204
+après une commande d'acteur, 301 après une commande de caméra, 507 après 506) et
+l'application l'abaisse par un `Signal` (`MessageClosed`, `ActorIdle`, `CameraIdle`,
+`Preloaded`, `Answer`) ; les sorties que seule l'application connaît (pose des acteurs 543/544,
+animation en cours 234) sont dans `Runtime`. Les fondus n'ont aucun prédicat de fin : les
+scripts comptent des mises à jour (840 renvoie `Frame::ticks`, 2 par défaut, voir
+[stb-natives.md](stb-natives.md#temps-et-unités-j0)). Un message dont le numéro manque à la table
+du script n'affiche rien et n'attend rien (`ov_001::0215e2a4`) : cas réel dans `ev21595`
+(message 1).
+
+**Natives.** 96 des 120 natives du prologue sont traitées : celles qui agissent donnent un
+`Event` typé (arguments décodés comme les gestionnaires, unités du jeu), celles que les scripts
+interrogent répondent depuis `Runtime` ; 502, 503, 512, 587 et 724, qui ne
+gèrent que la mémoire ou le matériel de la DS (comme 706 à 709), sont ignorées sans
+rapport ; les autres sont rapportées **une fois** (`Event::Unimplemented`) et comptées, jamais
+fatales. Les identifiants hors des plages de la table (`0–9`, `100–122`, `200–240`, `300–328`,
+`400–421`, `500–603`, `700–738`, `800–845`) sont ignorés comme dans `Stb_CallNative`. 596
+(`StbNat_GetActorStatus`, `ov_001::02161ab8`) cherche la déclaration de 566 dont le second
+octet vaut l'argument : catégorie (`octet0 >> 4`, 1 héros local, 2 autre personnage, 0 sinon)
+et état ; absente : -1 et 2. L'état d'un personnage déclaré (0 ici) vient de son contrôleur
+d'animation **[hypothèse]**, les modes 9 et 10 de 566 ne sont pas modélisés **[inconnu]**.
+
+**Résultat sur le prologue** (`cargo dq9re script 1.1-3`, test `prologue_scripts_run_to_completion`) :
+les 30 scripts vont à leur terme, sans erreur de la machine, de 56 mises à jour (`ev01140`) à
+3 579 (`ev21500`, 1 023 événements, environ deux minutes à 30 Hz ; il enchaîne `ev21507` par la
+native 538) ; chaque message `Text::Id`
+existe dans la table du script ; 24 natives restent sans effet modélisé : 238, 328, 409,
+411, 413, 541, 542, 545, 546, 547, 552, 554, 559, 560, 561, 571, 574, 575, 581, 582, 584, 712,
+809 et 815 (les mêmes que « non identifiées » dans [stb-natives.md](stb-natives.md)). Ce n'est
+pas une validation sous émulateur : l'ordre et les durées ne sont pas comparés à melonDS.
+
 ## Questions ouvertes
 
 - Natives encore sans rôle (571, 574/575, 541/542/561, 238, 554, 559, 560, 409/411/413,
@@ -155,3 +242,4 @@ affichage d'un message avec attente de sa fin (`fn@0xe3c`).
 - Nature (30 Hz ou 60 Hz) de `currentNumTicks_` : [hypothèse] VBlank, non démontrée.
 - Sens de l'op 0x16, de l'op 0x1c et du deuxième mot des enregistrements de fonction.
 - Champs inconnus des listes d'événements.
+- Appelant de l'entrée 200 et origine de `+0x40` (saut) dans la tâche d'événement.
