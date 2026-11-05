@@ -166,6 +166,11 @@ impl<'a> Font<'a> {
         })
     }
 
+    /// Advance of a byte without glyph, minus the 1 px spacing (`g_FontSpaceWidth`).
+    pub fn space_width(&self) -> u8 {
+        self.space_width
+    }
+
     /// First glyph (in table order) whose string starts `text` (`Font_FindGlyph`,
     /// `0x020424f4`).
     pub fn find(&self, text: &[u8]) -> Option<u8> {

@@ -618,6 +618,113 @@ pub fn compile(text: &[u8]) -> Vec<Token> {
     tokens
 }
 
+/// What the tags at the very start of a message ask of the message window: the ones the game
+/// consumes before compiling (`0x0206a3c0`, called first by `Msg_Compile`), instead of
+/// turning them into codes. Meaning of the window fields: `docs/re/dialogue.md`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LeadingTags {
+    /// `<N_TURN>`: the speaker keeps its facing instead of turning to the hero.
+    pub no_turn: bool,
+    /// `<EXC>` / `<QES>`: a "!" / "?" balloon over the speaker.
+    pub exclamation: bool,
+    pub question: bool,
+    /// `<WIN>`: window byte `+0x19b1` cleared, i.e. the frame is not drawn.
+    pub frameless: bool,
+    /// `<CEN>`: window byte `+0x19b8` set, the window of narration cards **[hypothèse :
+    /// boîte et lignes centrées]**.
+    pub centered: bool,
+    /// `<SKIP>`: window byte `+0x19bb` cleared.
+    pub no_skip: bool,
+    /// `<GYOU=n>`: number of lines of the box, at least 1 (default 3).
+    pub lines: Option<i32>,
+    /// `<MOJI=w,h>`: font cell, 12 and 16 when a value is not positive.
+    pub cell: Option<(i32, i32)>,
+    /// `<COLOR=r,g,b>`: BGR555 text colour (components clamped to 0-255, negative → 255).
+    pub color: Option<u16>,
+    /// `<RECT=x,y,w,h>`: window rectangle on the 256×192 screen.
+    pub rect: Option<[i32; 4]>,
+}
+
+/// Parses a signed decimal integer at the start of `text`, as `atoi` (0 without digits).
+fn atoi(text: &[u8]) -> i32 {
+    let (negative, digits) = match text.first() {
+        Some(b'-') => (true, &text[1..]),
+        _ => (false, text),
+    };
+    let n = digits
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .fold(0i32, |n, d| {
+            n.wrapping_mul(10).wrapping_add(i32::from(d - b'0'))
+        });
+    if negative { n.wrapping_neg() } else { n }
+}
+
+/// Comma-separated integers of a tag argument (`TextParseTagArgs`-style), up to the `>`.
+fn tag_args(args: &[u8]) -> Vec<i32> {
+    let end = args.iter().position(|&b| b == b'>').unwrap_or(args.len());
+    args[..end].split(|&b| b == b',').map(atoi).collect()
+}
+
+/// Consumes the leading layout tags of `text` (the loop of `0x0206a3c0`): returns what they
+/// ask for and the rest of the text. A tag without its `>` ends the loop with the text left
+/// at that tag. Matching ignores case (the normal pass upper-cases tags).
+pub fn leading_tags(text: &[u8]) -> (LeadingTags, &[u8]) {
+    let mut tags = LeadingTags::default();
+    let mut rest = text;
+    while let Some(end) = rest.iter().position(|&b| b == b'>') {
+        let tag = &rest[..=end];
+        let has = |name: &str| starts_with_ci(tag, name.as_bytes());
+        if has("<N_TURN>") {
+            tags.no_turn = true;
+        } else if has("<EXC>") {
+            tags.exclamation = true;
+        } else if has("<QES>") {
+            tags.question = true;
+        } else if has("<WIN>") {
+            tags.frameless = true;
+        } else if has("<CEN>") {
+            tags.centered = true;
+        } else if has("<SKIP>") {
+            tags.no_skip = true;
+        } else if has("<GYOU=") {
+            tags.lines = Some(atoi(&tag[6..]).max(1));
+        } else if has("<MOJI=") {
+            let a = tag_args(&tag[6..]);
+            let value =
+                |i: usize, default: i32| a.get(i).copied().filter(|&v| v > 0).unwrap_or(default);
+            tags.cell = Some((value(0, 12), value(1, 16)));
+        } else if has("<COLOR=") {
+            let a = tag_args(&tag[7..]);
+            if a.len() >= 3 {
+                let c = |v: i32| if v < 0 { 255 } else { v.min(255) } as u16;
+                tags.color = Some((c(a[0]) >> 3) | ((c(a[1]) >> 3) << 5) | ((c(a[2]) >> 3) << 10));
+            }
+        } else if has("<RECT=") {
+            let a = tag_args(&tag[6..]);
+            if a.len() >= 4 {
+                let x = a[0].clamp(0, 0x100);
+                let y = a[1].clamp(0, 0xc0);
+                let w = if (0..=0x100).contains(&a[2]) {
+                    a[2]
+                } else {
+                    0x100 - x
+                };
+                let h = if (0..=0xc0).contains(&a[3]) {
+                    a[3]
+                } else {
+                    0xc0 - y
+                };
+                tags.rect = Some([x, y, w, h]);
+            }
+        } else {
+            break;
+        }
+        rest = &rest[end + 1..];
+    }
+    (tags, rest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -772,5 +879,19 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn leading_tags_are_consumed_and_stop_at_text() {
+        let (tags, rest) = leading_tags(b"<N_TURN><CEN><GYOU=0><MOJI=0,5>*: hi<CEN>");
+        assert!(tags.no_turn && tags.centered && !tags.frameless);
+        assert_eq!(tags.lines, Some(1));
+        assert_eq!(tags.cell, Some((12, 5)));
+        assert_eq!(rest, b"*: hi<CEN>");
+        let (tags, rest) = leading_tags(b"<color=300,-1,8><RECT=10,20,-1,50>x");
+        assert_eq!(tags.color, Some(31 | 31 << 5 | 1 << 10));
+        assert_eq!(tags.rect, Some([10, 20, 246, 50]));
+        assert_eq!(rest, b"x");
+        assert_eq!(leading_tags(b"<PAGE>a").1, b"<PAGE>a");
     }
 }
