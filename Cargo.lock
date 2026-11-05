@@ -560,6 +560,7 @@ dependencies = [
  "clap",
  "dq9-core",
  "dq9-formats",
+ "glam",
  "nds-rom",
  "png",
  "serde",

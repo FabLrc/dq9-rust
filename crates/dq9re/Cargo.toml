@@ -12,6 +12,7 @@ publish = false
 nds-rom.workspace = true
 dq9-formats.workspace = true
 dq9-core.workspace = true
+glam.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["env"] }
 serde.workspace = true

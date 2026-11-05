@@ -155,7 +155,22 @@ pub fn run(rom: &Rom, args: &DoorsArgs) -> Result<()> {
         println!("#{i} {:#x} [{}] {}", r.kind, values.len(), values.join(" "));
     }
     if let Some(state) = &state {
-        leader(state)?;
+        let position = leader(state)?;
+        if let Some(position) = position {
+            for (i, w) in regions.warps.iter().enumerate() {
+                if dq9_core::field::warp_contains(w, position) {
+                    println!("leader inside warp {i} (to {})", w.destination);
+                }
+            }
+            for (i, z) in regions.zones.iter().enumerate() {
+                if dq9_core::field::zone_contains(z, position) {
+                    println!(
+                        "leader inside zone {i} (type {}, class {}, number {})",
+                        z.kind, z.class, z.number
+                    );
+                }
+            }
+        }
         let differences = compare(state, &regions)?;
         if differences.is_empty() {
             println!(
@@ -204,11 +219,11 @@ fn fx(v: i32) -> String {
 
 /// The leader's object (`GameState+0x397c` holds the first party member, `Chara_Get`):
 /// position, angle and the pending warp (`Save_Warp`, `GameState+0x3f8`).
-fn leader(state: &State) -> Result<()> {
+fn leader(state: &State) -> Result<Option<glam::Vec3>> {
     let first = u32::from(state.read(GAME_STATE + 0x397c, 1)?[0]);
     let Some(object) = state.object(first)? else {
         println!("no leader object (party member {first})");
-        return Ok(());
+        return Ok(None);
     };
     let p = state.object_position(object)?;
     let angle = state.u32(object + 0x54)? as i32;
@@ -236,7 +251,7 @@ fn leader(state: &State) -> Result<()> {
         fx(i32_at(0x18)),
         u16_at(0x1c) as i16
     );
-    Ok(())
+    Ok(Some(glam::Vec3::from_array(p.map(|c| c as f32 / 4096.0))))
 }
 
 /// Compares the parsed regions with the arrays of `g_Zone3D+0x6c`: warps (`+0x18`, count
