@@ -251,6 +251,8 @@ ov_017::0219814c Area_CheckLeader  # fires events 2 (enter) / 5 (leave) for map 
 ov_017::021bc77c EventTask_Update  # event task (+8 = event id from action 0x77); fires event 11 at its end
 
 # --- Event scripts (docs/re/stb.md) ---
+ov_001::021539d8 Event_BuildScene   # builds the cast declared by natives 566/567, applies the 568 flags
+ov_001::02154974 Event_TeardownScene # releases the declared cast, undoes the 568 flags
 ov_001::0215ab20 Stb_Actor          # actor slot 0..23 of the event (null outside), stride * slot + table
 ov_001::0215ae1c StbNat_CountFaceButtonsHeld arm # native 0
 ov_001::0215afec StbNat_RandomInt arm # native 7
@@ -258,13 +260,26 @@ ov_001::0215b040 StbNat_EnableEventChaining arm # native 8
 ov_001::0215b058 StbNat_DisableEventChaining arm # native 9
 ov_001::0215b2cc StbNat_FadeInBoth arm # native 100
 ov_001::0215b318 StbNat_FadeBoth arm # native 101
+ov_001::0215b454 StbNat_FadeSub arm # native 105
+ov_001::0215b4c0 StbNat_FadeInMain arm # native 106
+ov_001::0215b50c StbNat_FadeMain arm # native 107
 ov_001::0215b5b4 StbNat_SetDisplaySwap arm # native 109
 ov_001::0215b5c8 StbNat_ClearDisplaySwap arm # native 110
 ov_001::0215b5f8 StbNat_FadeBothAndLock arm # native 112
+ov_001::0215b630 StbNat_FadeSubAndLock arm # native 114
+ov_001::0215b668 StbNat_FadeMainAndLock arm # native 116
 ov_001::0215b684 StbNat_UnlockAndFadeInBoth arm # native 117
 ov_001::0215b6a0 StbNat_UnlockAndFadeBoth arm # native 118
+ov_001::0215b6bc StbNat_UnlockAndFadeInSub arm # native 119
+ov_001::0215b6d8 StbNat_UnlockAndFadeSub arm # native 120
+ov_001::0215b6f4 StbNat_UnlockAndFadeInMain arm # native 121
+ov_001::0215b710 StbNat_UnlockAndFadeMain arm # native 122
 ov_001::0215b72c StbNat_LoadCharacterModel arm # native 200
 ov_001::0215b9c4 StbNat_ReleaseCharacterModel arm # native 212
+ov_001::0215ba64 StbNat_CloneCharacter arm # native 228
+ov_001::0215bb3c StbNat_LoadCharacterArchive arm # native 229
+ov_001::0215bcc0 StbNat_RemoveCharacterAnimationPackage arm # native 230
+ov_001::0215bd5c StbNat_SetCharacterVisible arm # native 201
 ov_001::0215bdd0 StbNat_BindActorObject arm # native 202
 ov_001::0215bf34 StbNat_ResetActor arm # native 203
 ov_001::0215bf58 StbNat_GetActorBusy arm # native 204
@@ -276,12 +291,18 @@ ov_001::0215c1d0 StbNat_RotateActorTo arm # native 209
 ov_001::0215c298 StbNat_PlayActorAnimation arm # native 210
 ov_001::0215c330 StbNat_SetActorScale arm # native 211
 ov_001::0215c3e8 StbNat_WaitActorAnimation arm # native 213
+ov_001::0215c40c StbNat_ResetActorPath arm # native 214
+ov_001::0215c430 StbNat_SetActorPathSpeed arm # native 215
+ov_001::0215c468 StbNat_AddActorPathPoint arm # native 216
+ov_001::0215c4fc StbNat_RunActorPath arm # native 217
 ov_001::0215c544 StbNat_DelayActorAnimation arm # native 218
 ov_001::0215c57c StbNat_SetActorAlpha arm # native 219
 ov_001::0215c5b4 StbNat_FadeActorAlpha arm # native 220
 ov_001::0215c5fc StbNat_TurnActorTowardsActor arm # native 221
 ov_001::0215c70c StbNat_StopActorAnimation arm # native 222
 ov_001::0215c788 StbNat_QueueActorAnimation arm # native 224
+ov_001::0215c858 StbNat_SetActorRadius arm # native 226
+ov_001::0215c8a4 StbNat_FadeActorRadius arm # native 227
 ov_001::0215c994 StbNat_MoveActorOnGround arm # native 232
 ov_001::0215ca4c StbNat_LoadMonsterCharacter arm # native 233
 ov_001::0215ccdc StbNat_GetAnimationActive arm # native 234
@@ -302,24 +323,43 @@ ov_001::0215dbd0 StbNat_MoveCameraTargetPreservingOrbit arm # native 321
 ov_001::0215dd58 StbNat_MoveCameraTargetAndOrbit arm # native 322
 ov_001::0215dfc4 StbNat_FollowActorWithCameraTarget arm # native 324
 ov_001::0215e0c0 StbNat_StopCameraTargetFollow arm # native 325
+ov_001::0215e0dc StbNat_SetCameraRoll arm # native 327
 ov_001::0215e2a4 StbNat_Message arm # native 400: message id of the event's text table
 ov_001::0215e374 StbNat_GetMessageState arm # native 405
 ov_001::0215e398 StbNat_CloseMessage arm # native 401
+ov_001::0215e4f0 StbNat_DisableMessageBox arm # native 410
+ov_001::0215eab0 StbNat_RestoreTextureArena arm # native 502
+ov_001::0215eb3c StbNat_SaveTextureArena arm # native 503
 ov_001::0215ed2c StbNat_PreloadResources arm # native 506
 ov_001::0215edb8 StbNat_GetPreloadPending arm # native 507
 ov_001::0215eeb0 StbNat_SetCharacterFlags arm # native 509
 ov_001::0215ef44 StbNat_ReleasePreloadedResources arm # native 508
+ov_001::0215f1b0 StbNat_SetResourceFlags04 arm # native 512
 ov_001::0215f3fc StbNat_CreateSprite arm # native 521
 ov_001::0215f740 StbNat_DestroySprite arm # native 522
+ov_001::0215f930 StbNat_RestoreSavedCamera arm # native 531
+ov_001::0215f968 StbNat_SetCameraFov arm # native 532
+ov_001::0215f9dc StbNat_SetNextEvent arm # native 538
 ov_001::0215ff10 StbNat_GetActorPosition arm # native 543
 ov_001::0215ffc0 StbNat_GetActorRotation arm # native 544
+ov_001::02160338 StbNat_SetLightingIndexOverride arm # native 548
+ov_001::021603b0 StbNat_ClearLightingIndexOverride arm # native 549
 ov_001::021603d8 StbNat_SetSceneTimeOfDay arm # native 588
+ov_001::02160504 StbNat_SyncLightingToTimeOfDay arm # native 589
 ov_001::021609c0 StbNat_GetMessageAnswer arm # native 558
+ov_001::02160da8 StbNat_DeclareCastMember arm # native 566: deferred, consumed by Event_BuildScene
+ov_001::021612c8 StbNat_DeclareCharacterArchive arm # native 567
+ov_001::02161374 StbNat_AddSceneSuppressFlags arm # native 568
+ov_001::02161408 StbNat_SetSlotVisible arm # native 570
+ov_001::02161650 StbNat_InstallBoneCamera arm # native 572
+ov_001::02161900 StbNat_FreeAllocatorFront arm # native 587
 ov_001::02161a90 StbNat_IsEventSkipped arm # native 595
 ov_001::02161ab8 StbNat_GetActorStatus arm # native 596
 ov_001::02161ce8 StbNat_GetSceneTimeOfDay arm # native 597
 ov_001::02161d08 StbNat_GetPartyLeaderId arm # native 598
+ov_001::02161e8c StbNat_SetFogEnabled arm # native 804
 ov_001::02162148 StbNat_SetTimeOfDay arm # native 808
+ov_001::02163284 StbNat_GetTickCount arm # native 840
 ov_001::021632e4 StbNat_TestGlobalFlag arm # native 600
 ov_001::02163390 StbNat_TestStepFlag arm # native 602
 ov_001::021633ec StbNat_TestStoryFlag arm # native 603
@@ -334,7 +374,12 @@ ov_001::02163848 StbNat_RestoreSeHeap arm # native 727
 ov_001::02163860 StbNat_PlaySe arm # native 728
 ov_001::021638cc StbNat_StopSe arm # native 729
 ov_001::0216393c StbNat_StopBgm arm # native 721
+ov_001::02163970 StbNat_LoadSecondarySeGroup arm # native 730
+ov_001::02163994 StbNat_RestoreSecondarySeHeap arm # native 731
+ov_001::021639ac StbNat_PlaySecondarySe arm # native 732
 ov_001::02164004 StbNat_SetLightIntensity arm # native 578
+ov_001::02164080 StbNat_SetDayTimerStopped arm # native 579
+ov_001::021640b4 StbNat_MoveCameraFov arm # native 580
 ov_001::02164d6c g_StbNatives       # {handler, id} x304, ended by {0, -1}
 ov_017::021d4980 Stb_ToInt          # value must be an int
 ov_017::021d49ac Stb_Truthy

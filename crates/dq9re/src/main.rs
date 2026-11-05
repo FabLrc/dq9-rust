@@ -115,6 +115,16 @@ enum Command {
         #[arg(long, default_value = "en")]
         lang: String,
     },
+    /// Count the natives called by event scripts: every script, or those of the scenes of a
+    /// story stage range (`--stage 1.1-3`), from the event lists.
+    StbNatives {
+        /// Story stage `MAJOR.MINOR` or `MAJOR.MIN-MAX` of the scenes to keep.
+        #[arg(long)]
+        stage: Option<String>,
+        /// Only list natives without a name in `dq9_formats::stb::native_name`.
+        #[arg(long)]
+        unnamed: bool,
+    },
     /// List (and optionally extract) the members of a NARC file in the ROM.
     Narc {
         /// Path inside the ROM filesystem, e.g. `data/map/F01M01.ambl`.
@@ -270,6 +280,7 @@ fn main() -> Result<()> {
         } => msg::run(&rom, &archive, &member, record, &out),
         Command::Talk(args) => talk::run(&rom, &args),
         Command::Stb { path, lang } => stb::run(&rom, &path, &lang),
+        Command::StbNatives { stage, unnamed } => stb::natives(&rom, stage.as_deref(), unnamed),
         Command::Narc {
             path,
             out,

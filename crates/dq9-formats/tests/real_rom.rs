@@ -133,6 +133,39 @@ fn event_scripts_decode() {
     assert_eq!(ids.len(), 228);
 }
 
+/// The scenes of story stages 1.1 to 1.3 (Angel Falls prologue, `docs/re/stb-natives.md`) call
+/// 120 distinct natives; the set the J0 identification covers (`dq9re stb-natives --stage 1.1-3`).
+#[test]
+fn prologue_scripts_use_120_natives() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let (mut scripts, mut ids) = (HashSet::new(), HashSet::new());
+    for list in [
+        "data/event/eventlist6.bin",
+        "data/evspt_lv5/eventlist_lv5.bin",
+    ] {
+        let table = Table::parse(rom.file_by_path(list).unwrap()).unwrap();
+        for record in table.records.iter().filter(|r| r.kind == 102) {
+            let (Value::Int(1), Value::Int(1..=3), Value::Str(Some(script))) =
+                (record.values[0], record.values[1], record.values[8])
+            else {
+                continue;
+            };
+            scripts.insert(String::from_utf8(script.to_vec()).unwrap());
+        }
+    }
+    for_each_member(&rom, |_, name, data| {
+        if scripts.contains(name) {
+            let script = Script::parse(data).unwrap();
+            for function in script.functions.values() {
+                ids.extend(function.native_calls().into_iter().filter_map(|(_, id)| id));
+            }
+        }
+    });
+    assert_eq!(scripts.len(), 30);
+    assert_eq!(ids.len(), 120);
+}
+
 /// Every `.gp2` is a GPC2 archive whose index hashes match its names (checked by `parse`) and
 /// whose members all decompress to their declared size.
 #[test]

@@ -1,7 +1,7 @@
 //! `dq9re stb`: disassemble an event script (`docs/re/stb.md`), with the texts of the event
 //! (`<stem>_<lang>.bin`) next to the message natives.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result};
 use dq9_formats::stb::{self, Function, Instr, Scope, Script};
@@ -127,6 +127,93 @@ pub fn run(rom: &Rom, path: &str, lang: &str) -> Result<()> {
                 _ => String::new(),
             };
             println!("  {pc:#06x}  {:<34}{comment}", instr(&script, ins));
+        }
+    }
+    Ok(())
+}
+
+/// Event lists whose `0x66` records (tag 102) name a scene's stage and script (`docs/re/stb.md`).
+const EVENT_LISTS: [&str; 2] = [
+    "data/event/eventlist6.bin",
+    "data/evspt_lv5/eventlist_lv5.bin",
+];
+
+/// Parses `MAJOR.MINOR` or `MAJOR.MIN-MAX` into `(major, min..=max)`.
+fn parse_stage(text: &str) -> Result<(u32, std::ops::RangeInclusive<u32>)> {
+    let (major, minor) = text.split_once('.').context("stage is MAJOR.MINOR[-MAX]")?;
+    let (min, max) = minor.split_once('-').unwrap_or((minor, minor));
+    Ok((major.parse()?, min.parse()?..=max.parse()?))
+}
+
+/// Script archives of the scenes whose stage (list values 0 and 1) matches.
+fn stage_scripts(rom: &Rom, stage: &str) -> Result<Vec<String>> {
+    let (major, minors) = parse_stage(stage)?;
+    let mut paths = Vec::new();
+    for list in EVENT_LISTS {
+        let table = Table::parse(rom.file_by_path(list)?).with_context(|| list.to_owned())?;
+        for record in table
+            .records
+            .iter()
+            .filter(|r| r.kind == 102 && r.values.len() > 8)
+        {
+            let (Value::Int(a), Value::Int(b), Value::Str(Some(script))) =
+                (record.values[0], record.values[1], record.values[8])
+            else {
+                continue;
+            };
+            if a == major && minors.contains(&b) {
+                let stem = String::from_utf8_lossy(script.strip_suffix(b".stb").unwrap_or(script));
+                paths.push(
+                    ["data/event", "data/evspt_lv5"]
+                        .map(|dir| format!("{dir}/{stem}.gp2"))
+                        .into_iter()
+                        .find(|p| rom.file_by_path(p).is_ok())
+                        .with_context(|| format!("no archive for {stem}"))?,
+                );
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+/// `dq9re stb-natives`: per native id, the calls and the scripts that make them.
+pub fn natives(rom: &Rom, stage: Option<&str>, unnamed: bool) -> Result<()> {
+    let paths = match stage {
+        Some(stage) => stage_scripts(rom, stage)?,
+        None => rom
+            .files
+            .files
+            .iter()
+            .filter(|f| f.path.ends_with(".gp2"))
+            .map(|f| f.path.clone())
+            .collect(),
+    };
+    let mut total: BTreeMap<i32, (usize, usize)> = BTreeMap::new();
+    let mut scripts = 0;
+    for path in &paths {
+        let archive = Gpc2::parse(rom.file_by_path(path)?).with_context(|| path.clone())?;
+        let Some(entry) = archive.entries.iter().find(|e| e.name.ends_with(".stb")) else {
+            continue;
+        };
+        let data = archive.member(entry)?;
+        let script = Script::parse(&data).with_context(|| path.clone())?;
+        scripts += 1;
+        let mut seen = BTreeSet::new();
+        for (_, id) in script.functions.values().flat_map(Function::native_calls) {
+            let id = id.with_context(|| format!("{path}: native id is not constant"))?;
+            let (calls, files) = total.entry(id).or_default();
+            *calls += 1;
+            *files += usize::from(seen.insert(id));
+        }
+    }
+    println!("{scripts} scripts, {} natives", total.len());
+    println!("  id   calls scripts name");
+    for (id, (calls, files)) in &total {
+        let name = stb::native_name(*id);
+        if !unnamed || name.is_none() {
+            println!("{id:>4} {calls:>7} {files:>7} {}", name.unwrap_or("-"));
         }
     }
     Ok(())

@@ -124,9 +124,12 @@ Petits chantiers qui rendent tous les suivants plus rapides.
 - [ ] **Natives des scripts** : reporter dans `stb.md` les rôles lus par le wiki
       ([Engine-Functions](https://github.com/DQIX/wiki/blob/main/Engine-Functions.md)) en
       vérifiant chacune sur `ov_001` ; priorité aux plus fréquentes (210, 570, 206, 208, 571).
-      L'[inventaire statique](re/stb-natives.md) est complet, pas l'identification
-      sémantique : restent notamment les bits de 570/571, les déclarations différées,
-      les unités temporelles et certaines variantes de messages.
+      L'[inventaire statique](re/stb-natives.md) est complet. **Avancement** : les 120 natives
+      du prologue d'Angel Falls (étapes 1.1 à 1.3, `cargo dq9re stb-natives --stage 1.1-3`)
+      sont identifiées ou listées comme inconnues avec ce qui a été tenté ; unités de temps
+      tranchées (fondu en ticks de 60 Hz, mouvements en 30 Hz nominal, `GetTickCount`
+      mesuré à 2) ; 570 est `OBJECT3D_FLAG_HIDDEN`. Restent le bit `0x10` de 571, les bits
+      de 409/411/413, 574/575, 541/542/561, 238, 554, 560 et les natives hors prologue.
 - [x] **Sauvegarde DS** (`dq9-formats::save`, [`re/save.md`](re/save.md)) : conteneur
       (2 emplacements, 3 CRC-32, relecture/réécriture octet pour octet sur une sauvegarde
       réelle), champs typés (groupe, personnages et leurs noms, or, temps de jeu, équipement,

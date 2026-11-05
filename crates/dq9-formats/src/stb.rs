@@ -453,12 +453,22 @@ pub fn native_name(id: i32) -> Option<&'static str> {
         9 => "disable_event_chaining",
         100 => "fade_in_both",
         101 => "fade_both",
+        105 => "fade_sub",
+        106 => "fade_in_main",
+        107 => "fade_main",
         109 => "set_display_swap",
         110 => "clear_display_swap",
         112 => "fade_both_and_lock",
+        114 => "fade_sub_and_lock",
+        116 => "fade_main_and_lock",
         117 => "unlock_and_fade_in_both",
         118 => "unlock_and_fade_both",
+        119 => "unlock_and_fade_in_sub",
+        120 => "unlock_and_fade_sub",
+        121 => "unlock_and_fade_in_main",
+        122 => "unlock_and_fade_main",
         200 => "load_character_model",
+        201 => "set_character_visible",
         202 => "bind_actor_object",
         203 => "reset_actor",
         204 => "get_actor_busy",
@@ -471,12 +481,21 @@ pub fn native_name(id: i32) -> Option<&'static str> {
         211 => "set_actor_scale",
         212 => "release_character_model",
         213 => "wait_actor_animation",
+        214 => "reset_actor_path",
+        215 => "set_actor_path_speed",
+        216 => "add_actor_path_point",
+        217 => "run_actor_path",
         218 => "delay_actor_animation",
         219 => "set_actor_alpha",
         220 => "fade_actor_alpha",
         221 => "turn_actor_towards_actor",
         222 => "stop_actor_animation",
         224 => "queue_actor_animation",
+        226 => "set_actor_radius",
+        227 => "fade_actor_radius",
+        228 => "clone_character",
+        229 => "load_character_archive",
+        230 => "remove_character_animation_package",
         232 => "move_actor_on_ground",
         233 => "load_monster_character",
         234 => "get_animation_active",
@@ -497,20 +516,39 @@ pub fn native_name(id: i32) -> Option<&'static str> {
         324 => "follow_actor_with_camera_target",
         325 => "stop_camera_target_follow",
         326 => "shake_camera_target",
+        327 => "set_camera_roll",
         400 => "message",
         401 => "close_message",
         405 => "get_message_state",
+        410 => "disable_message_box",
+        502 => "restore_texture_arena",
+        503 => "save_texture_arena",
         506 => "preload_resources",
         507 => "get_preload_pending",
         508 => "release_preloaded_resources",
         509 => "set_character_flags",
+        512 => "set_resource_flags_04",
         521 => "create_sprite",
         522 => "destroy_sprite",
+        531 => "restore_saved_camera",
+        532 => "set_camera_fov",
+        538 => "set_next_event",
         543 => "get_actor_position",
         544 => "get_actor_rotation",
+        548 => "set_lighting_index_override",
+        549 => "clear_lighting_index_override",
         558 => "get_message_answer",
+        566 => "declare_cast_member",
+        567 => "declare_character_archive",
+        568 => "add_scene_suppress_flags",
+        570 => "set_slot_visible",
+        572 => "install_bone_camera",
         578 => "set_light_intensity",
+        579 => "set_day_timer_stopped",
+        580 => "move_camera_fov",
+        587 => "free_allocator_front",
         588 => "set_scene_time_of_day",
+        589 => "sync_lighting_to_time_of_day",
         595 => "is_event_skipped",
         596 => "get_actor_status",
         597 => "get_scene_time_of_day",
@@ -527,9 +565,14 @@ pub fn native_name(id: i32) -> Option<&'static str> {
         727 => "restore_se_heap",
         728 => "play_se",
         729 => "stop_se",
+        730 => "load_secondary_se_group",
+        731 => "restore_secondary_se_heap",
+        732 => "play_secondary_se",
         737 => "play_music_sequence",
         738 => "reset_bgm",
+        804 => "set_fog_enabled",
         808 => "set_time_of_day",
+        840 => "get_tick_count",
         _ => return None,
     })
 }
@@ -599,6 +642,24 @@ mod tests {
         assert_eq!((f2.frame, f2.params), (1, 1));
         assert_eq!(f2.code[1].1, Instr::Float(1.5));
         assert_eq!(f2.code.last().unwrap().1, Instr::Return);
+    }
+
+    /// Names are descriptive identifiers, one per native: a duplicate would make two ids
+    /// indistinguishable in the disassembly.
+    #[test]
+    fn native_names_are_unique_snake_case() {
+        let mut seen = std::collections::HashSet::new();
+        for id in 0..900 {
+            let Some(name) = native_name(id) else {
+                continue;
+            };
+            assert!(
+                name.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b == b'_' || b.is_ascii_digit()),
+                "{id}: {name}"
+            );
+            assert!(seen.insert(name), "{id}: duplicate {name}");
+        }
     }
 
     #[test]

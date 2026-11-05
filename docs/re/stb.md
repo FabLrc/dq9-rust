@@ -119,21 +119,24 @@ Les entrées encore incertaines restent numérotées.
 nommée ; ce ne sont pas trois variantes de déplacement. Les acteurs STB, leurs
 liaisons et les personnages/modèles appartiennent à trois espaces distincts.
 Les commandes sont en files par canal ; 224 attend la fin de l’animation courante,
-contrairement à 210. Les cadences absolues des durées ne sont pas établies.
+contrairement à 210. Unités des durées : `stb-natives.md`, § Temps et unités (fondu en ticks
+de 60 Hz, mouvements en paires de ticks, soit 30 Hz nominal).
 
-Bilan des cinq natives les plus fréquentes (vérification de la décompilation USA clonée
-et du wiki) :
+Bilan des cinq natives les plus fréquentes (ROM EU, source USA clonée, wiki) :
 
 - **206, 208, 210** : handlers EU localisés (`ov_001`, `0215bfd4`, `0215c138`, `0215c298`,
-  noms dans `re/symbols.txt`). **Non trouvés dans la décompilation USA** : le clone
-  `tools/dqix-decomp` ne contient ni table native ni VM SB2. Rôles établis par la ROM EU
-  (commandes de file, §`stb-natives.md`). Les lectures wiki (208 en radians, 210 bit 1) sont
-  **[hypothèse] EU**. Conflit ouvert sur les bits de 210 (`0x01` contre « bit 1 »).
-- **570, 571** : handlers EU (`02161408`, `02161524`), non trouvés dans le clone USA. Effets
-  de bits décrits dans `stb-natives.md`. Le wiki ne donne qu'une lecture « polled » pour 570
-  et aucune pour 571. Sens fonctionnel de 570 et 571 **[inconnu]**.
+  noms dans `re/symbols.txt`). Absents de la décompilation USA clonée (elle ne contient ni
+  table native ni VM SB2) ; rôles établis par la ROM EU (commandes de file, `stb-natives.md`).
+  Les lectures du wiki (208 en radians, 210 « bit 1 ») sont **[hypothèse] EU**. Conflit
+  ouvert sur les bits de 210 (`0x01` contre « bit 1 »).
+- **570** : établie. `570(slot, b)` cache (`b=0`) ou affiche (`b≠0`) l'objet lié au slot :
+  le handler positionne le masque `1` de `Object3D::flags_`, soit `OBJECT3D_FLAG_HIDDEN`
+  (source USA `Object3D.cpp`). Ce n'est pas un prédicat « polled » : elle n'écrit rien par
+  adresse. 201 agit sur le même bit par identifiant de personnage.
+- **571** : mêmes slots, masque `0x10` de `flags_` (bit 4, sans lecteur dans la source USA)
+  et bit `0x40` d'un placement. Toujours appelée avec 570 ; sens **[inconnu]**.
 
-Aucune de ces cinq natives n'est marquée `port:`. Aucune n'est établie sur le code USA.
+Aucune de ces cinq natives n'est marquée `port:`.
 
 400 affiche un message par identifiant ou chaîne ; 405 expose l’état d’attente
 (`ev03030:fn@0xe3c` boucle tant qu’il vaut 1), et 558 lit séparément la réponse.
@@ -147,7 +150,8 @@ affichage d'un message avec attente de sa fin (`fn@0xe3c`).
 
 ## Questions ouvertes
 
-- Rôle des natives et champs encore inconnus, unités temporelles et variantes :
-  voir les limites de l’[inventaire](stb-natives.md).
+- Natives encore sans rôle (571, 574/575, 541/542/561, 238, 554, 559, 560, 409/411/413,
+  etc.) : tableau « non identifiées » de [stb-natives.md](stb-natives.md#prologue-dangel-falls--natives-employées-j0).
+- Nature (30 Hz ou 60 Hz) de `currentNumTicks_` : [hypothèse] VBlank, non démontrée.
 - Sens de l'op 0x16, de l'op 0x1c et du deuxième mot des enregistrements de fonction.
 - Champs inconnus des listes d'événements.
