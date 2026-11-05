@@ -408,6 +408,44 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x020caa20 MI_ReadUncompLZ8
 0x020caba4 MI_ReadUncompHuffman
 
+# --- NitroSDK ARM9: 36 behaviour-identified hardware primitives (docs/re/nitro-sdk.md) ---
+0x02020978 Disp_WriteBg0CntB             # BG0CNT engine B 0x04001008: size r0<<14, colour r1<<7, base r2<<8, char r3<<2, wrap r4<<13; keeps bits 0-1, 6
+0x020209ac Disp_WriteBg1CntB             # BG1CNT engine B 0x0400100a: same packing as Disp_WriteBg0CntB
+0x0208c9dc Disp_WriteBg0CntB_Alt         # BG0CNT engine B 0x04001008: keeps bits 0-1, 6; argument layout not fully traced [inconnu]
+0x020938dc Disp_IsPowcnt1Bit15Clear     # POWCNT1 0x04000304 bit 15; returns 1 when clear (inverted)
+0x020c384c Disp_SetDispstatLyc          # DISPSTAT 0x04000004: LYC in bits 8-15; bit 7 from r0 bit 8 [inconnu]
+0x020c3874 Disp_SetDispstatVBlankIrq    # DISPSTAT bit 3 = VBlank IRQ enable [hypothese]
+0x020c3994 Disp_SetDispcntBMode         # DISPCNT B 0x04001000: BG mode bits 0-2
+0x020c5598 G3_SetClearColorDepth        # CLEAR_COLOR 0x04000350 / CLEAR_DEPTH 0x04000354; bit 15 fog flag [hypothese]
+0x020c5660 G3_GetGxstatMatrixLevel      # GXSTAT 0x04000600: -1 if bit 14, else bits 8-12 (matrix stack level)
+0x020c5690 G3_GetGxstatBit13            # GXSTAT 0x04000600: -1 if bit 14, else bit 13 [inconnu]
+0x020c56c0 G3_GetBoxTestResult          # GXSTAT 0x04000600: -1 if bit 0, else bit 1 (box test result)
+0x020c89d4 Cp15_EnableIRam              # CP15 control bit 18 set (instruction RAM enable)
+0x020c89e4 Cp15_EnableDRam              # CP15 control bit 16 set (data RAM enable)
+0x020c89f4 Cp15_GetDtcmBase             # CP15 c9,c1,0 with low 12 bits masked: DTCM region base
+0x020c8a08 Cp15_EnableProtectionUnit   # CP15 control bit 0 set (MPU enable) [hypothese]
+0x020c8a18 Cp15_DisableProtectionUnit  # CP15 control bit 0 cleared (MPU enable) [hypothese]
+0x020c8a28 Cp15_UpdateDataPermission  # CP15 c5,c0,2 data access permission: read, clear r0 bits, set r1 bits, write
+0x020c8a3c Cp15_WriteMpuDataRegion1    # CP15 c6,c1,0 MPU data region 1
+0x020c8a44 Cp15_WriteMpuDataRegion2    # CP15 c6,c2,0 MPU data region 2
+0x020c9c00 Cp15_WaitForInterrupt       # mov r0,#0; CP15 c7,c0,4 (wait for interrupt)
+0x020cedf0 Disp_IsPowcnt1Bit0Set          # POWCNT1 0x04000304 bit 0 test, returns 1 if set [inconnu role]
+0x020daf30 Disp_SetDispcntBBits8To12   # DISPCNT B bits 8-12
+0x020daf64 Disp_GetDispcntBBits8To12   # DISPCNT B bits 8-12
+0x020dc018 Disp_GetDispcntBBits8To12_Copy # identical body to Disp_GetDispcntBBits8To12
+0x020e29c8 Disp_SetWin1RectB           # args x1,y1,x2,y2 -> WIN1H 0x04001042 / WIN1V 0x04001046 (engine B)
+0x020e29fc Disp_SetWin0RectB           # args x1,y1,x2,y2 -> WIN0H 0x04001040 / WIN0V 0x04001044 (engine B)
+0x020e2a30 Disp_SetWin1RectA           # args x1,y1,x2,y2 -> WIN1H 0x04000042 / WIN1V 0x04000046 (engine A)
+0x020e2a64 Disp_SetWin0RectA           # args x1,y1,x2,y2 -> WIN0H 0x04000040 / WIN0V 0x04000044 (engine A)
+0x020e2a98 Disp_SetWininB1Bits         # WININ B 0x04001048 bits 8-13; effect flag bit 13
+0x020e2ac0 Disp_SetWininB0Bits         # WININ B 0x04001048 bits 0-5; effect flag bit 5
+0x020e2ae8 Disp_SetWininA1Bits         # WININ A 0x04000048 bits 8-13; effect flag bit 13
+0x020e2b10 Disp_SetWininA0Bits         # WININ A 0x04000048 bits 0-5; effect flag bit 5
+0x020e2b38 Disp_SetWinoutBBits         # WINOUT B 0x0400104a bits 0-5
+0x020e2b60 Disp_SetWinoutABits         # WINOUT A 0x0400004a bits 0-5
+0x020e2b88 Disp_SetDispcntBBits13To15  # DISPCNT B bits 13-15
+0x020e2bbc Disp_GetDispcntBBits13To15  # DISPCNT B bits 13-15
+
 # --- Save file (docs/re/save.md) ---
 0x02075920 Save_BackupRead          # (offset, dst, len, async): reads the DS backup memory
 0x02075adc Save_BackupWrite        # (offset, src, len, async): writes it
