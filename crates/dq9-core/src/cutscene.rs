@@ -35,6 +35,9 @@ use crate::script::{Runtime, Signal};
 const TICKS_PER_UNIT: f32 = 2.0;
 /// Alpha of an opaque object (5 bits, `Object3D` `+0x40`).
 pub const OPAQUE: i32 = 31;
+/// Scale of the character models (`NpcTable_Build`, `0x0203d038`; `ShallowCloneTo` constant of
+/// native 228): `0x10a / 4096`.
+pub const CHARACTER_SCALE: f32 = 266.0 / 4096.0;
 
 /// What the application draws for a script's character or object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -109,6 +112,8 @@ pub struct Node {
     pub animation: Option<Animation>,
     /// The target a bone of this one carries it on (natives 235, 236).
     pub attached: Option<(Target, String)>,
+    /// The model this one was cloned from (native 228).
+    pub cloned_from: Option<Target>,
 }
 
 impl Default for Node {
@@ -121,6 +126,7 @@ impl Default for Node {
             packages: Vec::new(),
             animation: None,
             attached: None,
+            cloned_from: None,
         }
     }
 }
@@ -668,9 +674,24 @@ impl Cutscene {
             Event::CloseMessage => out.push(Output::CloseMessage),
             Event::HideMessageFrame => out.push(Output::HideMessageFrame),
             Event::LoadModel {
-                path, character, ..
+                path,
+                character,
+                selector,
+            } => {
+                self.models.insert(*character, path.clone());
+                let node = self.node_mut(Target::Model(*character));
+                node.model = Some(path.clone());
+                node.packages.clear();
+                // Selector 0 models are the size of the map's characters; those the scripts
+                // load with selector 1 are sized by the script (`SetScale`) **[hypothèse]**:
+                // it fits the camera rigs and the attached models of the prologue.
+                node.pose.scale = if *selector == 0 {
+                    Vec3::splat(CHARACTER_SCALE)
+                } else {
+                    Vec3::ONE
+                };
             }
-            | Event::LoadMonster { path, character } => {
+            Event::LoadMonster { path, character } => {
                 self.models.insert(*character, path.clone());
                 let node = self.node_mut(Target::Model(*character));
                 node.model = Some(path.clone());
@@ -697,6 +718,9 @@ impl Cutscene {
                     let node = self.node_mut(Target::Model(*destination));
                     node.model = Some(path);
                     node.packages = packages;
+                    node.cloned_from = Some(Target::Model(*source));
+                    // `ShallowCloneTo` then `SetScale` with the character constant (`0215ba64`).
+                    node.pose.scale = Vec3::splat(CHARACTER_SCALE);
                 }
             }
             Event::LoadModelArchive {
@@ -706,6 +730,13 @@ impl Cutscene {
             } => {
                 let target = self.target_of_character(*character);
                 self.node_mut(target).packages.push((path.clone(), *tag));
+                // A clone shares the animations of its source (`ShallowCloneTo`): the
+                // monsters of the opening play motions added to the original only.
+                for node in self.nodes.values_mut() {
+                    if node.cloned_from == Some(target) {
+                        node.packages.push((path.clone(), *tag));
+                    }
+                }
             }
             Event::RemoveAnimationPackage { character, tag } => {
                 let target = self.target_of_character(*character);
@@ -736,6 +767,8 @@ impl Cutscene {
                     self.node_mut(child).attached =
                         Some((parent, bone.clone().unwrap_or_default()));
                 }
+                // Recorded in the node; no application draws a model on a bone yet.
+                self.ignore("bone attachments");
             }
             Event::DetachBone { slot } => {
                 if let Some(target) = self.slot_target(*slot) {
@@ -815,6 +848,13 @@ impl Cutscene {
         let node = self.node_mut(target);
         if let Target::Cast(_) = target {
             node.model = path.map(str::to_owned);
+            // Characters are drawn at the size of the map's; effects are sized by the script
+            // **[hypothèse]**.
+            node.pose.scale = if path.is_some_and(|p| p.starts_with("effect/")) {
+                Vec3::ONE
+            } else {
+                Vec3::splat(CHARACTER_SCALE)
+            };
         }
     }
 
@@ -870,7 +910,7 @@ impl Cutscene {
                 cam.follow = None;
                 cam.shake = Vec3::ZERO;
                 cam.bones = None;
-                cam.pending = false;
+                // The native raises the busy flag: the idle report follows.
                 return;
             }
             C::SetPosition(_)

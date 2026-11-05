@@ -366,3 +366,63 @@ fn a_path_walks_through_its_points() {
     let pose = c.node(Target::Cast(1)).unwrap().pose;
     assert!((pose.position - Vec3::new(4.0, 0.0, 4.0)).length() < 1e-4);
 }
+
+#[test]
+fn loaded_characters_have_the_size_of_the_map_and_clones_share_the_packages() {
+    let mut c = Cutscene::new();
+    for (character, selector) in [(-1, 0), (-2, 1)] {
+        c.apply(&Event::LoadModel {
+            path: format!("chara_sub/s{:03}.chr", -character),
+            character,
+            selector,
+        });
+    }
+    assert_eq!(
+        c.node(Target::Model(-1)).unwrap().pose.scale,
+        Vec3::splat(CHARACTER_SCALE)
+    );
+    assert_eq!(c.node(Target::Model(-2)).unwrap().pose.scale, Vec3::ONE);
+    c.apply(&Event::CloneModel {
+        source: -2,
+        destination: -3,
+    });
+    // The clone is sized like a character and gets what the original is given later.
+    assert_eq!(
+        c.node(Target::Model(-3)).unwrap().pose.scale,
+        Vec3::splat(CHARACTER_SCALE)
+    );
+    c.apply(&Event::LoadModelArchive {
+        path: "event_lv5/ev01000s002.chr".into(),
+        character: -2,
+        tag: 3,
+    });
+    assert_eq!(c.node(Target::Model(-3)).unwrap().packages.len(), 1);
+    assert_eq!(c.node(Target::Model(-1)).unwrap().packages.len(), 0);
+}
+
+#[test]
+fn a_camera_reset_is_reported_idle_like_any_camera_command() {
+    let mut c = Cutscene::new();
+    c.apply(&Event::Camera(CameraCommand::Reset));
+    assert_eq!(c.tick(&no_ground), [Signal::CameraIdle]);
+    assert!(run(&mut c, 3).is_empty());
+}
+
+#[test]
+fn shake_lasts_its_duration_and_a_negative_one_never_ends() {
+    let mut c = Cutscene::new();
+    c.apply(&Event::Camera(CameraCommand::Shake {
+        amplitude: [1.0, 0.0, 0.0],
+        duration: 3,
+        target_only: false,
+    }));
+    let signals = run(&mut c, 12);
+    assert_eq!(signals, [Signal::CameraIdle]);
+    assert_eq!(c.camera().eye, Vec3::new(0.0, 5.0, 20.0));
+    c.apply(&Event::Camera(CameraCommand::Shake {
+        amplitude: [1.0, 0.0, 0.0],
+        duration: -1,
+        target_only: false,
+    }));
+    assert!(run(&mut c, 600).is_empty());
+}

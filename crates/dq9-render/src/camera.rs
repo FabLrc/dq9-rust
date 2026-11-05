@@ -51,6 +51,9 @@ pub struct Camera {
     pub fovy: f32,
     pub near: f32,
     pub far: f32,
+    /// Roll around the view direction, radians (native 327 of the event scripts): the up
+    /// vector turned by this angle, positive towards the right of the picture.
+    pub roll: f32,
 }
 
 impl Default for Camera {
@@ -64,6 +67,7 @@ impl Default for Camera {
             fovy: DS_FOVY,
             near: DS_NEAR,
             far: DS_FAR,
+            roll: 0.0,
         }
     }
 }
@@ -104,7 +108,16 @@ impl Camera {
     }
 
     pub fn view(&self) -> Mat4 {
-        glam::camera::rh::view::look_at_mat4(self.eye(), self.target, Vec3::Y)
+        let forward = self.forward();
+        let up = if self.roll == 0.0 {
+            Vec3::Y
+        } else {
+            // Rodrigues' rotation of the up vector around the view direction.
+            let (sin, cos) = self.roll.sin_cos();
+            let up = Vec3::Y;
+            up * cos + forward.cross(up) * sin + forward * forward.dot(up) * (1.0 - cos)
+        };
+        glam::camera::rh::view::look_at_mat4(self.eye(), self.target, up)
     }
 
     /// Perspective projection to wgpu clip space (depth `0..1`).

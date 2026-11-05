@@ -266,6 +266,19 @@ impl AnimatedScene {
         bone_world(bytes, rig.clips(&self.models), bone)
     }
 
+    /// Turns a sprite NPC (`id` as in [`AnimatedScene::npc_instance`]) towards the game's
+    /// object `angle` (radians): the sprite shows the side that faces the camera from there
+    /// (`NpcSprite_FaceCamera`, `0x0203cbe8`). Models turn with their instance matrix.
+    pub fn set_npc_angle(&mut self, id: u16, angle: f32) {
+        let Some(instance) = self.npc_instance(id) else {
+            return;
+        };
+        let model = self.scene.instances[instance].model;
+        if let Some(sprite) = self.sprites.iter_mut().find(|s| s.model == model) {
+            sprite.angle = (angle * 4096.0).round() as i32;
+        }
+    }
+
     /// One 60 Hz step of the motions of the models that are not drawn.
     pub(super) fn advance_ghosts(&mut self) {
         for rig in &mut self.actors {

@@ -13,9 +13,9 @@ use glam::Vec3;
 use winit::event_loop::EventLoop;
 
 use crate::app::{App, Options, UserEvent};
-use crate::event::{EventPlayer, Outcome, Stage};
-use crate::talk::{self, Button, Talk};
-use crate::{gpu, lighting, load, walk};
+use crate::event::EventPlayer;
+use crate::talk::{self, Talk};
+use crate::{gpu, lighting, load, report, walk};
 
 #[derive(Parser)]
 #[command(version, about = "Shows a Dragon Quest IX map (see docs/app.md).")]
@@ -100,6 +100,18 @@ struct Cli {
     /// the messages, `300,900`.
     #[arg(long, value_delimiter = ',')]
     press: Vec<u32>,
+    /// With an event and `--screenshot`: also presses the action key every N steps.
+    #[arg(long)]
+    press_every: Option<u32>,
+    /// With an event: runs the game logic (triggers, map changes, events) for at most N
+    /// fixed steps without a window, pressing the action key every `--press-every` steps,
+    /// and logs it.
+    #[arg(long)]
+    headless_steps: Option<u32>,
+    /// Plays every scene of the story stages `MAJOR.MINOR-MINOR` (`1.1-3`) without a window
+    /// and prints which events play fully, partially or not at all.
+    #[arg(long, value_parser = parse_stage_range)]
+    events_report: Option<(u32, u32, u32)>,
 }
 
 impl Cli {
@@ -132,6 +144,17 @@ impl Cli {
             None => bail!("no opening scene at story stage {major}.{minor}"),
         }
     }
+}
+
+/// `MAJOR.MINOR-MINOR`: a story stage and the last of its steps.
+fn parse_stage_range(s: &str) -> Result<(u32, u32, u32), String> {
+    let (first, last) = s.split_once('-').ok_or("expected MAJOR.MINOR-MINOR")?;
+    let (major, minor) = parse_stage(first)?;
+    Ok((
+        major,
+        minor,
+        last.parse().map_err(|e| format!("{last:?}: {e}"))?,
+    ))
 }
 
 /// `MAJOR.MINOR` of a story stage.
@@ -239,6 +262,9 @@ pub fn main() -> Result<()> {
         let mut walker = walk::Walker::new(&rom, &map, time, &cli.story(), cli.start)?;
         return walker.run(&script);
     }
+    if let Some((major, first, last)) = cli.events_report {
+        return report::report(&rom, major, first..=last, &cli.story());
+    }
     let event = cli.event_id(&rom)?;
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let options = Options {
@@ -252,6 +278,10 @@ pub fn main() -> Result<()> {
         story: cli.story(),
     };
     let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
+    if let Some(steps) = cli.headless_steps {
+        app.play_headless(steps, cli.press_every);
+        return Ok(());
+    }
     if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
         app.look_at(eye, target);
     }
@@ -356,40 +386,26 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     // its script instead.
     if let Some(event) = event {
         talk.set_rom(rom);
-        let presses = &cli.press;
-        let mut state = dq9_core::field::initial_state(&cli.story());
+        let state = dq9_core::field::initial_state(&cli.story());
         let mut player = EventPlayer::new();
         player.queue(event);
-        for frame in 0..cli.frame {
-            if presses.contains(&frame) {
-                talk.press(Button::Confirm);
-            }
-            let mut stage = Stage {
-                rom,
-                world: &state,
-                scene: &mut loaded.runtime,
-                hero: &mut hero,
-                collision: &loaded.collision,
-                camera: &mut camera,
-                talk: &mut talk,
-            };
-            if let Some(next) = player.pending_start() {
-                if crate::event::place(rom, next).is_some_and(|p| p.map != loaded.entry.id) {
-                    println!("event {next} is on another map: the screenshot stops here");
-                    break;
-                }
-                player.prepare(rom, next, &mut stage);
-            }
-            for outcome in player.step(&mut stage) {
-                if let Outcome::Ended(id) = outcome {
-                    // Trigger 11 is the field's; the map's triggers are not loaded here.
-                    println!("frame {frame}: event {id} ended");
-                    let _ = &mut state;
-                }
-            }
-            talk.step();
-            loaded.runtime.step(&camera)?;
+        let played = report::play(
+            rom,
+            &mut loaded,
+            &mut hero,
+            &mut camera,
+            &mut talk,
+            &mut player,
+            &state,
+            Some(cli.frame),
+            &cli.press,
+            cli.press_every,
+        )?;
+        if let Some(next) = played.elsewhere {
+            println!("event {next} is on another map: the screenshot stops there");
         }
+        println!("events started: {:?}", player.started());
+        println!("waiting: {}", player.waiting());
         println!(
             "events: {} not executed: {:?}; natives without effect: {:?}",
             player.coverage().events,

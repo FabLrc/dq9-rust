@@ -3,7 +3,8 @@
 Implémentation : `crates/dq9-formats/src/stb.rs` (`Script::parse`, `Instr`,
 `Function::native_calls`). Outil : `cargo dq9re stb data/event/ev03030.gp2 [--lang fr]`
 désassemble le script et affiche le texte des messages à côté des appels de la native 400.
-L'interpréteur qui exécute ces scripts est dans `dq9-core` (§ [Interpréteur](#interpréteur-dq9-core-j3)).
+L'interpréteur qui exécute ces scripts est dans `dq9-core` (§ [Interpréteur](#interpréteur-dq9-core-j3)) ;
+leurs effets sont joués à l'écran par `dq9-app` (§ [Exécution à l'écran](#exécution-à-lécran-dq9-corecutscene-dq9-app)).
 
 Ce sont les scènes scriptées lancées par l'action de trigger 0x77 (`trigger.md`) :
 caméra, déplacements des personnages, dialogues, combats.
@@ -234,6 +235,73 @@ existe dans la table du script ; 24 natives restent sans effet modélisé : 238,
 411, 413, 541, 542, 545, 546, 547, 552, 554, 559, 560, 561, 571, 574, 575, 581, 582, 584, 712,
 809 et 815 (les mêmes que « non identifiées » dans [stb-natives.md](stb-natives.md)). Ce n'est
 pas une validation sous émulateur : l'ordre et les durées ne sont pas comparés à melonDS.
+
+## Exécution à l'écran (`dq9-core::cutscene`, `dq9-app`)
+
+Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/S, tests),
+`crates/dq9-app/src/event.rs` (`EventPlayer` : `Director` + rendu), acteurs et mouvements dans
+`dq9-render` (`AnimatedScene::add_actor`…) ; usage et résultat par scène dans
+[`app.md`](app.md), § « Événements ». Aucune fonction du jeu n'est portée en entier
+(pas de marqueur `port:`) : ce sont des modèles de comportement tirés des natives
+([`stb-natives.md`](stb-natives.md)) et des données. Les points ci-dessous sont ce que les
+30 scripts du prologue imposent ; ce n'est pas une comparaison à melonDS.
+
+**Établi par les données** (contrôles sur les 30 scripts, `cargo dq9re script`) :
+
+- Liste des événements (`eventlist6.bin`, `eventlist_lv5.bin`, enregistrements 102) : la valeur 4
+  est la carte de la scène (`ev21500` → 1112 `M01M12`, `ev21520` → 20101 `F01M01`, `ev01130` →
+  4105 `X01M05`), les valeurs 12 à 15 la position (x, y, z) et l'angle de départ du héros, tous
+  nuls (ou entiers) quand le script place lui-même les personnages (`dq9_core::script::load::place`).
+  Le premier enregistrement de l'étape 1.1 dans `eventlist_lv5.bin` est `21500`
+  (`stage_opening`).
+- Les déclarations 566 numérotent les membres de la distribution par leur champ `attach` : le
+  membre `n` est celui des créneaux de liaison et des acteurs de numéro `n` (`ev01130` : acteur 0
+  = héros, `attach 0` mode 0 ; acteur 1 = PNJ 105, `attach 1` mode 5 ; acteur 2 = modèle
+  `effect/ev999990700.chr`, `attach 2` mode 2 ; `ev01330` déclare 3, 4, 2, 1 dans cet ordre).
+  Modes : 0 le héros, 2/3/6/7 un modèle (ou sprite) de chemin donné, 4/5 un PNJ de la carte par son
+  numéro (`reference`). Pour le mode 4 le numéro (99, 139, 7, 210) n'est pas un PNJ de la carte
+  mais une entrée de la table des personnages (`Chara_Get`) **[inconnu]** : non dessiné.
+- Une liaison explicite (202) vise un personnage par son type : 4 avec le personnage 0 est le
+  héros, 1 avec un identifiant négatif un modèle chargé par 200/228/233, 2 un objet de carte.
+- Un clone (228) voit les paquets d'animation ajoutés ensuite à son modèle d'origine : en `ev21507`
+  le personnage −5 (clone de −4) joue des mouvements que seul −4 reçoit (`LoadModelArchive`),
+  de même −12 en `ev21500`. `RemoveAnimationPackage` est appelée pour chacun.
+- La caméra de l'ouverture (572, `eye`/`lookat`) est portée par un modèle sans polygone
+  (`ev01000cc000.chr`, `ev01000c000.chr`, mouvement `cut_00`/`cut_01` d'une tranche du fichier
+  `nsbca` du paquet de type 0) : l'œil et la cible sont les os de ce nom du modèle posé, dans le
+  repère de l'acteur. Avec l'échelle 0x10a/4096 du sélecteur 0, l'œil et la cible de `cut_01`
+  tombent à quelques unités des personnages que le script place un peu avant (œil
+  (−11,75 ; 12,35 ; −14,58), cible (−27,40 ; 0,65 ; −9,20), personnages vers (−27 ; −0,3 ; −9)) ;
+  avec l'échelle 1 ils seraient à 400 unités.
+- Les messages d'une scène sont fermés tantôt par le joueur (le script boucle sur 405), tantôt par
+  la native 401 après une durée (textes `<CEN>` des cinématiques, cadre retiré par 410).
+
+**Hypothèses** (marquées dans le code) :
+
+- Un modèle chargé par 200 avec le sélecteur 0 a l'échelle des personnages de la carte
+  (0x10a/4096, `NpcTable_Build`) ; avec le sélecteur 1 il a l'échelle 1, le script fixant la
+  sienne par 211. Le clone (228) a 0x10a. **[hypothèse]** : le sens du sélecteur est inconnu
+  (`stb-natives.md`, 200) ; elle s'accorde avec les caméras et les modèles attachés du prologue.
+- Les commandes d'un acteur sont groupées en six canaux (position, rotation, animation, échelle,
+  alpha, rayon) ; les huit files du jeu n'ont pas été reliées une à une. Une commande instantanée
+  ne prend pas de tick, l'acteur est au repos quand tous les canaux sont vides ; 210 ne bloque
+  pas, 224 et 213 attendent la fin du mouvement en cours (fin = la fin de la tranche atteinte
+  une fois, y compris pour un mouvement qui boucle).
+- Les durées de la caméra (304 à 322) et du chemin (217) sont comptées comme celles des acteurs
+  (2 ticks par unité) ; le demi-angle de champ de 532/580 est celui du jeu (15° par défaut) ; le
+  roulis 327 tourne le vecteur haut autour de la visée, positif vers la droite de l'image.
+- `Event_BuildScene` ne lie pas elle-même la position de départ d'un PNJ de la carte : il garde
+  sa place jusqu'à la première commande, et la retrouve à la fin de la scène.
+- Fondus : le moteur « principal » est l'écran 3D ; un moteur verrouillé (112, 114, 116) ignore
+  les fondus simples (100, 101, 105, 106, 107) jusqu'à un fondu qui le déverrouille
+  (117 à 122) ; l'état revient à la normale quand la dernière scène finit.
+
+**Non exécuté** (rapporté par `--events-report`) : son, échange d'écrans, lumière et heure
+(578, 579, 588, 589, 808), brouillard (804), sprites 2D (521), attachements d'os (235, 236),
+mouvements des PNJ de la carte et des modèles absents, natives 238, 328, 409, 411, 413, 541,
+542, 545, 546, 547, 552, 561, 574, 575, 581, 582, 584, 809 ; 554, 559, 560, 571, 712 et 815
+sont sans effet visible établi. **[inconnu]** : ce qui enchaîne `ev21507` à `ev21520` (le
+trigger 11 rend `Other(120)`, action `0x78`).
 
 ## Questions ouvertes
 

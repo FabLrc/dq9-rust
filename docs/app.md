@@ -122,6 +122,93 @@ qu'après un geste : la musique démarre au premier clic ou à la première touc
 (`?mute=1` sur le Web) n'ouvre aucun périphérique audio ; `dq9re sseq <n> --wav f.wav` rend une
 séquence sans fenêtre.
 
+## Événements (scènes `.stb`)
+
+Les scènes du jeu (cinématiques du prologue, dialogues scriptés) sont des scripts `.stb`
+([`re/stb.md`](re/stb.md)) que `dq9-app` joue à l'écran :
+
+```powershell
+# Le prologue : première scène de l'étape 1.1 (`21500`, Angel Falls, « Opening (Background) »),
+# puis, par la native 538, `21507`. Dans la fenêtre ; Entrée/Espace lit les messages.
+cargo run -p dq9-app --release -- --stage 1.1
+cargo run -p dq9-app --release -- --event 1130          # une scène seule, sur sa carte
+# Une capture après N pas de 60 Hz (le script, les fondus, les messages et la caméra rejoués
+# depuis le début), avec l'action pressée tous les 100 pas pour lire les messages :
+cargo run -p dq9-app --release -- --stage 1.1 --frame 420 --press-every 100 `
+    --size 512x384 --screenshot build/scratch/ev/hello.png
+# La logique du jeu sans fenêtre (déclencheurs, changements de carte, scènes), journalisée :
+cargo run -p dq9-app --release -- --stage 1.1 --headless-steps 60000 --press-every 100
+# Ce que joue chaque scène d'une plage d'étapes (tableau ci-dessous) :
+cargo run -p dq9-app --release -- --events-report 1.1-3
+```
+
+`--stage MAJEUR.MINEUR` choisit le point de l'histoire et la première scène de l'étape dans
+`eventlist_lv5.bin` (`dq9_core::script::load::stage_opening`) ; `--event N` une scène du
+numéro de `data/event` ou `data/evspt_lv5`. Une scène se joue sur la carte que son
+enregistrement de la liste des événements désigne (valeur 4), le héros à la position de
+l'enregistrement quand elle en a une : l'application charge cette carte si elle est ailleurs.
+Sur le Web, `?event=N`. Dans la fenêtre, un déclencheur qui demande `Request::Event` (actions
+`0x77`, `0x80`, `0x9b` : entrer dans une zone, parler) met l'événement en file ; à la fin d'un
+événement l'application tire l'événement 11 des triggers (`Field::event_ended`), comme
+`EventTask_Update`.
+
+**Architecture.** `dq9_core::cutscene` tient l'état de la scène que le script a produit (acteurs,
+caméra, fondus) sans E/S ; `dq9-app/src/event.rs` (`EventPlayer`) fait tourner le `Director`,
+applique cet état au rendu et renvoie les `Signal` au script ; `dq9_render::AnimatedScene`
+fournit les acteurs (`add_actor`, `play_actor`, `actor_bone`, `play_hero`, `set_npc_angle`).
+
+- **Cadence.** Un pas fixe de 60 Hz est un tick ; le script avance toutes les deux ticks (une
+  mise à jour du jeu, [`re/stb-natives.md`](re/stb-natives.md) § « Temps et unités »), la scène à
+  chaque tick. Déplacements, rotations, échelle et alpha chronométrés durent `2 × durée` ticks ;
+  les fondus comptent des ticks.
+- **Modèles.** Avant de jouer une scène, l'application la joue à blanc (toutes les attentes
+  finissent aussitôt) pour savoir quels `.chr` chaque personnage charge (natives 200, 228, 229,
+  233, 566, 567), les ajoute à la scène et envoie la scène au GPU une fois. Un modèle sans
+  polygone (les caméras du prologue, `ev01000cc000.chr`) n'a pas d'instance : il garde son
+  squelette et ses mouvements. Mouvements d'un acteur : table `BCFG` de son archive et des
+  paquets ajoutés (`LoadModelArchive`), un mouvement sans fichier propre jouant une tranche du
+  fichier du paquet de type 0. Le héros joue les mouvements des paquets `evNNNNNp000.chr`.
+- **Caméra.** Œil, cible, orbite, champ de vision (demi-angle, 15° par défaut), roulis, secousses,
+  suivi d'un acteur et caméra portée par deux os d'un modèle (native 572, utilisée par
+  l'ouverture) sont celles du script ; la caméra libre reprend à la fin. Une scène est cadrée en
+  4:3 (un écran DS), comme `--ds-aspect`.
+- **Messages.** La fenêtre de conversation (`talk.rs`) affiche le texte de la table de la scène ;
+  sans balise de fin elle attend l'action (`Dialogue::for_event`) ; la native 401 la ferme, la
+  native 410 en retire le cadre. Le joueur est verrouillé (pas de marche, pas de conversation).
+- **Fondus.** Un rectangle noir ou blanc sur tout l'écran 3D, de niveau −16 à +16 ; un moteur
+  verrouillé (`112`, `114`, `116`) ignore les fondus simples. L'écran « principal » est pris pour
+  l'écran 3D **[hypothèse]** ; le fondu de l'autre moteur et l'échange des écrans sont ignorés.
+
+**Résultat sur le prologue** (`--events-report 1.1-3`, ROM EU, textes anglais ; les 30 scripts
+vont à leur terme, aucune scène « non jouée » ; le son appartient à un autre chantier et n'est
+compté nulle part). « Complet » : tout ce que le script demande est exécuté, aux natives sans effet
+visible établi près (554, 559, 560, 571, 712, 815).
+
+| Scène(s) | Cartes | Résultat | Ce qui manque (visible) |
+|---|---|---|---|
+| 1130, 1140, 1310, 1350, 1360, 1370, 1390, 1410 | `X01M05`, `M01` | complet | — |
+| 1150, 1160, 1600, 1610 | `X01M07` | partiel | mouvements `stand`/`walk`/`talk_loop` des PNJ de la carte (sprites ou modèles) et héros de référence (cast mode 4, personnage 99/139/130 de la table des personnages, non dessinés) ; bulles 541/542/561 |
+| 1170, 1320 | `X01M01`, `M01` | partiel | natives 545/546 (`run`/`stand` d'un personnage), 328 (caméra) |
+| 1330, 1340, 1380 | `M01M06`, `M01M04`, `M01` | partiel | mouvement 1 d'un acteur déclaré, bulles 541/542/561, `574` (bit des placements de carte) |
+| 21500 + 21507 | `M01M12` | partiel | pas de son ni de lumière/heure (588, 589…), sprites 2D (521), 8 attachements d'os (tête, torse : halo, ailes), natives 238 (teinte), 409/411/413 (effets de fenêtre), 541/542/561, 547, 552 (caméra à trois os), 574, 584, mouvement `nozoki_loop` absent des données |
+| 21510 | `X01M04` | partiel | 574 |
+| 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | partiel | brouillard (804), lumière/heure, teinte 238, 574, 809 |
+| 21591, 21592, 21594, 21597 | `X01M05`, `M01`, `X01M04` | partiel | sprites 2D, 575/574, 581/582, 809, lumière |
+| 21593, 21595 | `M01` | partiel | sprites 2D, brouillard, teinte 238, bulles, 559, 581/582, 809, mouvement 1 d'un acteur |
+
+La chaîne 21520 → 21596 (quatre cartes) se joue d'un bout à l'autre par les natives 538 ; ce qui
+suit 21507 n'est pas enchaîné automatiquement : le trigger 11 de la carte rend une demande
+`Other(120)` (`0x78`, « tâche `+0x3718` », **[sens inconnu]**, `trigger.md`) et la scène 21520
+se lance par `--event 21520`.
+
+**Limites et hypothèses.** Voir aussi [`re/stb.md`](re/stb.md), § « Exécution » : liaison par défaut
+du membre déclaré `n` au créneau et à l'acteur `n`, taille par défaut des modèles chargés (0x10a
+avec le sélecteur 0, 1 avec le sélecteur 1), canaux des acteurs, sens du roulis, unité des
+durées de la caméra. Les PNJ de la carte ne changent pas de mouvement ; seuls leur position, leur
+direction (les sprites montrent le côté qui regarde la caméra) et leur visibilité suivent le
+script ; ils retrouvent leur place à la fin. Les modèles ne sont pas encore comparés
+à melonDS.
+
 ## Lancer dans un navigateur
 
 ```powershell
@@ -214,8 +301,8 @@ Approximé ou absent :
   déplacement du héros sont approximatifs (pas d'accélération ni rayon).
   Les portes, aires et warps suivent `dq9_core::field` (comparés à
   melonDS sur l'église de Stornway) sans l'animation de la porte ; les triggers de zone sont
-  évalués mais leurs demandes de conversation ou d'événement sont seulement journalisées, et
-  les escaliers, chutes et chemins des PNJ ne sont pas exécutés. Les
+  évalués ; leurs demandes d'événement sont exécutées (§ Événements), les autres demandes
+  seulement journalisées, et les escaliers, chutes et chemins des PNJ ne sont pas exécutés. Les
   visiteurs réseau, l'accessoire `s069` et la teinte additive des palettes (type 22) restent
   absents. Le mélange de plusieurs poses, les effets/actions `.beff`/`.bact` et les modes de
   sprite autres que debout/assis ne sont pas exécutés. Les couleurs MAT sont évaluées ; les

@@ -602,8 +602,17 @@ impl App {
         // Clamp long pauses (window dragged, tab hidden) instead of catching up.
         self.accumulator += now.duration_since(self.last).as_secs_f32().min(0.25);
         self.last = now;
+        let mut due = 0;
         while self.accumulator >= STEP {
             self.accumulator -= STEP;
+            due += 1;
+        }
+        self.run_steps(due);
+    }
+
+    /// Runs `due` fixed steps of the game logic.
+    fn run_steps(&mut self, due: u32) {
+        for _ in 0..due {
             if self.events.pending_start().is_some() || self.events.is_active() {
                 if !self.step_event() {
                     return;
@@ -922,5 +931,28 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl App {
+    /// Plays the game logic without a window for at most `steps` fixed steps, until the
+    /// events that were started are over, pressing the action key every `press_every` steps
+    /// (`--headless-steps`, `docs/app.md`). The log shows every event, map change and trigger.
+    pub fn play_headless(&mut self, steps: u32, press_every: Option<u32>) {
+        let mut started = false;
+        for step in 0..steps {
+            if press_every.is_some_and(|n| step > 0 && step % n == 0) {
+                self.talk.press(Button::Confirm);
+            }
+            self.run_steps(1);
+            let busy = self.events.is_active() || self.events.pending_start().is_some();
+            started |= busy;
+            if started && !busy {
+                status(&format!("events over after {step} steps"));
+                return;
+            }
+        }
+        status(&format!("stopped after {steps} steps"));
     }
 }

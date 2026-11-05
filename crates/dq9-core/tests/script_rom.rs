@@ -78,3 +78,24 @@ fn scripts_are_deterministic() {
     let mut second = Director::new("en");
     assert_eq!(run(&mut first, &rom, 1340), run(&mut second, &rom, 1340));
 }
+
+/// Where the opening scenes of the prologue happen, from the event lists: the first scene of
+/// stage 1.1 and the maps of its chain (`docs/app.md`, § Événements).
+#[test]
+fn prologue_events_know_their_map_and_the_stage_its_opening() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    assert_eq!(load::stage_opening(&rom, 1, 1), Some(21500));
+    // `M01M12`, "Opening (Background)", without a start position of its own.
+    let opening = load::place(&rom, 21500).unwrap();
+    assert_eq!((opening.map, opening.position), (1112, None));
+    // The observatory scene has a hero start: x, y, z and the angle of the record.
+    let observatory = load::place(&rom, 1130).unwrap();
+    assert_eq!(observatory.map, 4105);
+    let (at, angle) = observatory.position.unwrap();
+    for (got, want) in at.iter().zip([-16.6, 0.45, 2.25]) {
+        assert!((got - want).abs() < 1e-3, "{at:?}");
+    }
+    assert!((angle - 4.71).abs() < 1e-3);
+    assert_eq!(load::place(&rom, 3), None);
+}

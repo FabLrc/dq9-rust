@@ -275,3 +275,61 @@ fn hero_model_follows_its_gait() {
     assert_eq!(Gait::from_speed(4.0), Gait::Walk);
     assert_eq!(Gait::from_speed(8.0), Gait::Run);
 }
+
+/// A scripted actor (`add_actor`): a character archive's motions play by name, one-shot
+/// motions end, and a model without polygons still exposes its bones (the camera rigs of the
+/// opening cutscene).
+#[test]
+fn scripted_actors_play_named_motions_and_expose_bones() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+    let list = MapList::parse(&table).unwrap();
+    let record = list.records.iter().find(|r| r.code == b"M01M12").unwrap();
+    let map = assemble(&rom, &table, &list, record);
+    let file = |p: &str| map::rom_file(&rom, p);
+    let story = dq9_formats::cast::Story::default();
+    let mut scene =
+        dq9_render::AnimatedScene::build(&map, record.id, record.code, &story, file).unwrap();
+    let camera = dq9_render::Camera::default();
+
+    // A character with a package: `cut01_move` comes from the package, `stand` from the model.
+    let chr = file("data/chara_sub/s070.chr").unwrap();
+    let package = file("data/event_lv5/ev01000s070.chr").unwrap();
+    let before = scene.scene.instances.len();
+    let actor = scene.add_actor(chr, &[package]).unwrap();
+    assert_eq!(scene.actor_instance(actor), Some(before));
+    let motions = scene.actor_motions(actor);
+    assert!(motions.contains(&"stand") && motions.contains(&"cut01_move"));
+    assert!(!scene.play_actor(actor, "no such motion", false, 1.0));
+    assert!(scene.play_actor(actor, "cut01_move", true, 1.0));
+    assert_eq!(scene.actor_wraps(actor), 0);
+    for _ in 0..600 {
+        scene.step(&camera).unwrap();
+    }
+    // A one-shot motion has ended and holds its last pose.
+    assert!(scene.actor_wraps(actor) > 0);
+    let held = scene.scene.models[scene.scene.instances[before].model]
+        .vertices
+        .clone();
+    scene.step(&camera).unwrap();
+    assert_eq!(
+        held,
+        scene.scene.models[scene.scene.instances[before].model].vertices
+    );
+    assert!(scene.actor_bone(actor, "head").unwrap().is_some());
+    assert!(scene.actor_bone(actor, "no such bone").unwrap().is_none());
+
+    // The camera rig has no polygon: no instance, but bones that move with its motion.
+    let rig = scene
+        .add_actor(file("data/event_lv5/ev01000cc000.chr").unwrap(), &[])
+        .unwrap();
+    assert_eq!(scene.actor_instance(rig), None);
+    assert!(scene.play_actor(rig, "cut_00", true, 1.0));
+    let start = scene.actor_bone(rig, "eye").unwrap().unwrap();
+    for _ in 0..200 {
+        scene.step(&camera).unwrap();
+    }
+    let later = scene.actor_bone(rig, "eye").unwrap().unwrap();
+    assert_ne!(start, later);
+}

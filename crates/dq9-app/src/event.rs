@@ -220,6 +220,10 @@ pub struct EventPlayer {
     dirty: Vec<usize>,
     coverage: Coverage,
     running: Option<u16>,
+    /// The events that started, in order.
+    started: Vec<u16>,
+    /// The event whose scene [`EventPlayer::prepare`] built and that has not started yet.
+    prepared: Option<u16>,
 }
 
 impl Default for EventPlayer {
@@ -256,6 +260,8 @@ impl EventPlayer {
             dirty: Vec::new(),
             coverage: Coverage::default(),
             running: None,
+            started: Vec::new(),
+            prepared: None,
         }
     }
 
@@ -270,9 +276,18 @@ impl EventPlayer {
         self.director.is_active()
     }
 
-    /// The event the next step starts, when none runs.
+    /// The event the next step starts and whose scene is not prepared yet, when none runs
+    /// (the script starts on the next even tick).
     pub fn pending_start(&self) -> Option<u16> {
-        self.director.pending_start()
+        self.director
+            .pending_start()
+            .filter(|event| self.prepared != Some(*event))
+    }
+
+    /// The events that started, in order.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn started(&self) -> &[u16] {
+        &self.started
     }
 
     /// The hero is hidden by the script.
@@ -285,10 +300,14 @@ impl EventPlayer {
         std::mem::take(&mut self.dirty)
     }
 
+    /// What the events asked that is not executed (`--events-report`).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn coverage(&self) -> &Coverage {
         &self.coverage
     }
 
+    /// Natives called without an effect, with their call counts.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn unimplemented(&self) -> &BTreeMap<i32, u32> {
         self.director.unimplemented()
     }
@@ -309,6 +328,7 @@ impl EventPlayer {
         self.bindings.played.clear();
         self.restore_npcs(stage);
         self.cutscene.restart();
+        self.prepared = Some(event);
         let scanned = scan(rom, event, stage.world);
         if let Some(reason) = &scanned.failure {
             status(&format!("event {event}: {reason}"));
@@ -332,14 +352,29 @@ impl EventPlayer {
             }
         }
         for plan in &scanned.models {
-            if plan.path.ends_with(".spr") || plan.path.ends_with(".mon") {
-                self.coverage
-                    .miss(format!("sprite or monster actor {}", plan.path));
+            if plan.path.ends_with(".spr") {
+                self.coverage.miss(format!("2D sprite actor {}", plan.path));
                 continue;
             }
-            let Some(chr) = data(&plan.path) else {
-                self.fail(format!("model {}: not in the ROM", plan.path));
-                continue;
+            // A monster is the `.cchr` of its member of `enemy.gp2` (`native 233`).
+            let monster = plan
+                .path
+                .ends_with(".mon")
+                .then(|| monster_archive(&files, &plan.path))
+                .flatten();
+            let chr = match (&monster, plan.path.ends_with(".mon")) {
+                (Some(bytes), _) => bytes.as_slice(),
+                (None, true) => {
+                    self.fail(format!("monster {}: not in enemy.gp2", plan.path));
+                    continue;
+                }
+                (None, false) => match data(&plan.path) {
+                    Some(bytes) => bytes,
+                    None => {
+                        self.fail(format!("model {}: not in the ROM", plan.path));
+                        continue;
+                    }
+                },
             };
             let packages: Vec<&[u8]> = plan
                 .packages
@@ -427,7 +462,7 @@ impl EventPlayer {
     /// One fixed step (one tick of 1/60 s). Returns what the application must do.
     pub fn step(&mut self, stage: &mut Stage) -> Vec<Outcome> {
         let mut outcomes = Vec::new();
-        if self.ticks % 2 == 0 {
+        if self.ticks.is_multiple_of(2) {
             // An update of the game: the script runs once.
             let files = LazyRom::new(stage.rom);
             let events = self.director.step(&files, Frame::default(), stage.world);
@@ -467,6 +502,8 @@ impl EventPlayer {
             Event::Started { event } => {
                 status(&format!("event {event} starts"));
                 self.running = Some(*event);
+                self.started.push(*event);
+                self.prepared = None;
                 if self.saved_camera.is_none() {
                     self.saved_camera = Some(*stage.camera);
                 }
@@ -527,7 +564,8 @@ impl EventPlayer {
             *self.coverage.missing.entry(what.clone()).or_default() += n;
         }
         status(&format!(
-            "events over: not executed {:?}, natives without effect {:?}",
+            "events {:?} over: not executed {:?}, natives without effect {:?}",
+            self.started,
             self.coverage.missing,
             self.director.unimplemented()
         ));
@@ -625,6 +663,7 @@ impl EventPlayer {
                         .and_then(|i| stage.scene.scene.models.get(i.model))
                         .is_some_and(|m| m.archive.ends_with(".spr"));
                     let world = if sprite {
+                        stage.scene.set_npc_angle(id as u16, node.pose.rotation.y);
                         if node.visible {
                             Mat4::from_translation(node.pose.position)
                         } else {
@@ -668,9 +707,7 @@ impl EventPlayer {
         }
         stage.camera.fovy = (2.0 * view.half_fov).to_radians();
         stage.camera.far = stage.camera.far.max(stage.camera.distance * 4.0);
-        if view.roll != 0.0 {
-            self.coverage.miss("camera roll");
-        }
+        stage.camera.roll = view.roll.to_radians();
     }
 
     /// Eye and target of a camera driven by two bones of the model bound to a slot.
@@ -695,4 +732,40 @@ impl EventPlayer {
 /// Where `event` happens (`dq9_core::script::load::place`).
 pub fn place(rom: &[u8], event: u16) -> Option<dq9_core::script::load::EventPlace> {
     dq9_core::script::load::place(&LazyRom::new(rom), event)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl EventPlayer {
+    /// What the running script is waiting for, for the log of a screenshot.
+    pub fn waiting(&mut self) -> String {
+        let Some(runtime) = self.director.runtime_mut() else {
+            return "no event".into();
+        };
+        let actors: Vec<usize> = (0..runtime.actor_busy.len())
+            .filter(|&a| runtime.actor_busy[a])
+            .collect();
+        let animating: Vec<usize> = (0..runtime.animating.len())
+            .filter(|&s| runtime.animating[s])
+            .collect();
+        format!(
+            "message open {}, camera busy {}, preload {}, busy actors {actors:?}, animating slots {animating:?}",
+            runtime.message_open, runtime.camera_busy, runtime.preload_pending
+        )
+    }
+}
+
+/// The character archive of a monster (`enemy/z000a.mon`): the first `.cchr` of its member of
+/// `data/pack_lv5/enemy.gp2`, LZ-decompressed (`LoadMonsterCharacter`, native 233).
+fn monster_archive(files: &LazyRom, path: &str) -> Option<Vec<u8>> {
+    let member = path.strip_prefix("enemy/").unwrap_or(path);
+    let enemies = dq9_formats::Gpc2::parse(files.file("data/pack_lv5/enemy.gp2")?).ok()?;
+    let entry = enemies.entries.iter().find(|e| e.name == member)?;
+    let mon = enemies.member(entry).ok()?;
+    let monster = nds_rom::Narc::parse(&mon).ok()?;
+    let cchr = monster
+        .names
+        .files
+        .iter()
+        .find(|e| e.path.ends_with(".cchr"))?;
+    nds_rom::compress::decompress(monster.file(cchr.id).ok()?).ok()
 }

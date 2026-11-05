@@ -283,7 +283,7 @@ suivi), comparaison position par position à nombre d'images égal.
 | fenêtre de dialogue à l'écran : police, cadre, nom de l'orateur, défilement, Oui/Non ; balises de mise en page restantes (`<CEN>`, `<TC#>`, `<W=#>`… de `text.md`) | `message.rs`, `font.rs` (fait) ; wiki Text-Markup |
 | triggers branchés sur le jeu réel (parler, examiner, entrer dans une zone) | `trigger.rs` (fait) |
 | interpréteur `.stb` dans `dq9-core` (attente par image, appels de fonctions) — **fait** (`dq9_core::script`, voir Avancement) | `stb.rs` (fait) ; wiki Event-Scripts |
-| natives : personnages (200), caméra (300), messages (400), scène et fondus (500, 100–122) | wiki Engine-Functions ; `ov_001` |
+| natives : personnages (200), caméra (300), messages (400), scène et fondus (500, 100–122) — **jouées à l'écran** pour le prologue (voir Avancement) | wiki Engine-Functions ; `ov_001` |
 | deux écrans DS : écran haut (carte) et bas, disposition configurable | — |
 | son minimal : musique SDAT (séquenceur SSEQ + mixage SWAV) — **fait pour la musique de champ** : `dq9-audio` (séquenceur, enveloppes DS, ondes ADPCM, PSG, bruit), musique de la carte lue dans `maplist9.bin` + `mapbgm.bin`, sortie cpal/WebAudio (`--mute`, touche `M`), `dq9re sseq` ; reste : effets sonores, jingles `ME_`, fondus du gestionnaire, comparaison à l'oreille/melonDS ([`re/sdat.md`](re/sdat.md)) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
 
@@ -303,8 +303,10 @@ Avancement :
       héros de la sauvegarde, langues autres que l'anglais, `<TC#>` et `<W=#>` (absentes du
       chemin des conversations).
 - [ ] **Triggers branchés** : l'événement 0 « parler » (`Field::talk`) est branché sur la
-      conversation ; restent « examiner », les zones d'autres types et les événements `.stb`
-      (`Request::Event`) demandés par les triggers.
+      conversation ; les demandes `Request::Event` des triggers (actions `0x77`, `0x80`, `0x9b`)
+      démarrent l'événement dans l'application et la fin d'un événement tire l'événement 11
+      (`Field::event_ended`) ; restent « examiner », les zones d'autres types et la suite de
+      `ev21507` (trigger 11 → action `0x78`, sens inconnu).
 - [ ] **Interpréteur `.stb`** : `dq9_core::script` traduit `Stb_Run` et ses auxiliaires
       (`ov_017::021d4980…021d6148`, marqueurs `port:`), joue les entrées 200, 100 et 300 d'un
       événement une mise à jour à la fois (`Script::step`) et rend des `Event` typés (fondus,
@@ -313,9 +315,16 @@ Avancement :
       d'une requête `Request::Event` des triggers et enchaîne la native 538. Les 30 scripts du
       prologue (étapes 1.1 à 1.3) vont à leur terme sans erreur (`cargo dq9re script 1.1-3`, test
       réel `prologue_scripts_run_to_completion`) ; 24 natives de rôle inconnu sont rapportées une
-      fois et ignorées. Restent : exécuter les `Event` (dialogue, acteurs, caméra : autres
-      chantiers), comparer l'ordre et les durées à melonDS, l'appelant de l'entrée 200 et les
-      natives sans rôle (`re/stb.md`, § Interpréteur).
+      fois et ignorées. **Exécution à l'écran** (`dq9_core::cutscene`, `dq9-app/src/event.rs`,
+      [`app.md`](app.md) § « Événements », [`re/stb.md`](re/stb.md) § « Exécution à l'écran ») :
+      `--stage 1.1` / `--event N` jouent les scènes (fondus, messages dans la fenêtre de
+      conversation, acteurs qui bougent, tournent et jouent leurs mouvements, caméra du script
+      dont celle portée par les os d'un modèle, déplacements au pas du jeu) ; les 30 scripts du
+      prologue vont à leur terme (`--events-report 1.1-3` : 8 sans manque visible, 22 partielles,
+      aucune « non jouée »). Restent : le son, la lumière/heure, le brouillard, les sprites 2D,
+      les attachements d'os, les mouvements des PNJ de la carte, ~20 natives d'effets (liste dans
+      `app.md`), comparer l'ordre, les durées et les poses à melonDS, l'appelant de l'entrée 200
+      et les natives sans rôle (`re/stb.md`, § Interpréteur).
 
 **v0.1** : nouvelle partie avec un héros par défaut (modèle animé fait en J1 ; reste le choix
 de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,
