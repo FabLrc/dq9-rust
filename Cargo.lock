@@ -505,6 +505,7 @@ dependencies = [
  "anyhow",
  "clap",
  "console_error_panic_hook",
+ "dq9-core",
  "dq9-formats",
  "dq9-render",
  "glam",
@@ -518,6 +519,15 @@ dependencies = [
  "web-time",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "dq9-core"
+version = "0.1.0"
+dependencies = [
+ "dq9-formats",
+ "glam",
+ "nds-rom",
 ]
 
 [[package]]

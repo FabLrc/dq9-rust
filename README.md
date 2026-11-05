@@ -5,10 +5,10 @@ pour Windows, macOS, Linux et le Web, avec le multijoueur de la DS rendu possibl
 Le jeu est rétro-analysé et ses ressources sont lues depuis **votre propre ROM** ; aucune
 donnée du jeu n'est incluse dans ce dépôt.
 
-**État** : cartes texturées avec PNJ et animations affichées en natif et dans le navigateur
-(`dq9-app`, caméra libre) ; formats et logique de dialogue/scénario réimplémentés. Pas encore
-de déplacement jouable ni de scènes interactives. Prochain objectif : une **v0.1 jouable**
-(prologue d'Angel Falls). Plan complet : `docs/roadmap.md`, lancement : `docs/app.md`.
+**État** : cartes texturées avec PNJ et animations en natif/Web, déplacement de terrain
+expérimental (`dq9-core`) ; portes, progression interactive et scènes restent à faire. Prochain
+objectif : une **v0.1 jouable** (prologue d'Angel Falls). Plan : `docs/roadmap.md`, lancement :
+`docs/app.md`.
 
 <!-- coverage:start -->
 **Avancement : 1,6 %** des fonctions de jeu traduites (204 / 12 092), 2,1 % du code (53 Ko / 2 506 Ko).
@@ -58,6 +58,7 @@ Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (dé
 | `crates/nds-rom` | ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC. Sans E/S, compile en wasm. |
 | `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives `.gp2`, tables d'enregistrements, polices, messages, choix des répliques, triggers, scripts `.stb`. Sans E/S, compile en wasm. |
 | `crates/dq9-render` | Rendu wgpu des cartes, proche du moteur 3D de la DS ; caméra libre. Sans E/S, compile en wasm. |
+| `crates/dq9-core` | État déterministe, requêtes de collision et déplacement provisoire. Sans E/S, compile en wasm. |
 | `crates/dq9-app` | Application (winit + wgpu, natif et Web) : `cargo run -p dq9-app --release -- --map M01` (`docs/app.md`). |
 | `crates/dq9re` | CLI de rétro-ingénierie (`cargo dq9re --help`). |
 | `crates/testrom` | Localise la ROM pour les tests sur données réelles. |
@@ -66,8 +67,7 @@ Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (dé
 | `docs/` | Feuille de route, architecture, ressources externes, notes de RE (`re/`). |
 | `rom/` | Votre ROM (ignorée par git). |
 
-Les crates `dq9-core` et `dq9-audio` seront créées au fil de la feuille de route
-(`docs/architecture.md`).
+`dq9-audio` sera créée au fil de la feuille de route (`docs/architecture.md`).
 
 ## Mise en place
 
@@ -95,7 +95,7 @@ powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save partie.
 cargo test --workspace                        # tests sur la vraie ROM inclus si elle est présente
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
-cargo build -p nds-rom -p dq9-formats -p dq9-render -p dq9-app --target wasm32-unknown-unknown
+cargo build -p nds-rom -p dq9-formats -p dq9-core -p dq9-render -p dq9-app --target wasm32-unknown-unknown
 cargo dq9re coverage --readme README.md       # avancement (sans ROM), réécrit le bloc ci-dessus
 ```
 

@@ -12,6 +12,7 @@ repository = "https://github.com/FabLrc/dq9-online"
 [workspace.dependencies]
 nds-rom = { path = "crates/nds-rom" }
 anyhow = "1"
+dq9-core = { path = "crates/dq9-core" }
 dq9-formats = { path = "crates/dq9-formats" }
 testrom = { path = "crates/testrom" }
 clap = { version = "4", features = ["derive"] }

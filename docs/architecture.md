@@ -17,10 +17,10 @@ flowchart TD
 ```
 
 État : `nds-rom`, `dq9-formats` (compression Level-5, GPC2, tables, polices, messages, choix
-des répliques, triggers et leurs actions, scripts d'événements, cartes), `dq9-render` (cartes
-en wgpu), `dq9-app` (fenêtre native et Web, `app.md`) et `dq9re` existent. Les autres crates
-seront créées quand le format ou le sous-système correspondant aura été documenté dans
-`docs/re/`.
+des répliques, triggers et leurs actions, scripts d'événements, cartes), `dq9-core` (requêtes
+de sol et mouvement provisoire), `dq9-render` (cartes en wgpu), `dq9-app` (fenêtre native et
+Web, `app.md`) et `dq9re` existent. `dq9-audio` sera créée quand son sous-système aura été
+documenté dans `docs/re/`.
 
 ## Règles
 

@@ -10,9 +10,10 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use dq9_core::{CollisionWorld, Hero};
 use dq9_render::camera::{DS_ASPECT, letterbox};
 use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Renderer, Viewport};
-use glam::Vec2;
+use glam::{Mat4, Vec2, Vec3};
 use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -65,6 +66,9 @@ pub struct App {
     current: Option<(MapEntry, String)>,
     /// CPU state is retained after upload; native and Web advance the same animation clock.
     runtime: Option<AnimatedScene>,
+    collision: CollisionWorld,
+    hero: Option<Hero>,
+    hero_instance: Option<usize>,
     renderer: Option<Renderer>,
     camera: Camera,
     framed: Option<[glam::Vec3; 2]>,
@@ -97,6 +101,9 @@ impl App {
             maps: Vec::new(),
             current: None,
             runtime: None,
+            collision: CollisionWorld::default(),
+            hero: None,
+            hero_instance: None,
             renderer: None,
             camera: Camera::default(),
             framed: None,
@@ -144,6 +151,10 @@ impl App {
                 return;
             }
         };
+        let hero_start = loaded.hero.position;
+        self.collision = loaded.collision;
+        self.hero = Some(loaded.hero);
+        self.hero_instance = Some(loaded.hero_instance);
         let s = &loaded.runtime.scene;
         status(&format!(
             "{} {} ({}), time {}: {} models, {} textures, {} instances, {} triangles, {:.0} ms",
@@ -167,6 +178,7 @@ impl App {
             }
             self.framed = s.bounds();
         }
+        self.camera.target = hero_start;
         self.current = Some((loaded.entry, loaded.label));
         if let Err(e) = loaded.runtime.face_camera(&self.camera) {
             status(&format!("facing cast: {e}"));
@@ -264,7 +276,7 @@ impl App {
         self.last = now;
         while self.accumulator >= STEP {
             self.accumulator -= STEP;
-            let input = CameraInput {
+            let mut input = CameraInput {
                 forward: self.axis(
                     &[KeyCode::KeyW, KeyCode::ArrowUp],
                     &[KeyCode::KeyS, KeyCode::ArrowDown],
@@ -279,7 +291,43 @@ impl App {
                 fast: self.held.contains(&KeyCode::ShiftLeft)
                     || self.held.contains(&KeyCode::ShiftRight),
             };
+            let walking = self.camera.mode == CameraMode::Orbit;
+            if walking {
+                input.forward = 0.0;
+                input.right = 0.0;
+            }
             self.camera.step(&input, STEP);
+            let move_direction = if walking {
+                let (sin, cos) = self.camera.yaw.sin_cos();
+                let forward = Vec3::new(sin, 0.0, -cos);
+                let right = Vec3::new(cos, 0.0, sin);
+                forward
+                    * self.axis(
+                        &[KeyCode::KeyW, KeyCode::ArrowUp],
+                        &[KeyCode::KeyS, KeyCode::ArrowDown],
+                    )
+                    + right
+                        * self.axis(
+                            &[KeyCode::KeyD, KeyCode::ArrowRight],
+                            &[KeyCode::KeyA, KeyCode::ArrowLeft],
+                        )
+            } else {
+                Vec3::ZERO
+            };
+            if let Some(hero) = &mut self.hero {
+                let before = hero.position;
+                hero.step(
+                    &self.collision,
+                    move_direction,
+                    STEP * if input.fast { 2.0 } else { 1.0 },
+                );
+                self.camera.target += hero.position - before;
+                if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance)
+                    && let Some(instance) = runtime.scene.instances.get_mut(index)
+                {
+                    instance.world = Mat4::from_translation(hero.position);
+                }
+            }
             if let Some(runtime) = &mut self.runtime
                 && let Err(e) = runtime.step(&self.camera)
             {
@@ -303,6 +351,18 @@ impl App {
             self.runtime = None;
             self.renderer = None;
             return;
+        }
+        if let (Some(gpu), Some(renderer), Some(hero), Some(index)) = (
+            &self.gpu,
+            &mut self.renderer,
+            &self.hero,
+            self.hero_instance,
+        ) && !renderer.update_instance_world(
+            &gpu.queue,
+            index,
+            Mat4::from_translation(hero.position),
+        ) {
+            status("hero marker instance is unavailable");
         }
         let (Some(gpu), Some(renderer)) = (&mut self.gpu, &mut self.renderer) else {
             return;

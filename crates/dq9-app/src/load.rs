@@ -2,13 +2,14 @@
 //! assembly (`dq9_formats::map`), then the render scene.
 
 use anyhow::{Context as _, Result};
+use dq9_core::{CollisionWorld, Hero};
 use dq9_formats::Table;
 use dq9_formats::cast::Story;
 use dq9_formats::map::{self, Context, Map};
 use dq9_formats::maplist::{self, MapList, MapRecord};
 use dq9_render::AnimatedScene;
+use glam::Vec3;
 use nds_rom::Rom;
-
 /// One shippable map: id and code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapEntry {
@@ -24,6 +25,9 @@ pub struct LoadedMap {
     pub label: String,
     pub time: u32,
     pub runtime: AnimatedScene,
+    pub collision: CollisionWorld,
+    pub hero: Hero,
+    pub hero_instance: usize,
 }
 
 fn text(s: &[u8]) -> String {
@@ -69,10 +73,14 @@ pub fn load(rom: &[u8], key: &str, time: u32, story: &Story) -> Result<LoadedMap
     };
     let assembled = Map::assemble(record, &table, |p| map::rom_file(&rom, p), &ctx)
         .with_context(|| format!("assembling map {key}"))?;
-    let runtime = AnimatedScene::build(&assembled, record.id, record.code, story, |p| {
+    let collision = CollisionWorld::build(&assembled, |p| map::rom_file(&rom, p))
+        .with_context(|| format!("loading collision for {key}"))?;
+    let hero = Hero::new(collision.spawn().unwrap_or(Vec3::ZERO));
+    let mut runtime = AnimatedScene::build(&assembled, record.id, record.code, story, |p| {
         map::rom_file(&rom, p)
     })
     .with_context(|| format!("loading animations and cast for {key}"))?;
+    let hero_instance = runtime.add_hero_marker(hero.position);
     let label = [record.region, record.label]
         .into_iter()
         .flatten()
@@ -87,5 +95,8 @@ pub fn load(rom: &[u8], key: &str, time: u32, story: &Story) -> Result<LoadedMap
         label,
         time,
         runtime,
+        collision,
+        hero,
+        hero_instance,
     })
 }

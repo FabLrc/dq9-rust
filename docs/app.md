@@ -1,11 +1,13 @@
 # Application `dq9-app` et rendu `dq9-render`
 
-Première fenêtre du portage (jalon J1 de `roadmap.md`) : affiche une carte assemblée par
-`dq9_formats::map` (`re/map-archive.md`), modèles et textures G3D lus par `nds_rom::g3d`
-(`re/g3d.md`), avec les animations et la distribution de PNJ de `cast` (`re/characters.md`).
-Les `.col2` sont maintenant parsées (`re/collision.md`), mais ne sont ni dessinées ni utilisées
-pour le sol ou le déplacement ; l'éclairage de la carte reste absent.
+L'application commune native/Web affiche une carte, ses modèles, textures, animations, PNJ et un
+repère de position du joueur. `dq9-core` consomme maintenant les collisions `.col2`
+([`re/collision.md`](re/collision.md)) pour un déplacement de terrain expérimental ; les portes,
+changements de carte et l'éclairage restent absents.
 
+- `crates/dq9-core` (sans E/S, compile en wasm) : `CollisionWorld` assemble les `.col2` des
+  placements visibles ; `Hero` avance au pas fixe, recale le sol et bloque les faces verticales.
+  Vitesse et départ sont provisoires ([`re/movement.md`](re/movement.md)).
 - `crates/dq9-render` (sans E/S, compile en wasm) : `Scene::build(map, fichier)` reste
   disponible pour une scène statique ; `AnimatedScene::build(map, id, code, story, fichier)`
   ajoute les animations et les PNJ. `step(camera)` avance d'un pas de 60 Hz ;
@@ -40,9 +42,10 @@ N pas fixes depuis le début des mouvements avant la capture (0 par défaut), av
 mise à jour CPU qu'en fenêtre et sur le Web, sans dépendre du temps de chargement du GPU.
 Les sprites sont orientés vers la caméra de `--eye`/`--target` avant cette évaluation.
 
-Commandes : glisser avec le bouton gauche pour tourner, molette pour zoomer, `ZQSD`/`WASD`
-(touches physiques) ou flèches pour se déplacer, `Q`/`E` (physiques `A`/`E` en AZERTY) pour
-descendre/monter, `Maj` plus vite, `Tab` orbite/vol libre, `F` recadrer, `R` format DS,
+Commandes : glisser avec le bouton gauche pour tourner, molette pour zoomer. En mode orbite,
+`ZQSD`/`WASD` (touches physiques) ou flèches déplacent le héros sur le sol ; `Maj` double sa
+vitesse provisoire. `Tab` passe en vol libre, où ces touches déplacent la caméra ; `Q`/`E`
+(physiques `A`/`E` en AZERTY) déplacent la cible vers le bas/haut. `F` recadre, `R` format DS,
 `T` moment suivant, `PageHaut`/`PageBas` carte précédente/suivante, `Échap` quitter.
 
 ## Lancer dans un navigateur
@@ -70,8 +73,8 @@ Fidèle à ce que lit le jeu :
 
 - **Instances** : une par placement visible au moment choisi (`Instance::hidden`), des parties
   modèle et objet (`.nsbmd`) ; matrice monde = translation, rotation `y`, échelle de
-  `Instance::world` (`0x02013168`). Les triangles des `.col2` sont décodés par
-  `dq9_formats::map::Collision`, mais non dessinés ni consommés par la simulation.
+  `Instance::world` (`0x02013168`). `dq9-core` décompresse les `.col2`, transforme les faces
+  visibles et les utilise pour le sol et les murs (voir `re/movement.md`).
 - **Textures** : toutes les `.nsbtx` de l'`.ambl` (`Zone3D+0x418`), liées aux matériaux par
   nom de texture et de palette. Quand plusieurs fichiers ont le même nom, le premier de la
   liste (le plus récent) gagne **[hypothèse]**. Une texture qu'aucun fichier ne fournit
@@ -116,9 +119,9 @@ Approximé ou absent :
 - **Non rendu** : brouillard, contours (*edge marking*), anticrénelage, polygones d'ombre
   (mode 3) et fil de fer (alpha 0), panneaux G3D des modèles, ciel (couleur de fond fixe),
   précision de la DS (couleurs 6 bits, profondeur 24 bits ou W).
-- **PNJ, limites** : les hauteurs sont celles des placements : le rayon de
-  `Zone3D_GroundHeight` et le décalage du sol ne sont pas simulés sans `.col2` ; aucun faux
-  sol n'est ajouté. Pas d'errance, de chemins, de changement de mouvement par les scripts,
+- **PNJ, limites** : les hauteurs des PNJ sont celles des placements ; le snap du sol et le
+  déplacement du héros sont approximatifs (pas d'accélération, rayon, modèle animé ni départ
+  depuis une sauvegarde). Pas d'errance, de chemins, de changement de mouvement par les scripts,
   de visiteurs réseau, d'accessoire `s069` ni de teinte additive des palettes (type 22).
   Le mélange de plusieurs poses, les effets/actions `.beff`/`.bact` et les modes de sprite
   autres que debout/assis ne sont pas exécutés. Les couleurs MAT sont évaluées ; les sommets

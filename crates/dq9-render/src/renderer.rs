@@ -102,6 +102,8 @@ pub struct Renderer {
     instance_buffer: Option<wgpu::Buffer>,
     /// World matrix of each instance, in instance buffer order.
     instance_worlds: Vec<Mat4>,
+    /// Buffer slot for each original scene instance.
+    instance_slots: Vec<usize>,
     depth: Option<(wgpu::TextureView, u32, u32)>,
     /// Background colour.
     pub clear_color: wgpu::Color,
@@ -279,6 +281,7 @@ impl Renderer {
             models: Vec::new(),
             instance_buffer: None,
             instance_worlds: Vec::new(),
+            instance_slots: Vec::new(),
             depth: None,
             clear_color: wgpu::Color {
                 r: 0.25,
@@ -291,6 +294,10 @@ impl Renderer {
         let mut order: Vec<usize> = (0..scene.instances.len()).collect();
         order.sort_by_key(|&i| scene.instances[i].model);
         renderer.instance_worlds = order.iter().map(|&i| scene.instances[i].world).collect();
+        renderer.instance_slots.resize(order.len(), 0);
+        for (slot, &instance) in order.iter().enumerate() {
+            renderer.instance_slots[instance] = slot;
+        }
         let mut ranges = vec![0..0u32; scene.models.len()];
         for (slot, &i) in order.iter().enumerate() {
             let r = &mut ranges[scene.instances[i].model];
@@ -527,6 +534,31 @@ impl Renderer {
     /// Number of models and textures uploaded.
     pub fn counts(&self) -> (usize, usize) {
         (self.models.len(), self.textures.len())
+    }
+    /// Updates one world matrix in the instance buffer without rebuilding other GPU resources.
+    pub fn update_instance_world(
+        &mut self,
+        queue: &wgpu::Queue,
+        instance: usize,
+        world: Mat4,
+    ) -> bool {
+        let Some(&slot) = self.instance_slots.get(instance) else {
+            return false;
+        };
+        let Some(current) = self.instance_worlds.get_mut(slot) else {
+            return false;
+        };
+        let Some(buffer) = &self.instance_buffer else {
+            return false;
+        };
+        *current = world;
+        let offset = (slot * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
+        queue.write_buffer(
+            buffer,
+            offset,
+            bytemuck::bytes_of(&world.to_cols_array_2d()),
+        );
+        true
     }
 
     /// Re-uploads the vertices of `model` (e.g. posed by an animation), which must keep its

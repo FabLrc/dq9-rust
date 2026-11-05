@@ -398,6 +398,58 @@ impl AnimatedScene {
         Ok(())
     }
 
+    /// Adds a small untextured position marker to the shared scene and returns its instance index.
+    pub fn add_hero_marker(&mut self, position: Vec3) -> usize {
+        let vertices = [
+            [0.0, 1.0, 0.0],
+            [-0.3, 0.0, -0.3],
+            [0.3, 0.0, -0.3],
+            [0.3, 0.0, 0.3],
+            [-0.3, 0.0, 0.3],
+        ]
+        .map(|position| SceneVertex {
+            position,
+            texcoord: [0.0; 2],
+            color: [1.0, 0.45, 0.05],
+        })
+        .to_vec();
+        let model_index = self.scene.models.len();
+        self.scene.models.push(SceneModel {
+            archive: String::new(),
+            member: String::new(),
+            name: "hero marker".to_owned(),
+            vertices,
+            indices: vec![0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1, 1, 4, 3, 1, 3, 2],
+            materials: vec![SceneMaterial {
+                name: "hero marker".to_owned(),
+                texture_name: None,
+                palette_name: None,
+                texture: None,
+                wrap: [Wrap::Clamp; 2],
+                alpha: 31,
+                cull: Cull::None,
+                mode: PolygonMode::Modulate,
+                depth_equal: false,
+                translucent_depth_write: false,
+                uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            }],
+            draws: vec![SceneDraw {
+                material: 0,
+                indices: 0..18,
+                center: [0.0, 0.5, 0.0],
+            }],
+            bounds: Some([Vec3::new(-0.3, 0.0, -0.3), Vec3::new(0.3, 1.0, 0.3)]),
+        });
+        let instance_index = self.scene.instances.len();
+        self.scene.instances.push(SceneInstance {
+            model: model_index,
+            world: Mat4::from_translation(position),
+            block: usize::MAX,
+            instance: usize::MAX,
+        });
+        instance_index
+    }
+
     /// One deterministic 60 Hz update. GPU uploads can be batched after several updates.
     pub fn step(&mut self, camera: &Camera) -> Result<()> {
         self.face_camera(camera)?;

@@ -4,7 +4,9 @@ Le lecteur `dq9_formats::map::Collision::parse` décode les octets **décompress
 de l'index de grille et des records de sol des fichiers `.col2` européens. Dans les archives,
 les membres `.col2` portent un en-tête de compression Nintendo ; l'appelant les décompresse
 avec `nds_rom::compress::decompress` avant de les parser. Le parseur n'effectue aucune E/S.
-À ce stade, le rendu et le déplacement ne consomment pas encore ces données.
+Le parseur est maintenant consommé par `dq9-core` pour les requêtes de sol et le mouvement
+([`movement.md`](movement.md)). La construction reste sans E/S ; les archives et les membres
+sont fournis par l'appelant.
 
 ## Structure observée
 
@@ -56,8 +58,9 @@ mesures, mais **[inféré]**). Certains petits maillages sont vraisemblablement 
 verticaux, pas des surfaces praticables. Le lecteur expose ces données sans leur attribuer de
 physique.
 
-## Prochaine étape J2
+## Utilisation par J2
 
-Assembler les maillages par instance, appliquer leurs transformations et l'échelle confirmée,
-puis comparer la hauteur du sol et une trajectoire déterministe avec melonDS. Le déplacement,
-les collisions murales, la caméra de terrain et les changements de carte restent à implémenter.
+`dq9-core::CollisionWorld::build` assemble les collisions de chaque placement visible, applique
+la transformation d'instance et l'échelle `2^shift` [inférée]. Les requêtes de sol parcourent
+les faces ascendantes directement : l'origine et le placement de la grille ne sont pas établis.
+Le déplacement expérimental et ses limites sont décrits dans [`movement.md`](movement.md).
