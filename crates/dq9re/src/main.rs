@@ -11,6 +11,7 @@ mod maps;
 mod model;
 mod msg;
 mod save;
+mod script;
 mod state;
 mod stb;
 mod talk;
@@ -126,6 +127,18 @@ enum Command {
         /// Only list natives without a name in `dq9_formats::stb::native_name`.
         #[arg(long)]
         unnamed: bool,
+    },
+    /// Run event scripts headless with a fake application that completes every wait at
+    /// once, and print the event trace: an archive (`data/event/ev01130.gp2`), an event
+    /// number or a story stage (`1.1-3`).
+    Script {
+        target: String,
+        /// Language of the message texts.
+        #[arg(long, default_value = "en")]
+        lang: String,
+        /// Only the per-script summary and the unimplemented natives.
+        #[arg(long)]
+        quiet: bool,
     },
     /// List (and optionally extract) the members of a NARC file in the ROM.
     Narc {
@@ -287,6 +300,11 @@ fn main() -> Result<()> {
         Command::Talk(args) => talk::run(&rom, &args),
         Command::Stb { path, lang } => stb::run(&rom, &path, &lang),
         Command::StbNatives { stage, unnamed } => stb::natives(&rom, stage.as_deref(), unnamed),
+        Command::Script {
+            target,
+            lang,
+            quiet,
+        } => script::run(&rom, &target, &lang, quiet),
         Command::Narc {
             path,
             out,

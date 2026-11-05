@@ -132,12 +132,6 @@ pub fn run(rom: &Rom, path: &str, lang: &str) -> Result<()> {
     Ok(())
 }
 
-/// Event lists whose `0x66` records (tag 102) name a scene's stage and script (`docs/re/stb.md`).
-const EVENT_LISTS: [&str; 2] = [
-    "data/event/eventlist6.bin",
-    "data/evspt_lv5/eventlist_lv5.bin",
-];
-
 /// Parses `MAJOR.MINOR` or `MAJOR.MIN-MAX` into `(major, min..=max)`.
 fn parse_stage(text: &str) -> Result<(u32, std::ops::RangeInclusive<u32>)> {
     let (major, minor) = text.split_once('.').context("stage is MAJOR.MINOR[-MAX]")?;
@@ -145,33 +139,23 @@ fn parse_stage(text: &str) -> Result<(u32, std::ops::RangeInclusive<u32>)> {
     Ok((major.parse()?, min.parse()?..=max.parse()?))
 }
 
-/// Script archives of the scenes whose stage (list values 0 and 1) matches.
-fn stage_scripts(rom: &Rom, stage: &str) -> Result<Vec<String>> {
+/// `(event number, script stem)` of the scenes whose stage (list values 0 and 1) matches.
+pub fn stage_events(rom: &Rom, stage: &str) -> Result<Vec<(u16, String)>> {
     let (major, minors) = parse_stage(stage)?;
+    Ok(dq9_core::script::load::stage_events(rom, major, minors))
+}
+
+/// Script archives of the scenes whose stage matches.
+fn stage_scripts(rom: &Rom, stage: &str) -> Result<Vec<String>> {
     let mut paths = Vec::new();
-    for list in EVENT_LISTS {
-        let table = Table::parse(rom.file_by_path(list)?).with_context(|| list.to_owned())?;
-        for record in table
-            .records
-            .iter()
-            .filter(|r| r.kind == 102 && r.values.len() > 8)
-        {
-            let (Value::Int(a), Value::Int(b), Value::Str(Some(script))) =
-                (record.values[0], record.values[1], record.values[8])
-            else {
-                continue;
-            };
-            if a == major && minors.contains(&b) {
-                let stem = String::from_utf8_lossy(script.strip_suffix(b".stb").unwrap_or(script));
-                paths.push(
-                    ["data/event", "data/evspt_lv5"]
-                        .map(|dir| format!("{dir}/{stem}.gp2"))
-                        .into_iter()
-                        .find(|p| rom.file_by_path(p).is_ok())
-                        .with_context(|| format!("no archive for {stem}"))?,
-                );
-            }
-        }
+    for (_, stem) in stage_events(rom, stage)? {
+        paths.push(
+            ["data/event", "data/evspt_lv5"]
+                .map(|dir| format!("{dir}/{stem}.gp2"))
+                .into_iter()
+                .find(|p| rom.file_by_path(p).is_ok())
+                .with_context(|| format!("no archive for {stem}"))?,
+        );
     }
     paths.sort();
     paths.dedup();
