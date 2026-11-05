@@ -75,7 +75,7 @@ pub fn run(rom: &Rom, args: &MapArgs) -> Result<()> {
         time_of_day,
         grotto_environ: args.grotto_environ,
     };
-    let map = Map::assemble(record, &table, |p| map::rom_file(rom, p), &ctx)?;
+    let map = Map::assemble(record, &table, &list, |p| map::rom_file(rom, p), &ctx)?;
     print(record, &map, &ctx);
     if let Some(state) = &state {
         let differences = compare(state, &map)?;

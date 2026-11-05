@@ -5,7 +5,7 @@
 use super::manifest::{Manifest, Placement, Resource, resource_flags as rf};
 use super::transform::{Transform, hierarchy};
 use super::{BlockList, LightingFile, MapFiles, ZoneInfo, contains, extension, lz77, member_name};
-use crate::maplist::MapRecord;
+use crate::maplist::{MapList, MapRecord};
 use crate::table::Table;
 use nds_rom::{Narc, Result};
 
@@ -136,7 +136,7 @@ pub struct Block {
 }
 
 /// Everything a map loads, in the game's structures.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Map {
     pub files: MapFiles,
     /// Whether the `.ambl` was found; without it the game loads nothing more.
@@ -156,6 +156,8 @@ pub struct Map {
     /// Atmospheric effects archive queued once the last `.amdj` is loaded
     /// (`ZoneInfo::effects_file`).
     pub effects: Option<String>,
+    /// Map-changing door triggers loaded from the `.bmbl` records.
+    pub doorways: Vec<super::Doorway>,
 }
 
 /// A member of the mounted archive by path (`GetFileFromNARCInMemory`, `0x020afd1c`): the
@@ -188,9 +190,11 @@ impl Map {
     /// Assembles map `record`: `map_list` is the parsed `maplist9.bin`, `file` returns a ROM
     /// file by path, compared without case like the game ([`rom_file`](super::rom_file)).
     /// Errors on malformed archives or tables, where the game would read garbage.
+    /// `maps` is the parsed index of the same table, used to resolve doorway destination ids.
     pub fn assemble<'r>(
         record: &MapRecord<'_>,
         map_list: &Table<'_>,
+        maps: &MapList<'_>,
         file: impl Fn(&str) -> Option<&'r [u8]>,
         ctx: &Context,
     ) -> Result<Self> {
@@ -209,14 +213,14 @@ impl Map {
             amdj_loaded: Vec::new(),
             blocks: Vec::new(),
             effects: None,
+            doorways: Vec::new(),
         };
         // 0x02014118: a failed load stops the chain.
         let Some(ambl) = file(&map.files.ambl) else {
             return Ok(map);
         };
         map.ambl_found = true;
-        map.load_ambl(&Narc::parse(ambl)?)?;
-        // 0x02014b14, 0x02014c14.
+        map.load_ambl(&Narc::parse(ambl)?, &maps.records)?;
         if let Some(lighting) = map.zone.lighting_file(id, ctx.grotto_environ) {
             let found = file(&lighting.archive)
                 .and_then(|a| Narc::parse(a).ok())
@@ -240,7 +244,7 @@ impl Map {
 
     /// `0x02014118`: every `.nsbtx` first (`0x0201446c`), then `.bmbl` (`0x020143a0`),
     /// `.dat` (`0x0205e114`) and `.bpos` (`0x020143e8`) in member order.
-    fn load_ambl(&mut self, narc: &Narc<'_>) -> Result<()> {
+    fn load_ambl(&mut self, narc: &Narc<'_>, maps: &[MapRecord<'_>]) -> Result<()> {
         for (name, _) in members(narc) {
             if extension(name) == Some(".nsbtx") {
                 self.textures.insert(0, name.to_owned());
@@ -249,8 +253,11 @@ impl Map {
         for (name, data) in members(narc) {
             match extension(name) {
                 Some(".bmbl") => {
+                    let decompressed = lz77(data?)?;
+                    let table = Table::parse(&decompressed)?;
                     self.block_list.clear();
-                    self.block_list.load(&Table::parse(&lz77(data?)?)?)?;
+                    self.block_list.load(&table)?;
+                    self.doorways = super::doors::parse(&table, maps)?;
                 }
                 Some(".dat") => self.zone.load_dat(&Table::parse(&lz77(data?)?)?)?,
                 Some(".bpos") => self.block_list.load(&Table::parse(&lz77(data?)?)?)?,
@@ -630,11 +637,12 @@ mod tests {
             label: None,
         };
         let map_list = Table::parse(&map_list).unwrap();
+        let maps = MapList::parse(&map_list).unwrap();
         let ctx = Context {
             time_of_day: 1,
             grotto_environ: 0,
         };
-        let map = Map::assemble(&record, &map_list, files, &ctx).unwrap();
+        let map = Map::assemble(&record, &map_list, &maps, files, &ctx).unwrap();
         assert_eq!(map.textures, ["O00T2.nsbtx", "O00T1.nsbtx"]);
         let (lighting, found) = map.lighting.clone().unwrap();
         assert!(found);
@@ -686,6 +694,7 @@ mod tests {
     fn a_missing_ambl_stops_the_chain() {
         let map_list = table(&[]);
         let map_list = Table::parse(&map_list).unwrap();
+        let maps = MapList::parse(&map_list).unwrap();
         let record = MapRecord {
             id: 1,
             area: 0,
@@ -697,7 +706,7 @@ mod tests {
             region: None,
             label: None,
         };
-        let map = Map::assemble(&record, &map_list, |_| None, &Context::default()).unwrap();
+        let map = Map::assemble(&record, &map_list, &maps, |_| None, &Context::default()).unwrap();
         assert!(!map.ambl_found && map.blocks.is_empty() && map.lighting.is_none());
     }
 }

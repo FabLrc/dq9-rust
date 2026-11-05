@@ -5,6 +5,7 @@ use anyhow::{Context as _, Result};
 use dq9_core::{CollisionWorld, Hero};
 use dq9_formats::Table;
 use dq9_formats::cast::Story;
+use dq9_formats::map::Doorway;
 use dq9_formats::map::{self, Context, Map};
 use dq9_formats::maplist::{self, MapList, MapRecord};
 use dq9_formats::save::Save;
@@ -79,6 +80,7 @@ pub struct LoadedMap {
     pub collision: CollisionWorld,
     pub hero: Hero,
     pub hero_instance: usize,
+    pub doorways: Vec<Doorway>,
 }
 
 fn text(s: &[u8]) -> String {
@@ -113,7 +115,13 @@ pub fn maps(rom: &[u8]) -> Result<Vec<MapEntry>> {
 
 /// Assembles map `key` (code such as `M01`, or id) at time of day `time` and builds its
 /// scene.
-pub fn load(rom: &[u8], key: &str, time: u32, story: &Story) -> Result<LoadedMap> {
+pub fn load(
+    rom: &[u8],
+    key: &str,
+    time: u32,
+    story: &Story,
+    spawn: Option<(Vec3, f32)>,
+) -> Result<LoadedMap> {
     let rom = Rom::parse(rom).context("parsing the ROM")?;
     let table = Table::parse(rom.file_by_path(maplist::PATH)?).context("parsing the map list")?;
     let list = MapList::parse(&table)?;
@@ -122,11 +130,13 @@ pub fn load(rom: &[u8], key: &str, time: u32, story: &Story) -> Result<LoadedMap
         time_of_day: time,
         grotto_environ: 1,
     };
-    let assembled = Map::assemble(record, &table, |p| map::rom_file(&rom, p), &ctx)
+    let assembled = Map::assemble(record, &table, &list, |p| map::rom_file(&rom, p), &ctx)
         .with_context(|| format!("assembling map {key}"))?;
     let collision = CollisionWorld::build(&assembled, |p| map::rom_file(&rom, p))
         .with_context(|| format!("loading collision for {key}"))?;
-    let hero = Hero::new(collision.spawn().unwrap_or(Vec3::ZERO));
+    let (position, yaw) = spawn.unwrap_or_else(|| (collision.spawn().unwrap_or(Vec3::ZERO), 0.0));
+    let mut hero = Hero::new(position);
+    hero.yaw = yaw;
     let mut runtime = AnimatedScene::build(&assembled, record.id, record.code, story, |p| {
         map::rom_file(&rom, p)
     })
@@ -148,6 +158,7 @@ pub fn load(rom: &[u8], key: &str, time: u32, story: &Story) -> Result<LoadedMap
         runtime,
         collision,
         hero,
+        doorways: assembled.doorways,
         hero_instance,
     })
 }

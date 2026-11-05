@@ -11,12 +11,12 @@ use nds_rom::Rom;
 
 const IDENTITY: [[f32; 3]; 2] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
 
-fn assemble(rom: &Rom, table: &Table, record: &MapRecord) -> Map {
+fn assemble(rom: &Rom, table: &Table, list: &MapList, record: &MapRecord) -> Map {
     let ctx = Context {
         time_of_day: 0,
         grotto_environ: 1,
     };
-    Map::assemble(record, table, |p| map::rom_file(rom, p), &ctx).unwrap()
+    Map::assemble(record, table, list, |p| map::rom_file(rom, p), &ctx).unwrap()
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn sample_maps() {
     let list = MapList::parse(&table).unwrap();
     for code in ["M01", "C01M09", "F01"] {
         let record = list.records.iter().find(|r| r.code == code.as_bytes());
-        let m = assemble(&rom, &table, record.unwrap());
+        let m = assemble(&rom, &table, &list, record.unwrap());
         let s = Scene::build(&m, |p| map::rom_file(&rom, p));
         let textured = s
             .models
@@ -64,7 +64,7 @@ fn all_maps() {
     let mut modes = BTreeMap::new();
     let mut warnings = Vec::new();
     for record in list.records.iter().filter(|r| r.id != 0) {
-        let m = assemble(&rom, &table, record);
+        let m = assemble(&rom, &table, &list, record);
         if !seen.insert((m.files.ambl.to_ascii_lowercase(), m.files.amdj.clone())) {
             continue;
         }
@@ -132,7 +132,7 @@ fn runtime_cast_and_animation_are_deterministic() {
             .iter()
             .find(|r| r.code == code.as_bytes())
             .unwrap();
-        let map = assemble(&rom, &table, record);
+        let map = assemble(&rom, &table, &list, record);
         let mut a = AnimatedScene::build(&map, record.id, record.code, &story, |p| {
             map::rom_file(&rom, p)
         })

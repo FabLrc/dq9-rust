@@ -506,6 +506,7 @@ struct MapTotals {
     lighting: usize,
     lighting_missing: usize,
     effects: usize,
+    doorways: usize,
     blocks: usize,
     unbuilt_blocks: usize,
     resources: usize,
@@ -533,6 +534,7 @@ impl MapTotals {
             self.lighting_missing += usize::from(!found);
         }
         self.effects += usize::from(map.effects.is_some());
+        self.doorways += map.doorways.len();
         for block in &map.blocks {
             self.blocks += 1;
             let m = &block.manifest;
@@ -626,7 +628,7 @@ fn maps_assemble() {
         }
     };
     for r in list.records.iter().filter(|r| r.id != 0) {
-        let map = Map::assemble(r, &table, file, &ctx)
+        let map = Map::assemble(r, &table, &list, file, &ctx)
             .unwrap_or_else(|e| panic!("map {} {:?}: {e}", r.id, r.code));
         records += 1;
         with_ambl += usize::from(map.ambl_found);
@@ -639,7 +641,7 @@ fn maps_assemble() {
                 time_of_day: 0,
                 grotto_environ,
             };
-            add(Map::assemble(list.find(id).unwrap(), &table, file, &ctx).unwrap());
+            add(Map::assemble(list.find(id).unwrap(), &table, &list, file, &ctx).unwrap());
         }
     }
     // 75 records name archives that do not ship (dummies, debug maps); `S09M03` and `M03M05`
@@ -651,11 +653,10 @@ fn maps_assemble() {
             // 667 `.ambl` (all but the 14 `ats_*`), 669 `.amdj`.
             maps: 742,
             without_ambl: 75,
-            // D07M0800.bats and B10M0200.bats are missing.
             lighting: 663,
             lighting_missing: 2,
             effects: 15,
-            // Every `.bmdj` but M12M0001.bmdj, which no block entry names.
+            doorways: 1402,
             blocks: 754,
             unbuilt_blocks: 0,
             resources: 5341,

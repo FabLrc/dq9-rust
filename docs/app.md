@@ -1,9 +1,10 @@
 # Application `dq9-app` et rendu `dq9-render`
 
 L'application commune native/Web affiche une carte, ses modèles, textures, animations, PNJ et un
-repère de position du joueur. `dq9-core` consomme maintenant les collisions `.col2`
-([`re/collision.md`](re/collision.md)) pour un déplacement de terrain expérimental ; les portes,
-changements de carte et l'éclairage restent absents.
+repère de position du joueur. `dq9-core` consomme les collisions `.col2`
+([`re/collision.md`](re/collision.md)) pour un déplacement de terrain expérimental ;
+`dq9-app` charge aussi les destinations des portes map-changing `.bmbl`. Leur géométrie reste
+une hypothèse ; l'éclairage n'est pas encore pris en charge.
 
 - `crates/dq9-core` (sans E/S, compile en wasm) : `CollisionWorld` assemble les `.col2` des
   placements visibles ; `Hero` avance au pas fixe, recale le sol et bloque les faces verticales.
@@ -127,11 +128,12 @@ Approximé ou absent :
   précision de la DS (couleurs 6 bits, profondeur 24 bits ou W).
 - **PNJ, limites** : les hauteurs des PNJ sont celles des placements ; le snap du sol et le
   déplacement du héros sont approximatifs (pas d'accélération, rayon, modèle animé ni départ
-  depuis une sauvegarde). Pas d'errance, de chemins, de changement de mouvement par les scripts,
-  de visiteurs réseau, d'accessoire `s069` ni de teinte additive des palettes (type 22).
-  Le mélange de plusieurs poses, les effets/actions `.beff`/`.bact` et les modes de sprite
-  autres que debout/assis ne sont pas exécutés. Les couleurs MAT sont évaluées ; les sommets
-  à normales restent soumis à la lumière fixe décrite ci-dessus, pas aux lumières DS.
+  depuis une sauvegarde). Les volumes des portes restent une hypothèse non validée à melonDS ;
+  les triggers d'histoire, escaliers, chutes et chemins des PNJ ne sont pas exécutés. Les
+  visiteurs réseau, l'accessoire `s069` et la teinte additive des palettes (type 22) restent
+  absents. Le mélange de plusieurs poses, les effets/actions `.beff`/`.bact` et les modes de
+  sprite autres que debout/assis ne sont pas exécutés. Les couleurs MAT sont évaluées ; les
+  sommets à normales restent soumis à la lumière fixe décrite ci-dessus, pas aux lumières DS.
 
 ## Vérification
 

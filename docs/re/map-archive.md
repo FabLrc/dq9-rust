@@ -106,12 +106,44 @@ Une entrée sans nom est ignorée ; les autres sont ajoutées tant qu'il reste d
 (`0x0201e314`). Les noms sont copiés dans des champs de 16 octets (`+0x10`, `+0x20`,
 `+0x30`). Sur la ROM : 754 entrées, toutes à décalage nul sauf `F07` (0.018, −0.037, 0.02).
 
-Les autres types de la table remplissent le reste de `Zone3D+0x6c` et ne servent pas à
-l'assemblage : `0x66`/`0x67` boîtes, `0x68`/`0x69` et `0x72` régions, `0x6a`/`0x6b`
-éléments typés, `0x6e` position + angle (`+0x70`, `+0x7c`), `0x70` couleur BGR555 (`+0x7e`),
-`0x73`/`0x74` régions typées et leur action (portes, voir le wiki Map-Textures),
-`0x7b`/`0x7c` rectangles tournés, `0x7d`/`0x7e` grille des `.bpos` de grotte. [inconnu]
-au-delà des formes de valeurs.
+Les autres types de la table ne font pas partie de `BlockList` : `0x66`/`0x67` boîtes,
+`0x68`/`0x69` et `0x72` régions, `0x6a`/`0x6b` éléments typés, `0x6e` position + angle
+(`+0x70`, `+0x7c`), `0x70` couleur BGR555 (`+0x7e`), `0x73`/`0x74` régions typées et leur
+action (portes, voir ci-dessous), `0x7b`/`0x7c` rectangles tournés, `0x7d`/`0x7e` grille des
+`.bpos` de grotte. Formes restantes [inconnu].
+
+### Portes et changements de carte
+
+Les gestionnaires de régions (`0x0201d530`, dispatch `0x0201d638`, insertion
+`0x0201e710`) gardent les zones par type. Le chargeur du héros (`0x02094b5c`) interroge une
+fonction de présence avec sa position (`0x02094b9c`). Les enregistrements lus dans les
+`.bmbl` se présentent sous deux formes map-changing :
+
+- `0x72` : centre XYZ (0–2), taille XYZ (3–5), angle (6), code destination (8), arrivée XYZ
+  (11–13), orientation (14) ;
+- `0x73` type 2 : centre XYZ (1–3), taille XYZ (4–6), angle (7), suivi immédiatement du
+  `0x74` d'action : code destination (4), arrivée XYZ (7–9), orientation (10).
+
+Le code de destination est résolu par la liste des cartes ; les cibles sans entrée chargée
+sont ignorées. Les autres types de région et les actions `0x74` qui ne désignent pas une
+carte ne sont pas interprétés comme des portes.
+
+**[Hypothèse]** L'angle est un radian, la taille est complète, et la présence se teste sur un
+rectangle XZ tourné, bords inclus, sans contrainte sur Y. C'est le modèle de
+`DoorVolume::contains` ; l'orientation de l'arrivée est transmise au héros et à la caméra.
+Le wiki DQIX [Map-Textures](https://github.com/DQIX/wiki/blob/main/Map-Textures.md) a servi
+de piste de format ; la géométrie n'est pas encore validée contre une capture de melonDS.
+
+`dq9-app` déclenche la transition au pas fixe quand le héros passe de l'extérieur à l'intérieur
+d'une zone ; il charge la carte cible et place le héros à l'arrivée. Les 742 jeux d'archives
+assemblés dans `maps_assemble` exposent 1 402 portes non dégénérées avec une cible reconnue.
+Le sous-système des triggers d'histoire, les changements de carte déclenchés par scripts, et
+la validation différentielle de l'entrée restent hors de ce portage.
+
+Smoke Web : la sauvegarde `build/melonds/dq9.sav` charge la carte 109 (`C01M09`) ; maintenir
+`S+D` pendant 2,2 s traverse sa porte et le statut passe à `100 C01` (extérieur de Stornway).
+La cible est observée ; le même chemin de chargement reçoit la position et l'orientation
+d'arrivée. Ce n'est pas une comparaison différentielle avec melonDS.
 
 ## Éclairage (`ats_<c>.ambl`)
 
@@ -205,9 +237,6 @@ recherche passe par le système de fichiers du SDK, donc sans casse (`m08M0600.i
 - Objet : chaque instance qui le montre reçoit sa copie (`Object3D::ShallowCloneTo`).
 
 ### Instances (`Instance`, 0x70 octets par placement)
-
-`Zone3D_BuildInstances` (`0x020177e4`), pour les `capacité` placements :
-
 1. instance i : numéro = placement.instance (`Zone3D_NodeInit`, `0x02013028`) ;
 2. parent : placement.parent négatif → frère de l'instance 0 (sauf l'instance 0 elle-même,
    `0x020130f0`) ; sinon première instance de ce numéro (`0x020130c0`) ; un numéro absent
@@ -216,9 +245,6 @@ recherche passe par le système de fichiers du SDK, donc sans casse (`m08M0600.i
 4. partie : ressource négative → emplacement `instance` ; sinon première ressource de cet id
    (`0x0201f1c0`) ; une partie de genre 0/1/2 sans fichier n'est pas reliée ;
 5. transformations (`Zone3D_PlaceNodes`, `0x0201311c`).
-
-Le décalage du bloc est ajouté à la translation des instances sans parent **dans une
-variable locale jamais relue** (`0x02017968`–`0x02017974`, pile `sp+0`) : il ne déplace rien
 ici [inconnu : usage ailleurs].
 
 ### Transformations

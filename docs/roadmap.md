@@ -217,8 +217,13 @@ déterministe au pas fixe avec snap du sol et blocage simplifié des faces verti
 ([`re/movement.md`](re/movement.md)). L'application affiche un repère joueur et suit la caméra.
 `--save`/le champ Web sélectionne la carte du slot normal valide ; la position enregistrée
 exploitable pour le héros n'est pas établie, le départ reste calculé depuis les collisions.
-Vitesse fidèle, portes, triggers et transitions restent à implémenter. Les états melonDS
-existants ne sont pas alignés en nombre d'images : le critère différentiel de J2 n'est pas validé.
+Les portes map-changing de `.bmbl` sont parsées et une transition Web réelle de 109 (`C01M09`)
+vers 100 (`C01`) est observée ; l'application charge la position et l'orientation d'arrivée.
+La géométrie de déclenchement reste une hypothèse non comparée à melonDS
+([`re/map-archive.md`](re/map-archive.md)). Vitesse fidèle, parcours complet d'Angel Falls,
+autres portes, triggers de scénario et comparaison à nombre d'images égal restent à faire.
+Les états melonDS existants ne sont pas alignés en nombre d'images ; le critère différentiel
+de J2 n'est pas validé.
 
 ## J3 — Parler et scènes : **v0.1 jouable**
 

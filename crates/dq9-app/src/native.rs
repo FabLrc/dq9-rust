@@ -145,7 +145,7 @@ pub fn main() -> Result<()> {
 /// Renders one frame of the map offscreen and writes it as PNG.
 fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<()> {
     let map = load::starting_map(cli.map.as_deref(), save)?;
-    let mut loaded = load::load(rom, &map, cli.time, &cli.story())?;
+    let mut loaded = load::load(rom, &map, cli.time, &cli.story(), None)?;
     let s = &loaded.runtime.scene;
     println!(
         "{} {} ({}), time {}: {} models, {} textures, {} instances, {} triangles",

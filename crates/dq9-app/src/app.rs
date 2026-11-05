@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use dq9_core::{CollisionWorld, Hero};
+use dq9_formats::map::Doorway;
 use dq9_render::camera::{DS_ASPECT, letterbox};
 use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Renderer, Viewport};
 use glam::{Mat4, Vec2, Vec3};
@@ -23,6 +24,30 @@ use winit::window::{Window, WindowId};
 
 use crate::gpu::Gpu;
 use crate::load::{self, MapEntry};
+
+fn doorway_transition(
+    doorways: &[Doorway],
+    maps: &[MapEntry],
+    before: Vec3,
+    after: Vec3,
+) -> Option<(String, Vec3, f32)> {
+    doorways
+        .iter()
+        .find(|door| {
+            !door.volume.contains(before.to_array()) && door.volume.contains(after.to_array())
+        })
+        .and_then(|door| {
+            maps.iter()
+                .find(|map| map.id == door.destination)
+                .map(|map| {
+                    (
+                        map.code.clone(),
+                        Vec3::from_array(door.arrival),
+                        door.facing,
+                    )
+                })
+        })
+}
 
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
@@ -72,6 +97,7 @@ pub struct App {
     /// CPU state is retained after upload; native and Web advance the same animation clock.
     runtime: Option<AnimatedScene>,
     collision: CollisionWorld,
+    doorways: Vec<Doorway>,
     hero: Option<Hero>,
     hero_instance: Option<usize>,
     renderer: Option<Renderer>,
@@ -107,6 +133,7 @@ impl App {
             current: None,
             runtime: None,
             collision: CollisionWorld::default(),
+            doorways: Vec::new(),
             hero: None,
             hero_instance: None,
             renderer: None,
@@ -149,7 +176,7 @@ impl App {
                     return;
                 }
             };
-        self.load(&map, true);
+        self.load(&map, true, None);
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -161,10 +188,10 @@ impl App {
     }
 
     /// Loads map `key` at the current time of day; `frame` resets the camera onto it.
-    fn load(&mut self, key: &str, frame: bool) {
+    fn load(&mut self, key: &str, frame: bool, spawn: Option<(Vec3, f32)>) {
         let Some(rom) = &self.rom else { return };
         let started = Instant::now();
-        let mut loaded = match load::load(rom, key, self.options.time, &self.options.story) {
+        let mut loaded = match load::load(rom, key, self.options.time, &self.options.story, spawn) {
             Ok(l) => l,
             Err(e) => {
                 status(&format!("{e:#}"));
@@ -173,6 +200,7 @@ impl App {
         };
         let hero_start = loaded.hero.position;
         self.collision = loaded.collision;
+        self.doorways = loaded.doorways;
         self.hero = Some(loaded.hero);
         self.hero_instance = Some(loaded.hero_instance);
         let s = &loaded.runtime.scene;
@@ -196,6 +224,9 @@ impl App {
                 self.camera.frame(bounds);
             }
             self.framed = s.bounds();
+        }
+        if let Some((_, yaw)) = spawn {
+            self.camera.yaw = yaw;
         }
         self.camera.target = hero_start;
         self.current = Some((loaded.entry, loaded.label));
@@ -245,7 +276,7 @@ impl App {
             .unwrap_or(0);
         let next = (at as isize + delta).rem_euclid(self.maps.len() as isize) as usize;
         let id = self.maps[next].id.to_string();
-        self.load(&id, true);
+        self.load(&id, true, None);
     }
 
     fn key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, pressed: bool) {
@@ -278,7 +309,7 @@ impl App {
                     .as_ref()
                     .map(|(entry, _)| entry.code.clone())
                     .unwrap_or_else(|| "M01".into());
-                self.load(&map, false);
+                self.load(&map, false, None);
             }
             KeyCode::PageDown => self.cycle_map(1),
             KeyCode::PageUp => self.cycle_map(-1),
@@ -337,6 +368,7 @@ impl App {
             } else {
                 Vec3::ZERO
             };
+            let mut transition = None;
             if let Some(hero) = &mut self.hero {
                 let before = hero.position;
                 hero.step(
@@ -345,11 +377,16 @@ impl App {
                     STEP * if input.fast { 2.0 } else { 1.0 },
                 );
                 self.camera.target += hero.position - before;
+                transition = doorway_transition(&self.doorways, &self.maps, before, hero.position);
                 if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance)
                     && let Some(instance) = runtime.scene.instances.get_mut(index)
                 {
                     instance.world = Mat4::from_translation(hero.position);
                 }
+            }
+            if let Some((destination, arrival, yaw)) = transition {
+                self.load(&destination, true, Some((arrival, yaw)));
+                continue;
             }
             if let Some(runtime) = &mut self.runtime
                 && let Err(e) = runtime.step(&self.camera)
@@ -540,5 +577,70 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dq9_formats::map::DoorVolume;
+
+    #[test]
+    fn entering_a_doorway_resolves_map_and_arrival_pose_once() {
+        let doorways = [Doorway {
+            destination: 109,
+            volume: DoorVolume {
+                center: Vec3::ZERO.to_array(),
+                size: [2.0, 2.0, 2.0],
+                angle: 0.0,
+            },
+            arrival: [10.0, 2.0, 30.0],
+            facing: 1.25,
+        }];
+        let maps = [MapEntry {
+            id: 109,
+            code: "C01M09".into(),
+        }];
+        let transition = doorway_transition(
+            &doorways,
+            &maps,
+            Vec3::new(-1.1, 0.0, 0.0),
+            Vec3::new(-0.9, 100.0, 0.0),
+        );
+        assert_eq!(
+            transition,
+            Some(("C01M09".into(), Vec3::new(10.0, 2.0, 30.0), 1.25))
+        );
+        assert_eq!(
+            doorway_transition(
+                &doorways,
+                &maps,
+                Vec3::new(-0.9, 0.0, 0.0),
+                Vec3::new(0.0, 0.0, 0.0),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn doorway_with_no_loaded_destination_cannot_transition() {
+        let doorways = [Doorway {
+            destination: 109,
+            volume: DoorVolume {
+                center: Vec3::ZERO.to_array(),
+                size: [2.0, 2.0, 2.0],
+                angle: 0.0,
+            },
+            arrival: [0.0; 3],
+            facing: 0.0,
+        }];
+        assert_eq!(
+            doorway_transition(
+                &doorways,
+                &[],
+                Vec3::new(-1.1, 0.0, 0.0),
+                Vec3::new(-0.9, 0.0, 0.0),
+            ),
+            None
+        );
     }
 }
