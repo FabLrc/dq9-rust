@@ -14,12 +14,14 @@
 
 mod assemble;
 mod blocks;
+mod collision;
 mod manifest;
 mod transform;
 mod zone;
 
 pub use assemble::{AnimKind, Animation, Block, Context, Instance, Map, Part, PartKind};
 pub use blocks::{BlockEntry, BlockList};
+pub use collision::{Collision, GroundRecord, Triangle};
 pub use manifest::{Manifest, Placement, Resource, Variant, resource_flags};
 pub use transform::{Transform, fix32_cos, fix32_sin, reduce_angle, sin_cos_entry};
 pub use zone::{LightingFile, ZoneInfo};

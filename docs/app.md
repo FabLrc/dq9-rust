@@ -3,7 +3,8 @@
 Première fenêtre du portage (jalon J1 de `roadmap.md`) : affiche une carte assemblée par
 `dq9_formats::map` (`re/map-archive.md`), modèles et textures G3D lus par `nds_rom::g3d`
 (`re/g3d.md`), avec les animations et la distribution de PNJ de `cast` (`re/characters.md`).
-Ni collisions, ni éclairage de la carte.
+Les `.col2` sont maintenant parsées (`re/collision.md`), mais ne sont ni dessinées ni utilisées
+pour le sol ou le déplacement ; l'éclairage de la carte reste absent.
 
 - `crates/dq9-render` (sans E/S, compile en wasm) : `Scene::build(map, fichier)` reste
   disponible pour une scène statique ; `AnimatedScene::build(map, id, code, story, fichier)`
@@ -69,7 +70,8 @@ Fidèle à ce que lit le jeu :
 
 - **Instances** : une par placement visible au moment choisi (`Instance::hidden`), des parties
   modèle et objet (`.nsbmd`) ; matrice monde = translation, rotation `y`, échelle de
-  `Instance::world` (`0x02013168`). Les collisions (`.col2`) ne sont pas dessinées.
+  `Instance::world` (`0x02013168`). Les triangles des `.col2` sont décodés par
+  `dq9_formats::map::Collision`, mais non dessinés ni consommés par la simulation.
 - **Textures** : toutes les `.nsbtx` de l'`.ambl` (`Zone3D+0x418`), liées aux matériaux par
   nom de texture et de palette. Quand plusieurs fichiers ont le même nom, le premier de la
   liste (le plus récent) gagne **[hypothèse]**. Une texture qu'aucun fichier ne fournit

@@ -10,6 +10,48 @@ use dq9_formats::trigger::{self, Member, State};
 use dq9_formats::{Font, FontId, Gpc2, Table, Value, level5};
 use nds_rom::Rom;
 
+/// Every collision member in the ROM obeys the complete `.col2` table invariants.
+#[test]
+fn collision_meshes_parse() {
+    use nds_rom::Narc;
+
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let mut meshes = 0;
+    let mut triangles = 0;
+    for archive_file in rom
+        .files
+        .files
+        .iter()
+        .filter(|file| file.path.ends_with(".amdj"))
+    {
+        let archive = Narc::parse(rom.file(archive_file.id).unwrap())
+            .unwrap_or_else(|error| panic!("{}: {error}", archive_file.path));
+        for entry in archive
+            .names
+            .files
+            .iter()
+            .filter(|entry| entry.path.ends_with(".col2"))
+        {
+            let data = archive.file(entry.id).unwrap();
+            let unpacked = nds_rom::compress::decompress(data)
+                .unwrap_or_else(|error| panic!("{}/{}: {error}", archive_file.path, entry.path));
+            let collision = map::Collision::parse(&unpacked).unwrap_or_else(|error| {
+                panic!(
+                    "{}/{} header {:02x?}: {error}",
+                    archive_file.path,
+                    entry.path,
+                    &unpacked[..unpacked.len().min(16)]
+                )
+            });
+            meshes += 1;
+            triangles += collision.triangles.len();
+        }
+    }
+    assert_eq!(meshes, 1178);
+    assert_eq!(triangles, 109_122);
+}
+
 /// Calls `f(archive path, member name, decompressed bytes)` for every GPC2 member.
 fn for_each_member(rom: &Rom, mut f: impl FnMut(&str, &str, &[u8])) {
     for file in rom.files.files.iter().filter(|f| f.path.ends_with(".gp2")) {
