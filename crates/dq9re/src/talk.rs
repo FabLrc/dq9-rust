@@ -1,11 +1,12 @@
 //! `dq9re talk`: decode an NPC dialogue file and show which line the game picks for a given
-//! state: the map's talk triggers first (`dq9_formats::trigger`, `docs/re/trigger.md`), then
+//! state: the map's talk triggers first (`dq9_core::trigger`, `docs/re/trigger.md`), then
 //! the line selection (`dq9_formats::dialogue`, `docs/re/dialogue.md`).
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
+use dq9_core::trigger::{self, Member, QuestLogEntry, Request, State};
 use dq9_formats::dialogue::{self, Kind, Line, Session, TalkState};
-use dq9_formats::trigger::{self, Member, Op, QuestLogEntry, Request, State};
+use dq9_formats::trigger::{self as rules, Op};
 use dq9_formats::{Gpc2, Table, Value};
 use nds_rom::{Narc, Rom};
 
@@ -176,7 +177,7 @@ fn ops(ops: &[Op]) -> String {
                     Value::Str(s) => format!("{:?}", s.map(escape)),
                 })
                 .collect();
-            let name = trigger::action_name(op.code).map_or(String::new(), |n| format!("{n}:"));
+            let name = rules::action_name(op.code).map_or(String::new(), |n| format!("{n}:"));
             format!("{name}{:#04x}({}){operands:?}", op.code, op.arg)
         })
         .collect();
@@ -222,7 +223,7 @@ fn trigger_context(
         (chapter as u8, args.step as u8, args.substep as u8);
     let data = rom.file_by_path(&format!("data/scenario/trigger{map}.bin"))?;
     let table = Table::parse(data).context("trigger table")?;
-    let triggers: Vec<_> = trigger::parse(&table)?
+    let triggers: Vec<_> = rules::parse(&table)?
         .into_iter()
         .filter(|t| t.loaded(room, chapter, args.step))
         .collect();

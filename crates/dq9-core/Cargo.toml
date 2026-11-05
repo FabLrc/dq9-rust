@@ -12,5 +12,8 @@ dq9-formats.workspace = true
 glam.workspace = true
 nds-rom.workspace = true
 
+[dev-dependencies]
+testrom.workspace = true
+
 [lints]
 workspace = true

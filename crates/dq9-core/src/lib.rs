@@ -6,6 +6,8 @@ use glam::{Mat4, Vec3};
 use nds_rom::compress::decompress;
 use nds_rom::{Error, Narc, Result};
 
+pub mod trigger;
+
 const GROUND_RISE: f32 = 1.0;
 const GROUND_DROP: f32 = 10.0;
 const GROUND_EPSILON: f32 = 0.1;

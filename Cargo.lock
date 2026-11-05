@@ -528,6 +528,7 @@ dependencies = [
  "dq9-formats",
  "glam",
  "nds-rom",
+ "testrom",
 ]
 
 [[package]]
@@ -557,6 +558,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dq9-core",
  "dq9-formats",
  "nds-rom",
  "png",

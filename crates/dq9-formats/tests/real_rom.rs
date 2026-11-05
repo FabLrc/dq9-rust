@@ -6,7 +6,7 @@ use dq9_formats::dialogue::{self, Kind, Session, TalkState};
 use dq9_formats::map::{self, Context, Map, PartKind};
 use dq9_formats::maplist::{self, MapList};
 use dq9_formats::stb::{Instr, Script};
-use dq9_formats::trigger::{self, Member, State};
+use dq9_formats::trigger;
 use dq9_formats::{Font, FontId, Gpc2, Table, Value, level5};
 use nds_rom::Rom;
 
@@ -279,10 +279,9 @@ fn dialogue_selection_follows_quest_state() {
     );
 }
 
-/// Every scenario trigger file compiles (each word's operands fit in its record) and every
-/// condition it uses is reimplemented.
+/// Every scenario trigger file parses, and every talk trigger names a dialogue context.
 #[test]
-fn trigger_files_compile() {
+fn trigger_files_parse() {
     let Some(bytes) = testrom::load() else { return };
     let rom = Rom::parse(bytes).unwrap();
     let (mut files, mut triggers) = (0, 0);
@@ -295,14 +294,6 @@ fn trigger_files_compile() {
         let table = Table::parse(rom.file(file.id).unwrap()).unwrap();
         let parsed = trigger::parse(&table).unwrap_or_else(|e| panic!("{}: {e}", file.path));
         for t in &parsed {
-            for c in &t.conditions {
-                assert!(
-                    !trigger::UNMODELLED.contains(&c.code),
-                    "{}: condition {:#x}",
-                    file.path,
-                    c.code
-                );
-            }
             if let Some((_, context)) = t.talk() {
                 assert!(
                     (0..240).contains(&context),
@@ -316,65 +307,6 @@ fn trigger_files_compile() {
     }
     assert_eq!(files, 76);
     assert_eq!(triggers, 5_895);
-}
-
-/// George's quest offer goes through a talk trigger: with quest 11 available (state 1), it
-/// forces context 202 (offer) from level 25, 203 ("if only someone strong enough…") below.
-#[test]
-fn talk_triggers_force_the_dialogue_context() {
-    let george = |level: u16| {
-        let mut leader = Member {
-            hp: 1,
-            ..Member::default()
-        };
-        leader.levels[0] = level;
-        let mut s = State::default();
-        s.quests.insert(11, 1);
-        s.event[0] = 18;
-        s.party = vec![leader];
-        s.characters.insert(0, leader);
-        s.time_of_day = 1;
-        s
-    };
-    let Some(bytes) = testrom::load() else { return };
-    let rom = Rom::parse(bytes).unwrap();
-    let table = Table::parse(rom.file_by_path("data/scenario/triggerM02.bin").unwrap()).unwrap();
-    // Chapter 15 = letter M, room 1200 (George's room in M02place.bin).
-    let triggers: Vec<_> = trigger::parse(&table)
-        .unwrap()
-        .into_iter()
-        .filter(|t| t.loaded(1200, 15, 1))
-        .collect();
-    let archive = Gpc2::parse(rom.file_by_path("data/scenario/M02M0.gp2").unwrap()).unwrap();
-    let data = archive.member(archive.find("018_en.bin").unwrap()).unwrap();
-    let table = Table::parse(&data).unwrap();
-    let lines = dialogue::parse(&table).unwrap();
-    let available = |q: i32| u8::from(q == 11);
-    for (level, context, start) in [
-        (25, 202, &b"*: Just lately I<1>ve had real trouble"[..]),
-        (5, 203, &b"*: There<1>ve been so many monsters"[..]),
-    ] {
-        let world = george(level);
-        let t = trigger::first_match(&triggers, 0, &world).unwrap().unwrap();
-        assert_eq!(t.talk(), Some((18, context)));
-        let talk = TalkState {
-            step: 1,
-            substep: 0,
-            context,
-            talk_count: [0, 0],
-            daytime: true,
-            session: Session {
-                hero_alive: true,
-                ..Session::default()
-            },
-            quest: &available,
-        };
-        let chosen = dialogue::select(&lines, &talk).unwrap();
-        assert!(
-            lines[chosen].text.unwrap().starts_with(start),
-            "level {level}"
-        );
-    }
 }
 
 /// Both fonts parse, and every accented-letter tag used in the European texts (`<'e>`,
