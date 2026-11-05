@@ -121,6 +121,20 @@ liaisons et les personnages/modèles appartiennent à trois espaces distincts.
 Les commandes sont en files par canal ; 224 attend la fin de l’animation courante,
 contrairement à 210. Les cadences absolues des durées ne sont pas établies.
 
+Bilan des cinq natives les plus fréquentes (vérification de la décompilation USA clonée
+et du wiki) :
+
+- **206, 208, 210** : handlers EU localisés (`ov_001`, `0215bfd4`, `0215c138`, `0215c298`,
+  noms dans `re/symbols.txt`). **Non trouvés dans la décompilation USA** : le clone
+  `tools/dqix-decomp` ne contient ni table native ni VM SB2. Rôles établis par la ROM EU
+  (commandes de file, §`stb-natives.md`). Les lectures wiki (208 en radians, 210 bit 1) sont
+  **[hypothèse] EU**. Conflit ouvert sur les bits de 210 (`0x01` contre « bit 1 »).
+- **570, 571** : handlers EU (`02161408`, `02161524`), non trouvés dans le clone USA. Effets
+  de bits décrits dans `stb-natives.md`. Le wiki ne donne qu'une lecture « polled » pour 570
+  et aucune pour 571. Sens fonctionnel de 570 et 571 **[inconnu]**.
+
+Aucune de ces cinq natives n'est marquée `port:`. Aucune n'est établie sur le code USA.
+
 400 affiche un message par identifiant ou chaîne ; 405 expose l’état d’attente
 (`ev03030:fn@0xe3c` boucle tant qu’il vaut 1), et 558 lit séparément la réponse.
 Le chemin YESNO documenté utilise 0=oui, 1=non, sans généralisation aux variantes.
