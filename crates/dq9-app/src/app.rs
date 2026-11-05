@@ -14,9 +14,10 @@ use dq9_core::field::{self, Event, Field, Leader, MapChange};
 use dq9_core::state::{DayClock, GameState, TimeOfDay};
 use dq9_core::trigger::State;
 use dq9_core::{CollisionWorld, Hero};
+use dq9_formats::hero::HeroLook;
 use dq9_render::camera::{DS_ASPECT, letterbox};
-use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Renderer, Viewport};
-use glam::{Mat4, Vec2, Vec3};
+use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Gait, Renderer, Viewport};
+use glam::{Vec2, Vec3};
 use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -92,6 +93,8 @@ pub struct App {
     chain: u8,
     hero: Option<Hero>,
     hero_instance: Option<usize>,
+    /// The protagonist's look (the save's hero, else a new game's), kept across maps.
+    look: HeroLook,
     renderer: Option<Renderer>,
     /// Lighting, fog and background of the loaded map at the selected time of day.
     environment: dq9_render::Environment,
@@ -135,6 +138,7 @@ impl App {
             chain: 0,
             hero: None,
             hero_instance: None,
+            look: HeroLook::new_game(),
             renderer: None,
             environment: dq9_render::Environment::default(),
             camera: Camera::default(),
@@ -182,6 +186,7 @@ impl App {
             self.options.clock,
         );
         self.time = self.day.phase().index();
+        self.look = start.look.clone();
         self.load(&start.map, true, None, start.state.as_ref());
     }
 
@@ -227,7 +232,15 @@ impl App {
     ) -> bool {
         let Some(rom) = &self.rom else { return false };
         let started = Instant::now();
-        let mut loaded = match load::load(rom, key, self.time, &self.options.story, spawn, state) {
+        let mut loaded = match load::load(
+            rom,
+            key,
+            self.time,
+            &self.options.story,
+            spawn,
+            state,
+            &self.look,
+        ) {
             Ok(l) => l,
             Err(e) => {
                 status(&format!("{e:#}"));
@@ -479,10 +492,15 @@ impl App {
                     };
                     events = field.step(&leader, &mut self.state);
                 }
-                if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance)
-                    && let Some(instance) = runtime.scene.instances.get_mut(index)
-                {
-                    instance.world = Mat4::from_translation(hero.position);
+                if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance) {
+                    // Motion from the distance covered this step (`dq9-render::hero`).
+                    let moved = hero.position - before;
+                    let speed = Vec3::new(moved.x, 0.0, moved.z).length() / STEP;
+                    runtime.set_hero_gait(Gait::from_speed(speed));
+                    let world = runtime.hero_world(hero.position, field::angle_of_yaw(hero.yaw));
+                    if let Some(instance) = runtime.scene.instances.get_mut(index) {
+                        instance.world = world;
+                    }
                 }
             }
             if self.apply_events(events) {
@@ -512,17 +530,18 @@ impl App {
             self.renderer = None;
             return;
         }
-        if let (Some(gpu), Some(renderer), Some(hero), Some(index)) = (
+        if let (Some(gpu), Some(renderer), Some(runtime), Some(hero), Some(index)) = (
             &self.gpu,
             &mut self.renderer,
+            &self.runtime,
             &self.hero,
             self.hero_instance,
         ) && !renderer.update_instance_world(
             &gpu.queue,
             index,
-            Mat4::from_translation(hero.position),
+            runtime.hero_world(hero.position, field::angle_of_yaw(hero.yaw)),
         ) {
-            status("hero marker instance is unavailable");
+            status("hero instance is unavailable");
         }
         let (Some(gpu), Some(renderer)) = (&mut self.gpu, &mut self.renderer) else {
             return;

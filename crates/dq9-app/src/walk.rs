@@ -10,6 +10,7 @@ use dq9_core::Hero;
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
 use dq9_core::trigger::State;
 use dq9_formats::cast::Story;
+use dq9_formats::hero::HeroLook;
 use glam::Vec3;
 
 use crate::app::STEP;
@@ -71,6 +72,34 @@ fn parse_axes(text: &str) -> Result<Vec3> {
     Ok(direction)
 }
 
+/// The hero at the ground of `(x, z)`, facing +z (`--start`).
+pub fn start_hero(
+    collision: &dq9_core::CollisionWorld,
+    key: &str,
+    (x, z): (f32, f32),
+) -> Result<Hero> {
+    let Some(y) = collision.ground_height(x, z, 3.0) else {
+        bail!("no ground at ({x}, {z}) on map {key}");
+    };
+    let mut hero = Hero::new(Vec3::new(x, y + 0.1, z));
+    hero.yaw = field::yaw_of_angle(0.0);
+    Ok(hero)
+}
+
+/// The direction the script walks at fixed step `frame` (`Vec3::ZERO` once it has ended), with
+/// the parts lasting `(seconds / STEP)` rounded frames as [`Walker::run`] plays them.
+pub fn direction_at(script: &[Walk], frame: u32) -> Vec3 {
+    let mut start = 0;
+    for part in script {
+        let end = start + (part.seconds / STEP).round() as u32;
+        if frame < end {
+            return part.direction;
+        }
+        start = end;
+    }
+    Vec3::ZERO
+}
+
 /// The simulation state of one walk.
 pub struct Walker<'r> {
     rom: &'r [u8],
@@ -95,15 +124,11 @@ impl<'r> Walker<'r> {
         story: &Story,
         start: Option<(f32, f32)>,
     ) -> Result<Self> {
-        let loaded = load::load(rom, key, time, story, None, None)?;
+        let loaded = load::load(rom, key, time, story, None, None, &HeroLook::new_game())?;
         let collision = loaded.collision;
         let mut hero = loaded.hero;
-        if let Some((x, z)) = start {
-            let Some(y) = collision.ground_height(x, z, 3.0) else {
-                bail!("no ground at ({x}, {z}) on map {key}");
-            };
-            hero = Hero::new(Vec3::new(x, y + 0.1, z));
-            hero.yaw = field::yaw_of_angle(0.0);
+        if let Some(at) = start {
+            hero = start_hero(&collision, key, at)?;
         }
         let mut walker = Self {
             rom,
@@ -177,6 +202,7 @@ impl<'r> Walker<'r> {
             &self.story,
             spawn,
             None,
+            &HeroLook::new_game(),
         )?;
         self.entry = loaded.entry;
         self.collision = loaded.collision;

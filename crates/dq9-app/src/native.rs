@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 use dq9_render::camera::{DS_ASPECT, letterbox};
-use dq9_render::{Camera, Renderer, Viewport};
+use dq9_render::{Camera, Gait, Renderer, Viewport};
 use glam::Vec3;
 use winit::event_loop::EventLoop;
 
@@ -215,8 +215,13 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         &cli.story(),
         None,
         start.state.as_ref(),
+        &start.look,
     )?;
-    let hero = loaded.hero;
+    let script = cli.walk.as_deref().map(walk::parse_script).transpose()?;
+    let mut hero = loaded.hero;
+    if let Some(at) = cli.start {
+        hero = walk::start_hero(&loaded.collision, &start.map, at)?;
+    }
     println!(
         "hero: ({:.3}, {:.3}, {:.3}) yaw {:.3} ({})",
         hero.position.x,
@@ -268,8 +273,33 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     }
     camera.far = camera.far.max(camera.distance * 4.0);
     loaded.runtime.face_camera(&camera)?;
-    for _ in 0..cli.frame {
+    // The same fixed steps as the window: the hero follows the `--walk` script (standing once
+    // it has ended, or without one) and plays the motion its speed asks for.
+    for frame in 0..cli.frame {
+        let direction = script
+            .as_deref()
+            .map_or(Vec3::ZERO, |s| walk::direction_at(s, frame));
+        let before = hero.position;
+        hero.step(&loaded.collision, direction, crate::app::STEP);
+        let moved = hero.position - before;
+        let speed = Vec3::new(moved.x, 0.0, moved.z).length() / crate::app::STEP;
+        loaded.runtime.set_hero_gait(Gait::from_speed(speed));
         loaded.runtime.step(&camera)?;
+    }
+    let world = loaded
+        .runtime
+        .hero_world(hero.position, dq9_core::field::angle_of_yaw(hero.yaw));
+    loaded.runtime.scene.instances[loaded.hero_instance].world = world;
+    if script.is_some() || cli.start.is_some() {
+        println!(
+            "hero after {} steps: ({:.3}, {:.3}, {:.3}) yaw {:.3}, motion {:?}",
+            cli.frame,
+            hero.position.x,
+            hero.position.y,
+            hero.position.z,
+            hero.yaw,
+            loaded.runtime.hero_gait()
+        );
     }
     loaded.runtime.face_camera(&camera)?;
     let mut renderer = Renderer::new(&device, &queue, format, &loaded.runtime.scene);

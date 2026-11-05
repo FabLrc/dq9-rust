@@ -12,6 +12,7 @@ use glam::{Mat4, Vec3};
 use nds_rom::g3d::{Fx12, G3dFile, Name};
 use nds_rom::{Error, Narc, Result};
 
+use crate::hero::{Gait, HeroRig};
 use crate::pose::VertexPose;
 use crate::scene::{
     Builder, Cull, MaterialLight, PolygonMode, SceneDraw, Shade, TextureSources, Wrap, member,
@@ -22,17 +23,17 @@ use crate::{
 };
 
 #[derive(Debug)]
-struct Clip {
-    bytes: Vec<u8>,
-    frame: i32,
-    frames: u16,
+pub(crate) struct Clip {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) frame: i32,
+    pub(crate) frames: u16,
     speed: i32,
     /// BCFG and per-motion characters provide ranges; plain map models use the full count.
-    range: Option<(i32, i32)>,
+    pub(crate) range: Option<(i32, i32)>,
 }
 
 impl Clip {
-    fn new(bytes: Vec<u8>, speed: i32, range: Option<(i32, i32)>) -> Result<Self> {
+    pub(crate) fn new(bytes: Vec<u8>, speed: i32, range: Option<(i32, i32)>) -> Result<Self> {
         let f = G3dFile::parse(&bytes)?;
         let frames = f
             .joint_animations
@@ -50,7 +51,7 @@ impl Clip {
             range,
         })
     }
-    fn advance(&mut self) {
+    pub(crate) fn advance(&mut self) {
         // Plain map models: Animation3D::AdvanceTimer (0x0207e178), full frame count.
         // Object3D::AdvanceAnimations_v0/v1 (0x02034e38/0x02035188) supplies explicit ranges.
         let (start, end) = self.range.unwrap_or((0, i32::from(self.frames) << 12));
@@ -97,6 +98,7 @@ pub struct AnimatedScene {
     pub scene: Scene,
     models: Vec<ModelAnimation>,
     sprites: Vec<SpriteAnimation>,
+    hero: Option<HeroRig>,
     pub frame: u64,
 }
 
@@ -125,6 +127,7 @@ impl AnimatedScene {
             scene: Scene::build(map, &file),
             models: Vec::new(),
             sprites: Vec::new(),
+            hero: None,
             frame: 0,
         };
         let ambl = Narc::parse(required(&file, &map.files.ambl)?)?;
@@ -403,60 +406,41 @@ impl AnimatedScene {
         Ok(())
     }
 
-    /// Adds a small untextured position marker to the shared scene and returns its instance index.
-    pub fn add_hero_marker(&mut self, position: Vec3) -> usize {
-        let vertices = [
-            [0.0, 1.0, 0.0],
-            [-0.3, 0.0, -0.3],
-            [0.3, 0.0, -0.3],
-            [0.3, 0.0, 0.3],
-            [-0.3, 0.0, 0.3],
-        ]
-        .map(|position| SceneVertex {
-            position,
-            texcoord: [0.0; 2],
-            color: [1.0, 0.45, 0.05],
-            ..SceneVertex::default()
-        })
-        .to_vec();
-        let model_index = self.scene.models.len();
-        self.scene.models.push(SceneModel {
-            archive: String::new(),
-            member: String::new(),
-            name: "hero marker".to_owned(),
-            vertices,
-            indices: vec![0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1, 1, 4, 3, 1, 3, 2],
-            materials: vec![SceneMaterial {
-                name: "hero marker".to_owned(),
-                texture_name: None,
-                palette_name: None,
-                texture: None,
-                wrap: [Wrap::Clamp; 2],
-                alpha: 31,
-                cull: Cull::None,
-                mode: PolygonMode::Modulate,
-                depth_equal: false,
-                translucent_depth_write: false,
-                uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-                light: MaterialLight::default(),
-            }],
-            draws: vec![SceneDraw {
-                material: 0,
-                indices: 0..18,
-                center: [0.0, 0.5, 0.0],
-            }],
-            bounds: Some([Vec3::new(-0.3, 0.0, -0.3), Vec3::new(0.3, 1.0, 0.3)]),
-            lit: false,
-            tinted: false,
-        });
-        let instance_index = self.scene.instances.len();
-        self.scene.instances.push(SceneInstance {
-            model: model_index,
-            world: Mat4::from_translation(position),
-            block: usize::MAX,
-            instance: usize::MAX,
-        });
-        instance_index
+    /// Adds the protagonist (`look`: a new game's hero or a save's) at the origin and returns
+    /// its instance index. Call before the scene is uploaded; the application then places it
+    /// each update with [`AnimatedScene::hero_world`].
+    pub fn add_hero<'a>(
+        &mut self,
+        look: &dq9_formats::hero::HeroLook,
+        file: impl Fn(&str) -> Option<&'a [u8]>,
+    ) -> Result<usize> {
+        let rig = HeroRig::build(&mut self.scene, look, file)?;
+        let instance = rig.instance;
+        self.hero = Some(rig);
+        Ok(instance)
+    }
+
+    /// World matrix of the hero at `position`, facing the game's object `angle` (0 faces +z,
+    /// `(sin a, cos a)` is the direction; `dq9_core::field::angle_of_yaw` converts a
+    /// `dq9_core::Hero` yaw).
+    pub fn hero_world(&self, position: Vec3, angle: f32) -> Mat4 {
+        self.hero
+            .as_ref()
+            .map_or(Mat4::from_translation(position), |h| {
+                h.world(position, angle)
+            })
+    }
+
+    /// Chooses the hero's motion (idle, walk, run); the same motion keeps playing.
+    pub fn set_hero_gait(&mut self, gait: Gait) {
+        if let Some(hero) = &mut self.hero {
+            hero.set_gait(gait);
+        }
+    }
+
+    /// The motion the hero plays.
+    pub fn hero_gait(&self) -> Option<Gait> {
+        self.hero.as_ref().map(HeroRig::gait)
     }
 
     /// One deterministic 60 Hz update. GPU uploads can be batched after several updates.
@@ -470,6 +454,9 @@ impl AnimatedScene {
         }
         for sprite in &mut self.sprites {
             sprite.advance()?;
+        }
+        if let Some(hero) = &mut self.hero {
+            hero.step(&mut self.scene)?;
         }
         self.evaluate()
     }
@@ -585,6 +572,16 @@ impl AnimatedScene {
             for (i, material) in model.materials.iter().enumerate() {
                 renderer.update_material(device, queue, state.model, i, material)?;
             }
+        }
+        if let Some(hero) = &mut self.hero
+            && hero.dirty
+        {
+            let model = &self.scene.models[hero.model];
+            if !renderer.update_vertices(queue, hero.model, &model.vertices) {
+                return Err(Error::Malformed("hero GPU vertex count"));
+            }
+            renderer.update_draws(hero.model, &model.draws);
+            hero.dirty = false;
         }
         for sprite in &self.sprites {
             let model = &self.scene.models[sprite.model];

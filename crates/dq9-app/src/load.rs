@@ -7,6 +7,7 @@ use dq9_core::state::GameState;
 use dq9_core::{CollisionWorld, Hero};
 use dq9_formats::Table;
 use dq9_formats::cast::Story;
+use dq9_formats::hero::HeroLook;
 use dq9_formats::map::{self, Context, Map};
 use dq9_formats::maplist::{self, MapList, MapRecord};
 use dq9_formats::save::Save;
@@ -22,21 +23,34 @@ pub struct Start {
     /// `None` for an explicit map or without a save: the hero then starts where the
     /// collisions put it.
     pub state: Option<GameState>,
+    /// The protagonist's look: the save's hero when there is a save, else a new game's.
+    pub look: HeroLook,
+}
+
+/// The hero of the current slot of `save` (the first character of the party), if it reads.
+fn save_look(bytes: &[u8]) -> Option<HeroLook> {
+    let save = Save::parse(bytes).ok()?;
+    let slot = save.slot(save.current_slot()?)?;
+    let hero = slot.character(usize::from(slot.standby_count()))?;
+    Some(HeroLook::from_character(&hero))
 }
 
 /// Chooses an explicit map (the save is then ignored: its position belongs to its own map),
 /// otherwise the first valid normal slot of the save, then the prologue map.
 pub fn start(map: Option<&str>, save: Option<&[u8]>) -> Result<Start> {
+    let look = save.and_then(save_look).unwrap_or_else(HeroLook::new_game);
     if let Some(map) = map {
         return Ok(Start {
             map: map.to_owned(),
             state: None,
+            look,
         });
     }
     let Some(bytes) = save else {
         return Ok(Start {
             map: "M01".into(),
             state: None,
+            look,
         });
     };
     let save = Save::parse(bytes).context("parsing the save")?;
@@ -44,6 +58,7 @@ pub fn start(map: Option<&str>, save: Option<&[u8]>) -> Result<Start> {
     Ok(Start {
         map: state.map.to_string(),
         state: Some(state),
+        look,
     })
 }
 
@@ -154,6 +169,7 @@ pub fn load(
     story: &Story,
     spawn: Option<(Vec3, f32)>,
     state: Option<&GameState>,
+    look: &HeroLook,
 ) -> Result<LoadedMap> {
     let rom = Rom::parse(rom).context("parsing the ROM")?;
     let table = Table::parse(rom.file_by_path(maplist::PATH)?).context("parsing the map list")?;
@@ -194,7 +210,11 @@ pub fn load(
         map::rom_file(&rom, p)
     })
     .with_context(|| format!("loading animations and cast for {key}"))?;
-    let hero_instance = runtime.add_hero_marker(hero.position);
+    let hero_instance = runtime
+        .add_hero(look, |p| map::rom_file(&rom, p))
+        .context("building the hero model")?;
+    runtime.scene.instances[hero_instance].world =
+        runtime.hero_world(hero.position, field::angle_of_yaw(hero.yaw));
     let trigger_file = field::trigger_path(&text(record.code))
         .and_then(|path| map::rom_file(&rom, &path))
         .map(<[u8]>::to_vec);

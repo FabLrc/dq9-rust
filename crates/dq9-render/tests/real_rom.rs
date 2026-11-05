@@ -198,3 +198,80 @@ fn runtime_cast_and_animation_are_deterministic() {
         }
     }
 }
+
+/// The hero model is assembled on the rig, hangs its head parts on the head bone and its motion
+/// follows the gait; the same inputs give the same vertices.
+#[test]
+fn hero_model_follows_its_gait() {
+    use dq9_formats::cast::Story;
+    use dq9_formats::hero::HeroLook;
+    use dq9_render::{AnimatedScene, Camera, Gait};
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+    let list = MapList::parse(&table).unwrap();
+    let record = list.records.iter().find(|r| r.code == b"M01").unwrap();
+    let map = assemble(&rom, &table, &list, record);
+    let build = || {
+        let mut scene =
+            AnimatedScene::build(&map, record.id, record.code, &Story::default(), |p| {
+                map::rom_file(&rom, p)
+            })
+            .unwrap();
+        let instance = scene
+            .add_hero(&HeroLook::new_game(), |p| map::rom_file(&rom, p))
+            .unwrap();
+        (scene, instance)
+    };
+    let (mut a, instance) = build();
+    let (mut b, _) = build();
+    let model = a.scene.instances[instance].model;
+    // Body, legs, face, hair and halo in one model.
+    assert!(a.scene.models[model].draws.len() >= 5);
+    assert_eq!(a.hero_gait(), Some(Gait::Stand));
+    let camera = Camera::default();
+    let heights = |scene: &AnimatedScene| {
+        let v = &scene.scene.models[model].vertices;
+        let y = v.iter().map(|v| v.position[1]);
+        (
+            y.clone().fold(f32::MAX, f32::min),
+            y.fold(f32::MIN, f32::max),
+        )
+    };
+    let (low, high) = heights(&a);
+    // A character of the rig is about 21 units tall (body 16.6, head 4); the halo tops it.
+    assert!(
+        low > -1.0 && (18.0..30.0).contains(&(high - low)),
+        "{low} {high}"
+    );
+    let rest = a.scene.models[model].vertices.clone();
+    for _ in 0..7 {
+        a.step(&camera).unwrap();
+        b.step(&camera).unwrap();
+    }
+    assert_eq!(
+        a.scene.models[model].vertices,
+        b.scene.models[model].vertices
+    );
+    let standing = a.scene.models[model].vertices.clone();
+    assert_ne!(rest, standing, "stand moves the model");
+    a.set_hero_gait(Gait::Run);
+    b.set_hero_gait(Gait::Run);
+    for _ in 0..7 {
+        a.step(&camera).unwrap();
+        b.step(&camera).unwrap();
+    }
+    assert_eq!(
+        a.scene.models[model].vertices,
+        b.scene.models[model].vertices
+    );
+    assert_ne!(standing, a.scene.models[model].vertices);
+    // The same gait is not restarted by being chosen again.
+    let running = a.scene.models[model].vertices.clone();
+    a.set_hero_gait(Gait::Run);
+    a.step(&camera).unwrap();
+    assert_ne!(running, a.scene.models[model].vertices);
+    assert_eq!(Gait::from_speed(0.0), Gait::Stand);
+    assert_eq!(Gait::from_speed(4.0), Gait::Walk);
+    assert_eq!(Gait::from_speed(8.0), Gait::Run);
+}
