@@ -64,3 +64,11 @@ physique.
 la transformation d'instance et l'échelle `2^shift` [inférée]. Les requêtes de sol parcourent
 les faces ascendantes directement : l'origine et le placement de la grille ne sont pas établis.
 Le déplacement expérimental et ses limites sont décrits dans [`movement.md`](movement.md).
+
+## Correction : mot d'attributs et grille (J2)
+
+Le code `0x0204c040` (voir [`movement.md`](movement.md)) établit l'origine de la grille (minimum
+de la boîte de l'en-tête, rangées décalées d'une demi-cellule sur les rangées impaires,
+indice `rangée × gridX + colonne + rangée / 2`) et le sens du mot d'attributs : six quartets de
+boîte englobante puis `(record << 1) | marque`. Le lecteur `Collision::parse` n'expose pas encore
+ces champs.

@@ -52,3 +52,98 @@ entrées horodatées.
 
 Le port ne marque aucune routine ARM9 complète : ce modèle est volontairement partiel et ne doit
 pas gonfler `cargo dq9re coverage`.
+
+## Analyse du code de déplacement (J2, en cours)
+
+Obtenue avec `scripts/ghidra-dump.ps1` (décompilation de toutes les fonctions d'`ov_017` et du
+module ARM9 dans `build/decomp/`, ~2,5 min). **Rien de cette section n'est encore porté** :
+`dq9-core` garde son modèle provisoire et aucune fonction n'est marquée `port:`. Adresses
+européennes ; noms dans `re/symbols.txt`.
+
+### Qui déplace le héros
+
+- `0x0218d8cc` ne déplace pas le héros : elle fabrique `field+0x4438` (direction du pavé dans le
+  monde, relative à l'axe caméra → héros), lu par les échelles et le dialogue.
+- Le déplacement du chef de groupe passe par `ov_017::0218e674` (boucle sur les membres) →
+  `ov_017::0218e210` : (1) `PartyMember_Update` `0x02037d98` ; (2) collision
+  `ov_017::0219344c` avec la position précédente ; (3) réglages : glissement si le déplacement
+  corrigé dépasse 0x27, retour à la position précédente si |Δ| < 5 sur chaque axe, la distance
+  parcourue ne peut pas dépasser celle d'avant la collision.
+- `0x020a654c` → `0x020a75fc` (touches + `Character_Update`) agit sur l'objet `GameState+0x32c`,
+  **nul** dans l'état `field.ml1` : ce n'est pas le héros à pied (**[inconnu]** : véhicule ?).
+
+### Ordre dans `PartyMember_Update` (`0x02037d98`)
+
+`0x02052af8` (mise à jour générique) **d'abord**, puis `Hero_ReadDirectionInput` (`0x02038148`)
+puis `0x020385a8` (échelle). L'entrée d'une image ne déplace donc le personnage qu'à l'image
+suivante : à reproduire pour l'alignement image par image.
+
+### Entrée → cap (`0x02038148`)
+
+- Code de direction `+0x250` : Haut+Gauche `0xc`, Haut+Droite `0xd`, Bas+Gauche `0xe`,
+  Bas+Droite `0xf`, Haut 8, Bas 9, Gauche 10, Droite 11 (touches `0x40`, `0x80`, `0x20`,
+  `0x10`). Les diagonales ont priorité.
+- Cap = `table[code-8] + yaw caméra`, réduit à [0, 2π) ; table `0x020e90b8` en radians fx32
+  (4096 = 1 rad, π = `0x3244`, 2π = `0x6488`) : Haut π, Bas 0, Gauche `0x4b66` (3π/2), Droite
+  `0x1922` (π/2), Haut+Gauche `0x3ed5`, Haut+Droite `0x25b3`, Bas+Gauche `0x57f7`, Bas+Droite
+  `0x0c91`. Convention : direction = (sin θ, 0, cos θ) ; la caméra à yaw 0 regarde vers −z.
+- Sans touche : état 0 (repos). Avec touche : état 1 (marche), `Character_SetFacing`
+  (`+0xae` = cap).
+- Aimantation sur une zone orientée (`0x0201e90c` dans la liste `zone+0x6c`, écart < `0xc91`,
+  aussi vers l'angle +π) : **non portée**, liste de zones propre au travail sur les triggers.
+- Glissement au stylet (mode 2) : hors périmètre des entrées explicites.
+
+### `Character_Update` (`0x020332bc`)
+
+Champs : `+0x44` position fx32 ×3, `+0x54` angle du modèle, `+0xac` vitesse de chute,
+`+0xae` cap voulu, `+0xb0` vitesse de rotation, `+0xb2` vitesse courante, `+0xb4` vitesse
+max, `+0xb6` accélération, `+0xbe` état. Valeurs d'initialisation (`0x02032e68`, lues dans la
+ROM) : rotation **`0x324`** (≈ 0,196 rad / image), vitesse max **`0x189`** (393/4096 =
+0,0959 unité/image = **5,76 unités/s**), accélération **`0x28`** par image.
+
+1. `0x02033720` : l'angle du modèle tourne vers `+0xae` du pas `+0xb0 × ticks`
+   (`fix32SignedAngleDistance`, arrêt exact sur la cible).
+2. `0x0203349c` (état 1) : vitesse ← vers max par `+0xb6 × ticks` (arrêt exact) ; hors état 1,
+   décélère de la même valeur ; vitesse effective = min(vitesse, max × (0x1000 − |écart angulaire| / π)) ;
+   déplacement = `(sin a, 0, cos a) × vitesse × ticks` avec `a` = angle **du modèle** (`+0x54`,
+   pas `+0xae`) sauf drapeau `0x100` ; `Vector3fixMultiplyScalar` = `(x·y + 0x800) >> 12`.
+3. Gravité : y −= `+0xac` ; `+0xac` croît de `0x51` par image jusqu'à `0x1000` dans
+   `0x0219344c`, remis à 0 au contact du sol.
+
+`ticks` = `GameState+0x3c4` (valeur 1 à vitesse normale **[hypothèse]**).
+
+### Collision (`ov_017::0219344c` et `0x0204c040`)
+
+- Requête `.col2` (`0x0204c040`) : position − origine de la pièce, coordonnées `>> shift` ;
+  grille **décalée** : rangée = `FX_Div(zc − minZ, taille) / 4096` (troncature), colonne =
+  idem avec `+ taille/2` sur les rangées impaires, indice de cellule =
+  `rangée × gridX + colonne + rangée / 2` ; cellule centrale et voisines (selon parité),
+  toutes les cellules si le maillage en compte ≤ 7. Un triangle est retenu si sa boîte
+  englobante recoupe la boîte de requête ; 0x60 triangles au plus.
+- **Le mot d'attributs d'un triangle** (`+0x18`) : les octets `0x18..0x1a` sont six quartets
+  d'indices (dans les 9 coordonnées du triangle) du min x/y/z et du max x/y/z — la boîte
+  englobante précalculée ; l'octet `0x1b` est `(indice de record << 1) | marque temporaire`.
+  Cela explique les valeurs « permutations de `0x543210` » du wiki.
+- Sol (`0x02018fcc`) : rayon de y+1 à y−10, résultat `+0x199` ; sans ajout de l'origine y de
+  la pièce (**[hypothèse]** : y d'origine toujours nul pour les pièces de sol).
+- `0x02192b48` : rayon depuis y+0x1800, fenêtre de marche 0x800 (0x1800 en mode forcé),
+  poussée contre les murs par `0x020315c8`.
+- Arithmétique : `FX_Div` = `((a << 32) / b + 0x80000) >> 20` (diviseur matériel, troncature),
+  `VEC_Normalize`/`VEC_Mag` par le diviseur et la racine matériels, `FX_Atan2` par table de
+  `0x020c3550`, sin/cos par table `0x020e9460`.
+
+### Caméra de terrain
+
+Objet caméra : `+4` œil, `+0x10` cible, `+0x70` yaw, `+0x74` dy, `+0x78` distance. Défaut
+(`0x0202df78`) : yaw 0, dy `0x6000`, distance `0xb000`. `Camera_SetOrbit` (`0x0202e5e8`) :
+œil = cible + RotY(yaw) · (0, dy, √(dist² − dy²)). `FieldCamera_Update` (`0x020a213c`) :
+L `0x200` ajoute, R `0x100` retire au yaw (pas = deltaTime × constantes de `0x020a2710/14`,
+**[inconnu]** valeurs non lues), neutralisé pendant une transition de luminosité ; la cible
+est la position du personnage `+0x21c` + hauteur/2 + décalage `+0x22c`.
+
+### Reste à faire (J2 non terminé)
+
+Port Rust de `fx` (mathématique matérielle), `Character_Update`, entrée, requête `.col2`,
+sol, murs (`0x020315c8`, `0x02031b94`, `0x02032090`), caméra ; câblage `dq9-app` (L/R) ;
+mesure de la vitesse sous melonDS (5,76 unités/s attendues) ; lecture des constantes
+`0x020a2710..0x020a2724`, `0x02193274`, tables `0x020c3550` et `0x020e9460`.

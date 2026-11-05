@@ -670,6 +670,23 @@ ov_017::0219ca88 Field_CheckWarps      # 0x72 warps: leader inside -> Save_Warp;
 # --- Camera projection (docs/app.md) ---
 0x0202df78 Camera_Init                          # half FOV 15 deg (0xf000), near 1, far 400 (fx32)
 0x0202e9b4 Camera_SetHalfFovDegrees             # +0x58 degrees fx32; +0x5c/+0x60 sin, cos (radians = x * 0x47 / 4096)
+0x02030c78 fix32_sini                      # (angle << 16) / 0x6488, table 0x020e9460 (4096 sin/cos s16 pairs); angles are radians fx32, 2*pi = 0x6488
+0x02030f40 fix32_ReduceAngle0To2Pi         # reduce to [0, 0x6488)
+0x0202e5e8 Camera_SetOrbit                 # eye = target + RotY(yaw) * (0, dy, sqrt(dist^2 - dy^2)); +0x70 yaw, +0x74 dy, +0x78 dist
+0x020a213c FieldCamera_Update              # L (0x200) / R (0x100) rotate yaw, follows the character (+0x21c) at height/2
+0x020332bc Character_Update                 # turn, accelerate, advance along model angle, gravity; reached through a vtable
+0x0203349c Character_AdvanceWalk           # speed +0xb2 to max +0xb4 by +0xb6, limited by turn error; pos += (sin,0,cos)*speed
+0x02033720 Character_TurnToFacing          # model angle +0x54 toward facing +0xae by +0xb0 per tick
+0x02033844 Character_SetFacing             # +0xae = ReduceAngle(angle)
+0x02033b78 Character_SetState              # +0xbe (0 idle, 1 walk), refreshes the animation
+0x02032e68 Character_Init                  # +0xb0 turn 0x324, +0xb4 max speed 0x189, +0xb6 acceleration 0x28
+0x02037d98 PartyMember_Update              # generic update, then input 0x02038148 and ladder 0x020385a8
+0x02038148 Hero_ReadDirectionInput          # D-pad to 8 directions (+0x250 = 8..15): table 0x020e90b8 + camera yaw
+0x0204c040 Col2_QueryBox                   # .col2 grid + AABB query, 0x18-byte output records
+ov_017::0218e210 Field_UpdatePartyMember   # Update, collide with the previous position, slide adjustments
+ov_017::0218e674 Field_UpdateParty         # 0218e210 for each party member
+ov_017::0219344c Character_CollideWorld    # gravity +0x51 per frame (max 0x1000), col2 query per part
+ov_017::02192b48 Character_ResolveTriangles # ground ray (+0x199), step window 0x800/0x1800, wall push 020315c8
 
 # --- Characters (docs/re/characters.md) ---
 ov_017::021a2c14 Cast_LoadMap               # data/scenario/<area>.npc: place.bin, npc.bin, NpcTable_Build, ground snap
