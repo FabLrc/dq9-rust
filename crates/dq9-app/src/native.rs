@@ -4,11 +4,11 @@ use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
+use crate::screens::{self, Layout};
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 use dq9_core::Input;
-use dq9_render::camera::{DS_ASPECT, letterbox};
-use dq9_render::{Camera, Gait, Renderer, Viewport};
+use dq9_render::{Camera, Gait, Panel, Renderer};
 use glam::Vec3;
 use winit::event_loop::EventLoop;
 
@@ -54,12 +54,12 @@ struct Cli {
     /// `0x` hexadecimal), the `DISP3DCNT` depth shift and the 32 `FOG_TABLE` densities.
     #[arg(long, value_parser = parse_fog)]
     fog: Option<dq9_render::lighting::Fog>,
-    /// Draw at the DS screen aspect (256×192), letterboxed.
-    #[arg(long)]
-    ds_aspect: bool,
     /// No music (and no sound device is opened); `M` in the window unmutes.
     #[arg(long)]
     mute: bool,
+    /// Which DS screens are shown: `stacked` (default), `side` or `top` (`screens.rs`).
+    #[arg(long, default_value = "stacked", value_parser = Layout::parse)]
+    layout: Layout,
     /// Render one frame offscreen into this PNG and exit, without a window.
     #[arg(long)]
     screenshot: Option<PathBuf>,
@@ -272,9 +272,9 @@ pub fn main() -> Result<()> {
         save,
         time: cli.time,
         clock: cli.clock,
-        ds_aspect: cli.ds_aspect,
         mute: cli.mute,
         event,
+        layout: cli.layout,
         story: cli.story(),
     };
     let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
@@ -448,33 +448,25 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     loaded.runtime.face_camera(&camera)?;
     let mut renderer = Renderer::new(&device, &queue, format, &loaded.runtime.scene);
     renderer.environment = lighting::environment(loaded.lighting.as_ref(), clock);
-    // Events are framed for one DS screen.
-    let ds_aspect = cli.ds_aspect || event.is_some();
-    renderer.edge_pixels = (!ds_aspect).then_some(1);
+
     if let Some(fog) = cli.fog {
         renderer.environment.fog = Some(fog);
     }
     let (w, h) = cli.size;
-    let viewport = if ds_aspect {
-        let (x, y, width, height) = letterbox(w, h, DS_ASPECT);
-        Viewport {
-            x,
-            y,
-            width,
-            height,
-        }
-    } else {
-        Viewport::full(w, h)
-    };
+    let shown = screens::screens(cli.layout, w, h);
+    let panel = Panel::new(&device, format);
     let rgba = renderer
         .render_to_rgba_with(
             &device,
             &queue,
             (w, h),
-            viewport,
+            shown.top,
             &camera,
             |encoder, view| {
-                talk.draw(&device, &queue, format, encoder, view, (w, h));
+                if let Some(bottom) = shown.bottom {
+                    panel.draw(encoder, view, bottom);
+                }
+                talk.draw(&device, &queue, format, encoder, view, shown.top);
             },
         )
         .context("reading the frame back")?;

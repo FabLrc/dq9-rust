@@ -6,7 +6,7 @@
 //! Controls: drag with the left button to turn, wheel to zoom, `WASD`/arrows to move (the hero
 //! in orbit mode, the camera in fly mode), `Q`/`E` the game's `L`/`R` camera buttons in orbit
 //! mode (both together return the camera) and down/up in fly mode, `Shift` faster camera, `Tab`
-//! orbit/fly, `F` reframe, `R` DS aspect (256×192), `T` next
+//! orbit/fly, `F` reframe, `R` cycles the DS screen layout (`screens.rs`), `T` next
 //! time of day, `M` mute the music, `PageUp`/`PageDown` previous/next map, `Enter`/`Space` talk to the NPC in front
 //! of the hero and advance the message window, `Backspace`/`X` answer No.
 
@@ -14,14 +14,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use dq9_core::camera::FieldCamera;
+use crate::screens::{self, Layout};
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
 use dq9_core::fx::reduce_angle;
 use dq9_core::state::{DayClock, GameState, TimeOfDay};
 use dq9_core::trigger::{Request, State};
 use dq9_core::{CollisionWorld, Hero, Input};
 use dq9_formats::hero::HeroLook;
-use dq9_render::camera::{DS_ASPECT, letterbox};
-use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Gait, Renderer, Viewport};
+use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Gait, Panel, Renderer};
 use glam::{Vec2, Vec3};
 use web_time::Instant;
 use winit::application::ApplicationHandler;
@@ -54,6 +54,9 @@ pub enum UserEvent {
     /// Time of day picked in the page (0 to 3).
     #[cfg(target_arch = "wasm32")]
     Time(u32),
+    /// Layout picked in the page.
+    #[cfg(target_arch = "wasm32")]
+    Layout(Layout),
 }
 
 /// Start-up options.
@@ -66,7 +69,8 @@ pub struct Options {
     pub time: Option<u32>,
     /// Explicit second of the 420-second day (`--clock`); its phase replaces `time`.
     pub clock: Option<f32>,
-    pub ds_aspect: bool,
+    /// Which DS screens are shown and where (`screens.rs`).
+    pub layout: Layout,
     /// No music, and no sound device opened until `M` unmutes.
     pub mute: bool,
     /// An event to start as soon as the map is loaded (`--event`).
@@ -110,6 +114,8 @@ pub struct App {
     events: EventPlayer,
     /// Set while an event loads its map: the map's own `Request::Event`s are not queued.
     quiet_events: bool,
+    /// Placeholder of the bottom DS screen, created with the surface format.
+    panel: Option<Panel>,
     hero_instance: Option<usize>,
     /// The protagonist's look (the save's hero, else a new game's), kept across maps.
     look: HeroLook,
@@ -166,6 +172,7 @@ impl App {
             talk: Talk::default(),
             events: EventPlayer::new(),
             quiet_events: false,
+            panel: None,
             hero_instance: None,
             look: HeroLook::new_game(),
             renderer: None,
@@ -466,7 +473,7 @@ impl App {
                 }
             }
             KeyCode::KeyM => self.audio.toggle_mute(),
-            KeyCode::KeyR => self.options.ds_aspect = !self.options.ds_aspect,
+            KeyCode::KeyR => self.options.layout = self.options.layout.next(),
             KeyCode::KeyT => {
                 let next = match self.day.phase() {
                     TimeOfDay::Night => TimeOfDay::Morning,
@@ -762,7 +769,6 @@ impl App {
                 status("hero instance is unavailable");
             }
         }
-        let ds_aspect = self.options.ds_aspect || self.events.is_active();
         let (Some(gpu), Some(renderer)) = (&mut self.gpu, &mut self.renderer) else {
             return;
         };
@@ -779,38 +785,33 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let (w, h) = (gpu.config.width, gpu.config.height);
-        let viewport = if ds_aspect {
-            let (x, y, width, height) = letterbox(w, h, DS_ASPECT);
-            Viewport {
-                x,
-                y,
-                width,
-                height,
-            }
-        } else {
-            Viewport::full(w, h)
-        };
+        let screens = screens::screens(self.options.layout, w, h);
+        let panel = self
+            .panel
+            .get_or_insert_with(|| Panel::new(&gpu.device, gpu.config.format));
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
-        renderer.edge_pixels = (!ds_aspect).then_some(1);
         renderer.render(
             &gpu.device,
             &gpu.queue,
             &mut encoder,
             (&view, (w, h)),
-            viewport,
+            screens.top,
             &self.camera,
         );
+        if let Some(bottom) = screens.bottom {
+            panel.draw(&mut encoder, &view, bottom);
+        }
         self.talk.draw(
             &gpu.device,
             &gpu.queue,
             gpu.config.format,
             &mut encoder,
             &view,
-            (w, h),
+            screens.top,
         );
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(frame);
@@ -875,6 +876,8 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Save(save) => self.set_save(save),
             #[cfg(target_arch = "wasm32")]
             UserEvent::Time(time) => self.set_time(lighting::phase(time)),
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::Layout(layout) => self.options.layout = layout,
         }
         if let Some(window) = &self.window {
             window.request_redraw();

@@ -1,6 +1,6 @@
 //! Web entry point. The player picks the ROM with the page's `<input type=file id=rom>`: it is
 //! read in the browser and never uploaded or fetched. The map comes from the URL query
-//! (`?map=M01&time=0&ds`), the canvas is `#dq9`, status lines go to `#status`.
+//! (`?map=M01&time=0&layout=side`), the canvas is `#dq9`, status lines go to `#status`.
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
@@ -9,6 +9,7 @@ use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
 use winit::window::WindowAttributes;
 
 use crate::app::{App, Options, UserEvent};
+use crate::screens::Layout;
 
 fn document() -> Option<web_sys::Document> {
     web_sys::window()?.document()
@@ -33,16 +34,17 @@ pub fn window_attributes(attributes: WindowAttributes) -> WindowAttributes {
         .with_prevent_default(true)
 }
 
-/// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day), `ds` and `mute` from the page's query string.
+/// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
+/// `layout` (`stacked`, `side` or `top`) and `mute` from the page's query string.
 fn options() -> Options {
     let mut options = Options {
         map: None,
         save: None,
         time: None,
         clock: None,
-        ds_aspect: false,
         mute: false,
         event: None,
+        layout: Layout::default(),
         story: dq9_formats::cast::Story {
             chapter: 1,
             step: 1,
@@ -60,8 +62,8 @@ fn options() -> Options {
             "map" if !value.is_empty() => options.map = Some(value.to_owned()),
             "time" => options.time = crate::lighting::parse_time(value).ok(),
             "clock" => options.clock = value.parse().ok(),
-            "ds" => options.ds_aspect = value != "0",
             "mute" => options.mute = value != "0",
+            "layout" => options.layout = Layout::parse(value).unwrap_or(options.layout),
             "chapter" => {
                 if let Ok(n) = value.parse() {
                     options.story.chapter = n;
@@ -182,6 +184,30 @@ fn watch_time_select(proxy: EventLoopProxy<UserEvent>, initial: u32) {
     on_change.forget();
 }
 
+/// Sends the layout picked in the page's `<select id=layout>` (also set from `?layout=`).
+fn watch_layout_select(proxy: EventLoopProxy<UserEvent>, initial: Layout) {
+    let Some(select) = document()
+        .and_then(|d| d.get_element_by_id("layout"))
+        .and_then(|e| e.dyn_into::<web_sys::HtmlSelectElement>().ok())
+    else {
+        return;
+    };
+    select.set_value(initial.name());
+    let target = select.clone();
+    let on_change = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+        if let Ok(layout) = Layout::parse(&target.value()) {
+            let _ = proxy.send_event(UserEvent::Layout(layout));
+        }
+    });
+    if select
+        .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+        .is_err()
+    {
+        status("cannot watch the layout select");
+    }
+    on_change.forget();
+}
+
 pub fn main() {
     console_error_panic_hook::set_once();
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
@@ -196,6 +222,7 @@ pub fn main() {
     watch_save_input(proxy.clone());
     let options = options();
     watch_time_select(proxy.clone(), options.time.unwrap_or(0));
+    watch_layout_select(proxy.clone(), options.layout);
     status("pick your Dragon Quest IX ROM (.nds); optionally a .sav, both stay in this browser");
     event_loop.spawn_app(App::new(proxy, options, None));
 }

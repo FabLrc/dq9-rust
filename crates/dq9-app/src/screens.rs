@@ -1,0 +1,185 @@
+//! The two DS screens in the window. Each screen is 256×192 pixels; a layout places one or two
+//! of them, integer-scaled when the window allows it. The top screen shows the field (and the
+//! message window, `talk.rs`); the bottom one is a placeholder (`dq9_render::Panel`).
+
+use dq9_render::Viewport;
+
+/// Width and height of one DS screen, in DS pixels.
+pub const SCREEN: (u32, u32) = (256, 192);
+
+/// Which screens are shown and where.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Layout {
+    /// Top screen above the bottom one.
+    #[default]
+    Stacked,
+    /// Top screen left of the bottom one.
+    Side,
+    /// Top screen only.
+    Top,
+}
+
+impl Layout {
+    /// Parses a layout name (`stacked`, `side` or `top`).
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "stacked" => Ok(Self::Stacked),
+            "side" => Ok(Self::Side),
+            "top" => Ok(Self::Top),
+            _ => Err(format!("expected stacked, side or top, not `{s}`")),
+        }
+    }
+
+    /// The name `parse` accepts for this layout.
+    #[cfg(target_arch = "wasm32")]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Stacked => "stacked",
+            Self::Side => "side",
+            Self::Top => "top",
+        }
+    }
+
+    /// The next layout, in the order the `R` key cycles through them.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Stacked => Self::Side,
+            Self::Side => Self::Top,
+            Self::Top => Self::Stacked,
+        }
+    }
+
+    /// Screens across and down the layout.
+    fn grid(self) -> (u32, u32) {
+        match self {
+            Self::Stacked => (1, 2),
+            Self::Side => (2, 1),
+            Self::Top => (1, 1),
+        }
+    }
+}
+
+/// Rectangles of the screens in a window, in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Screens {
+    pub top: Viewport,
+    /// `None` for [`Layout::Top`].
+    pub bottom: Option<Viewport>,
+}
+
+/// Places the screens of `layout` in a `width` × `height` window, centred. The scale is the
+/// largest whole number that fits; below 1 the screens are shrunk to fit exactly.
+pub fn screens(layout: Layout, width: u32, height: u32) -> Screens {
+    let (columns, rows) = layout.grid();
+    let (block_w, block_h) = (columns * SCREEN.0, rows * SCREEN.1);
+    let fit = (width as f32 / block_w as f32).min(height as f32 / block_h as f32);
+    let scale = if fit >= 1.0 { fit.floor() } else { fit };
+    // Truncated, so that the screens never exceed the window.
+    let cell_w = (SCREEN.0 as f32 * scale) as u32;
+    let cell_h = (SCREEN.1 as f32 * scale) as u32;
+    let x0 = width.saturating_sub(cell_w * columns) / 2;
+    let y0 = height.saturating_sub(cell_h * rows) / 2;
+    let at = |column: u32, row: u32| Viewport {
+        x: x0 + column * cell_w,
+        y: y0 + row * cell_h,
+        width: cell_w,
+        height: cell_h,
+    };
+    let bottom = match layout {
+        Layout::Stacked => Some(at(0, 1)),
+        Layout::Side => Some(at(1, 0)),
+        Layout::Top => None,
+    };
+    Screens {
+        top: at(0, 0),
+        bottom,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inside(v: Viewport, width: u32, height: u32) -> bool {
+        v.x + v.width <= width && v.y + v.height <= height
+    }
+
+    #[test]
+    fn integer_scale_keeps_each_screen_at_ds_aspect() {
+        let s = screens(Layout::Stacked, 512, 768);
+        assert_eq!(
+            s.top,
+            Viewport {
+                x: 0,
+                y: 0,
+                width: 512,
+                height: 384
+            }
+        );
+        assert_eq!(
+            s.bottom,
+            Some(Viewport {
+                x: 0,
+                y: 384,
+                width: 512,
+                height: 384
+            })
+        );
+    }
+
+    #[test]
+    fn side_by_side_is_centred_in_a_wider_window() {
+        let s = screens(Layout::Side, 1024, 768);
+        assert_eq!(
+            s.top,
+            Viewport {
+                x: 0,
+                y: 192,
+                width: 512,
+                height: 384
+            }
+        );
+        assert_eq!(
+            s.bottom,
+            Some(Viewport {
+                x: 512,
+                y: 192,
+                width: 512,
+                height: 384
+            })
+        );
+    }
+
+    #[test]
+    fn top_only_has_no_bottom_screen() {
+        let s = screens(Layout::Top, 1024, 768);
+        assert_eq!(
+            s.top,
+            Viewport {
+                x: 0,
+                y: 0,
+                width: 1024,
+                height: 768
+            }
+        );
+        assert_eq!(s.bottom, None);
+    }
+
+    #[test]
+    fn small_window_shrinks_screens_inside_it() {
+        for layout in [Layout::Stacked, Layout::Side, Layout::Top] {
+            let s = screens(layout, 200, 300);
+            assert!(inside(s.top, 200, 300), "{layout:?} top");
+            if let Some(b) = s.bottom {
+                assert!(inside(b, 200, 300), "{layout:?} bottom");
+            }
+        }
+    }
+
+    #[test]
+    fn names_parse_and_cycle() {
+        assert_eq!(Layout::parse("side"), Ok(Layout::Side));
+        assert!(Layout::parse("wide").is_err());
+        assert_eq!(Layout::Stacked.next().next().next(), Layout::Stacked);
+    }
+}

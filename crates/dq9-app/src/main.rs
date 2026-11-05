@@ -14,6 +14,7 @@ mod load;
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
 mod report;
+mod screens;
 mod talk;
 #[cfg(not(target_arch = "wasm32"))]
 mod walk;

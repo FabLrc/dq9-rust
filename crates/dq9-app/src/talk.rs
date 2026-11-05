@@ -16,7 +16,6 @@ use dq9_formats::dialogue::{self, Session, TalkState};
 use dq9_formats::spr::Sprite;
 use dq9_formats::{Font, FontId, Gpc2, Table};
 use dq9_render::Viewport;
-use dq9_render::camera::{DS_ASPECT, letterbox};
 use dq9_render::ui::{Atlas, Image, Quad, Ui};
 use nds_rom::Rom;
 
@@ -438,8 +437,8 @@ impl Talk {
         out
     }
 
-    /// Draws the window over `target` (a `size` render target of `format`), in the largest
-    /// 4:3 rectangle of it. Nothing is drawn when no dialogue is open.
+    /// Draws the window over `target` in `region`, the top screen (`screens.rs`). Nothing is
+    /// drawn when no dialogue is open.
     pub fn draw(
         &mut self,
         device: &wgpu::Device,
@@ -447,7 +446,7 @@ impl Talk {
         format: wgpu::TextureFormat,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
-        size: (u32, u32),
+        region: Viewport,
     ) {
         let quads = self.quads();
         if quads.is_empty() {
@@ -461,13 +460,6 @@ impl Talk {
         }
         let Some((_, ui)) = &mut self.gpu else {
             return;
-        };
-        let (x, y, width, height) = letterbox(size.0, size.1, DS_ASPECT);
-        let region = Viewport {
-            x,
-            y,
-            width,
-            height,
         };
         ui.draw(device, queue, encoder, target, region, &quads);
     }
