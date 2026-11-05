@@ -11,14 +11,14 @@ objectif : une **v0.1 jouable** (prologue d'Angel Falls). Plan : `docs/roadmap.m
 `docs/app.md`.
 
 <!-- coverage:start -->
-**Avancement : 1,7 %** des fonctions de jeu traduites (213 / 12 056), 2,1 % du code (55 Ko / 2 505 Ko).
+**Avancement : 1,8 %** des fonctions de jeu traduites (226 / 12 056), 2,2 % du code (57 Ko / 2 505 Ko).
 Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (définition dans `docs/roadmap.md`).
 
 <details><summary>Détail par module</summary>
 
 | Module | Fonctions traduites | Code traduit |
 |---|---:|---:|
-| ARM9 | 205 / 5 464 (3,7 %) | 52 Ko / 826 Ko (6,2 %) |
+| ARM9 | 216 / 5 464 (3,9 %) | 53 Ko / 826 Ko (6,3 %) |
 | ITCM | 0 / 34 (0,0 %) | 0 Ko / 6 Ko (0,0 %) |
 | ov_000 | 0 / 826 (0,0 %) | 0 Ko / 190 Ko (0,0 %) |
 | ov_001 | 0 / 515 (0,0 %) | 0 Ko / 70 Ko (0,0 %) |
@@ -36,7 +36,7 @@ Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (dé
 | ov_014 | 0 / 69 (0,0 %) | 0 Ko / 21 Ko (0,0 %) |
 | ov_015 | 0 / 103 (0,0 %) | 0 Ko / 34 Ko (0,0 %) |
 | ov_016 | 0 / 87 (0,0 %) | 0 Ko / 22 Ko (0,0 %) |
-| ov_017 | 8 / 1 194 (0,6 %) | 4 Ko / 301 Ko (1,0 %) |
+| ov_017 | 10 / 1 194 (0,8 %) | 4 Ko / 301 Ko (1,3 %) |
 | ov_020 | 0 / 18 (0,0 %) | 0 Ko / 9 Ko (0,0 %) |
 | ov_021 | 0 / 5 (0,0 %) | 0 Ko / 2 Ko (0,0 %) |
 | ov_023 | 0 / 827 (0,0 %) | 0 Ko / 147 Ko (0,0 %) |
