@@ -139,6 +139,13 @@ pub struct Talk {
     /// Buttons pressed since the last step.
     pending: Input,
     ticks: u32,
+    /// An event message is open (see [`Talk::show_event`]).
+    event_message: bool,
+    /// The player closed it.
+    closed: bool,
+    /// Native 410 hid the frame of the current event message.
+    frameless: bool,
+    fade: Option<[f32; 4]>,
 }
 
 impl Talk {
@@ -190,12 +197,60 @@ impl Talk {
         };
         dialogue.step(input);
         if let Some(outcome) = dialogue.outcome() {
-            status(&format!(
-                "talk ended ({:?}, answer {:?})",
-                outcome.end, outcome.answer
-            ));
+            if self.event_message {
+                // The script of the event polls the message (native 405).
+                self.event_message = false;
+                self.closed = true;
+            } else {
+                status(&format!(
+                    "talk ended ({:?}, answer {:?})",
+                    outcome.end, outcome.answer
+                ));
+            }
             self.active = None;
         }
+    }
+
+    /// Native 400: opens the window on an event's text (see [`Dialogue::for_event`]).
+    pub fn show_event(&mut self, text: &[u8]) -> Result<()> {
+        let Some(assets) = &self.assets else {
+            bail!("no message window (the ROM resources failed to load)");
+        };
+        let font = assets.font()?;
+        let script = talk::prepare(&font, text, &self.names, TEXT_WIDTH);
+        self.active = Some(Dialogue::for_event(script));
+        self.event_message = true;
+        self.frameless = false;
+        self.closed = false;
+        Ok(())
+    }
+
+    /// Native 410: the window of the current event message has no frame.
+    pub fn hide_event_frame(&mut self) {
+        self.frameless = true;
+    }
+
+    /// Native 401: closes the event message without reporting it as read.
+    pub fn close_event(&mut self) {
+        if self.event_message {
+            self.active = None;
+            self.event_message = false;
+        }
+    }
+
+    /// Whether the player closed the event message since the last call.
+    pub fn take_closed(&mut self) -> bool {
+        std::mem::take(&mut self.closed)
+    }
+
+    /// An event message is on screen.
+    pub fn event_message_open(&self) -> bool {
+        self.event_message
+    }
+
+    /// The colour (straight alpha) the fade of the event draws over the screen, if any.
+    pub fn set_fade(&mut self, color: Option<[f32; 4]>) {
+        self.fade = color;
     }
 
     /// The action key with no dialogue open: talks to the NPC in front of the hero. Returns
@@ -307,8 +362,17 @@ impl Talk {
         Ok(())
     }
 
-    /// The quads of the window on the 256×192 screen, empty when no dialogue is open.
+    /// The quads of the window and of the fade over it on the 256×192 screen.
     pub fn quads(&self) -> Vec<Quad> {
+        let mut out = self.window_quads();
+        if let (Some(assets), Some(color)) = (&self.assets, self.fade) {
+            out.push(assets.atlas.solid([0, 0, 256, 192], color));
+        }
+        out
+    }
+
+    /// The quads of the window, empty when no dialogue is open.
+    fn window_quads(&self) -> Vec<Quad> {
         let (Some(assets), Some(dialogue)) = (&self.assets, &self.active) else {
             return Vec::new();
         };
@@ -321,7 +385,7 @@ impl Talk {
         }
         let color = tags.color.map_or([1.0; 4], tint);
         let mut out = Vec::new();
-        if !tags.frameless {
+        if !tags.frameless && !self.frameless {
             atlas.window(window, FILL, &mut out);
         }
         if let Some(plate) = view.name {

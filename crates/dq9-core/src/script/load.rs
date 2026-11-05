@@ -188,3 +188,62 @@ pub fn stage_events(
     events.dedup();
     events
 }
+
+/// Where an event happens, from its event-list record (`stb.md`, § Fichiers).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EventPlace {
+    /// Map id (record value 4).
+    pub map: u16,
+    /// Position and angle of the record (values 12 to 15; all zero when the event has none,
+    /// the script then places everyone itself) **[hypothèse]**: the hero's start.
+    pub position: Option<([f32; 3], f32)>,
+}
+
+/// The map and start of `event`, from the event lists.
+pub fn place(files: &dyn Files, event: u16) -> Option<EventPlace> {
+    LISTS.iter().find_map(|list| {
+        let table = Table::parse(files.file(list)?).ok()?;
+        table
+            .records
+            .iter()
+            .filter(|r| r.kind == 102)
+            .find_map(|r| {
+                let v = r.values.get(..16)?;
+                let (Value::Int(map), Value::Int(id)) = (v[4], v[5]) else {
+                    return None;
+                };
+                if id != u32::from(event) {
+                    return None;
+                }
+                let number = |i: usize| match v[i] {
+                    Value::Float(f) => f,
+                    _ => 0.0,
+                };
+                let at = [number(12), number(13), number(14)];
+                let angle = number(15);
+                let position = (at != [0.0; 3] || angle != 0.0).then_some((at, angle));
+                Some(EventPlace {
+                    map: u16::try_from(map).ok()?,
+                    position,
+                })
+            })
+    })
+}
+
+/// The first scene of the story stage `major.minor` in `eventlist_lv5.bin`, in list order:
+/// the opening cutscene of the stage (21500 for 1.1).
+pub fn stage_opening(files: &dyn Files, major: u32, minor: u32) -> Option<u16> {
+    let table = Table::parse(files.file(LISTS[2])?).ok()?;
+    table
+        .records
+        .iter()
+        .filter(|r| r.kind == 102)
+        .find_map(|r| match r.values.get(..6)? {
+            &[Value::Int(a), Value::Int(b), _, _, _, Value::Int(event)]
+                if a == major && b == minor =>
+            {
+                u16::try_from(event).ok()
+            }
+            _ => None,
+        })
+}

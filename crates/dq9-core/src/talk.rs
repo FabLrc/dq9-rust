@@ -539,6 +539,7 @@ pub struct Dialogue {
     name: Option<Plate>,
     lines: Vec<Vec<(u8, i32)>>,
     answer: Option<u8>,
+    hold_at_end: bool,
 }
 
 impl Dialogue {
@@ -550,6 +551,16 @@ impl Dialogue {
             name: None,
             lines: vec![Vec::new()],
             answer: None,
+            hold_at_end: false,
+        }
+    }
+
+    /// A message of an event script (native 400): when its text ends without an end tag it
+    /// waits for the action key instead of closing at once **[hypothèse]**.
+    pub fn for_event(script: Script) -> Self {
+        Self {
+            hold_at_end: true,
+            ..Self::new(script)
         }
     }
 
@@ -590,7 +601,12 @@ impl Dialogue {
     fn run(&mut self, mut budget: usize) {
         while budget > 0 {
             let Some(op) = self.script.ops.get(self.at) else {
-                self.state = State::Closed(EndKind::Wait);
+                // An event's message stays until the action key (or the script) closes it.
+                self.state = if self.hold_at_end {
+                    State::WaitEnd
+                } else {
+                    State::Closed(EndKind::Wait)
+                };
                 return;
             };
             match op {

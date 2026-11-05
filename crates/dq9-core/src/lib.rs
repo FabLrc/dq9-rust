@@ -2,6 +2,7 @@
 
 pub mod camera;
 pub mod collision;
+pub mod cutscene;
 pub mod field;
 pub mod fx;
 pub mod lighting;

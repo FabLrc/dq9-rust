@@ -87,6 +87,10 @@ pub(crate) struct HeroRig {
     parts: Vec<Part>,
     /// `Stand`, `Walk`, `Run` joint animations.
     clips: [Clip; 3],
+    /// A scripted motion that replaces the gait's until the next [`HeroRig::set_gait`].
+    custom: Option<Clip>,
+    /// Joint motions of the packages an event added: name, file, speed.
+    packages: Vec<(String, Vec<u8>, i32)>,
     gait: Gait,
     scale: [f32; 3],
     pub(crate) dirty: bool,
@@ -103,7 +107,7 @@ impl std::fmt::Debug for Part {
 
 /// World matrix of every object the render commands multiply by, with the objects' local
 /// matrices `objects` (the matrix after `MulObject`, before any `ScaleUp`).
-fn object_worlds(model: &Model, objects: &[DsMat]) -> Result<Vec<Option<DsMat>>> {
+pub(crate) fn object_worlds(model: &Model, objects: &[DsMat]) -> Result<Vec<Option<DsMat>>> {
     let mut out = vec![None; objects.len()];
     let mut stack = [DsMat::IDENTITY; 32];
     let mut cur = DsMat::IDENTITY;
@@ -331,6 +335,8 @@ impl HeroRig {
             instance,
             parts,
             clips,
+            custom: None,
+            packages: Vec::new(),
             gait: Gait::Stand,
             scale: [width, height, width],
             dirty: true,
@@ -347,9 +353,10 @@ impl HeroRig {
             * Mat4::from_scale(Vec3::from_array(self.scale))
     }
 
-    /// Starts `gait` from its first frame; the same gait keeps playing.
+    /// Starts `gait` from its first frame; the same gait keeps playing. A scripted motion
+    /// ([`HeroRig::play`]) ends.
     pub(crate) fn set_gait(&mut self, gait: Gait) {
-        if gait != self.gait {
+        if self.custom.take().is_some() || gait != self.gait {
             self.gait = gait;
             self.clips[gait.index()].frame = 0;
         }
@@ -359,14 +366,78 @@ impl HeroRig {
         self.gait
     }
 
+    /// Adds the joint motions of a character archive (`event_lv5/evNNNNNp000.chr`, natives
+    /// 229 and 567) that [`HeroRig::play`] can start.
+    pub(crate) fn add_package(&mut self, chr: &[u8]) -> Result<()> {
+        let chr = Chr::parse(chr)?;
+        for found in chr.motions() {
+            if let Some((_, id)) = found
+                .files
+                .iter()
+                .find(|(kind, _)| *kind == dq9_formats::chr::AnimKind::Joint)
+            {
+                self.packages.push((
+                    found.motion.name_str(),
+                    chr.narc.file(*id)?.to_vec(),
+                    found.motion.speed,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Plays a motion by name, from its first frame: those of the added packages (the last
+    /// one wins), then `stand`, `walk` and `run`. Returns whether it exists.
+    pub(crate) fn play(&mut self, name: &str, once: bool) -> bool {
+        let clip = if let Some((_, bytes, speed)) =
+            self.packages.iter().rev().find(|(n, _, _)| n == name)
+        {
+            Clip::new(bytes.clone(), *speed, None).ok().map(|mut clip| {
+                clip.range = Some((0, (i32::from(clip.frames) - 1) << 12));
+                clip
+            })
+        } else {
+            let gait = match name {
+                "stand" => Some(Gait::Stand),
+                "walk" => Some(Gait::Walk),
+                "run" => Some(Gait::Run),
+                _ => None,
+            };
+            gait.and_then(|g| {
+                let base = &self.clips[g.index()];
+                Clip::new(base.bytes.clone(), base.speed, base.range).ok()
+            })
+        };
+        let Some(mut clip) = clip else { return false };
+        clip.once = once;
+        self.custom = Some(clip);
+        true
+    }
+
+    /// Times the scripted motion reached its end since it started (0 without one).
+    pub(crate) fn wraps(&self) -> u32 {
+        self.custom.as_ref().map_or(0, |c| c.wraps)
+    }
+
+    /// The scale of the model.
+    pub(crate) fn scale(&self) -> Vec3 {
+        Vec3::from_array(self.scale)
+    }
+
     /// One 60 Hz update of the current motion.
     pub(crate) fn step(&mut self, scene: &mut Scene) -> Result<()> {
-        self.clips[self.gait.index()].advance();
+        match &mut self.custom {
+            Some(clip) => clip.advance(),
+            None => self.clips[self.gait.index()].advance(),
+        }
         self.evaluate(scene)
     }
 
     fn evaluate(&mut self, scene: &mut Scene) -> Result<()> {
-        let clip = &self.clips[self.gait.index()];
+        let clip = self
+            .custom
+            .as_ref()
+            .unwrap_or(&self.clips[self.gait.index()]);
         let anim = G3dFile::parse(&clip.bytes)?;
         let joint = anim
             .joint_animations

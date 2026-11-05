@@ -12,6 +12,8 @@ use glam::{Mat4, Vec3};
 use nds_rom::g3d::{Fx12, G3dFile, Name};
 use nds_rom::{Error, Narc, Result};
 
+mod actor;
+
 use crate::hero::{Gait, HeroRig};
 use crate::pose::VertexPose;
 use crate::scene::{
@@ -27,9 +29,14 @@ pub(crate) struct Clip {
     pub(crate) bytes: Vec<u8>,
     pub(crate) frame: i32,
     pub(crate) frames: u16,
-    speed: i32,
+    pub(crate) speed: i32,
     /// BCFG and per-motion characters provide ranges; plain map models use the full count.
     pub(crate) range: Option<(i32, i32)>,
+    /// Scripted motions (flag `0x01` of native 210) stop on their last frame instead of
+    /// looping.
+    pub(crate) once: bool,
+    /// Times the clock reached the end of its range since it was made.
+    pub(crate) wraps: u32,
 }
 
 impl Clip {
@@ -49,6 +56,8 @@ impl Clip {
             frames,
             speed,
             range,
+            once: false,
+            wraps: 0,
         })
     }
     pub(crate) fn advance(&mut self) {
@@ -56,13 +65,32 @@ impl Clip {
         // Object3D::AdvanceAnimations_v0/v1 (0x02034e38/0x02035188) supplies explicit ranges.
         let (start, end) = self.range.unwrap_or((0, i32::from(self.frames) << 12));
         let length = i64::from(end) - i64::from(start);
-        self.frame = if length > 0 {
-            (i64::from(start)
-                + (i64::from(self.frame) - i64::from(start) + i64::from(self.speed))
-                    .rem_euclid(length)) as i32
-        } else {
-            start
-        };
+        if length <= 0 {
+            self.frame = start;
+            return;
+        }
+        let raw = i64::from(self.frame) - i64::from(start) + i64::from(self.speed);
+        if self.once {
+            // Holds the last pose once the end is reached.
+            let last = if self.range.is_some() {
+                end
+            } else {
+                end - 0x1000
+            };
+            if self.wraps > 0 {
+                self.frame = last;
+            } else if raw >= length || raw < 0 {
+                self.wraps += 1;
+                self.frame = last;
+            } else {
+                self.frame = (i64::from(start) + raw) as i32;
+            }
+            return;
+        }
+        if raw >= length || raw < 0 {
+            self.wraps += 1;
+        }
+        self.frame = (i64::from(start) + raw.rem_euclid(length)) as i32;
     }
 }
 
@@ -99,6 +127,7 @@ pub struct AnimatedScene {
     models: Vec<ModelAnimation>,
     sprites: Vec<SpriteAnimation>,
     hero: Option<HeroRig>,
+    actors: Vec<actor::ActorRig>,
     pub frame: u64,
 }
 
@@ -128,6 +157,7 @@ impl AnimatedScene {
             models: Vec::new(),
             sprites: Vec::new(),
             hero: None,
+            actors: Vec::new(),
             frame: 0,
         };
         let ambl = Narc::parse(required(&file, &map.files.ambl)?)?;
@@ -823,6 +853,8 @@ mod tests {
             frames: 9,
             speed: 2048,
             range: None,
+            once: false,
+            wraps: 0,
         };
         for _ in 0..16 {
             file.advance();
@@ -837,6 +869,8 @@ mod tests {
             frames: 30,
             speed: 4096,
             range: Some((10 << 12, 14 << 12)),
+            once: false,
+            wraps: 0,
         };
         for _ in 0..5 {
             ranged.advance();
@@ -856,6 +890,8 @@ mod tests {
             frames: 1,
             speed: 8192,
             range: None,
+            once: false,
+            wraps: 0,
         };
         for _ in 0..60 {
             clip.advance();

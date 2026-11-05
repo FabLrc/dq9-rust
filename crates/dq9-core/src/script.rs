@@ -258,6 +258,15 @@ impl Director {
             .collect()
     }
 
+    /// The event the next update starts, when none runs: the application prepares its scene
+    /// (map, models) before stepping.
+    pub fn pending_start(&self) -> Option<u16> {
+        match self.current {
+            Some(_) => None,
+            None => self.queue.front().copied(),
+        }
+    }
+
     /// Whether an event runs or waits.
     pub fn is_active(&self) -> bool {
         self.current.is_some() || !self.queue.is_empty()

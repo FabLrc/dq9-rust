@@ -35,6 +35,7 @@ use crate::trigger::{
 const TWO_PI: i32 = 0x6488;
 /// Events of `docs/re/trigger.md`.
 const EVENT_TALK: i32 = 0;
+const EVENT_END: i32 = 11;
 const EVENT_ENTER_AREA: i32 = 2;
 const EVENT_ARRIVAL: i32 = 3;
 const EVENT_LEAVE_AREA: i32 = 5;
@@ -404,6 +405,16 @@ impl Field {
         self.step_areas(p, state, &mut events);
         self.step_added_areas(p, state, &mut events);
         self.step_warps(p, state, &mut events);
+        events
+    }
+
+    /// An event ended (`EventTask_Update`, `ov_017::021bc77c`): fires trigger event 11 with
+    /// the event number in word 2, and returns what its actions ask for (typically the next
+    /// event or a map change).
+    pub fn event_ended(&mut self, event: u16, state: &mut State) -> Vec<Event> {
+        let mut events = Vec::new();
+        let ended = self.fire(EVENT_END, &[(2, u32::from(event))], state);
+        self.collect(ended, None, &mut events);
         events
     }
 
