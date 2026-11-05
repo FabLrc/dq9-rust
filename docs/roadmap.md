@@ -168,7 +168,15 @@ Avancement :
 - [x] Liste des cartes `maplist9.bin` réimplémentée (`dq9_formats::maplist`,
       [`re/maplist.md`](re/maplist.md), `dq9re maps`) : 1 010 enregistrements identiques à la
       RAM d'un état melonDS ; carte courante lue en `g_Zone3D+0`.
-- [ ] Archives `.ambl`/`.amdj`, puis `BMD0`/`BTX0`.
+- [x] Lecteur G3D porté d'apicula (`nds_rom::g3d`, [`re/g3d.md`](re/g3d.md),
+      `dq9re model`) : les 4 328 `BMD0`, 737 `BTX0` et 525 `BTP0` des cartes se lisent,
+      22 827 textures décodées, 748 435 triangles assemblés.
+- [x] Assemblage des cartes réimplémenté (`dq9_formats::map`,
+      [`re/map-archive.md`](re/map-archive.md), `dq9re map`) : fichiers chargés, blocs
+      `.bmdj`, parties et instances avec leur transformation ; les 667 `.ambl` et 669 `.amdj`
+      s'assemblent, 5 341 ressources toutes résolues, `C01M09` identique à la RAM (melonDS).
+- [ ] Personnages `.chr` (chargés après l'assemblage, `0x02018f30`, `0x020181fc`…),
+      animations `BCA0`/`BTA0`/`BMA0` (lues par nom seulement), puis `dq9-app` (wgpu).
 
 ## J2 — Se déplacer
 

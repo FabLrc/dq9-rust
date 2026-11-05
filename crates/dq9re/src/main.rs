@@ -3,7 +3,9 @@
 mod coverage;
 mod extract;
 mod font;
+mod map;
 mod maps;
+mod model;
 mod msg;
 mod save;
 mod state;
@@ -138,6 +140,21 @@ enum Command {
         #[arg(long)]
         state: Option<PathBuf>,
     },
+    /// The files a map loads (`<code>.ambl`, lighting, `<code>.amdj`) and how the game
+    /// assembles them: blocks, parts with their files, instances with world transforms.
+    /// With `--state`, compares the result with the map loaded in a melonDS state.
+    Map(map::MapArgs),
+    /// Export the textures (PNG) and models (OBJ + MTL, model space) of G3D files: a
+    /// `.nsbmd`/`.nsbtx` file or the members of a NARC such as `data/map/M01.amdj`.
+    Model {
+        /// Path inside the ROM filesystem.
+        path: String,
+        /// Only this NARC member, e.g. `M01M0003.nsbmd`.
+        #[arg(long)]
+        member: Option<String>,
+        #[arg(long, default_value = "build/g3d")]
+        out: PathBuf,
+    },
     /// Build `re/functions.txt` from a checkout of the USA decompilation (DQIX/dqix-decomp):
     /// every function, at European addresses, classified game / platform / excluded.
     Functions {
@@ -243,6 +260,8 @@ fn main() -> Result<()> {
             decompress,
         } => narc(&rom, &path, out.as_deref(), decompress),
         Command::Maps { state } => maps::run(&rom, state.as_deref()),
+        Command::Map(args) => map::run(&rom, &args),
+        Command::Model { path, member, out } => model::run(&rom, &path, member.as_deref(), &out),
         Command::Cat {
             path,
             out,

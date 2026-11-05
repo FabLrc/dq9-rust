@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use dq9_formats::dialogue::{self, Kind, Session, TalkState};
+use dq9_formats::map::{self, Context, Map, PartKind};
 use dq9_formats::maplist::{self, MapList};
 use dq9_formats::stb::{Instr, Script};
 use dq9_formats::trigger::{self, Member, State};
@@ -453,4 +454,180 @@ fn map_list_loads() {
     // Ids are unique on shipped maps. 155 of the 179 without a `.amdj` are grotto floors
     // (kind 6), whose maps are generated.
     assert_eq!((shipped, with_archive), (871, 692));
+}
+
+/// Counts over assembled maps.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct MapTotals {
+    maps: usize,
+    without_ambl: usize,
+    lighting: usize,
+    lighting_missing: usize,
+    effects: usize,
+    blocks: usize,
+    unbuilt_blocks: usize,
+    resources: usize,
+    texture_links: usize,
+    placements: usize,
+    models: usize,
+    objects: usize,
+    collisions: usize,
+    animations: usize,
+    flagged_but_missing: usize,
+    texture_sources: usize,
+    with_parent: usize,
+    hidden_at_0: usize,
+    unreached: usize,
+}
+
+impl MapTotals {
+    fn add(&mut self, map: &Map) {
+        self.maps += 1;
+        if !map.ambl_found {
+            self.without_ambl += 1;
+        }
+        if let Some((_, found)) = &map.lighting {
+            self.lighting += 1;
+            self.lighting_missing += usize::from(!found);
+        }
+        self.effects += usize::from(map.effects.is_some());
+        for block in &map.blocks {
+            self.blocks += 1;
+            let m = &block.manifest;
+            if !block.processed {
+                self.unbuilt_blocks += 1;
+                continue;
+            }
+            assert_eq!(m.resources.len(), m.resource_capacity, "{}", block.member);
+            assert_eq!(m.placements.len(), m.placement_capacity, "{}", block.member);
+            self.resources += m.resources.len();
+            self.texture_links += m.textures.len();
+            self.placements += m.placements.len();
+            for (part, r) in block.parts.iter().zip(&m.resources) {
+                // Every resource resolves to members of its archive.
+                assert!(part.file.is_some(), "{}: {:?}", block.member, part.name);
+                match part.kind {
+                    PartKind::Model => self.models += 1,
+                    PartKind::Object => self.objects += 1,
+                    PartKind::Collision => self.collisions += 1,
+                    PartKind::None => panic!("{}: {:?} unresolved", block.member, part.name),
+                }
+                self.animations += part.animations.len();
+                if part.kind != PartKind::Collision {
+                    let mask = if part.kind == PartKind::Object {
+                        0x1f
+                    } else {
+                        0xf
+                    };
+                    let flagged = (r.flags & mask).count_ones() as usize;
+                    self.flagged_but_missing += flagged - part.animations.len();
+                }
+                self.texture_sources += usize::from(part.texture_source.is_some());
+            }
+            for inst in &block.instances {
+                assert!(
+                    inst.part.is_some(),
+                    "{}: instance {}",
+                    block.member,
+                    inst.id
+                );
+                self.with_parent += usize::from(inst.parent.is_some());
+                self.hidden_at_0 += usize::from(inst.hidden);
+            }
+            // Instances the hierarchy walk does not reach keep the default transform.
+            self.unreached += block
+                .instances
+                .iter()
+                .enumerate()
+                .filter(|(i, inst)| {
+                    *i != 0 && inst.parent.is_none() && m.placements[*i].parent >= 0
+                })
+                .count();
+        }
+    }
+}
+
+/// Every shipped map assembles (`dq9_formats::map`), every resource of a built block resolves
+/// to members of its archive and every placement to a part; the SDK sine table is the one the
+/// transforms compute.
+#[test]
+fn maps_assemble() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    // g_fixSinCosTable (0x020e9460): 4096 pairs of fx16 sine, cosine.
+    let arm9 = rom.arm9().unwrap();
+    let table_at = (0x020e_9460 - arm9.load_addr) as usize;
+    for i in 0..4096 {
+        let at = table_at + 4 * i;
+        let b = &arm9.data[at..at + 4];
+        let entry = (
+            i16::from_le_bytes([b[0], b[1]]),
+            i16::from_le_bytes([b[2], b[3]]),
+        );
+        assert_eq!(map::sin_cos_entry(i), entry, "sine table entry {i}");
+    }
+
+    let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+    let list = MapList::parse(&table).unwrap();
+    let file = |p: &str| map::rom_file(&rom, p);
+    let ctx = Context {
+        time_of_day: 0,
+        grotto_environ: 1,
+    };
+    // Records sharing their archives (grotto floors, ...) are counted once.
+    let mut seen = HashSet::new();
+    let (mut records, mut with_ambl) = (0, 0);
+    let mut totals = MapTotals::default();
+    let mut add = |map: Map| {
+        if seen.insert((map.files.ambl.clone(), map.files.amdj.clone())) {
+            totals.add(&map);
+        }
+    };
+    for r in list.records.iter().filter(|r| r.id != 0) {
+        let map = Map::assemble(r, &table, file, &ctx)
+            .unwrap_or_else(|e| panic!("map {} {:?}: {e}", r.id, r.code));
+        records += 1;
+        with_ambl += usize::from(map.ambl_found);
+        add(map);
+    }
+    // The other grotto environments: a floor and a boss room each.
+    for grotto_environ in 2..=5 {
+        for id in [40001, 41101] {
+            let ctx = Context {
+                time_of_day: 0,
+                grotto_environ,
+            };
+            add(Map::assemble(list.find(id).unwrap(), &table, file, &ctx).unwrap());
+        }
+    }
+    // 75 records name archives that do not ship (dummies, debug maps); `S09M03` and `M03M05`
+    // only load through the case-insensitive file system.
+    assert_eq!((records, with_ambl), (871, 796));
+    assert_eq!(
+        totals,
+        MapTotals {
+            // 667 `.ambl` (all but the 14 `ats_*`), 669 `.amdj`.
+            maps: 742,
+            without_ambl: 75,
+            // D07M0800.bats and B10M0200.bats are missing.
+            lighting: 663,
+            lighting_missing: 2,
+            effects: 15,
+            // Every `.bmdj` but M12M0001.bmdj, which no block entry names.
+            blocks: 754,
+            unbuilt_blocks: 0,
+            resources: 5341,
+            texture_links: 529,
+            placements: 5651,
+            models: 4096,
+            objects: 112,
+            collisions: 1133,
+            animations: 2125,
+            flagged_but_missing: 36,
+            texture_sources: 845,
+            with_parent: 1288,
+            hidden_at_0: 713,
+            unreached: 0,
+        }
+    );
 }

@@ -7,6 +7,7 @@ pub mod dialogue;
 pub mod font;
 pub mod gpc2;
 pub mod level5;
+pub mod map;
 pub mod maplist;
 pub mod melonds;
 pub mod message;

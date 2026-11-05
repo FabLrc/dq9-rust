@@ -454,3 +454,76 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x02099960 MapList_Find             # first record whose id (+0) matches, else 0
 0x02099a00 MapList_Append           # copies a record while count < capacity
 0x020f1524 g_MapListRecordHandlers  # {0x64, nop}, {0x65, nop}, {0x66, count}, {0x67, map}, {0x68, nop}, {0x69, nop}, {0}
+
+# --- Map archives (docs/re/map-archive.md) ---
+0x02013000 Zone3D_PartInit          # 0x18-byte part: kind 0xffff (+0), model/collision (+4), anim slots +8 nsbtp, +0xc nsbta, +0x10 nsbma, +0x14 nsbca
+0x02013028 Zone3D_NodeInit          # 0x70-byte instance: id 0xffff, scale 1.0 (+0x14), parent/child/sibling (+0x28/+0x2c/+0x30) 0
+0x020130c0 Zone3D_NodeAddChild      # sets the child's parent (+0x28), appends it to the parent's children (+0x2c, then +0x30 chain)
+0x020130f0 Zone3D_NodeAddSibling    # appends to a +0x30 sibling chain
+0x0201311c Zone3D_PlaceNodes        # world transforms from the first instance, under the identity
+0x02013168 Zone3D_PlaceNodeChain    # node + siblings: RotY(parent angle) * translation + parent position, angle + rot y, scale * scale; recurses into children
+0x02013464 Zone3D_BlockInit         # 0x58-byte block: entry -1, manifest (+4) cleared, parts/instances/next 0
+0x02013e28 Zone3D_StepLoad          # zone load state machine: maplist, ambl, lighting, amdj, effects steps in order
+0x02013fc4 Zone3D_StepMapList       # parses the queued maplist9.bin (Zone3D_LoadMapList), queues the .ambl
+0x0201404c Zone3D_QueueAmbl         # data/map/<code>.ambl, Z0%dM01.ambl (grotto floors, environ 1..5), Z0%dM99.ambl
+0x02014118 Zone3D_StepAmbl          # .ambl: every .nsbtx, then .bmbl/.dat/.bpos in member order; then Zone3D_QueueLighting
+0x020143a0 Zone3D_LoadBmbl          # clears Zone3D+0x6c and parses the .bmbl into it (Zone3D+8 saved around it)
+0x020143e8 Zone3D_LoadBpos          # parses a .bpos into Zone3D+0x6c without clearing
+0x02014424 Zone3D_LoadBats          # LightingInfo (Zone3D+0x10c) from a .bats script
+0x0201446c Zone3D_LoadNsbtx         # Model3D of one .nsbtx (name kept at +0xac), prepended to Zone3D+0x418
+0x020145b8 Zone3D_QueueAmdj         # <code>.amdj; ids 10000/10100: <code>b.amdj then <code>a.amdj (counter Zone3D+0x42c); grotto Z0%dM01/M99.amdj
+0x0201470c Zone3D_StepAmdj          # mounts the .amdj as ARC, loads each .bmdj once per Zone3D+0x6c name it contains (strstr), builds blocks, queues the .mse
+0x02014910 Zone3D_LoadBlock         # block for one .bmdj: entry id/offset, LZ77 + Manifest_Parse, prepended to Zone3D+0x41c
+0x02014a34 Zone3D_BuildBlock        # one part per resource slot: name[3] 'A' collision, flag 0x10 object, else model; then Zone3D_BuildInstances
+0x02014b14 Zone3D_QueueLighting     # grotto floors: Z0%dM0100..03 by floor; then data/map/ats_<first char>.ambl, or Zone3D_QueueAmdj
+0x02014c14 Zone3D_StepLighting      # GetFileInNarc(<name>.bats) -> Zone3D_LoadBats, then Zone3D_QueueAmdj
+0x02014d28 Zone3D_ArcPath           # "ARC:/<name>" with the text after its last '.' replaced by an extension
+0x02014d90 Zone3D_LoadModelPart     # variant for the time of day, .nsbmd, texture source (+3 links), nsbca/nsbma/nsbta/nsbtp by flags
+0x02015144 Zone3D_LoadCollisionPart # <name>.col2; kind 1 even when missing
+0x020151dc Zone3D_LoadObjectPart    # Object3D: .nsbmd, then nsbca/nsbma/nsbta/nsbtp/bcfg by flags
+0x020177e4 Zone3D_BuildInstances    # instances: parent by instance id, hidden by time of day, part by resource id; Zone3D_PlaceNodes
+0x0201b5c0 Zone3D_IsGrottoFloor     # ids 40001..40096
+0x0201b5e8 Zone3D_IsGrottoOther     # ids 41101..41505
+0x0201c604 ZoneMapList_RecNop66     # kind 0x66 handler: nothing
+0x0201c60c ZoneMapList_RecMap       # kind 0x67 of the current id: value 11 -> lighting name (Zone3D+0xc), 13-15 -> Zone3D+0x40/+0x44/+0x48
+0x0201c724 ZoneMapList_RecNop68     # kind 0x68 handler: nothing
+0x0201c72c ZoneMapList_RecNop69     # kind 0x69 handler: nothing
+0x0201c734 Zone3D_LoadMapList       # Tbl_* over maplist9.bin with g_ZoneMapListHandlers for one map id
+0x0201c7ac BlockList_RecCount       # bmbl kind 0x64: new list of n entries
+0x0201c7d4 BlockList_RecEntry       # bmbl kind 0x65: id, offset (fx32), name, optional names 5 and 6
+0x0201e1e0 BlockList_Load           # Tbl_* with g_BlockListHandlers (kinds 0x64..0x7e)
+0x0201e258 BlockList_Clear          # memset(Zone3D+0x6c, 0, 0x88)
+0x0201e26c BlockList_Alloc          # n * 0x58 bytes, count 0, capacity n
+0x0201e2c4 BlockList_Parse          # calls BlockList_Load
+0x0201e2e8 BlockList_Get            # i-th 0x58-byte entry, else 0
+0x0201e314 BlockList_Append         # copies an entry while count < capacity
+0x0201ebd4 Bmdj_RecResourceCount    # kind 0x6a: resource array of n * 12 bytes
+0x0201ec08 Bmdj_RecNop6b            # kind 0x6b handler: nothing
+0x0201ec10 Bmdj_RecResource         # kind 0x6c: id, name, flags & 0x3f, texture links; becomes the current resource
+0x0201ece4 Bmdj_RecVariant          # kind 0x72: variant (time of day, name, flags & 0x1f) chained to the current resource
+0x0201edd0 Bmdj_RecPlacementCount   # kind 0x6d: placement array of n * 32 bytes
+0x0201edf8 Bmdj_RecNop6e            # kind 0x6e handler: nothing
+0x0201ee00 Bmdj_RecPlacement        # kind 0x6f: instance, resource, translation, parent, name (dropped), scale, rotation, flags (bits 4, 5 inverted)
+0x0201f000 Bmdj_RecTexture          # kind 0x70: texture link name (8 slots, unchecked)
+0x0201f02c Manifest_Init            # clears the 0x3c-byte manifest
+0x0201f050 Manifest_Parse           # Tbl_* with g_BmdjHandlers into a manifest
+0x0201f100 Manifest_AddResource     # copies a resource while count < capacity
+0x0201f154 Manifest_Resource        # i-th resource, else 0
+0x0201f180 Manifest_FindResource    # first resource with an id, else 0
+0x0201f1c0 Manifest_ResourceIndex   # index of the first resource with an id, else -1
+0x0201f200 Manifest_AllocPlacements # n * 32 bytes, capacity n
+0x0201f224 Manifest_AddPlacement    # copies a placement while count < capacity
+0x0201f2b4 Manifest_Placement       # i-th placement, else 0
+0x0201f318 Manifest_AddTexture      # copies a texture link name into slot +0x18 + 4 * count
+0x0201f378 Manifest_Texture         # i-th texture link, else 0
+0x0205e04c ZoneDat_Rec65            # .dat kind 0x65: u16 at Zone3D+0x36
+0x0205e06c ZoneDat_Rec66            # .dat kind 0x66: u32 at Zone3D+0x3c
+0x0205e094 ZoneDat_Rec68            # .dat kind 0x68: string at Zone3D+0x26
+0x0205e0e0 ZoneDat_Rec6d            # .dat kind 0x6d: effects name at Zone3D+0x16 (data/map/<name>.mse)
+0x0205e114 Zone3D_LoadDat           # Tbl_* over a .dat with g_DatHandlers into Zone3D+0xc
+0x020e6f58 g_ObjectAnimFiles        # {mask, Object3D animation type, ext[8]}: nsbca 0, nsbma 1, nsbta 3, nsbtp 2, bcfg -1 (package)
+0x020e6fb8 g_ModelAnimFiles         # {mask, ext[8], part slot, ?}: nsbca, nsbma, nsbta, nsbtp
+0x020ef2c0 g_ZoneMapListHandlers    # {0x66, nop}, {0x67, ZoneMapList_RecMap}, {0x69, nop}, {0x68, nop}, {0}
+0x020ef388 g_BlockListHandlers      # kinds 0x64..0x7e (0x64/0x65 blocks, others zone data), {0}
+0x020ef418 g_BmdjHandlers           # kinds 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x72, {0}
+0x020f051c g_DatHandlers            # kinds 0x64..0x6e, {0}
