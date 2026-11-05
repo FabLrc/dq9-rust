@@ -13,8 +13,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use dq9_core::camera::FieldCamera;
 use crate::screens::{self, Layout};
+use dq9_core::camera::FieldCamera;
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
 use dq9_core::fx::reduce_angle;
 use dq9_core::state::{DayClock, GameState, TimeOfDay};
