@@ -1192,9 +1192,23 @@ impl Renderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        size: (u32, u32),
+        viewport: Viewport,
+        camera: &Camera,
+    ) -> Result<Vec<u8>, wgpu::BufferAsyncError> {
+        self.render_to_rgba_with(device, queue, size, viewport, camera, |_, _| {})
+    }
+
+    /// [`Renderer::render_to_rgba`] with `overlay` drawing over the finished frame (the
+    /// interface of [`crate::ui`]) before the read-back.
+    pub fn render_to_rgba_with(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         (width, height): (u32, u32),
         viewport: Viewport,
         camera: &Camera,
+        overlay: impl FnOnce(&mut wgpu::CommandEncoder, &wgpu::TextureView),
     ) -> Result<Vec<u8>, wgpu::BufferAsyncError> {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
@@ -1229,6 +1243,7 @@ impl Renderer {
             viewport,
             camera,
         );
+        overlay(&mut encoder, &view);
         encoder.copy_texture_to_buffer(
             texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {

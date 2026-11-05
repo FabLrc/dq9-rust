@@ -16,6 +16,7 @@ pub mod lighting;
 mod pose;
 pub mod renderer;
 pub mod scene;
+pub mod ui;
 
 pub use animation::AnimatedScene;
 pub use camera::{Camera, CameraInput, CameraMode};
