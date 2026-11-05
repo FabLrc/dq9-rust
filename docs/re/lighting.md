@@ -83,7 +83,12 @@ Lu dans `build/rom/arm9.bin` (extrait de la ROM du joueur, non committé) et dan
 - `FOG_COLOR` (`0x04000358`) : écrit dans les lignes de `ComputeFogInfo` (USA), non relu en EU.
 - Le masque `0xCF7F` (désactivation) efface aussi les bits 12–13 : [inconnu], à vérifier.
 
-Pas encore établi : la formule exacte de densité (table de `0x69`) et l'équation côté GPU.
+Validation RAM (savestate melonDS `field.ml1`, `LightingManager` à `0x02107930`, 0x9c octets) :
+les valeurs par défaut de `Initialize` (USA) sont présentes à l'identique en EU : offset `0x5800`
+à `+0x58`, couleur `0x7FFF` à `+0x5C`, alpha `15` à `+0x60`, `densityTable[i] = 2i` (32 octets) à
+`+0x64`. Ces décalages sont [hypothèse] : ils viennent de la valeur, pas d'un type de structure.
+Non établi : bits de DISP3DCNT (`GP3D` du savestate, format non documenté dans le dépôt),
+donc ni la formule de densité ni l'équation côté GPU. Le brouillard reste non rendu.
 
 ### Éclairage avancé (`0x6a`)
 
