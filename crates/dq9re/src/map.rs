@@ -43,15 +43,15 @@ pub struct MapArgs {
     scale: u32,
     /// Hero marker on the image, world units: `--at X,Z` is stood on the highest floor,
     /// `--at X,Y,Z` within one unit above a floor. Refused when no floor is found.
-    #[arg(long, num_args = 2..=3, value_name = "X[,Y],Z")]
-    at: Option<Vec<f32>>,
+    #[arg(long, value_name = "X[,Y],Z")]
+    at: Option<String>,
     /// Flood fill from `X,Z` (highest floor) or `X,Y,Z`, with the real hero step and 3D
     /// arrival; one line of statistics.
-    #[arg(long, num_args = 2..=3, value_name = "X[,Y],Z")]
-    reach: Option<Vec<f32>>,
+    #[arg(long, value_name = "X[,Y],Z")]
+    reach: Option<String>,
     /// Target of `--reach`: the report says whether a hero reaches it.
-    #[arg(long, num_args = 3, value_name = "X Y Z")]
-    to: Option<Vec<f32>>,
+    #[arg(long, value_name = "X[,Y],Z")]
+    to: Option<String>,
     /// Writes the same view with the cells of `--reach` tinted green; needs `--reach`.
     #[arg(long)]
     reach_image: Option<PathBuf>,
@@ -156,6 +156,25 @@ fn grounded(world: &CollisionWorld, values: &[f32], what: &str) -> Result<[f32; 
     Ok([x, ground as f32 / 4096.0, z])
 }
 
+/// Parses `X,Z` or `X,Y,Z` (comma or whitespace separated) into world units.
+fn point_values(text: &str, what: &str, min: usize, max: usize) -> Result<Vec<f32>> {
+    let values: Vec<f32> = text
+        .split([',', ' ', '\t'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.parse::<f32>()
+                .with_context(|| format!("{what}: {part:?} is not a number"))
+        })
+        .collect::<Result<_>>()?;
+    if values.len() < min || values.len() > max {
+        bail!(
+            "{what} needs {min} to {max} numbers (X[,Y],Z), got {}",
+            values.len()
+        );
+    }
+    Ok(values)
+}
+
 /// Builds the collision world of the assembled map and renders and/or floods it.
 fn run_collision(rom: &Rom, map: &Map, list: &MapList<'_>, args: &MapArgs) -> Result<()> {
     let world = CollisionWorld::build(map, |p| map::rom_file(rom, p))
@@ -180,16 +199,29 @@ fn run_collision(rom: &Rom, map: &Map, list: &MapList<'_>, args: &MapArgs) -> Re
             Some(raw_start)
         }
     };
-    let hero = args
+    let at = args
         .at
+        .as_deref()
+        .map(|text| point_values(text, "--at", 2, 3))
+        .transpose()?;
+    let reach_arg = args
+        .reach
+        .as_deref()
+        .map(|text| point_values(text, "--reach", 2, 3))
+        .transpose()?;
+    let to_arg = args
+        .to
+        .as_deref()
+        .map(|text| point_values(text, "--to", 3, 3))
+        .transpose()?;
+    let hero = at
         .as_ref()
         .map(|values| grounded(&world, values, "--at"))
         .transpose()?;
-    let target = args
-        .to
+    let target = to_arg
         .as_ref()
         .map(|values| [values[0], values[1], values[2]]);
-    let reach = match &args.reach {
+    let reach = match &reach_arg {
         Some(values) => {
             let start = grounded(&world, values, "--reach")?;
             let start_fx = start.map(|c| (c * 4096.0) as i32);
