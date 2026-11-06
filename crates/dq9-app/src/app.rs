@@ -95,6 +95,18 @@ pub struct Options {
     pub new_game: bool,
 }
 
+/// Writes a flag set as a JSON number array, without a per-flag allocation.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_flag_list(out: &mut String, flags: &std::collections::BTreeSet<i32>) {
+    use std::fmt::Write as _;
+    for (index, flag) in flags.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(out, "{flag}");
+    }
+}
+
 /// The d-pad keys of a replay frame (bit 0 up, 1 down, 2 left, 3 right).
 fn pad_input(bits: u8) -> Input {
     Input {
@@ -1106,33 +1118,31 @@ impl App {
             if index > 0 {
                 out.push(',');
             }
-            let list = |set: &std::collections::BTreeSet<i32>| {
-                set.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
-            };
             let _ = write!(
                 out,
-                "{{\"chapter\":{},\"step\":{},\"substep\":{},\"chapter_flags\":[{}],\"step_flags\":[{}]}}",
-                track.chapter,
-                track.step,
-                track.substep,
-                list(&track.flags[0]),
-                list(&track.flags[1])
+                "{{\"chapter\":{},\"step\":{},\"substep\":{},\"chapter_flags\":[",
+                track.chapter, track.step, track.substep
             );
+            write_flag_list(&mut out, &track.flags[0]);
+            out.push_str("],\"step_flags\":[");
+            write_flag_list(&mut out, &track.flags[1]);
+            out.push_str("]}");
         }
-        let flags = self
-            .state
-            .flags
-            .iter()
-            .map(i32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let quests = self
-            .state
-            .quests
-            .iter()
-            .map(|(quest, state)| format!("\"{quest}\":{state}"))
-            .collect::<Vec<_>>()
-            .join(",");
+        out.push_str("],\"flags\":[");
+        write_flag_list(&mut out, &self.state.flags);
+        out.push(']');
+        out.push_str(",\"quests\":{");
+        for (index, (quest, state)) in self.state.quests.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(out, "\"{quest}\":{state}");
+        }
+        out.push('}');
+        let event = self
+            .events
+            .current()
+            .map_or_else(|| "null".to_owned(), |event| event.to_string());
         let hero = self.hero.map_or([0.0; 4], |hero| {
             [
                 hero.position().x,
@@ -1141,13 +1151,9 @@ impl App {
                 hero.yaw(),
             ]
         });
-        let event = self
-            .events
-            .current()
-            .map_or_else(|| "null".to_owned(), |event| event.to_string());
         let _ = write!(
             out,
-            "],\"flags\":[{flags}],\"quests\":{{{quests}}},\"event\":{event},\"hero\":{{\"x\":{:.3},\"y\":{:.3},\"z\":{:.3},\"yaw\":{:.3}}}}}",
+            ",\"event\":{event},\"hero\":{{\"x\":{:.3},\"y\":{:.3},\"z\":{:.3},\"yaw\":{:.3}}}}}",
             hero[0], hero[1], hero[2], hero[3]
         );
         self.checkpoints.push(out);
@@ -1166,19 +1172,22 @@ impl App {
     /// The recorded pad and action key, one JSON object per fixed step.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn input_trace_jsonl(&self) -> String {
+        use std::fmt::Write as _;
         let mut out = String::new();
         for (frame, (bits, confirm)) in self.input_trace.iter().enumerate() {
-            let mut keys = Vec::new();
+            let _ = write!(out, "{{\"frame\":{frame},\"pad\":[");
+            let mut first = true;
             for (bit, name) in [(1u8, "up"), (2, "down"), (4, "left"), (8, "right")] {
-                if bits & bit != 0 {
-                    keys.push(format!("\"{name}\""));
+                if bits & bit == 0 {
+                    continue;
                 }
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                let _ = write!(out, "\"{name}\"");
             }
-            out.push_str(&format!(
-                "{{\"frame\":{frame},\"pad\":[{}],\"a\":{}}}\n",
-                keys.join(","),
-                confirm
-            ));
+            let _ = writeln!(out, "],\"a\":{confirm}}}");
         }
         out
     }

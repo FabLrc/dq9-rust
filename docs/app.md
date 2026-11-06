@@ -298,8 +298,9 @@ drapeaux d'étape `{1}`, héros `(0,660, -0,250, -3,610)`), à l'écart des 17 d
 pavé et la touche action d'un pas fixe. La trace du parcours ci-dessus (20 570 pas) rejouée
 donne **les mêmes 45 checkpoints, octet pour octet** (dont l'arrivée à 1.1.2 et les 1170
 scènes), ce qui est la preuve d'entrées reproductibles. Le pilote donne des directions du monde
-avec la caméra à l'angle 0 : la trace reproduit la preuve dans notre moteur, pas telle quelle
-une manette melonDS.
+avec la caméra à l'angle 0 et `--replay` force le même cap : la trace prouve la preuve du
+pilote headless dans notre moteur, pas un rejeu avec une caméra manuelle arbitraire ni une
+manette melonDS.
 
 Sur le Web : bouton « Nouvelle partie » de la page (ou `?newgame=1`), après avoir choisi la ROM.
 
