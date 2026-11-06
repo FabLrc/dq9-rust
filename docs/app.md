@@ -419,10 +419,11 @@ La fenêtre montre les deux écrans de la DS (`crates/dq9-app/src/screens.rs`) :
 - **Fenêtre de message** : dessinée sur l'écran du haut (`talk.rs`, `dialogue.md`).
 
 Dispositions : `stacked` (défaut, écran du haut au-dessus de celui du bas), `side` (côte à côte),
-`top` (écran du haut seul). Chaque écran est mis à l'échelle entière (1, 2, 3…) quand la fenêtre
-le permet, sinon à l'échelle fractionnaire ; les écrans sont centrés. Natif : `--layout`, et `R`
-passe à la disposition suivante. Web : le select « Écrans » ou `?layout=`. Les anciens
-`--ds-aspect` et `ds=` sont supprimés.
+`top` (écran du haut seul). Les écrans sont centrés et agrandis ensemble au maximum dans
+l'espace disponible, sans déformer leur rapport 4:3 ; les marges restent noires, indépendamment
+du ciel, du brouillard et des fondus. Sur le Web, le canevas suit la taille disponible sous les
+commandes et la densité de pixels de l'écran. Natif : `--layout`, et `R` passe à la disposition
+suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect` et `ds=` sont supprimés.
 
 ## Vérification
 

@@ -34,6 +34,17 @@ pub fn window_attributes(attributes: WindowAttributes) -> WindowAttributes {
         .with_prevent_default(true)
 }
 
+/// Canvas backing size in physical pixels, independent of CSS layout.
+pub fn canvas_size() -> Option<(u32, u32)> {
+    let window = web_sys::window()?;
+    let canvas = document()?.get_element_by_id("dq9")?;
+    let dpr = window.device_pixel_ratio();
+    Some((
+        (f64::from(canvas.client_width()) * dpr).round() as u32,
+        (f64::from(canvas.client_height()) * dpr).round() as u32,
+    ))
+}
+
 /// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
 /// `layout` (`stacked`, `side` or `top`) and `mute` from the page's query string.
 fn options() -> Options {

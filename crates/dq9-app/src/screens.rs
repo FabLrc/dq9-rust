@@ -1,11 +1,8 @@
 //! The two DS screens in the window. Each screen is 256×192 pixels; a layout places one or two
-//! of them, integer-scaled when the window allows it. The top screen shows the field (and the
-//! message window, `talk.rs`); the bottom one is a placeholder (`dq9_render::Panel`).
+//! of them, scaled to fit. The top screen shows the field (and the message window, `talk.rs`);
+//! the bottom one is a placeholder (`dq9_render::Panel`).
 
 use dq9_render::Viewport;
-
-/// Width and height of one DS screen, in DS pixels.
-pub const SCREEN: (u32, u32) = (256, 192);
 
 /// Which screens are shown and where.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -67,16 +64,14 @@ pub struct Screens {
     pub bottom: Option<Viewport>,
 }
 
-/// Places the screens of `layout` in a `width` × `height` window, centred. The scale is the
-/// largest whole number that fits; below 1 the screens are shrunk to fit exactly.
+/// Places the screens of `layout` in a `width` × `height` window, centred and at 4:3.
 pub fn screens(layout: Layout, width: u32, height: u32) -> Screens {
     let (columns, rows) = layout.grid();
-    let (block_w, block_h) = (columns * SCREEN.0, rows * SCREEN.1);
-    let fit = (width as f32 / block_w as f32).min(height as f32 / block_h as f32);
-    let scale = if fit >= 1.0 { fit.floor() } else { fit };
-    // Truncated, so that the screens never exceed the window.
-    let cell_w = (SCREEN.0 as f32 * scale) as u32;
-    let cell_h = (SCREEN.1 as f32 * scale) as u32;
+    // One unit is four by three physical pixels. This keeps both screens exactly 4:3
+    // while allowing fractional DS-pixel scales in windows between integer multiples.
+    let unit = (width / columns / 4).min(height / rows / 3);
+    let cell_w = unit * 4;
+    let cell_h = unit * 3;
     let x0 = width.saturating_sub(cell_w * columns) / 2;
     let y0 = height.saturating_sub(cell_h * rows) / 2;
     let at = |column: u32, row: u32| Viewport {
@@ -163,6 +158,13 @@ mod tests {
             }
         );
         assert_eq!(s.bottom, None);
+    }
+
+    #[test]
+    fn intermediate_window_uses_available_space() {
+        let s = screens(Layout::Stacked, 1000, 658);
+        assert_eq!((s.top.width, s.top.height), (436, 327));
+        assert_eq!(s.bottom.unwrap().y, s.top.y + s.top.height);
     }
 
     #[test]

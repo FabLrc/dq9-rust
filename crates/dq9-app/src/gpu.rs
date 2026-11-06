@@ -51,6 +51,10 @@ impl Gpu {
             .context("no GPU adapter")?;
         let (device, queue) = device(&adapter).await?;
         let size = window.inner_size();
+        #[cfg(target_arch = "wasm32")]
+        let size = crate::web::canvas_size()
+            .map(|(width, height)| winit::dpi::PhysicalSize::new(width, height))
+            .unwrap_or(size);
         let caps = surface.get_capabilities(&adapter);
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
@@ -70,11 +74,26 @@ impl Gpu {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
+        #[cfg(target_arch = "wasm32")]
+        let (width, height) = crate::web::canvas_size().unwrap_or((width, height));
+        self.resize_physical(width, height);
+    }
+
+    fn resize_physical(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn sync_canvas_size(&mut self) {
+        if let Some((width, height)) = crate::web::canvas_size()
+            && (width, height) != (self.config.width, self.config.height)
+        {
+            self.resize_physical(width, height);
+        }
     }
 }

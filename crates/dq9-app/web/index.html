@@ -7,9 +7,10 @@
   <style>
     html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 14px sans-serif; }
     body { display: flex; flex-direction: column; }
-    header { padding: 6px 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-    #status { opacity: 0.8; }
-    canvas#dq9 { flex: 1; width: 100%; min-height: 0; display: block; outline: none; }
+    header { padding: 6px 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; flex: none; }
+    #status { opacity: 0.8; overflow-wrap: anywhere; }
+    main { flex: 1; min-height: 0; position: relative; }
+    canvas#dq9 { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; outline: none; }
   </style>
 </head>
 <body>
@@ -27,7 +28,7 @@
     <button id="newgame" type="button">Nouvelle partie</button>
     <span id="status">chargement…</span>
   </header>
-  <canvas id="dq9" tabindex="0"></canvas>
+  <main><canvas id="dq9" tabindex="0"></canvas></main>
   <script type="module">
     // Built by `wasm-bindgen --target web --out-dir crates/dq9-app/web/pkg` (docs/app.md).
     import init from "./pkg/dq9-app.js";

@@ -877,6 +877,8 @@ impl App {
         let (Some(gpu), Some(renderer)) = (&mut self.gpu, &mut self.renderer) else {
             return;
         };
+        #[cfg(target_arch = "wasm32")]
+        gpu.sync_canvas_size();
         let frame = match gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
             | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
@@ -1000,6 +1002,14 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size.width, size.height);
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let (Some(gpu), Some(window)) = (&mut self.gpu, &self.window) {
+                    let size = window.inner_size();
+                    gpu.resize(size.width, size.height);
+                    window.request_redraw();
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
