@@ -68,11 +68,9 @@ pub struct EventScript {
     pub entries: Entries,
     /// Message number → text (`evNNNNN_<lg>.bin`); empty when the language has no table.
     pub texts: BTreeMap<i32, String>,
-}
-
-/// Script name and entries of `event` from the event lists.
-fn from_lists(files: &dyn Files, event: u16) -> Option<(String, Entries)> {
-    event_record(files, event).map(|(name, entries, _)| (name, entries))
+    /// Global flag the game sets when this scene starts (`scene_flag`, from the same record
+    /// rank); `None` when the event is not in a list.
+    pub scene_flag: Option<u16>,
 }
 
 /// The record of `event`, with its rank among the kind-102 records of the list that holds it.
@@ -129,6 +127,11 @@ const SCENE_FLAG_IDS: std::ops::Range<u32> = 0x5208..0x9c40;
 /// `docs/re/trigger.md`, § « Drapeaux globaux posés à l'ouverture »).
 pub fn scene_flag(files: &dyn Files, event: u16) -> Option<u16> {
     let (_, _, rank) = event_record(files, event)?;
+    scene_flag_of(event, rank)
+}
+
+/// [`scene_flag`] from the rank already read by [`event_record`].
+fn scene_flag_of(event: u16, rank: u16) -> Option<u16> {
     let base = if SCENE_FLAG_IDS.contains(&u32::from(event)) {
         SCENE_FLAG_BASE
     } else {
@@ -139,8 +142,11 @@ pub fn scene_flag(files: &dyn Files, event: u16) -> Option<u16> {
 
 /// Loads the script of `event` with the texts of language `lang` (`en`, `fr`, …).
 pub fn load(files: &dyn Files, event: u16, lang: &str) -> Result<EventScript, LoadError> {
-    let (name, entries) =
-        from_lists(files, event).unwrap_or_else(|| (format!("ev{event:05}"), Entries::default()));
+    let record = event_record(files, event);
+    let (name, entries, scene_flag) = match record {
+        Some((name, entries, rank)) => (name, entries, scene_flag_of(event, rank)),
+        None => (format!("ev{event:05}"), Entries::default(), None),
+    };
     let path = DIRECTORIES
         .iter()
         .map(|dir| format!("{dir}/{name}.gp2"))
@@ -175,6 +181,7 @@ pub fn load(files: &dyn Files, event: u16, lang: &str) -> Result<EventScript, Lo
         stb,
         entries,
         texts,
+        scene_flag,
     })
 }
 

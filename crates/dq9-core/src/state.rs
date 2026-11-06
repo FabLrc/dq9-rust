@@ -183,9 +183,11 @@ const MAP_VISIT_FLAG_BASE: u16 = 0xa96;
 ///
 /// Only the branch that the prologue uses is reproduced: a map id in `100..=9999` sets
 /// `0xa96 + id / 100` (2710 + tens), which gives 2721 for `M01M12` (1112), 2751 for `X01`
-/// (4100) and 2774 for the `S14` group (6400). Map ids 1949 and 20000..=29999 take branches
-/// of the original that are not established (`docs/re/trigger.md`, § « Drapeaux globaux
-/// posés à l'ouverture »); this returns `None` for them rather than guessing.
+/// (4100), 2729 for the map id 1949 and 2774 for the `S14` group (6400). The constant 1949
+/// at `0x0201bb84` is a **flag** set by `func_0201b588`, not a map id. Map ids
+/// 20000..=29999 and those outside `99..=9999` take branches of the original that are not
+/// established (`docs/re/trigger.md`, § « Drapeaux globaux posés à l'ouverture »); this
+/// returns `None` for them rather than guessing.
 pub fn map_visit_flag(map: u16) -> Option<u16> {
     (99 < map && map <= 9999).then(|| MAP_VISIT_FLAG_BASE + map / 100)
 }
@@ -420,6 +422,13 @@ mod tests {
         assert_eq!(map_visit_flag(1112), Some(2721));
         assert_eq!(map_visit_flag(4100), Some(2751));
         assert_eq!(map_visit_flag(6401), Some(2774));
+        // The general branch is inclusive on both ends; 1949 is a map id here (the constant
+        // 1949 of the original is a flag set by `func_0201b588`, not a map).
+        assert_eq!(map_visit_flag(99), None);
+        assert_eq!(map_visit_flag(100), Some(2711));
+        assert_eq!(map_visit_flag(1949), Some(2729));
+        assert_eq!(map_visit_flag(9999), Some(2809));
+        assert_eq!(map_visit_flag(10000), None);
         // The flag is one per hundred map ids.
         assert_eq!(map_visit_flag(1100), map_visit_flag(1199));
         assert_eq!(map_visit_flag(100), Some(2711));

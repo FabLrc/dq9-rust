@@ -91,6 +91,8 @@ struct Scan {
     npc_packages: Vec<(u16, String)>,
     /// Field sprite ids of the balloons it puts up.
     balloons: BTreeSet<i32>,
+    /// Scene flag from the event's `EventScript` (no separate list parse).
+    scene_flag: Option<u16>,
 }
 
 /// Plays `event` headless up to its end, noting the models and packages each target gets.
@@ -103,6 +105,9 @@ fn scan(rom: &[u8], event: u16, world: &State) -> Scan {
     'run: while out.updates < MAX_UPDATES {
         let events = director.step(&files, Frame::default(), world);
         out.updates += 1;
+        if out.scene_flag.is_none() {
+            out.scene_flag = director.scene_flag();
+        }
         for e in &events {
             cutscene.apply(e);
             if let Some(balloon) = cutscene.balloon() {
@@ -275,6 +280,8 @@ pub struct EventPlayer {
     started: Vec<u16>,
     /// The event whose scene [`EventPlayer::prepare`] built and that has not started yet.
     prepared: Option<u16>,
+    /// Scene flag carried by the prepared event's `EventScript`.
+    prepared_scene_flag: Option<u16>,
     /// The character a native 552 camera drags to its source's `foot` bone.
     three_bone: Option<ThreeBoneDrag>,
     /// The scene lighting the renderer's environment was last built from.
@@ -324,6 +331,7 @@ impl EventPlayer {
             running: None,
             started: Vec::new(),
             prepared: None,
+            prepared_scene_flag: None,
             three_bone: None,
             applied_light: SceneLight::default(),
         }
@@ -411,6 +419,12 @@ impl EventPlayer {
         self.running
     }
 
+    /// Scene flag of the event prepared by [`EventPlayer::prepare`], from the event list it
+    /// already loaded for the scan.
+    pub fn prepared_scene_flag(&self) -> Option<u16> {
+        self.prepared_scene_flag
+    }
+
     /// A doorway the field touched (native 584): the shared door state both the render
     /// (`apply_placements`) and the collision (`CollisionWorld::set_door_angle`) read.
     /// Returns whether the door was added.
@@ -477,6 +491,7 @@ impl EventPlayer {
         self.three_bone = None;
         self.prepared = Some(event);
         let scanned = scan(rom, event, stage.world);
+        self.prepared_scene_flag = scanned.scene_flag;
         if let Some(reason) = &scanned.failure {
             status(&format!("event {event}: {reason}"));
         }

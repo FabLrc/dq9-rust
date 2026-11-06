@@ -379,7 +379,8 @@ prologue ; ils ne passent ni par les triggers ni par les natives des scripts.
   premier passage utile et non à la création du contexte.
 - **Réimplémentation** (`dq9-core`) : `script::load::scene_flag` lit le rang dans
   `eventlist_lv5.bin` et ajoute la base puis `0x38e` — test `scene_flags_match_the_oracle_checkpoints`
-  sur la ROM (`21500`→1450 … `21596`→1461, sans liste de constantes d'événements). Le
+  sur la ROM (`21500`→1450 … `21596`→1461, sans liste de constantes d'événements). Le drapeau
+  voyage sur `EventScript` (même lecture de la liste que le script, pas de parse séparé) ; le
   branchement est fait dans `dq9-app::begin_event`, après `EventPlayer::prepare` et avant la
   première mise à jour du script (jamais dans `GameState::new_game`) : c'est un effet de
   l'exécution des scènes.
@@ -396,7 +397,10 @@ gestionnaire de quêtes :
 - `20000 <= id <= 29999` : drapeau `0xa5a + f(id - 20000)` (`0x02012f78`, remappage 0x3c..0x3f,
   `-1` au-delà de 0x3b → aucun drapeau). La valeur exacte de `f` pour les cartes de champ du
   prologue n'est pas contrôlée.
-- carte 1949 (constante `re/symbols.txt`) et branche `0x02012f24` : **[inconnu]**.
+- `func_0201b588()` (condition **[inconnue]**) pose le drapeau **1949** (`0x0201bb84`) : ce
+  n'est pas un identifiant de carte, et `map_visit_flag(1949)` suit donc la branche générale
+  (`2729`). La branche `0x02012f24` des cartes hors `99..=9999` et `20000..=29999` reste
+  **[inconnue]**.
 - Contrôlé : **2774** = 2710 + 64 est déjà posé en `pro1`, ce qui correspond au groupe de
   cartes 6400 (`S14`, Starflight Express) ; [hypothèse] une carte `S14` est chargée avant le
   prologue (scène d'ouverture), ce que le runtime ne rejoue pas.
