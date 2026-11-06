@@ -13,16 +13,22 @@ livrés avec un prologue intégralement jouable.
 
 ### Intégré et publié
 
-- Dernier commit de jeu : **`4c02170`** (causes des drapeaux) ; outillage : **`829db11`**.
-  CI Linux [42274982535](https://github.com/FabLrc/dq9-rust/actions/runs/42274982535) et
-  déploiement [Pages 42274980383](https://github.com/FabLrc/dq9-rust/actions/runs/42274980383)
-  réussis pour l'intégration `v01-field`.
+- Dernier commit : **`9a25199`** (drapeaux de scène limités à l'ouverture) ; outillage :
+  **`829db11`**. CI Linux
+  [42284105057](https://github.com/FabLrc/dq9-rust/actions/runs/42284105057) et déploiement
+  [Pages 42284105022](https://github.com/FabLrc/dq9-rust/actions/runs/42284105022) réussis.
 - Runtime intégré : hooks `scene_flag`/`map_visit_flag`, NavGrid 3D, checkpoints/trace/replay.
   Le pilote réel atteint **1.1.2** à 369,78 s (arrêt 377,8 s sur `X01M01`) et ses 22 670 pas
   rejouent les 49 checkpoints **identiques** (`3da80263…`). Au premier contrôle, les causes
   des drapeaux sont branchées : **17 des 18** drapeaux de l'original, seul le butin aléatoire
   du combat 26 (`4135` ou `4212`) reste hors runtime. `compare-runs.ps1` préfère le même
   `kind` pour ne pas confondre un chargement de carte avec une prise de contrôle.
+- Référence originale reprise : premier contrôle, X01M05 (rampe centrale, escalier est et
+  pont vers le warp 16), X01M07 et events 1150/1160 atteints sans téléport. Elle bute sur le
+  **dialogue de 1160** : le choix Yes est confirmé, mais le message suivant « Stop!
+  Benevolence is not a toy! » reste ouvert et ne répond ni à A, ni aux taps, ni à 50 s
+  d'attente. L'état 1.1.2 original n'est donc pas obtenu. Entrées, états et captures
+  conservés sous `build/oracle-route/` (ignoré) ; le dernier état est `idle-state.bin`.
 - Harnais oracle libretro (outil GPL externe, hors crates) : création du personnage et
   **premier contrôle original** reproductibles sans GUI, `dq9re state --ram` sur les images
   RAM de 4 Mio, catalogue `states index/find`, `state diff` et `state watch`. Le premier
@@ -63,12 +69,14 @@ leurs conclusions sont reprises dans `main` et les docs ; ne pas les réintégre
    Falls, quêtes, fin du prologue) avec le même harnais, puis les comparer au runtime par
    `state diff` et `compare-runs.ps1` aux mêmes points d'histoire. Ne pas réintégrer les
    anciennes branches d'outillage : elles sont déjà dans `main`.
-2. **Poursuivre le parcours original au-delà du premier contrôle.** Le harnais libretro
-   exécute la ROM sans focus (rendu logiciel, RAM et `retro_serialize` accessibles) et la
-   création du personnage y est terminée. Un état de cœur au premier contrôle existe
-   (`build/oracle-host/core23050.bin`) ; le recharger s'il est compatible, sinon repartir
-   d'une **nouvelle partie réelle**, et enregistrer un état (`--dump-ram`, `--state-out`,
-   `--checkpoints`) à chaque point. Le prochain jalon est
+2. **Débloquer la référence originale après 1160.** Le harnais exécute la ROM sans focus et
+   un état de cœur au premier contrôle existe (`build/oracle-host/core23050.bin`). Le parcours
+   original a atteint X01M07 et les events 1150/1160, mais reste bloqué sur le message de
+   1160 : le choix Yes est confirmé, puis « Stop! Benevolence is not a toy! » reste affiché
+   malgré A, taps et 50 s d'attente. Prochaine piste : traiter ce message avec
+   `DQIX_WATCH`/DQIX Enhanced ou une sauvegarde au texte rapide, pas en déduisant la suite du
+   runtime. Une fois 1170 atteint, relever la pose : elle décidera si le warp 9 de la terrasse
+   est légitime ou si le runtime doit changer de route. Le prochain jalon est
    l'arrivée à 1.1.2 puis Angel Falls ; ne pas fabriquer d'état ni modifier les
    coordonnées/drapeaux pour contourner un blocage.
 3. **Résoudre l'accès à la tour `X01M01` → `X01M03`.** La grille 3D plafonne à y = 11,25 ;
