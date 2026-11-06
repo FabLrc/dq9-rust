@@ -224,17 +224,17 @@ cargo run -p dq9-app --release -- --new-game --headless `
   ajoutée par l'événement 20 (événement 1150), NPC 130 (1600), retour par la porte vers
   `X01M01`, NPC 127 (1170) à 334,47 s → **histoire 1.1.2**.
 - Le pilote s'arrête à 342,8 s sur `X01M01` : ses **sondes dans les huit directions** depuis
-  y 8,25 et y 11,25 plafonnent à y 11,25 et il ne demande pas le warp `X01M03` comme but.
-  La collision, elle, relie bien la terrasse à la rampe : le mur fin `X01A01S1` (bloc 0,
-  placement 12, normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`, `y 9..14`) se contourne par
-  son extrémité nord (`z ≈ 20`), puis la rampe monte jusqu'à la boîte du warp. Trajet validé
-  arête par arête avec `Hero::step` (24 images par arête) : `(2,77 ; 11,25 ; 18,19)` →
-  `(3 ; 18)` → `(-5,5 ; 11,25 ; 22)` → `(-5,5 ; 19)` → `(-4 ; 12,4 ; 18)` →
-  `(-6 ; 13,2 ; 16,5)` → `(-8,5 ; 14,13 ; 16)`, dans la boîte du warp `0x72` **type 0**
-  (n° 9) vers `X01M03`. Les zones `0x73` de **type 1** de la carte sont **inertes** : aucune
-  routine de `Field_CheckRegions` ne lit leur liste (voir `map-archive.md`) ; ce n'est donc
-  pas un monte-charge ni une tâche 8. Reste à faire côté pilote : ajouter le warp au choix de
-  but et suivre la rampe (aucun placement direct du héros).
+  y 8,25 et y 11,25 plafonnent à y 11,25. Ce n'est pas seulement la sonde : une marche
+  exhaustive depuis la pose d'histoire (`(2,77 ; 11,25 ; 18,19)`) **et** depuis le point de
+  départ de la carte (`(0 ; 8,25 ; 30)`), avec des arêtes validées en 3D (`Hero::step`, montée
+  ≤ 1,0, chute ≤ 10), plafonne aussi à y 11,25. Le mur fin `X01A01S1` (bloc 0, placement 12,
+  normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`, `y 9..14`) sépare la terrasse du pied de la
+  rampe menant au warp `0x72` **type 0** (n° 9) vers `X01M03`. Les zones `0x73` de **type 1**
+  sont **inertes** (aucun lecteur dans `Field_CheckRegions`, voir `map-archive.md`) : ce n'est
+  ni un monte-charge ni une tâche 8. **[inconnu]** : la connexion manquante (placement de
+  collision déplacé, plateforme animée ou changement de carte scénarisé), à établir sur
+  melonDS. Un `edge_pass` qui ne compare que `x`/`z` accepte de fausses arêtes entre deux
+  étages ; la grille doit comparer la hauteur atteinte.
 - Limite de la trace : le pilote donne les directions avec la caméra du jeu à l'angle 0 et le
   rejeu force ce même cap ; elle prouve le parcours headless dans notre moteur, pas un rejeu à
   la manette melonDS avec caméra manuelle.
