@@ -231,9 +231,9 @@ d'animation **[hypothèse]**, les modes 9 et 10 de 566 ne sont pas modélisés *
 les 30 scripts vont à leur terme, sans erreur de la machine, de 56 mises à jour (`ev01140`) à
 3 579 (`ev21500`, 1 023 événements, environ deux minutes à 30 Hz ; il enchaîne `ev21507` par la
 native 538) ; chaque message `Text::Id`
-existe dans la table du script ; 13 natives restent sans effet modélisé dans `dq9-core` : 409, 411,
-413, 547, 552, 559, 560, 571, 581, 582, 584, 809 et 815 (les mêmes que « non
-identifiées » dans [stb-natives.md](stb-natives.md)). Ce n'est
+existe dans la table du script ; 8 natives restent sans effet modélisé dans `dq9-core` : 547,
+559, 560, 571, 581, 582, 809 et 815 (les mêmes que « non identifiées » dans
+[stb-natives.md](stb-natives.md)). Ce n'est
 pas une validation sous émulateur : l'ordre et les durées ne sont pas comparés à melonDS.
 
 ## Exécution à l'écran (`dq9-core::cutscene`, `dq9-app`)
@@ -314,8 +314,23 @@ Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/
   `0x02013168`) ; 574 et 575 changent l'échelle et la translation d'après cet état : un 575
   seul déplace le placement sans le montrer, 574 le montre à sa nouvelle position (dans un ordre
   ou l'autre), jusqu'au rechargement de la carte, comme le jeu qui garde les champs de
-  l'enregistrement. Les placements de collision n'ont pas d'instance : leurs changements restent
-  sans effet visible (`collision placement`).
+  l'enregistrement. Les placements de collision n'ont pas d'instance : leur changement de
+  murs/sol n'est pas appliqué et le rapport le compte (`collision placement`) depuis le lot
+  « scènes restantes ».
+- Légendes (409/411/413) : `W+0x9a8` donne le maintien ; `020658b8` fait varier `W+0x9b0` de
+  `0x8444` par image jusqu'à `0x1f0000` (60 images par fondu), `02066d00` en tire l'alpha du
+  texte. `0206b6c8` déplace la fenêtre à `(192 − (lignes − 1) × 20 − 8) / 2 − 16` (411) et
+  `02045608` coupe le bip quand `W+0x19b2 == 0` (413). Exécuté par `Talk` : alpha des quads,
+  texte centré quand 410 a retiré le cadre, blips filtrés. L'arrêt du compteur de message
+  pendant la légende n'est pas modélisé **[hypothèse]**.
+- Caméra à trois os (552) : `0204a170` suit `eye` et `lookat` de la source et pose la cible sur
+  `foot` ; celle-ci est tournée tous les trois updates vers son déplacement. Exécuté par
+  `Camera::ThreeBoneCamera` et `EventPlayer::drag_three_bone` ; sa capture à l'image 1820 de
+  `21507` montre le changement de point de vue, sans comparaison melonDS.
+- Porte (584) : `02018b44` retrouve le placement `(entrée de bloc, identifiant)` de la zone ;
+  `02018310` fixe l'angle cible à `+6434` (90°) et la vitesse à `409` par update. Exécuté par
+  `Event::OpenDoor` : rotation du placement visible aux images 2900→2960 de `21500` ; le son
+  (index de `g_DoorSeTable` dépendant du quartet bas de la zone) reste rapporté.
 
 **Exécuté depuis J3** : lumière et heure (578, 579, 588, 589, 548/549, 808) et brouillard (804)
 par `dq9_core::cutscene::SceneLight` ; attachements d'os (235, 236) ; mouvements nommés des PNJ de
@@ -323,8 +338,8 @@ la carte ; sprites 2D de script (521/522) ; bulles (541/542/561) ; placements (5
 mouvements 545/546 ; palette (238) ; retour de la caméra (328) — détail et preuves dans
 [stb-natives.md](stb-natives.md#effets-exécutés-à-lécran-j3).
 
-**Non exécuté** (rapporté par `--events-report`) : échange d'écrans, natives 409, 411, 413, 547,
-552, 584 (voir la fin de la même section) ; 559, 560, 571, 815, 581, 582 et 809 sont sans effet
+**Non exécuté** (rapporté par `--events-report`) : échange d'écrans, native 547 (transition de
+combat, hors v0.1) ; le son de porte (584) ; 559, 560, 571, 815, 581, 582 et 809 sont sans effet
 visible établi ou sans objet dessiné.
 
 ## Enchaînement du prologue (`dq9-core::scenario`)
@@ -353,11 +368,14 @@ Ce qui enchaîne les scènes est établi (ROM EU, Ghidra, `cargo dq9re triggers`
 
 ## Questions ouvertes
 
-- Natives encore sans rôle (571, 559, 560, 409/411/413, 547, 552, 584, 815) :
-  tableau « non identifiées » de [stb-natives.md](stb-natives.md#prologue-dangel-falls--natives-employées-j0).
+- Natives encore sans rôle (571, 559, 560, 547, 815) : tableau « non identifiées » de
+  [stb-natives.md](stb-natives.md#prologue-dangel-falls--natives-employées-j0).
 - Palette de 238 : les modes 1 et 2 ne sont pas observés ; objets de 809 et ombres de 581/582
   **[hypothèse]**.
 - Nature (30 Hz ou 60 Hz) de `currentNumTicks_` : [hypothèse] VBlank, non démontrée.
 - Sens de l'op 0x16, de l'op 0x1c et du deuxième mot des enregistrements de fonction.
 - Champs inconnus des listes d'événements.
 - Appelant de l'entrée 200 et origine de `+0x40` (saut) dans la tâche d'événement.
+- Porte 584 : quartet bas de la zone (index du son 200–204) non lu, branche coulissante (bit
+  `0x20`) et sens inverse non modélisés ; arrêt du compteur de message pendant 409 et byte
+  `+0x265` de 839 non branchés.
