@@ -30,6 +30,14 @@ Options (all paths may be absolute; the core and the ROM live in the main checko
   --dump-ram FILE     write the 4 MiB main RAM (ARM9 `0x02000000`) at the end.
   --state-out FILE    `retro_serialize` (core savestate) at the end.
   --state-in FILE     `retro_unserialize` before running (resume a real run).
+  --watch ADDR:LEN    watch bytes of ARM9 main RAM (`0x02000000` base) and compare them
+                      after every frame; hex, repeatable. Overlapping zones are merged and
+                      only the watched bytes are copied each frame (a few KiB, negligible).
+  --watch-out FILE    JSONL of the changed watched bytes, one object per changed byte:
+                      {"frame":1,"addr":"0x021088c0","old":0,"new":1}. `frame` is the
+                      number of frames run since the start; the first snapshot is taken
+                      before frame 1. `dq9re state watch --file FILE` translates these
+                      addresses back to flags, quests and scenario tracks.
   --shot FILE         PNG at the end.
   --shot-every N      PNG every N frames, into `--shot-dir` (default build/melondsds/shots).
   --core-log FILE     keep the core's stdout log (default: discarded).
@@ -80,6 +88,7 @@ ENV_GET_LANGUAGE = 39
 ENV_SET_GEOMETRY = 37
 
 MEMORY_SYSTEM_RAM = 2
+MAIN_RAM_BASE = 0x02000000
 
 # Fields of a `dq9-app --checkpoints` object, in order, so the two files read alike.
 CHECKPOINT_FIELDS = ("vblank", "map", "area", "track", "daytime", "tracks", "flags",
@@ -152,6 +161,7 @@ class Host:
         self.touch = None
         self.frames = 0
         self._keep = []
+        self._ram = {}
         self._bind()
 
     def _bind(self):
@@ -323,11 +333,33 @@ class Host:
         return ok, bytes(buf.raw[:size])
 
     def ram(self, kind=MEMORY_SYSTEM_RAM):
-        size = self.lib.retro_get_memory_size(kind)
-        ptr = self.lib.retro_get_memory_data(kind)
-        if not ptr or not size:
+        ptr, size = self.ram_region(kind)
+        if not ptr:
             return b""
         return C.string_at(ptr, size)
+
+    def ram_region(self, kind=MEMORY_SYSTEM_RAM):
+        """Pointer and size of a core memory, queried once (`retro_get_memory_data`)."""
+        if kind not in self._ram:
+            ptr = self.lib.retro_get_memory_data(kind)
+            size = self.lib.retro_get_memory_size(kind)
+            self._ram[kind] = (ptr, size) if ptr and size else (None, 0)
+        return self._ram[kind]
+
+    def read_ram(self, addr, length, kind=MEMORY_SYSTEM_RAM):
+        """Copy only `length` bytes at an ARM9 main-RAM address (watch zones, no 4 MiB copy)."""
+        ptr, size = self.ram_region(kind)
+        # Main RAM is mirrored every 4 MiB in the ARM9 address space; accept the addresses
+        # the game code uses (e.g. the VBlank counter at 0x027ffc3c).
+        offset = addr - MAIN_RAM_BASE
+        if MAIN_RAM_BASE <= addr < 0x03000000:
+            offset &= 0x3FFFFF
+        if not ptr or offset < 0 or length < 0 or offset + length > size:
+            raise SystemExit(
+                f"watch {addr:#010x}:{length:#x} is outside the core's "
+                f"main RAM ({size:#x} bytes)"
+            )
+        return C.string_at(ptr + offset, length)
 
 
 def read_input(path):
@@ -420,6 +452,77 @@ class Checkpoints:
              "map", line["map"], "vblank", line["vblank"])
 
 
+def parse_watch(text):
+    """`ADDR:LEN` in hex (0x optional) -> (address, length)."""
+    addr_text, separator, length_text = text.partition(":")
+    if not separator:
+        raise SystemExit(f"--watch {text!r}: expected ADDR:LEN in hexadecimal")
+    try:
+        addr = int(addr_text, 16)
+        length = int(length_text, 16)
+    except ValueError:
+        raise SystemExit(f"--watch {text!r}: ADDR and LEN must be hexadecimal")
+    if length <= 0:
+        raise SystemExit(f"--watch {text!r}: LEN must be positive")
+    return addr, length
+
+
+def merge_watch_zones(zones):
+    """Sort zones and merge overlapping or adjacent ones, so no byte is reported twice."""
+    merged = []
+    for addr, length in sorted(zones):
+        if merged and addr <= merged[-1][0] + merged[-1][1]:
+            start, old_length = merged[-1]
+            merged[-1] = (start, max(start + old_length, addr + length) - start)
+        else:
+            merged.append((addr, length))
+    return merged
+
+
+class Watch:
+    """Writes the changed bytes of watched main-RAM zones as JSONL, one line per byte.
+
+    Only `--watch` zones are copied each frame (not the whole 4 MiB), so a 2 KiB zone costs
+    two small `memcpy`s per frame. `frame` is `Host.frames`, the number of frames run since
+    the start; the first snapshot is taken before frame 1. The output is the input of
+    `dq9re state watch`.
+    """
+
+    def __init__(self, specs, path):
+        self.zones = merge_watch_zones([parse_watch(spec) for spec in specs])
+        self.path = path
+        self.previous = {}
+        self.lines = 0
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
+        self.file = open(path, "w", encoding="utf-8", buffering=1)
+
+    def start(self, host):
+        """Snapshot the zones before the first frame."""
+        self.previous = {
+            zone: host.read_ram(*zone) for zone in self.zones
+        }
+
+    def step(self, host, frame):
+        """Compare the zones after one frame and write each changed byte."""
+        for zone in self.zones:
+            addr, _ = zone
+            current = host.read_ram(*zone)
+            previous = self.previous[zone]
+            for offset, (old, new) in enumerate(zip(previous, current)):
+                if old == new:
+                    continue
+                self.file.write(json.dumps(
+                    {"frame": frame, "addr": f"0x{addr + offset:08x}",
+                     "old": old, "new": new},
+                    separators=(",", ":")) + "\n")
+                self.lines += 1
+            self.previous[zone] = current
+
+    def close(self):
+        self.file.close()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -437,11 +540,18 @@ def main():
     ap.add_argument("--dump-ram")
     ap.add_argument("--state-out")
     ap.add_argument("--state-in")
+    ap.add_argument("--watch", action="append", default=[], metavar="ADDR:LEN")
+    ap.add_argument("--watch-out")
     ap.add_argument("--shot")
     ap.add_argument("--shot-every", type=int, default=0)
     ap.add_argument("--shot-dir", default="build/melondsds/shots")
     ap.add_argument("--core-log")
     args = ap.parse_args()
+
+    if bool(args.watch) != bool(args.watch_out):
+        ap.error("--watch and --watch-out must be passed together")
+    for spec in args.watch:
+        parse_watch(spec)  # fail before booting on a malformed ADDR:LEN
 
     rom = args.rom
     if not rom:
@@ -471,6 +581,7 @@ def main():
     # The core logs through the libretro log interface; keep it out of the terminal unless
     # a file is asked for.
     log = open(args.core_log, "w", encoding="utf-8", buffering=1) if args.core_log else None
+    watch = None
 
     try:
         host = Host(args.core, args.sysdir, args.savedir, log)
@@ -485,6 +596,9 @@ def main():
                 note("retro_unserialize refused", args.state_in)
                 return 3
             note("resumed", args.state_in)
+        watch = Watch(args.watch, args.watch_out) if args.watch else None
+        if watch:
+            watch.start(host)
         for frame in range(total):
             entry = starts.get(frame)
             if entry:
@@ -503,6 +617,8 @@ def main():
             if checkpoints and args.checkpoint_every and frame % args.checkpoint_every == 0:
                 checkpoints.capture(host, frame)
             host.run()
+            if watch:
+                watch.step(host, host.frames)
             if args.shot_every and host.frames % args.shot_every == 0:
                 host.save_png(os.path.join(args.shot_dir, f"f{host.frames:06d}.png"))
         if args.shot:
@@ -520,7 +636,11 @@ def main():
             note("ram", len(data), "bytes ->", args.dump_ram)
         if checkpoints:
             note("checkpoints", checkpoints.lines, "->", args.checkpoints)
+        if watch:
+            note("watch", watch.lines, "change(s) ->", args.watch_out)
     finally:
+        if watch:
+            watch.close()
         if log:
             log.close()
     note("frames run", host.frames)
