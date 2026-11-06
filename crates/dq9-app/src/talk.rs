@@ -229,6 +229,17 @@ impl Talk {
         }
     }
 
+    /// Ends a replaced game session without rebuilding the ROM assets or the GPU window.
+    pub fn reset_session(&mut self) {
+        let assets = self.assets.take();
+        let gpu = self.gpu.take();
+        *self = Self {
+            assets,
+            gpu,
+            ..Self::default()
+        };
+    }
+
     /// The protagonist the message window substitutes (`<HERO>`, `<LEADER>`, `<ADDRESSEE>`)
     /// and whose sex the conditions read. `None` keeps the documented default identity ("Hero",
     /// a man), used without a save and by a new game.

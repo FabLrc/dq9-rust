@@ -292,6 +292,14 @@ impl App {
         self.camera.look_at(eye, target);
     }
 
+    /// An external ROM, save or new game replaces the old event and dialogue together.
+    fn reset_session(&mut self) {
+        self.events = EventPlayer::new();
+        self.talk.reset_session();
+        self.doors_opened.clear();
+        self.door_angles.clear();
+    }
+
     fn set_rom(&mut self, rom: Vec<u8>) {
         match load::maps(&rom) {
             Ok(maps) => self.maps = maps,
@@ -300,9 +308,8 @@ impl App {
                 return;
             }
         }
-        // A previous save's hero must not survive a ROM or save replacement: the identity is
-        // set again below once the new save is read.
-        self.talk.set_identity(None);
+        // No task or caption from the old session may run over the replacement save.
+        self.reset_session();
         self.talk.set_rom(&rom);
         self.rom = Some(rom);
         self.state = field::initial_state(&self.options.story);
@@ -346,8 +353,8 @@ impl App {
         self.options.event = None;
         self.options.save = Some(save);
         self.talk.set_identity(None);
-        if let Some(rom) = &self.rom {
-            self.set_rom(rom.clone());
+        if let Some(rom) = self.rom.take() {
+            self.set_rom(rom);
         }
     }
 
@@ -1384,7 +1391,6 @@ impl ApplicationHandler<UserEvent> for App {
             #[cfg(target_arch = "wasm32")]
             UserEvent::NewGame => {
                 self.options.new_game = true;
-                self.talk.set_identity(None);
                 self.start_new_game();
             }
         }
@@ -1532,10 +1538,38 @@ mod tests {
         };
         let mut app = App::new(event_loop.create_proxy(), options, Some(rom.to_vec()));
         assert!(app.options.new_game);
-        app.set_save(save);
+        assert_eq!(app.events.pending_start(), Some(21500));
+        app.set_save(save.clone());
         assert!(!app.options.new_game, "the save selects save mode");
         assert_eq!(app.options.map, None);
         let map = app.current.as_ref().map(|(entry, _)| entry.id);
         assert_eq!(map, Some(expected.map), "the save's map is loaded");
+        assert!(!app.events.is_active());
+        assert_eq!(app.events.pending_start(), None);
+        assert!(!app.talk.is_active());
+
+        // Replacing an already-running prologue must also discard its active caption,
+        // not merely select the save's map while the old task keeps running.
+        app.options.new_game = true;
+        app.start_new_game();
+        for _ in 0..480 {
+            app.run_steps(1);
+            if app.talk.is_active() {
+                break;
+            }
+        }
+        assert!(app.events.is_active(), "the prologue must have started");
+        assert!(app.talk.is_active(), "the prologue caption must be open");
+        app.set_save(save);
+        assert!(!app.events.is_active());
+        assert_eq!(app.events.pending_start(), None);
+        assert!(!app.talk.is_active());
+        app.run_steps(120);
+        assert_eq!(
+            app.current.as_ref().map(|(entry, _)| entry.id),
+            Some(expected.map)
+        );
+        assert!(!app.events.is_active(), "the old prologue must not resume");
+        assert!(!app.talk.is_active(), "the old caption must not reopen");
     }
 }
