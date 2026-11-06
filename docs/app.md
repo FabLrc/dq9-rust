@@ -509,6 +509,21 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   `pkg/*.js|*.wasm` et rejette un `leak.nds` ajouté à `_site` (essai local des commandes).
   La CI Linux échouait sur `alsa-sys` faute de `alsa.pc` (run 42212225607) ; les jobs `lint`
   et `test` installent désormais `libasound2-dev` avant la compilation.
+- Intégration publiée sur GitHub Pages (6 novembre 2026) : le lot Web `aab6daa` a passé
+  les jobs Linux `lint`, `test`, `wasm` et `coverage` (run 42216397722), puis le déploiement
+  Pages 42216397713. Sur le site public, la ROM locale donne immédiatement le focus à
+  `dq9`, active « Nouvelle partie » et lance l'ouverture ; Entrée avance le message.
+  Le parcours clavier de la version précédente atteint `X01M05`, permet de parler aux PNJ
+  108 et 101, de jouer 1130 avec le PNJ 105, puis de monter les escaliers latéraux au sud
+  et le pont central jusqu'au warp `X01M05 → X01M07`. Aucun placement direct du héros
+  n'est utilisé dans ce parcours navigateur.
+- Lot scènes intégré `e6b885b` : CI 42219786799 et déploiement Pages 42219786761 réussis.
+  La capture native de `21500` à l'image 420 montre la légende en cours de fondu.
+  Sur la page publique `?event=21507&time=2&mute=1`, la ROM locale lance la scène,
+  les entrées clavier avancent les messages et `21507` termine après 42,5 s observées ;
+  `21520` démarre ensuite. Le rapport ne liste plus 552 parmi les effets absents ;
+  la vue de la scène est capturée, sans comparaison à melonDS.
+  Ce smoke de scène ne valide pas le parcours manuel complet ni les drapeaux du prologue.
 - Lot J3 (6 novembre 2026) : capture native d'Ivor avec la branche féminine de la sauvegarde
   de démonstration ; scène 1330 rendue et placements initialement masqués contrôlés par un
   test réel ; capture `M01` identique pixel pour pixel avant/après ce changement. Événement
