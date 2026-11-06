@@ -100,3 +100,42 @@ Limites :
 - Une requête verrouille toujours le projet pendant son exécution ; pour du parallélisme,
   garder une copie de `re/ghidra` par requête et `DQ9_GHIDRA_PROJECT`, le cache n'y change
   rien.
+
+## Traçage mémoire : `DQIX_WATCH` de DQIX Enhanced
+
+[DQIX Enhanced](https://github.com/sackchief/dqix-enhanced) (GPL-3.0, v33, commit
+`86ff9b1`) est une recompilation statique du code européen. C'est un **outil externe** :
+on peut l'exécuter pour observer le jeu, jamais copier ni lier son code dans les crates
+Rust. Il n'a **aucun binaire prébuild** ; le build depuis la ROM est obligatoire (MSYS2
+UCRT64, 10 à 20 min la première fois, ~3 Go) :
+
+```sh
+./tools/build-game.sh /c/chemin/YDQP.nds   # game/dqix.exe, game/data/code, game/dqixcore.dll
+```
+
+Son mode headless ne crée pas de fenêtre et journalise les écritures ARM9 sur `stderr`,
+ce qui en fait le traceur mémoire des drapeaux dont l'écrivain n'est pas encore connu :
+
+```powershell
+$env:DQIX_NOWINDOW   = "1"
+$env:DQIX_NO_SETTINGS = "1"
+$env:SDL_AUDIODRIVER = "dummy"
+$env:DQIX_RTC        = "1760000000"       # horloge fixe, reproductible
+$env:DQIX_INPUT_FILE = "build/watch/inputs.txt"
+$env:DQIX_RAMDUMP    = "build/watch/ram,12000,12100"
+$env:DQIX_WATCH      = "02108ADC"         # un seul mot ARM9, aligné sur 4 octets
+$env:DQIX_WATCHREGS  = "1"
+$env:DQIX_TRACEN     = "64"
+.\game\dqix.exe <ROM> game\data\code 12201 1 build\watch\eval.sav 2> build\watch\watch.log
+```
+
+Chaque écriture produit `[f<frame> l<vblank>] watch: write32 <adresse> = <valeur> (lr
+<lr>)`, suivi des `r0..r12` avec `DQIX_WATCHREGS`, puis des dernières fonctions ARM9
+entrées (noms si `-DRECOMP_TRACE`). `DQIX_RAMDUMP` écrit des images brutes de 4 Mio aux
+images demandées, lisibles par `dq9re state --ram` une fois ce mode livré. Limites : un
+seul mot surveillé par exécution, pas de PC ni de pile complète, pas de valeur avant
+l'écriture. Le raisonnement complet et les chemins de code (v33, `runtime/mem.c` l.
+157-188, `runtime/io.c` l. 8-19) sont dans le rapport local
+`build/eval-dqix-enhanced/RAPPORT-watch-drapeaux.md` ; au 6 novembre 2026, les unités
+`mem.c`, `dispatch.c` et `frontend_none.c` compilent avec MinGW-W64, mais le link complet
+avec la ROM reste à exécuter.

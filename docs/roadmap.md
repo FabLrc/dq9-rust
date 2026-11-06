@@ -21,8 +21,11 @@ avec un prologue intégralement jouable.
   chemins CI/Pages vérifiés (un commit de documentation ne déclenche plus rien),
   `scripts/decomp.ps1` (adresse EU → source USA) et cache Ghidra (9,3 s → 0,96 s),
   `scripts/compare-runs.ps1` (alignement par point d'histoire), `scripts/prune-build.ps1`
-  (purge sûre des états) et règles de propriété/preuve dans `AGENTS.md`. Détails :
-  [`docs/app.md`](app.md#boucle-de-développement), [`re/outils.md`](re/outils.md), README.
+  (purge sûre des états), `dq9re map --image/--reach` (rendu de collision et connectivité
+  3D réelle) et règles de propriété/preuve dans `AGENTS.md`. Le traceur mémoire dispose
+  d'une piste vérifiée dans le code de DQIX Enhanced (`DQIX_WATCH`, outil GPL externe).
+  Détails : [`docs/app.md`](app.md#boucle-de-développement),
+  [`re/outils.md`](re/outils.md), [`re/map-archive.md`](re/map-archive.md), README.
 - Ouverture, dialogues, légendes temporisées, caméra de scène et échange des écrans intégrés.
   Les deux vantaux de la bibliothèque de `X01M07` s'ouvrent et le héros les franchit :
   vérification native **et sur la page publiée**, par entrées clavier, sans téléportation.
