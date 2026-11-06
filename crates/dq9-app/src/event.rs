@@ -162,6 +162,8 @@ fn note(cutscene: &Cutscene, out: &mut Scan) {
 /// What a step of the player asks the application to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
+    /// An event started: its script runs from the next update.
+    Started(u16),
     /// An event ended: the application fires trigger event 11 (`Field::event_ended`).
     Ended(u16),
     /// The last event ended: the scene is back to the field.
@@ -510,6 +512,7 @@ impl EventPlayer {
                 status(&format!("event {event} starts"));
                 self.running = Some(*event);
                 self.started.push(*event);
+                outcomes.push(Outcome::Started(*event));
                 self.prepared = None;
                 if self.saved_camera.is_none() {
                     self.saved_camera = Some(*stage.camera);

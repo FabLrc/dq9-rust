@@ -126,6 +126,15 @@ fn tint(color: u16) -> [f32; 4] {
     [c(0), c(5), c(10), 1.0]
 }
 
+/// A closed conversation, as trigger event 1 sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ended {
+    pub npc: u16,
+    pub context: u16,
+    /// Choice (0 first, 1 second) of the last prompt answered.
+    pub answer: Option<u8>,
+}
+
 /// Conversations of the application: the NPCs of the map, the counters, the open dialogue.
 #[derive(Debug, Default)]
 pub struct Talk {
@@ -144,6 +153,10 @@ pub struct Talk {
     closed: bool,
     /// Native 410 hid the frame of the current event message.
     frameless: bool,
+    /// The NPC and context of the open conversation (not an event message).
+    conversation: Option<(u16, u16)>,
+    /// A conversation the player closed, until [`Talk::take_ended`].
+    ended: Option<Ended>,
     fade: Option<[f32; 4]>,
     sounds: Vec<talk::Sound>,
 }
@@ -162,6 +175,11 @@ impl Talk {
         self.npcs = npcs;
         self.counts.enter_map();
         self.active = None;
+    }
+
+    /// Action 0x7c: the NPC leaves the map (flag `0x8000` of its object): nobody to talk to.
+    pub fn remove_npc(&mut self, npc: u16) {
+        self.npcs.retain(|n| n.id != npc);
     }
 
     pub fn is_active(&self) -> bool {
@@ -212,9 +230,22 @@ impl Talk {
                     "talk ended ({:?}, answer {:?})",
                     outcome.end, outcome.answer
                 ));
+                if let Some((npc, context)) = self.conversation.take() {
+                    self.ended = Some(Ended {
+                        npc,
+                        context,
+                        answer: outcome.answer,
+                    });
+                }
             }
             self.active = None;
         }
+    }
+
+    /// The conversation the player closed since the last call: the application fires the
+    /// trigger event 1 with it (`Field::talk_ended`).
+    pub fn take_ended(&mut self) -> Option<Ended> {
+        self.ended.take()
     }
 
     /// Native 400: opens the window on an event's text (see [`Dialogue::for_event`]).
@@ -359,6 +390,7 @@ impl Talk {
             char::from(letter)
         ));
         self.counts.record(npc);
+        self.conversation = Some((npc, context));
         self.active = Some(Dialogue::new(script));
         Ok(())
     }
@@ -469,6 +501,93 @@ impl Talk {
             return;
         };
         ui.draw(device, queue, encoder, target, region, &quads);
+    }
+}
+
+/// Where the hero stands to talk to an NPC with a given context (`Target`): what an autopilot
+/// needs to have the conversation without walking there.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Partner {
+    pub npc: u16,
+    pub context: u16,
+    pub position: glam::Vec3,
+    pub yaw: f32,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Talk {
+    /// The conversations the map offers: for each NPC, a standing point in each of its talk
+    /// zones and one free spot beside it, each checked with the game's partner search
+    /// ([`talk::nearest`]).
+    pub fn partners(&self) -> Vec<Partner> {
+        use glam::Vec3;
+        let mut out = Vec::new();
+        for npc in &self.npcs {
+            let at = Vec3::from_array(npc.position.map(|v| v as f32 / 4096.0));
+            let zones = npc.zones.iter().map(|z| {
+                let [x_max, z_max, x_min, z_min] = z.rect;
+                let centre = Vec3::new(
+                    ((x_max + x_min) / 2) as f32 / 4096.0,
+                    at.y,
+                    ((z_max + z_min) / 2) as f32 / 4096.0,
+                );
+                (centre, z.label as u16)
+            });
+            let free = [(0.0, 1.2), (0.0, -1.2), (1.2, 0.0), (-1.2, 0.0)]
+                .map(|(dx, dz)| (at + Vec3::new(dx, 0.0, dz), 0u16));
+            let mut free_found = false;
+            for (position, context) in zones.chain(free) {
+                if context == 0 && free_found {
+                    continue;
+                }
+                let yaw =
+                    dq9_core::field::yaw_of_angle((at.x - position.x).atan2(at.z - position.z));
+                let target = talk::Target {
+                    npc: npc.id,
+                    context,
+                };
+                if talk::nearest(&self.npcs, position, yaw) == Some(target) {
+                    free_found |= context == 0;
+                    out.push(Partner {
+                        npc: npc.id,
+                        context,
+                        position,
+                        yaw,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// What the conversation would do to the story: the events of the talk trigger and of the
+    /// trigger that closes it (answering the first choice of a prompt), and the state after.
+    /// Works on copies; nothing of the game changes.
+    pub fn simulate(&self, partner: &Partner, field: &Field, state: &State) -> (Vec<Event>, State) {
+        let (mut field, mut state) = (field.clone(), state.clone());
+        state.zones = talk::zones_containing(&self.npcs, partner.position);
+        let mut events = Vec::new();
+        let context = match field.talk(partner.npc, partner.context, &mut state) {
+            TalkTrigger::NoTrigger | TalkTrigger::Unsupported(_) => partner.context,
+            TalkTrigger::Fired(fired) => {
+                let mut context = None;
+                for event in fired {
+                    match event {
+                        Event::Request(Request::Talk { npc, context: c }) if npc == partner.npc => {
+                            context = Some(c);
+                        }
+                        other => events.push(other),
+                    }
+                }
+                match context {
+                    Some(context) if events.is_empty() => context,
+                    _ => return (events, state),
+                }
+            }
+        };
+        events.extend(field.talk_ended(partner.npc, context, Some(0), &mut state));
+        (events, state)
     }
 }
 

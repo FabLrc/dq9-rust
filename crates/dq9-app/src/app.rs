@@ -17,6 +17,7 @@ use crate::screens::{self, Layout};
 use dq9_core::camera::FieldCamera;
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
 use dq9_core::fx::reduce_angle;
+use dq9_core::scenario::{Journal, Step};
 use dq9_core::state::{DayClock, GameState, TimeOfDay};
 use dq9_core::trigger::{Request, State};
 use dq9_core::{CollisionWorld, Hero, Input};
@@ -36,6 +37,10 @@ use crate::gpu::Gpu;
 use crate::lighting;
 use crate::load::{self, MapEntry};
 use crate::talk::{Button, Talk};
+
+#[cfg(not(target_arch = "wasm32"))]
+mod auto;
+mod flow;
 
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
@@ -57,6 +62,9 @@ pub enum UserEvent {
     /// Layout picked in the page.
     #[cfg(target_arch = "wasm32")]
     Layout(Layout),
+    /// "Nouvelle partie" clicked in the page: starts the prologue (now, or once the ROM is read).
+    #[cfg(target_arch = "wasm32")]
+    NewGame,
 }
 
 /// Start-up options.
@@ -78,6 +86,8 @@ pub struct Options {
     /// An event to start as soon as the map is loaded (`--event`).
     pub event: Option<u16>,
     pub story: dq9_formats::cast::Story,
+    /// Start a new game: the first scene of the story (`docs/app.md`, § Nouvelle partie).
+    pub new_game: bool,
 }
 
 /// Prints a status line (stderr natively, the console and `#status` element on the web).
@@ -118,6 +128,9 @@ pub struct App {
     quiet_events: bool,
     /// Placeholder of the bottom DS screen, created with the surface format.
     panel: Option<Panel>,
+    /// What the story did since the start, and the fixed step it did it at.
+    journal: Journal,
+    tick: u64,
     hero_instance: Option<usize>,
     /// The protagonist's look (the save's hero, else a new game's), kept across maps.
     look: HeroLook,
@@ -178,6 +191,8 @@ impl App {
             events: EventPlayer::new(),
             quiet_events: false,
             panel: None,
+            journal: Journal::default(),
+            tick: 0,
             hero_instance: None,
             look: HeroLook::new_game(),
             renderer: None,
@@ -219,6 +234,10 @@ impl App {
         self.talk.set_rom(&rom);
         self.rom = Some(rom);
         self.state = field::initial_state(&self.options.story);
+        if self.options.new_game {
+            self.start_new_game();
+            return;
+        }
         let start = match load::start(self.options.map.as_deref(), self.options.save.as_deref()) {
             Ok(start) => start,
             Err(e) => {
@@ -279,17 +298,10 @@ impl App {
         state: Option<&GameState>,
         transition: bool,
     ) -> bool {
+        let story = self.current_story();
         let Some(rom) = &self.rom else { return false };
         let started = Instant::now();
-        let mut loaded = match load::load(
-            rom,
-            key,
-            self.time,
-            &self.options.story,
-            spawn,
-            state,
-            &self.look,
-        ) {
+        let mut loaded = match load::load(rom, key, self.time, &story, spawn, state, &self.look) {
             Ok(l) => l,
             Err(e) => {
                 status(&format!("{e:#}"));
@@ -333,6 +345,13 @@ impl App {
         self.camera.target = hero_start;
         let flags = |flag: u16| self.state.flags.contains(&i32::from(flag));
         self.audio.set_map(rom, loaded.entry.id, self.time, &flags);
+        self.journal.record(
+            self.tick,
+            Step::Map {
+                id: loaded.entry.id,
+                code: loaded.entry.code.clone(),
+            },
+        );
         self.current = Some((loaded.entry, loaded.label));
         if let Err(e) = loaded.runtime.face_camera(&self.camera) {
             status(&format!("facing cast: {e}"));
@@ -369,10 +388,14 @@ impl App {
                 Event::Request(Request::Event(id)) => {
                     status(&format!("event {id} ignored while an event loads its map"));
                 }
+                Event::Request(Request::Battle(number)) => self.run_battle(number),
+                Event::Request(Request::RemoveNpc(npc)) => self.talk.remove_npc(npc),
                 Event::Request(request) => {
                     status(&format!(
                         "trigger request not supported before J3: {request:?}"
                     ));
+                    self.journal
+                        .record(self.tick, Step::Unhandled(format!("{request:?}")));
                 }
                 Event::Unsupported(code) => {
                     status(&format!("trigger condition {code:#x} is not modelled"));
@@ -390,6 +413,14 @@ impl App {
             return false;
         }
         let from = self.current.as_ref().map(|(e, _)| e.id);
+        self.journal.record(
+            self.tick,
+            Step::MapChange {
+                from,
+                to: change.destination,
+                cause: format!("{:?}", change.cause),
+            },
+        );
         status(&format!(
             "map change {from:?} -> {} at {:?} facing {:?}: {:?}",
             change.destination, change.position, change.angle, change.cause
@@ -565,8 +596,10 @@ impl App {
         self.talk.step();
         for outcome in outcomes {
             match outcome {
-                // The game fires trigger event 11 when an event ends (`EventTask_Update`).
+                Outcome::Started(id) => self.journal.record(self.tick, Step::EventStarted(id)),
                 Outcome::Ended(id) => {
+                    self.journal.record(self.tick, Step::EventEnded(id));
+                    // The game fires trigger event 11 when an event ends (`EventTask_Update`).
                     if let Some(field) = &mut self.field {
                         let events = field.event_ended(id, &mut self.state);
                         self.apply_events(events);
@@ -648,6 +681,8 @@ impl App {
     fn run_steps(&mut self, due: u32) {
         for _ in 0..due {
             self.step_sound();
+            self.tick += 1;
+            self.journal.note_progress(self.tick, &self.state);
             if self.events.pending_start().is_some() || self.events.is_active() {
                 if !self.step_event() {
                     return;
@@ -666,6 +701,17 @@ impl App {
                 self.talk.discard_input();
             }
             self.talk.step();
+            // The game fires trigger event 1 when a conversation closes (`TalkTask_Update`).
+            if let Some(ended) = self.talk.take_ended()
+                && let Some(field) = &mut self.field
+            {
+                events.extend(field.talk_ended(
+                    ended.npc,
+                    ended.context,
+                    ended.answer,
+                    &mut self.state,
+                ));
+            }
             let talking = self.talk.is_active();
             let mut input = CameraInput {
                 forward: self.axis(
@@ -906,6 +952,11 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Time(time) => self.set_time(lighting::phase(time)),
             #[cfg(target_arch = "wasm32")]
             UserEvent::Layout(layout) => self.options.layout = layout,
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::NewGame => {
+                self.options.new_game = true;
+                self.start_new_game();
+            }
         }
         if let Some(window) = &self.window {
             window.request_redraw();

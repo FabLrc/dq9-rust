@@ -46,6 +46,7 @@ fn options() -> Options {
         record_sound: false,
         event: None,
         layout: Layout::default(),
+        new_game: false,
         story: dq9_formats::cast::Story {
             chapter: 1,
             step: 1,
@@ -82,6 +83,7 @@ fn options() -> Options {
             }
             "night" => options.story.daytime = value == "0",
             "event" => options.event = value.parse().ok(),
+            "newgame" => options.new_game = value != "0",
             _ => {}
         }
     }
@@ -209,6 +211,23 @@ fn watch_layout_select(proxy: EventLoopProxy<UserEvent>, initial: Layout) {
     on_change.forget();
 }
 
+/// Starts a new game when the page's `<button id=newgame>` is clicked.
+fn watch_new_game_button(proxy: EventLoopProxy<UserEvent>) {
+    let Some(button) = document().and_then(|d| d.get_element_by_id("newgame")) else {
+        return;
+    };
+    let on_click = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+        let _ = proxy.send_event(UserEvent::NewGame);
+    });
+    if button
+        .add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())
+        .is_err()
+    {
+        status("cannot watch the new game button");
+    }
+    on_click.forget();
+}
+
 pub fn main() {
     console_error_panic_hook::set_once();
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
@@ -221,6 +240,7 @@ pub fn main() {
     let proxy = event_loop.create_proxy();
     watch_rom_input(proxy.clone());
     watch_save_input(proxy.clone());
+    watch_new_game_button(proxy.clone());
     let options = options();
     watch_time_select(proxy.clone(), options.time.unwrap_or(0));
     watch_layout_select(proxy.clone(), options.layout);

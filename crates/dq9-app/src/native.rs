@@ -116,6 +116,26 @@ struct Cli {
     /// and prints which events play fully, partially or not at all.
     #[arg(long, value_parser = parse_stage_range)]
     events_report: Option<(u32, u32, u32)>,
+    /// Start a new game: default hero, story 1.1.1, the opening scene of the prologue
+    /// (`ev21500`), then the story chains on its own (triggers, scripted battles, maps).
+    #[arg(
+        long,
+        conflicts_with_all = ["event", "stage", "map", "save", "walk", "events_report", "screenshot"]
+    )]
+    new_game: bool,
+    /// Run the game logic without a window (with `--new-game`, `--event` or `--stage`); needs
+    /// `--auto` or `--headless-steps`.
+    #[arg(long)]
+    headless: bool,
+    /// With `--headless`: press the action key to read every message, run until the player
+    /// would get control (or `--headless-steps` steps, default 200000), and print what the
+    /// story did.
+    #[arg(long, requires = "headless")]
+    auto: bool,
+    /// With `--auto`: at each free control, have the conversation (or take the exit) that moves
+    /// the story on, instead of stopping: a player's stand-in (docs/app.md, § Nouvelle partie).
+    #[arg(long, requires = "auto")]
+    pilot: bool,
 }
 
 impl Cli {
@@ -281,10 +301,16 @@ pub fn main() -> Result<()> {
         event,
         layout: cli.layout,
         story: cli.story(),
+        new_game: cli.new_game,
     };
     let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
-    if let Some(steps) = cli.headless_steps {
-        app.play_headless(steps, cli.press_every);
+    if cli.auto {
+        let stop = app.play_auto(u64::from(cli.headless_steps.unwrap_or(200_000)), cli.pilot);
+        print!("{}", app.auto_report(&stop));
+        return Ok(());
+    }
+    if cli.headless || cli.headless_steps.is_some() {
+        app.play_headless(cli.headless_steps.unwrap_or(200_000), cli.press_every);
         if let (Some(path), Some((rate, samples))) = (&cli.sound_wav, app.take_recording()) {
             write_sound(path, rate, &samples)?;
         }
