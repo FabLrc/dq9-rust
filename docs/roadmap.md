@@ -83,19 +83,18 @@ octet. Ce n'est ni un parcours complet ni une preuve de parité avec melonDS.
    applicatif passe par `4103 → 4109 → 4103 → 4104`, puis 21510 avant 1.2.1.
    Comparer au vrai parcours original ; ne pas abaisser les murs ou les limites de marche.
    L'égalité de quelques constantes et placements ne prouve pas que tout le port est correct.
-4. **Finir les drapeaux.** Le premier contrôle runtime contient
-   `{337,1450..1454,1461,2721,2751}`, contre 18 drapeaux dans la référence `bat6` ; neuf
-   restent absents. Les dernières traces attribuent `3191/3775/3955/4046` à l'acquisition de
-   l'équipement initial (`0xc76 + index 1/585/765/856`), `2774` à la carte S14 6405 et `4414`
-   à `KeyManager::RefreshKeys` : reprendre les **causes et conditions**, pas une liste de
-   constantes copiée du checkpoint. L'origine de `4212`, `4283` et `4410` reste à établir ;
-   ces deux derniers apparaissent pendant 21596 sans passer par `Flags_Set`. La nouvelle
-   course originale donne **4135** au lieu de **4212** : ce dernier n'est pas une constante
-   d'ouverture, et la cause de la différence (entrées, choix de création) doit être établie
-   avant toute correction. Outils prêts : `dq9re state diff` entre deux états et
-   `dq9re state watch --file` sur un log `--watch` du harnais pour dater chaque bit ; si le
-   `LR` de l'écriture est nécessaire, `DQIX_WATCH` de DQIX Enhanced est documenté dans
-   [`re/outils.md`](re/outils.md).
+4. **Drapeaux de l'ouverture : causes établies et branchées.** Le premier contrôle du
+   runtime pose désormais les 17 drapeaux `337, 1450..1454, 1461, 2721, 2751, 2774, 3191,
+   3775, 3955, 4046, 4283, 4410, 4414`, chacun par sa cause : équipement initial (épée de
+   cuivre + tenue céleste, `0xc76 + indice de compendium` lu dans `itemdt_*`), carte `S14M05`
+   (6405) chargée avant le prologue (2774), `0x72(22159)` et `0x6b` du trigger de fin de
+   `21596` (4283, 4410), touche tenue (`KeyManager::RefreshKeys`, 4414). Détail et preuves :
+   [`re/trigger.md`](re/trigger.md) et [`re/item.md`](re/item.md).
+   **Seul écart restant** : `4135` (herbe médicinale, item 22000) dans la course féminine ou
+   `4212` (slimedrop, 22087) dans `bat6`. Ce sont des **butins de combat aléatoires** : trois
+   courses aux entrées identiques sauf le sexe donnent l'un ou aucun, jamais tous les deux.
+   Le runtime substitue le combat 26 et ne tire pas de butin ; aucun drapeau n'est forcé.
+   Prochaine étape : un vrai combat (J4) pour que le butin sorte de sa propre règle.
 5. **Valider toute la v0.1** : prologue, quêtes du village, checkpoints strictement identiques
    à l'original aux mêmes points, déplacement à nombre d'images contrôlé, puis parcours
    sur la version GitHub Pages publiée. Aucun de ces critères finaux n'est déclaré acquis.
@@ -277,10 +276,12 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       `scripts/melonds-play.ps1` pilote une nouvelle partie réelle (écran titre, création du
       personnage, combat 26, états) sans premier plan. Première mesure réelle au premier
       contrôle de l'Observatoire : carte `4105`, héros à la même position, histoire 1.1.1 et
-      `step_flags {1}` identiques ; **17 drapeaux globaux manquent** au runtime
+      `step_flags {1}` identiques ; **17 drapeaux globaux manquaient** au runtime
       (`1450–1454,1461,2721,2751,2774,3191,3775,3955,4046,4212,4283,4410,4414`), `337` commun
       (preuves et limites dans [`re/melonds-state.md`](re/melonds-state.md), § « Oracle
-      différentiel »). **Reste** : Angel Falls, quêtes du village et fin du prologue exigent
+      différentiel »). Depuis, leurs causes sont branchées (§ « Blocages et ordre de reprise »,
+      point 4) : seuls `4135`/`4212`, butin de combat aléatoire, restent hors du runtime.
+      **Reste** : Angel Falls, quêtes du village et fin du prologue exigent
       le chemin physique réel (les entrées du parcours seront rejouées dans melonDS ; le premier
       PNJ de `X01M05` et ses coordonnées sont relevés dans `re/melonds-state.md`) ; le critère
       J2 « même nombre d'images » demande un pas à pas exact (`pause`/`frame` mesuré à ~0,5

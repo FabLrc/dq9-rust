@@ -107,6 +107,35 @@ fn write_flag_list(out: &mut String, flags: &std::collections::BTreeSet<i32>) {
     }
 }
 
+/// Reads the item id → compendium index tables (`data/prm/itemdt_<category>.gp2`,
+/// `docs/re/item.md`) of one language. On a missing or malformed member the table stops
+/// there: item flags are then not raised rather than guessed.
+fn item_table(rom: &[u8]) -> dq9_formats::item::ItemTable {
+    use dq9_formats::item::{CATEGORIES, ItemTable};
+    let Ok(image) = nds_rom::Rom::parse(rom) else {
+        return ItemTable::default();
+    };
+    let mut table = ItemTable::default();
+    for category in CATEGORIES {
+        let path = format!("data/prm/itemdt_{category}.gp2");
+        let member = image.file_by_path(&path).ok().and_then(|file| {
+            let archive = dq9_formats::Gpc2::parse(file).ok()?;
+            let name = format!("itemdt_{category}_en.nat");
+            let entry = archive.entries.iter().find(|e| e.name == name)?;
+            archive.member(entry).ok()
+        });
+        let Some(member) = member else {
+            status(&format!("item table {path}: no {category} member"));
+            return table;
+        };
+        if let Err(e) = table.add_member(&member) {
+            status(&format!("item table {path}: {e}"));
+            return table;
+        }
+    }
+    table
+}
+
 /// The d-pad bits of an [`Input`] (bit 0 up, 1 down, 2 left, 3 right).
 fn input_bits(input: Input) -> u8 {
     u8::from(input.up)
@@ -170,6 +199,9 @@ pub struct App {
     field: Option<Field>,
     /// Scenario trigger state, kept across maps.
     state: State,
+    /// Item id → compendium index (`itemdt_*.gp2`), for the "item obtained" flags of
+    /// [`dq9_core::state::item_obtained_flag`].
+    item_table: dq9_formats::item::ItemTable,
     /// Map changes chained since the last fixed step (guards against warp loops).
     chain: u8,
     hero: Option<Hero>,
@@ -254,6 +286,7 @@ impl App {
             collision: CollisionWorld::default(),
             field: None,
             state,
+            item_table: dq9_formats::item::ItemTable::default(),
             chain: 0,
             hero: None,
             pilot_dir: None,
@@ -318,9 +351,11 @@ impl App {
         }
         // No task or caption from the old session may run over the replacement save.
         self.reset_session();
+        self.item_table = item_table(&rom);
         self.talk.set_rom(&rom);
         self.rom = Some(rom);
         self.state = field::initial_state(&self.options.story);
+        self.state.compendium = self.item_table.clone();
         if self.options.new_game {
             self.start_new_game();
             return;
@@ -338,6 +373,7 @@ impl App {
             &self.options.story,
             self.options.story_override,
         );
+        self.state.compendium = self.item_table.clone();
         self.day = lighting::day_clock(
             start.state.as_ref().map(|s| s.clock),
             self.options.time,
@@ -849,6 +885,29 @@ impl App {
     /// Runs `due` fixed steps of the game logic.
     fn run_steps(&mut self, due: u32) {
         for _ in 0..due {
+            // `KeyManager::RefreshKeys` (`0x020122ac`): the first frame a button is held
+            // raises flag 0x113e. The app's buttons are the d-pad, the action key, the
+            // headless pilot's walk and a replayed input.
+            let buttons = self.talk.confirm_pending()
+                || self.pilot_dir.is_some()
+                || self.replay_pad.is_some_and(|bits| bits != 0)
+                || [
+                    KeyCode::KeyW,
+                    KeyCode::KeyA,
+                    KeyCode::KeyS,
+                    KeyCode::KeyD,
+                    KeyCode::ArrowUp,
+                    KeyCode::ArrowDown,
+                    KeyCode::ArrowLeft,
+                    KeyCode::ArrowRight,
+                ]
+                .into_iter()
+                .any(|key| self.held.contains(&key));
+            if buttons {
+                self.state
+                    .flags
+                    .insert(i32::from(dq9_core::state::KEY_REFRESH_FLAG));
+            }
             if self.options.trace_inputs {
                 self.input_trace.push((0, self.talk.confirm_pending()));
             }
@@ -1594,5 +1653,58 @@ mod tests {
         );
         assert!(!app.events.is_active(), "the old prologue must not resume");
         assert!(!app.talk.is_active(), "the old caption must not reopen");
+    }
+    /// A new game raises the opening flags by their causes, without a save: the starting
+    /// equipment through the item table (`item_obtained_flag`), the `S14M05` map load, and
+    /// the first held button (`KeyManager::RefreshKeys`).
+    #[test]
+    fn a_new_game_raises_the_opening_flags() {
+        let Some(rom) = testrom::load() else { return };
+        use winit::platform::windows::EventLoopBuilderExtWindows;
+        let Ok(event_loop) = winit::event_loop::EventLoop::<UserEvent>::with_user_event()
+            .with_any_thread(true)
+            .build()
+        else {
+            eprintln!("skipping: no event loop");
+            return;
+        };
+        let options = Options {
+            map: None,
+            save: None,
+            time: None,
+            clock: None,
+            layout: Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: dq9_formats::cast::Story {
+                chapter: 1,
+                step: 1,
+                substep: 1,
+                daytime: true,
+                ..Default::default()
+            },
+            story_override: [None; 3],
+            new_game: true,
+        };
+        let mut app = App::new(event_loop.create_proxy(), options, Some(rom.to_vec()));
+        assert_eq!(
+            app.current.as_ref().map(|(entry, _)| entry.id),
+            Some(6405),
+            "the opening loads S14M05 before the prologue"
+        );
+        for flag in [3191, 3775, 3955, 4046, 2774] {
+            assert!(
+                app.state.flags.contains(&flag),
+                "flag {flag} after a new game"
+            );
+        }
+        app.talk.press(Button::Confirm);
+        app.run_steps(1);
+        assert!(
+            app.state.flags.contains(&4414),
+            "the first button raises 0x113e"
+        );
     }
 }

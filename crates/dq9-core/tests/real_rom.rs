@@ -218,3 +218,36 @@ fn scene_flags_match_the_oracle_checkpoints() {
         );
     }
 }
+
+/// The item tables carry the compendium indexes the "item obtained" flags use
+/// (`func_0207cc18`, `docs/re/item.md`): index 1 for the starting copper sword, 585/765/856
+/// for the celestial outfit, 945/1022/1093 for the tools of the first-control states.
+#[test]
+fn item_tables_carry_the_compendium_indexes() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let mut table = dq9_formats::item::ItemTable::default();
+    for category in dq9_formats::item::CATEGORIES {
+        let path = format!("data/prm/itemdt_{category}.gp2");
+        let archive = Gpc2::parse(rom.file_by_path(&path).unwrap()).unwrap();
+        let name = format!("itemdt_{category}_en.nat");
+        let entry = archive
+            .entries
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("{path}: no {name}"));
+        table.add_member(&archive.member(entry).unwrap()).unwrap();
+    }
+    for (item, compendium) in [
+        (20004, 1),
+        (13007, 585),
+        (16215, 765),
+        (17120, 856),
+        (12805, 398),
+        (22000, 945),
+        (22087, 1022),
+        (22159, 1093),
+    ] {
+        assert_eq!(table.compendium(item), Some(compendium), "item {item}");
+    }
+}

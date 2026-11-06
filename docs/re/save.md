@@ -262,10 +262,13 @@ d'en-tête ; 1 618 drapeaux globaux posés. Accesseurs : `Slot::event_flags`, `E
 `Track`, `test_bit`.
 
 Une **nouvelle partie** ne part pas d'un bloc vide : les drapeaux de scène
-(`EventTask_Update`) et de carte visitée (`Flags_SetMapVisited`) sont posés par le moteur
-avant et pendant le prologue, sans passer par un chargement de sauvegarde. Mécanismes,
-preuves en RAM et drapeaux encore inexpliqués : [`trigger.md`](trigger.md), § « Drapeaux
-globaux posés à l'ouverture ».
+(`EventTask_Update`), de carte visitée (`Flags_SetMapVisited`), d'objet obtenu
+(`func_0207cc18`) et de touche tenue (`KeyManager::RefreshKeys`) sont posés par le moteur
+avant et pendant le prologue, sans passer par un chargement de sauvegarde. L'équipement de
+départ (épée de cuivre, costume, bas et souliers célestes) sort de la table de création
+`ov_009` `0x0218636c` et pose 3191, 3775, 3955 et 4046 par la règle d'objet
+([`item.md`](item.md)). Mécanismes, preuves en RAM et écart restant : [`trigger.md`](trigger.md),
+§ « Drapeaux globaux posés à l'ouverture ».
 
 ## Champs typés par `dq9_formats::save`
 

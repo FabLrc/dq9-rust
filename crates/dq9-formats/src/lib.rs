@@ -10,6 +10,7 @@ pub mod dialogue;
 pub mod font;
 pub mod gpc2;
 pub mod hero;
+pub mod item;
 pub mod level5;
 pub mod lighting;
 pub mod map;

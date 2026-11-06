@@ -9,6 +9,13 @@ use dq9_core::trigger::Member;
 use super::{App, status};
 use crate::lighting;
 
+/// Map the original loads after character creation and before the first scene: `S14M05`
+/// (id 6405, "Starflight Express / For Events"). Its load raises the S14 "map visited" flag
+/// 2774; the prologue's own map (`M01M12`, 1112) follows ~100 frames later. Evidence: the
+/// oracle RAM at frame 3762 holds map 6405 / area 6401, 2774 appears at frame 3764, and map
+/// 1112 at frame 3864.
+const OPENING_MAP: u16 = 6405;
+
 impl App {
     /// Action 0x76 outside a conversation (an area, a doorway, the end of a scene): opens the
     /// window on the line of `npc` for `context`.
@@ -65,6 +72,7 @@ impl App {
             return;
         };
         self.state = dq9_core::field::initial_state(&self.options.story);
+        self.state.compendium = self.item_table.clone();
         self.day = lighting::day_clock(Some(game.clock), self.options.time, self.options.clock);
         self.time = self.day.phase().index();
         // The hero as the conditions read him: alive, level 1 Guardian, in the opening outfit
@@ -83,11 +91,33 @@ impl App {
         }
         self.state.characters.insert(0, hero);
         self.state.party = vec![hero];
+        // Character creation is not replayed. The game hands the hero the copper sword and
+        // the celestial outfit when it confirms the character (`ov_009` table `0x0218636c`);
+        // each item it equips raises its compendium flag (`func_0207cc18`, `0x0207cc28`).
+        // The four flags appear together at frame 3740 of the oracle run.
+        for item in [
+            Some(dq9_core::state::NEW_GAME_WEAPON),
+            look.armour,
+            look.legwear,
+            look.footwear,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.state.obtain(i32::from(item), 1);
+        }
         self.look = dq9_formats::hero::HeroLook::new_game();
         self.reset_session();
         self.journal = Default::default();
         self.tick = 0;
         self.journal.note_progress(0, &self.state);
+        // The original leaves character creation for the `S14M05` event map (RAM frame 3762:
+        // map 6405, area 6401), whose load raises 2774 (`Flags_SetMapVisited`), then loads the
+        // first scene's map (`M01M12`, 1112, frame 3863). The scene played on the train map is
+        // not modelled, but the map load and its flag are.
+        if !self.load_map(&OPENING_MAP.to_string(), true, None, None, false) {
+            status(&format!("opening map {OPENING_MAP} did not load"));
+        }
         status(&format!(
             "new game: story {}.{}.{}, first scene {opening}",
             scenario.chapter, scenario.step, scenario.substep
