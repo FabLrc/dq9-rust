@@ -101,6 +101,9 @@ Les overlays 10, 28 et 32 (`pitfall`, `sub_hoge`, `sound`) sont à identifier.
       `ov_017`, entrées 200/100/300, attentes par signaux, événements typés, `Director`
       branché sur les requêtes des triggers ; les 30 scripts du prologue vont à leur terme
       (`stb.md`, § Interpréteur, `dq9re script`).
+- [x] Finitions J3 : identité du héros sauvegardé dans les messages (nom en glyphes et sexe),
+      confirmation sonore des choix avec exceptions `NOTSE`, placements masqués à l'heure
+      choisie affichables/déplaçables par les natives 574/575 (`dialogue.md`, `sdat.md`, `stb.md`).
 - [x] Recensement des ressources externes (`ressources-externes.md`).
 - [x] Inventaire statique des 228 natives STB employées : arguments, effets établis,
       preuves par adresses et limites (`re/stb-natives.md`) ; noms descriptifs dans
@@ -288,7 +291,7 @@ zones de caméra, comparaison position par position à nombre d'images égal.
 | interpréteur `.stb` dans `dq9-core` (attente par image, appels de fonctions) — **fait** (`dq9_core::script`, voir Avancement) | `stb.rs` (fait) ; wiki Event-Scripts |
 | natives : personnages (200), caméra (300), messages (400), scène et fondus (500, 100–122) — **jouées à l'écran** pour le prologue (voir Avancement) | wiki Engine-Functions ; `ov_001` |
 | deux écrans DS : écran haut (carte) et bas, disposition configurable | — |
-| son : musique SDAT, effets et jingles — **fait** (sans comparaison à l'oreille ni à melonDS) : `dq9-audio` (séquenceur, enveloppes DS, ondes ADPCM, PSG, bruit, archives de séquences SSAR, mixeur multi-séquences avec limites et priorités des joueurs du SDAT), musique de la carte lue dans `maplist9.bin` + `mapbgm.bin`, natives 554 et 712 à 738 des scripts (effets des groupes chargés, effets de base, jingles `ME_` avec fondu et reprise de la musique, volume, arrêt, verrou), sons du message (bip de frappe, `<EXC>`, `<QES>`, ouverture de choix), sortie cpal/WebAudio (`--mute`, touche `M`), `dq9re sseq|sdat|se`, `dq9-app --sound-wav` ; reste : sons de portes, de pas et de gestes, curseur de choix, effets de combat, flux STRM, réglage de volume du joueur ([`re/sdat.md`](re/sdat.md)) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
+| son : musique SDAT, effets et jingles — **fait** (sans comparaison à l'oreille ni à melonDS) : `dq9-audio` (séquenceur, enveloppes DS, ondes ADPCM, PSG, bruit, archives de séquences SSAR, mixeur multi-séquences avec limites et priorités des joueurs du SDAT), musique de la carte lue dans `maplist9.bin` + `mapbgm.bin`, natives 554 et 712 à 738 des scripts (effets des groupes chargés, effets de base, jingles `ME_` avec fondu et reprise de la musique, volume, arrêt, verrou), sons du message (bip de frappe, `<EXC>`, `<QES>`, ouverture et confirmation de choix avec exceptions `NOTSE` ; déplacement du curseur silencieux d'après le code EU), sortie cpal/WebAudio (`--mute`, touche `M`), `dq9re sseq|sdat|se`, `dq9-app --sound-wav` ; reste : sons de portes, de pas et de gestes, effets de combat, flux STRM, réglage de volume du joueur ([`re/sdat.md`](re/sdat.md)) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
 
 Avancement :
 
@@ -301,10 +304,13 @@ Avancement :
       sauts `<JP_x>`/`<LB_x>`), balises de tête (`<CEN>`, `<WIN>`, `<GYOU=>`, `<MOJI=>`,
       `<COLOR=>`, `<RECT=>`) ; les 37 988 répliques anglaises se jouent jusqu'à la fermeture
       (test réel) ; capture `--input` d'une réplique de Hugo, d'Aquila (question) et d'Erinn.
+      Le nom et le sexe du héros viennent du slot valide de la sauvegarde, y compris avec
+      `--map` ; sans sauvegarde et en nouvelle partie, l'identité par défaut est conservée.
+      Substitution et conditions testées ; branche féminine contrôlée à l'écran avec la
+      sauvegarde de démonstration.
       **Reste** : valider sur melonDS les constantes de mise en page non lues (marges, plaque,
-      fenêtre Oui/Non, fond, flèche), PNJ tournés vers le héros et immobiles, ballons, nom du
-      héros de la sauvegarde, langues autres que l'anglais, `<TC#>` et `<W=#>` (absentes du
-      chemin des conversations).
+      fenêtre Oui/Non, fond, flèche), PNJ tournés vers le héros et immobiles, ballons,
+      langues autres que l'anglais, `<TC#>` et `<W=#>` (absentes du chemin des conversations).
 - [ ] **Triggers branchés** : l'événement 0 « parler » (`Field::talk`) est branché sur la
       conversation ; les demandes `Request::Event` des triggers (actions `0x77`, `0x80`, `0x9b`)
       démarrent l'événement dans l'application, la fin d'un événement tire l'événement 11
@@ -338,9 +344,12 @@ Avancement :
       dont celle portée par les os d'un modèle, déplacements au pas du jeu, lumière et heure,
       brouillard, attachements d'os du halo et des ailes, mouvements des PNJ de la carte, bulles,
       sprites de script, palette des personnages) ; les 30 scripts du prologue vont à leur terme
-      (`--events-report 1.1-3` : 26 sans manque visible, 4 partielles — 22 avant les effets de
-      scène —, aucune « non jouée »). Restent : les effets du texte des légendes (409/411/413),
-      547, 552, 584, les placements masqués à l'heure choisie que 574 montre, comparer l'ordre,
+      (`--events-report 1.1-3` : 28 sans manque visible, 2 partielles — 22 avant les effets de
+      scène —, aucune « non jouée »). Les placements masqués à l'heure choisie restent
+      construits et les natives 574/575 peuvent les montrer et les déplacer : les scènes
+      1330 et 21510 sont désormais complètes ; capture native de 1330 et test réel du
+      placement affiché, image de référence `M01` inchangée pixel pour pixel.
+      Restent : les effets du texte des légendes (409/411/413), 547, 552, 584, comparer l'ordre,
       les durées et les poses à melonDS, l'appelant de l'entrée 200 et les natives sans rôle
       (`re/stb.md`, § Interpréteur).
 - **Deux écrans DS** (`dq9-app/src/screens.rs`, `dq9_render::Panel`) : écran haut = champ 3D avec

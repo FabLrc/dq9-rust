@@ -456,6 +456,13 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
 
 ## Vérification
 
+- Lot J3 (6 novembre 2026) : capture native d'Ivor avec la branche féminine de la sauvegarde
+  de démonstration ; scène 1330 rendue et placements initialement masqués contrôlés par un
+  test réel ; capture `M01` identique pixel pour pixel avant/après ce changement. Événement
+  1160 exécuté jusqu'au terme et mixage écrit en WAV (6,28 s, 32 728 Hz), sans écoute ni
+  comparaison à melonDS. Bundle Web reconstruit : chargement et remplacement de sauvegarde
+  sur `C01M09`, conversation du PNJ 25 et démarrage d'une nouvelle partie contrôlés dans
+  Chromium (1024 × 820, DPR 1,25, son coupé), sans erreur de page observée.
 - Vérification navigateur de la version intégrée (Chromium, 6 novembre 2026, fenêtre
   1000 × 808, DPR 1,25, son coupé) : ROM et sauvegarde chargées localement, conversation
   du PNJ 25 sur `C01M09` avec `C01Q0/025_en.bin`, réplique avancée puis fermée ; dispositions
@@ -467,9 +474,9 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   toits/poutres pouvant masquer le héros ; ce parcours ne vérifie ni le son ni la fidélité
   image par image à melonDS.
 - `crates/dq9-render/tests/real_rom.rs` : les 738 jeux d'archives distincts (moment 0,
-  environnement de grotte 1) se construisent sans erreur : 3 501 modèles, 3 646 instances,
-  18 570 textures décodées, 697 035 triangles ; 28 834 matériaux, dont 48 sans texture et
-  201 avec une matrice de texture.
+  environnement de grotte 1) se construisent sans erreur, placements masqués inclus :
+  4 204 modèles, 4 349 instances, 19 557 textures décodées, 697 035 triangles visibles ;
+  30 447 matériaux, dont 48 sans texture et 236 avec une matrice de texture.
 - Captures `--screenshot` de `M01` (Angel Falls : village, cascade, rivière), `C01M09`
   (église de Stornway) et `F01` (plaine d'Angel Falls) : textures à leur place, feuillages et
   fleurs détourés, cascade et brume translucides sans trous.
