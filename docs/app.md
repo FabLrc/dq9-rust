@@ -316,24 +316,41 @@ drapeaux, aires déjà prises), ou plafond de pas atteint. Limites connues :
 
 ### Démo hébergée (GitHub Pages)
 
-Ouvrir **https://fablrc.github.io/dq9-rust/?newgame=1**, choisir sa ROM européenne `YDQP01`
-et cliquer dans le jeu pour utiliser le clavier. Flèches : marcher ; Entrée/Espace : parler
-et avancer les messages ; Q/E : caméra ; M : son. Une sauvegarde DS est facultative.
+Ouvrir **https://fablrc.github.io/dq9-rust/?newgame=1**, choisir sa ROM européenne `YDQP01` :
+le bouton « Nouvelle partie » s'active dès que la ROM est lue, et le clavier est rendu au jeu
+sans clic supplémentaire. Flèches : marcher ; Entrée/Espace : parler et avancer les messages ;
+Q/E : caméra ; M : son. Une sauvegarde DS est facultative.
 Les fichiers sont lus localement : aucune ROM ni sauvegarde n'est envoyée à GitHub.
 Un ordinateur avec clavier et un navigateur récent WebGPU ou WebGL 2 sont recommandés.
 Les limites de la preuve technique restent applicables : combats sautés, effets incomplets
 et écran inférieur provisoire.
 
-Les sélecteurs restent désactivés pendant le téléchargement et l'initialisation du moteur ;
-attendre qu'ils deviennent disponibles avant de choisir les fichiers. Si le chargement
-échoue, la page affiche une erreur au lieu d'accepter un fichier qu'elle ne pourrait pas lire.
+Les champs ROM/sauvegarde et les sélecteurs restent désactivés pendant le téléchargement et
+l'initialisation du moteur. « Nouvelle partie » reste désactivé jusqu'à ce que les octets de
+la ROM soient mis en file pour la boucle du jeu : l'ordre ROM puis nouvelle partie est donc
+garanti, et le champ ROM est désactivé pendant sa lecture (pas de lectures concurrentes). Si
+le chargement échoue, la page affiche une erreur au lieu d'accepter un fichier qu'elle ne
+pourrait pas lire.
+
+Le clavier revient au canevas après le choix d'un fichier, un clic sur « Nouvelle partie »,
+un changement de moment ou de disposition ; cliquer dans l'image le reprend aussi. Les
+touches du jeu ne sortent pas du canevas : hors des champs, sélecteurs et boutons de la page,
+les flèches, Espace, Page haut/bas et Début/Fin ne font pas défiler la page. Une perte de
+focus de la fenêtre (changement d'onglet, boîte de dialogue de fichier) relâche les touches
+tenues : `web.rs` retire le focus du canevas, winit émet `Focused(false)` et `App` vide son
+ensemble de touches, donc le héros ne continue pas à marcher. Les erreurs (fichier illisible,
+ROM qui n'est pas `YDQP01`, moteur graphique absent) s'affichent en rouge dans `#status` ;
+une ROM refusée désactive de nouveau « Nouvelle partie ».
 
 Le workflow `.github/workflows/pages.yml` compile la version wasm optimisée à chaque push
 sur `main` (ou lancement manuel), installe la version de `wasm-bindgen-cli` de `Cargo.lock`
 et déploie uniquement `index.html` et les bindings JavaScript/WebAssembly dans GitHub Pages.
-Le dépôt reste privé ; le site et le programme compilé sont publics. Le chemin relatif
-`./pkg/dq9-app.js` permet de servir la page sous `/dq9-rust/` sans nom de domaine personnalisé.
-Aucune donnée du jeu n'entre dans l'artefact Pages.
+Une liste blanche vérifie l'artefact avant l'envoi (seuls `index.html` et
+`pkg/*.js`/`pkg/*.wasm`) : toute ROM, sauvegarde, capture ou autre fichier fait échouer le
+job. Le déploiement est conditionné à `refs/heads/main`, donc un lancement manuel sur une
+branche ne publie rien. Le dépôt reste privé ; le site et le programme compilé sont publics.
+Le chemin relatif `./pkg/dq9-app.js` permet de servir la page sous `/dq9-rust/` sans nom de
+domaine personnalisé. Aucune donnée du jeu n'entre dans l'artefact Pages.
 
 ### Compilation et serveur local
 
@@ -350,7 +367,9 @@ Ouvrir `http://localhost:8000/` (paramètres `map`, `time` (nom ou 0 à 3), `clo
 `substep`, `night=1`, `mute=1`, `newgame=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
 page. Les deux fichiers sont lus localement dans le navigateur, jamais envoyés ni hébergés ;
 `map` explicite prévaut sur la carte de la sauvegarde. Le bouton « Nouvelle partie » (ou `?newgame=1`)
-lance le prologue (§ « Nouvelle partie »).
+lance le prologue (§ « Nouvelle partie ») ; il reste désactivé jusqu'à la lecture de la ROM et
+le clavier revient au canevas ensuite. La page signale les erreurs en rouge et nomme le
+fichier refusé.
 WebGPU quand le navigateur le propose, sinon WebGL 2. `crates/dq9-app/web/pkg/` est généré
 (ignoré par git).
 
@@ -456,6 +475,23 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
 
 ## Vérification
 
+- Lot navigateur et chaîne de livraison (6 novembre 2026) : page wasm locale servie par
+  `python -m http.server` (`?newgame=1&mute=1`, Chromium 150, 1929 × 921, DPR 1, WebGPU et
+  WebGL 2 disponibles), ROM européenne locale de 256 Mio lue par `<input type=file>`. Le
+  journal du serveur ne montre que `/`, `pkg/dq9-app.js` et `pkg/dq9-app_bg.wasm` : aucune
+  requête POST, donc aucune ROM ni sauvegarde envoyée. Après la lecture,
+  `document.activeElement` est le canevas, « Nouvelle partie » est actif et `?newgame=1`
+  lance `21500` ; Entrée fait avancer la scène. Une flèche maintenue déplace le héros
+  (captures) ; une perte de focus simulée (`window.blur`) rend le focus au document et arrête
+  le déplacement (deux captures à 1,5 s d'intervalle, même position), car `Focused(false)` vide
+  les touches tenues. Changer la disposition rend le focus au canevas ; une flèche pressée
+  hors du canevas laisse `scrollY` à 0. Un fichier non-ROM affiche « Ce fichier n'est pas une
+  ROM Dragon Quest IX européenne (YDQP01). » en rouge et désactive de nouveau le bouton ;
+  l'erreur reste affichée malgré les lignes de progression du moteur (effets sonores), puis
+  une ROM valide réactive le jeu. La liste blanche de `pages.yml` accepte `index.html` et
+  `pkg/*.js|*.wasm` et rejette un `leak.nds` ajouté à `_site` (essai local des commandes).
+  La CI Linux échouait sur `alsa-sys` faute de `alsa.pc` (run 42212225607) ; les jobs `lint`
+  et `test` installent désormais `libasound2-dev` avant la compilation.
 - Lot J3 (6 novembre 2026) : capture native d'Ivor avec la branche féminine de la sauvegarde
   de démonstration ; scène 1330 rendue et placements initialement masqués contrôlés par un
   test réel ; capture `M01` identique pixel pour pixel avant/après ce changement. Événement

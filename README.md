@@ -6,8 +6,9 @@ ligne. Le jeu est rétro-analysé et ses ressources sont lues depuis **votre pro
 donnée du jeu n'est incluse dans ce dépôt.
 
 **[Tester DQ9 Rust dans le navigateur](https://fablrc.github.io/dq9-rust/?newgame=1)** —
-sélectionnez votre propre ROM européenne (`YDQP01`), puis cliquez dans le jeu pour utiliser
-le clavier. Les fichiers ROM et sauvegarde restent locaux : aucun envoi au serveur.
+sélectionnez votre propre ROM européenne (`YDQP01`) : le bouton « Nouvelle partie » s'active
+une fois la ROM lue et le jeu prend le clavier automatiquement. Les fichiers ROM et
+sauvegarde restent locaux : aucun envoi au serveur.
 La démo est publique, expérimentale et nécessite un navigateur récent avec WebGPU ou WebGL 2.
 
 **État** : une première preuve technique se joue, en natif comme dans un navigateur.
