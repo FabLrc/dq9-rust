@@ -231,6 +231,15 @@ ov_017::021d8438 g_TalkSelect       # selection state (flags, step, context, cou
 0x02096144 QuestLog_Find            # entry of a quest, or null
 0x020f05bc g_TrigRecordHandlers     # {100, nop}, {101, nop}, {1, Trig_LoadRecord}, {0}
 
+# --- Global flags set at a new game / scene entry (docs/re/trigger.md) ---
+0x0201ba78 Flags_SetMapVisited      # map load: flag 0xa96 + map/100 for 99 < map <= 9999 (2710 base)
+0x0206dff8 Flags_ClearRange         # clears the flag bits in [start, end] of g_QuestManager+0x8c
+0x02071218 EventRecord_Build        # eventlist kind 0x66 handler: fills the event context from one record
+0x02071498 EventRecord_Parse        # parses the event record of an id and adds the scene-flag base
+0x02071584 EventRecord_Find         # picks eventlist6 / evl_quest / eventlist_lv5 by id range
+0x02071698 Flags_SetStoryBases      # boot (main): story flag bases 0x21c and 0x302 in g_FlagBases
+0x020716b4 EventRecord_StoryProgress # eventlist kind 0x66 handler: chapter/step/substep + a flag list
+
 # --- Trigger actions, events and scenario tracks (docs/re/trigger.md) ---
 0x0200fd1c Save_Warp                # save +0x3f8: destination room (+0), entry (+0x20), position, direction
 0x0200fd80 Chara_Get                # character table entry 0..0xe8 (0 = hero), no flag check

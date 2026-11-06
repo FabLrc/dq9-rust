@@ -261,6 +261,12 @@ Vérifié sur la démo : piste courante 0, avec 19 / 2 / 1 = chapitre/étape/sou
 d'en-tête ; 1 618 drapeaux globaux posés. Accesseurs : `Slot::event_flags`, `EventFlags`,
 `Track`, `test_bit`.
 
+Une **nouvelle partie** ne part pas d'un bloc vide : les drapeaux de scène
+(`EventTask_Update`) et de carte visitée (`Flags_SetMapVisited`) sont posés par le moteur
+avant et pendant le prologue, sans passer par un chargement de sauvegarde. Mécanismes,
+preuves en RAM et drapeaux encore inexpliqués : [`trigger.md`](trigger.md), § « Drapeaux
+globaux posés à l'ouverture ».
+
 ## Champs typés par `dq9_formats::save`
 
 Voir les accesseurs de `Slot` et `Character` ; tous sont vérifiés sur la démo. Personnage
