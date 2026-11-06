@@ -191,6 +191,45 @@ numéro d'image du compteur VBlank (`0x027ffc3c`).
 d'abord, `Flags_Test`) ; `quests` ne liste que les quartets non nuls. Sans `--json`, la même
 chose est imprimée en texte, avec la position des objets du groupe.
 
+### Différentiel de deux états (`dq9re state diff`)
+
+```powershell
+cargo dq9re state diff bat6.ml1 bat4.ml1          # même point d'histoire -> code 0
+cargo dq9re state diff pro1.ml1 bat6.ml1          # sortie 1 : cinq différences nommées
+cargo dq9re state diff bat6.ml1 ram23050.bin --json
+```
+
+Les deux entrées peuvent être un `.ml1` ou une image RAM principale de 4 Mio
+(`--dump-ram`) : le type est reconnu à l'en-tête `MELN` ou à la taille, jamais deviné. Le
+lecteur est celui de `dq9re state` (`Memory`), donc les mêmes adresses et miroirs
+s'appliquent.
+
+Le premier bloc du rapport nomme les écarts **de jeu** : carte et area, piste courante,
+histoire (`chapter.step.substep`), heure du jour, pose du héros (position et angle `fx32`),
+progression et deux jeux de drapeaux de chacune des cinq pistes (bits ajoutés/retirés),
+drapeaux globaux (ajoutés/retirés) et quêtes (quartets modifiés). `--json` les donne dans
+`differences`, une entrée typée par champ (`{"field":"global_flags","change":{"added":[…],
+"removed":[…]}}`).
+
+Le second bloc résume **les autres octets** de la RAM principale, hors bloc d'événements
+(déjà décrit ci-dessus) : nombre d'octets modifiés, puis des plages `début`, `longueur`,
+`changed`. Les octets égaux qui séparent deux changements de moins de 16 octets fusionnent
+dans une même plage, pour lire une structure d'un bloc ; le nombre `changed` reste exact.
+En texte, seules les 200 premières plages sont imprimées (`--json` les garde toutes). Le
+compteur de VBlank, les horloges et le tas y apparaissent : ce sont des différences
+transitoires, pas des écarts de jeu.
+
+Codes de sortie : **0** si le premier bloc est vide (état de jeu identique, même si des
+octets transitoires diffèrent), **1** si au moins un champ de jeu diffère, **2** si une
+entrée est illisible ou n'est ni un état melonDS ni une image de 4 Mio. C'est ce que
+vérifie le smoke du 2026-11-06 : `bat6.ml1` contre `bat4.ml1` (même premier contrôle,
+images différentes) donne 0 et 136 plages transitoires ; `pro1.ml1` contre `bat6.ml1`
+donne 1 avec carte, area, pose, `step_flags` et drapeaux globaux nommés.
+
+Limite : le diff voit les octets qui changent et les champs qu'ils composent ; il ne dit
+pas **qui** les a écrits. Un drapeau posé directement hors de `Flags_Set` est donc vu, son
+auteur ne l'est pas (voir `state watch` ci-dessous pour la provenance image par image).
+
 ### Côté runtime
 
 `dq9-app --new-game --headless --auto` s'arrête à la première prise de contrôle et imprime le
