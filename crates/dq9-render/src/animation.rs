@@ -447,6 +447,7 @@ impl AnimatedScene {
             b.scene.instances.push(SceneInstance {
                 model: id,
                 world,
+                home: world,
                 block: usize::MAX,
                 instance: usize::from(npc.member.id),
             });
@@ -824,6 +825,7 @@ impl AnimatedScene {
         self.scene.instances.push(SceneInstance {
             model,
             world,
+            home: world,
             block: usize::MAX,
             instance: spec.instance,
         });

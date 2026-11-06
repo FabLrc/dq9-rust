@@ -201,6 +201,7 @@ impl AnimatedScene {
         self.scene.instances.push(SceneInstance {
             model: model_id,
             world: Mat4::from_scale(Vec3::ZERO),
+            home: Mat4::from_scale(Vec3::ZERO),
             block: usize::MAX,
             instance: usize::MAX,
         });

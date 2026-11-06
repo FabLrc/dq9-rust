@@ -308,6 +308,14 @@ Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/
 - La bulle (541) est un sprite posé sur le rayon qui passe par le pixel de l'écran DS (projection
   de l'acteur décalée de `(−6, −76)`), un peu devant l'acteur, à l'échelle d'un texel par pixel
   DS **[hypothèse]** : le jeu la dessine en 2D par-dessus l'image.
+- Placements 574/575 : `Scene::build` construit une instance pour chaque placement de modèle ou
+  d'objet, y compris ceux que l'heure choisie cache (`Instance::hidden`, bit `0x4` de `+2`).
+  L'instance cachée a une échelle nulle mais garde sa matrice d'origine (`SceneInstance::home`,
+  `0x02013168`) ; 574 et 575 changent l'échelle et la translation d'après cet état : un 575
+  seul déplace le placement sans le montrer, 574 le montre à sa nouvelle position (dans un ordre
+  ou l'autre), jusqu'au rechargement de la carte, comme le jeu qui garde les champs de
+  l'enregistrement. Les placements de collision n'ont pas d'instance : leurs changements restent
+  sans effet visible (`collision placement`).
 
 **Exécuté depuis J3** : lumière et heure (578, 579, 588, 589, 548/549, 808) et brouillard (804)
 par `dq9_core::cutscene::SceneLight` ; attachements d'os (235, 236) ; mouvements nommés des PNJ de
