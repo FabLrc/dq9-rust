@@ -168,7 +168,7 @@ pub fn run(rom: &Rom, args: &SseqArgs) -> Result<()> {
 }
 
 /// 16-bit PCM stereo WAV.
-fn wav(samples: &[f32], rate: u32) -> Vec<u8> {
+pub(crate) fn wav(samples: &[f32], rate: u32) -> Vec<u8> {
     let data_len = (samples.len() * 2) as u32;
     let mut out = Vec::with_capacity(44 + data_len as usize);
     out.extend(b"RIFF");

@@ -8,9 +8,11 @@
 //! translated; the command semantics and the conversion tables follow the public
 //! documentation and the WTFPL players it cites (SSEQPlayer by kode54, FSS by fincs).
 
+mod mixer;
 mod player;
 mod song;
 mod tables;
 
+pub use mixer::{Handle, Mixer};
 pub use player::Player;
 pub use song::Song;

@@ -189,6 +189,9 @@ enum Command {
     /// The record lists, players, groups and sequence archives of a sound archive
     /// (`bgm`, `se_norm`, `se_btl`).
     Sdat(sdat::SdatArgs),
+    /// Renders one sound effect of a sequence archive of `se_norm.sdat` (or `se_btl.sdat`) to
+    /// a WAV file and reports its duration and levels.
+    Se(sdat::SeArgs),
     /// Export the textures (PNG) and models (OBJ + MTL, model space) of G3D files: a
     /// `.nsbmd`/`.nsbtx` file or the members of a NARC such as `data/map/M01.amdj`. With
     /// `--anim`, models are posed (joints), retextured (texture SRT) and recoloured (material)
@@ -326,6 +329,7 @@ fn main() -> Result<()> {
         Command::Hero(args) => hero::run(&rom, &args),
         Command::Sseq(args) => sseq::run(&rom, &args),
         Command::Sdat(args) => sdat::run(&rom, &args),
+        Command::Se(args) => sdat::run_se(&rom, &args),
         Command::Model {
             path,
             member,

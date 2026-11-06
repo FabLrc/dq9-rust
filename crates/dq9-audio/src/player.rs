@@ -179,6 +179,10 @@ pub struct Player {
     frames: u64,
     /// Host gain (1.0 = as the game).
     volume: f32,
+    volume_target: f32,
+    /// Volume change per output frame while ramping.
+    volume_step: f32,
+    paused: bool,
     fade_left: u64,
     fade_total: u64,
     peak: f32,
@@ -187,7 +191,7 @@ pub struct Player {
 impl Player {
     /// Starts `song` from the beginning, mixing at `sample_rate` Hz.
     pub fn new(song: Arc<Song>, sample_rate: u32) -> Self {
-        let mut tracks = vec![Track::new(0, true)];
+        let mut tracks = vec![Track::new(song.start, true)];
         tracks.reserve(MAX_TRACKS - 1);
         Self {
             song,
@@ -203,6 +207,9 @@ impl Player {
             until_update: 0.0,
             frames: 0,
             volume: 1.0,
+            volume_target: 1.0,
+            volume_step: 0.0,
+            paused: false,
             fade_left: 0,
             fade_total: 0,
             peak: 0.0,
@@ -250,9 +257,31 @@ impl Player {
             .unwrap_or(u32::MAX)
     }
 
-    /// Host volume, 0.0 to 1.0.
+    /// Host volume, 0.0 to 1.0, at once.
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.clamp(0.0, 1.0);
+        self.volume_target = self.volume;
+    }
+
+    /// Host volume now.
+    pub fn volume(&self) -> f32 {
+        self.volume
+    }
+
+    /// Moves the host volume to `volume` (0.0 to 1.0) in a straight line over `seconds`.
+    pub fn ramp_volume(&mut self, volume: f32, seconds: f32) {
+        self.volume_target = volume.clamp(0.0, 1.0);
+        let frames = (f64::from(seconds.max(0.0)) * self.rate).max(1.0);
+        self.volume_step = ((self.volume_target - self.volume).abs() as f64 / frames) as f32;
+    }
+
+    /// Holds the song where it is, silent, or lets it go on.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused
     }
 
     /// Fades the sound to silence over `seconds` of audio; the song is then finished.
@@ -272,6 +301,9 @@ impl Player {
     /// overwriting it. Silence once [`Player::finished`].
     pub fn render(&mut self, out: &mut [f32]) {
         out.fill(0.0);
+        if self.paused {
+            return;
+        }
         let total = out.len() / 2;
         let mut done = 0;
         while done < total {
@@ -293,8 +325,16 @@ impl Player {
 
     /// Host volume, fade and a soft limiter over the mixed block.
     fn finish_block(&mut self, out: &mut [f32]) {
-        let (volume, total) = (self.volume, self.fade_total);
+        let total = self.fade_total;
         for (i, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            if self.volume != self.volume_target {
+                let step = self.volume_step;
+                self.volume = if self.volume < self.volume_target {
+                    (self.volume + step).min(self.volume_target)
+                } else {
+                    (self.volume - step).max(self.volume_target)
+                };
+            }
             let fade = if total == 0 {
                 1.0
             } else {
@@ -302,7 +342,7 @@ impl Player {
             };
             for s in frame {
                 self.peak = self.peak.max(s.abs());
-                *s = soft_limit(*s * MIX_GAIN * volume * fade);
+                *s = soft_limit(*s * MIX_GAIN * self.volume * fade);
             }
         }
         self.fade_left = self.fade_left.saturating_sub((out.len() / 2) as u64);
@@ -342,11 +382,14 @@ impl Player {
             }
             t += 1;
         }
-        // Once every track has ended, notes held without a length are let go.
+        // Once every track has ended, notes held without a length are let go, unless their
+        // wave plays once: it ends by itself (the sound effects are written that way: a key,
+        // a length of 0 and the end of the track) **[hypothèse, docs/re/sdat.md]**.
         if self.tracks.iter().all(|t| !t.active) {
             for voice in &mut self.voices {
-                voice.remaining = None;
-                voice.key_off();
+                if voice.remaining.is_none() && voice.loops() {
+                    voice.key_off();
+                }
             }
         }
     }
@@ -761,6 +804,14 @@ fn soft_limit(x: f32) -> f32 {
 }
 
 impl Voice {
+    /// Whether the wave goes on forever (a loop, PSG, noise) rather than ending by itself.
+    fn loops(&self) -> bool {
+        match &self.source {
+            Source::Pcm { samples, .. } => samples.loop_start.is_some(),
+            Source::Psg { .. } | Source::Noise { .. } => true,
+        }
+    }
+
     fn key_off(&mut self) {
         if self.stage != Stage::Release {
             self.stage = Stage::Release;
@@ -998,7 +1049,10 @@ mod tests {
         Arc::new(Song {
             index: 0,
             name: None,
-            stream: stream.to_vec(),
+            player: 0,
+            priority: 0,
+            stream: stream.into(),
+            start: 0,
             volume: 127,
             instruments: vec![Instrument::Single(Note {
                 kind: NoteKind::Pcm,
@@ -1010,8 +1064,9 @@ mod tests {
                 sustain,
                 release,
                 pan: 64,
-            })],
-            waves,
+            })]
+            .into(),
+            waves: Arc::new(waves),
         })
     }
 
