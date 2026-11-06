@@ -250,6 +250,7 @@ enum Command {
     },
     /// Inspect a melonDS savestate (`.ml1`): sections, frame, scenario, resident code compared
     /// with the ROM when one is found, or `--peek ADDR[:LEN]` (hex) bytes of main RAM / TCM.
+    /// `--json` prints the checkpoint a differential run compares (event block, map, frame).
     State {
         path: PathBuf,
         #[arg(long, num_args = 1..)]
@@ -257,6 +258,9 @@ enum Command {
         /// Compare the RAM with the `.sav` the game was loaded from (`SAVE_COPIES`).
         #[arg(long)]
         save: Option<PathBuf>,
+        /// Print the story checkpoint as JSON (no ROM or save comparison).
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -272,8 +276,13 @@ fn main() -> Result<()> {
             check,
         } => return coverage::run_coverage(functions, crates, readme.as_deref(), *check),
         Command::Save { path, verbose } => return save::run(path, *verbose, cli.rom.as_deref()),
-        Command::State { path, peek, save } => {
-            return state::run(path, peek, save.as_deref(), cli.rom.as_deref());
+        Command::State {
+            path,
+            peek,
+            save,
+            json,
+        } => {
+            return state::run(path, peek, save.as_deref(), cli.rom.as_deref(), *json);
         }
         _ => {}
     }

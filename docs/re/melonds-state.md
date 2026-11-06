@@ -44,6 +44,7 @@ Un état troncaté ou sans `NDSG`/`CP15` assez longs est refusé (jamais de pani
 cargo dq9re state partie.ml1                       # sections, VBlank, scénario, code vs ROM
 cargo dq9re state partie.ml1 --save partie.sav     # + la RAM comparée à la sauvegarde chargée
 cargo dq9re state partie.ml1 --peek 020f33d8:40    # octets en hexadécimal (adresse:longueur)
+cargo dq9re state partie.ml1 --json                # checkpoint de l'histoire (JSON, voir plus bas)
 ```
 
 Avec la ROM, `dq9re state` compare au contenu de la ROM le module ARM9 statique, chaque bloc
@@ -118,9 +119,123 @@ cas (15 copies différentes sur l'écran titre).
 
 Les tests (`melonds::tests`) utilisent un état synthétique construit selon ce format.
 
+## Oracle différentiel (v0.1)
+
+But : comparer au jeu réel (melonDS) l'état de l'histoire que le runtime réimplémenté calcule,
+aux **mêmes points** — progression des cinq pistes, leurs deux jeux de drapeaux, drapeaux
+globaux, quêtes — plus la carte et la position du héros. Le critère de la v0.1
+([`roadmap.md`](../roadmap.md), J3) est strict : mêmes drapeaux aux mêmes points ; il ne se
+déduit ni de `--pilot` seul ni d'une sauvegarde fabriquée.
+
+### Checkpoint (`dq9re state --json`)
+
+Le bloc d'événements est lu en RAM à `g_QuestManager` (`0x02108844`) : même disposition que
+la sauvegarde (`save.md`, § « Bloc d'événements »), donc pistes à `+0`, drapeaux globaux à
+`+0x8c`, quêtes à `+0x2cc`, piste courante à `+0x332`. La carte vient de `Zone3D+0`/`+4`, le
+numéro d'image du compteur VBlank (`0x027ffc3c`).
+
+```json
+{"vblank":26379,"map":4105,"area":4100,"track":0,"daytime":true,
+ "tracks":[{"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[1]},
+           {"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[]},
+           {"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[]},
+           {"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[]},
+           {"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[]}],
+ "flags":[337,1450,...],"quests":{}}
+```
+
+`flags` et les deux jeux d'une piste sont des **indices de bits** (bit de poids faible
+d'abord, `Flags_Test`) ; `quests` ne liste que les quartets non nuls. Sans `--json`, la même
+chose est imprimée en texte, avec la position des objets du groupe.
+
+### Côté runtime
+
+`dq9-app --new-game --headless --auto` s'arrête à la première prise de contrôle et imprime le
+journal puis, pour chaque piste, `track i: c.s.b flags [{...}, {...}]`, `global flags: {...}`
+et la position du héros. `--pilot` continue (téléportations : ordre de l'histoire seulement).
+Le worker du parcours ajoute `--checkpoints FICHIER` (JSONL, mêmes noms de champs plus
+`tick`/`seconds`/`kind`/`event`/`hero`) ; le comparateur lit le rapport texte en attendant.
+
+### Comparateur
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/oracle-compare.ps1 `
+    -State build/melonds-oracle/observatory.ml1 -Report build/oracle/runtime-auto.txt
+```
+
+Il exécute `dq9re state --json` sur l'état, lit la dernière ligne de chaque piste et les
+drapeaux globaux du rapport, puis compare carte, progression et les deux jeux de drapeaux de
+chaque piste et les drapeaux globaux ; code de sortie non nul et une ligne `DIFF` par écart.
+Les quêtes ne sont pas encore dans le rapport du runtime : elles ne sont pas comparées.
+
+### Piloter melonDS (`scripts/melonds-play.ps1`)
+
+Le script copie `melonDS.exe` dans `build/melonds-oracle/` (avec `portable`, un lien physique
+vers la ROM, `dq9.sav`), écrit un `melonDS.toml` valide (sans BOM) avec les touches
+(`Up`/`Down`/`Left`/`Right`, `A = X`, `B = Z`, `Start = Retour`), puis poste les messages à
+la fenêtre (pas de premier plan, fenêtre non redimensionnée). Actions : `waitstart` (bouton
+START orange), `tap`, `key`, `hold:up+left:2`, `spam`/`play` (A toutes les N secondes, états
+tous les M), `save`, `loadstate`, `shot`. Exemple de référence nouvelle partie :
+
+```powershell
+# écran titre -> menu -> création du personnage (A x10, OK tactile, « Yes ») -> prologue
+powershell -ExecutionPolicy Bypass -File scripts/melonds-play.ps1 -Fresh -Actions `
+  "waitstart,tap:127:377,wait:8,key:a,wait:3,key:a,wait:3,key:a,wait:3,key:a,wait:3,key:a,wait:3,key:a,wait:3,key:a,wait:3,key:a,wait:3,key:a,wait:3,key:a,wait:3,tap:221:144,wait:3,key:a,wait:8,play:260:2:20:pro,shot:end"
+# reprise d'un état (File > Load state > 1) puis combat/scènes
+powershell -ExecutionPolicy Bypass -File scripts/melonds-play.ps1 `
+  -LoadState build/melonds-oracle/pro11.ml1 -Actions "wait:3,loadstate,wait:2,play:240:1.5:20:bat"
+```
+
+La création du personnage est réelle (aucune sauvegarde fabriquée) : les défauts sont
+acceptés, le nom est un caractère tapé au clavier tactile, puis « Begin your adventure » ;
+le combat 26 est joué (A) et gagné normalement. Les états sont des points d'histoire stables,
+pas des images exactes.
+
+### Mesure du 2026-11-06 (ROM EU, melonDS 1.1, BIOS libres)
+
+Référence : nouvelle partie réelle, combat 26 gagné, états pris toutes les 20 s. Le premier
+contrôle de l'Observatoire donne (vblank 26379, `bat6.ml1`) :
+
+| | melonDS | runtime `--new-game --headless --auto` (210,42 s) |
+|---|---|---|
+| carte | `4105` (`X01M05`) | `4105` |
+| héros | (0,660 ; −0,250 ; −3,610) | (0,6599 ; −0,25 ; −3,6099) |
+| histoire | 1.1.1, piste 0 | 1.1.1, piste 0 |
+| `step_flags` piste 0 | `{1}` | `{1}` |
+| drapeaux globaux | 18 | 1 (`337`) |
+
+Identiques : carte, position (à moins de 10⁻³), progression et drapeaux de piste. **Écart
+mesuré** : 17 drapeaux globaux présents dans melonDS et absents du runtime —
+`1450,1451,1452,1453,1454,1461,2721,2751,2774,3191,3775,3955,4046,4212,4283,4410,4414` ;
+`337` est commun. `GameState::new_game` laisse le bloc d'événements vide
+(`state.rs`, « the game's initial tracks are not read ») : l'écart couvre donc l'initialisation
+de la nouvelle partie, les scènes 21500–21596 et la victoire du combat 26 (substituée côté
+runtime). Signalé au worker du parcours avec l'état et le comparateur ; non corrigé ici.
+
+Pendant l'ouverture (`M01M12`, 1.1.1) les mêmes 7 drapeaux de base sont déjà posés au premier
+état (vblank 5217) et `1450`, puis `1451`, apparaissent pendant la scène : ce sont des
+candidats « initialisation/scripts », pas des drapeaux de piste.
+
+### Limites
+
+- La création du personnage est pilotée au temps réel (A, OK tactile) : la séquence est
+  reproductible mais pas à l'image près ; les points de contrôle sont lus en RAM, jamais
+  déduits d'une capture d'écran.
+- Le A en boucle ne marche pas : au-delà du premier contrôle, atteindre Angel Falls exige le
+  **vrai chemin physique** (escaliers, portes, PNJ à qui parler). Les entrées du parcours réel
+  du worker field seront rejouées dans melonDS ; aucun téléport ne servira de référence.
+- Le combat 26 est un vrai combat (pas de contournement), mais le runtime le substitue : les
+  drapeaux posés par le combat/le moteur peuvent manquer (c'est l'écart ci-dessus).
+- Aucun quartet de quête à ces points ; les checkpoints « quêtes du village » et « fin de
+  prologue » attendent le chemin physique.
+- La sauvegarde d'état passe par le menu (environ 2 s, temps réel) ; ce sont des points
+  d'histoire stables, pas des numéros d'image alignés.
+
 ## Suite
 
-- Comparer les structures que `dq9-core` calculera (position, drapeaux d'événements via le
-  gestionnaire de quêtes) à celles de la RAM : c'est le test différentiel de `architecture.md`.
+- Rejouer dans melonDS les entrées du parcours réel (premier contrôle → Angel Falls → quêtes
+  → fin du prologue) et comparer chaque checkpoint ; puis le critère J2 « même nombre
+  d'images » demande un pilotage image par image (pause + `HK_FrameStep`) que ce script ne
+  fait pas encore.
 - L'état contient aussi l'ARM7 et le son (`SPU.`) : hors périmètre tant que l'audio n'est pas
   porté.
