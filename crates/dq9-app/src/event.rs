@@ -196,6 +196,9 @@ pub enum Outcome {
     Finished,
     /// A sound native (712 to 738): the application's sound executes it (`audio::Audio`).
     Sound(Sound),
+    /// Native 584 opened a door with its own effect: the application looks up the map's
+    /// doorway sound (`Field::door_sound`) and plays base effect 200 + low quartet.
+    DoorSound { block: i32, placement: i32 },
 }
 
 /// What a step works on.
@@ -400,6 +403,33 @@ impl EventPlayer {
     #[allow(dead_code)] // the collision side (field worker) reads the same state
     pub fn doors(&self) -> &[dq9_core::cutscene::Door] {
         self.cutscene.doors()
+    }
+
+    /// The event running now (`None` between scenes), for the checkpoints.
+    pub fn current(&self) -> Option<u16> {
+        self.running
+    }
+
+    /// A doorway the field touched (native 584): the shared door state both the render
+    /// (`apply_placements`) and the collision (`CollisionWorld::set_door_angle`) read.
+    /// Returns whether the door was added.
+    pub fn open_door(&mut self, block: i32, placement: i32, sound: bool) -> bool {
+        self.cutscene.open_door(block, placement, sound)
+    }
+
+    /// Another map is loaded: its doors are forgotten.
+    pub fn clear_doors(&mut self) {
+        self.cutscene.clear_doors();
+    }
+
+    /// One tick of the door animations when no script runs (a doorway the field opened):
+    /// advances the angles and moves the scene placements with them.
+    pub fn tick_doors(&mut self, stage: &mut Stage) {
+        if self.cutscene.doors().is_empty() {
+            return;
+        }
+        self.cutscene.tick_doors();
+        self.apply_placements(stage);
     }
 
     /// Whether the DS display engines are swapped (natives 109/110): the field and the message
@@ -704,12 +734,15 @@ impl EventPlayer {
                 outcomes.push(Outcome::Ended(*event));
             }
             Event::Sound(sound) => outcomes.push(Outcome::Sound(sound.clone())),
-            Event::OpenDoor { sound: true, .. } => {
-                // `02018310` plays `g_DoorSeTable[record+0x2e & 0xf]` (200 to 204) on the base
-                // archive; the record's low quartet and the base effect index are not read
-                // here, so the sound is reported rather than guessed.
-                self.coverage.miss("door sound");
-            }
+            Event::OpenDoor {
+                block,
+                placement,
+                sound: true,
+                ..
+            } => outcomes.push(Outcome::DoorSound {
+                block: *block,
+                placement: *placement,
+            }),
             _ => {}
         }
         for output in self.cutscene.apply(&event) {

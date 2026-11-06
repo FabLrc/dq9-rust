@@ -25,6 +25,7 @@ fn zone(kind: u32, center: [f32; 3], size: [f32; 3], angle: f32, facing: f32) ->
         class: 0,
         number: 0,
         flags: 0,
+        sound: 0,
         warp: None,
     }
 }

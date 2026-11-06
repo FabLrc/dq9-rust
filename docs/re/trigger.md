@@ -378,6 +378,29 @@ les scènes qui le suivent. Exemple du prologue : fin de `ev21507` (`M01`, salle
 `8 : 21507` → `0x78(26)`), combat 26 (monstres 290, 292 et 290, musique 23, arène 30116), victoire
 (`triggerM01.bin` et `triggerF.bin`, événement 15, `12 : 26` → `0x77(21520)`).
 
+## Portes sans destination et portes internes (native 584)
+
+Une porte de type 2 dont l'action `0x74` n'a pas le drapeau `0x8` ne change pas de carte :
+`Field_TouchDoorways` (`ov_017::02198f84`) appelle quand même la routine de porte
+(`0x02018b44`, la même que la native 584). Elle trouve le placement dont l'entrée de bloc vaut
+la **classe** de la zone et l'identifiant vaut son **numéro**, puis tourne ce placement et tout
+son sous-arbre de `0x1922` (+90°) autour de son origine : 16 mises à jour de 2 images, `409` par
+mise à jour (`Door::SPEED`, `Door::QUARTER_TURN` de `dq9_core::cutscene`). La collision enfant
+suit la rotation (`CollisionWorld::set_door_angle`, delta `fx32`), sinon le passage reste fermé.
+L'événement 17 part avant la rotation ; l'événement 3 (arrivée) part quand elle est finie. Le
+son est `g_DoorSeTable[quartet bas de la valeur 3 du 0x74]`, effets de base **200 à 204**.
+
+Preuves sur la ROM :
+
+- X01M07 (bibliothèque) a **deux** zones au même volume `(-8.6, 0.5, -7.2)`, `1.5 × 2 × 2` :
+  classe 0 numéro 2 (drapeaux `0x10`, son 2) et classe 0 numéro 3 (drapeaux `0x12`, son 2).
+  Leurs placements 2 et 3 (entrée de bloc 0) portent chacun un enfant de collision (4 et 5).
+  Le test `x01m07_inner_door_opens_the_way` : fermée, le héros s'arrête à `z = -6.45` ; après
+  `set_door_angle(0, 2, +0x1922)` **et** `set_door_angle(0, 3, +0x1922)`, il traverse
+  (`z < -8`). Un seul vantail ne suffit pas : les deux zones sont touchées ensemble.
+- X01M01, X01M07, X01M05 : les zones `0x73` de type 1 (43 sur la ROM) sont lues par le champ
+  (tâche 8) mais **restent non modélisées** ; voir la limite du parcours dans `app.md`.
+
 ## Fin de conversation (événement 1)
 
 `Field::talk_ended(pnj, contexte, réponse, état)` tire l'événement 1 quand la fenêtre d'une

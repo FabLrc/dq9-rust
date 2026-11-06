@@ -127,7 +127,7 @@ handler et de ses callees directs, source USA, wiki `Engine-Functions`/`Event-Sc
 | 547 (1) | transition de combat scripté (objet du slot de type 1 rendu visible, masque `0x40000000`) | hors v0.1 (J4) : le combat n'existe pas, l'effet reste rapporté |
 | 552 (1) | caméra à trois os (`02160768`, `0204a170`), même `ctx+4` que 572/531 ; **exécutée** (œil/visée par os, cible portée par `foot`) | le byte `+0x265` (839) n'est pas piloté |
 | 581 (2), 582 (4) | bit 1 (valeur 2) de `NpcTable+0x98` (`0203cf5c`) : `581(0)` le positionne, `581(1)` et `582` l'effacent, `582` efface aussi `0x10000` des 32 PNJ (« PNJ de la distribution d'événement », que 566 modes 4 et 5 positionnent). Seul lecteur trouvé : `0203de94` (boucle des PNJ vers `0208f87c`, avec `zone+0x38/+0x3c`) ne traite un PNJ que si `+0x98 = 0` ou s'il porte `0x10000`. Le bit 0 de `+0x98` coupe lui le dessin des sprites (`0203dda4`, `0203ddf0`) | **[hypothèse]** : `0208f87c` dessine l'ombre des PNJ ; le moteur d'ici n'en dessine aucune, donc 581/582 sont sans effet visible |
-| 584 (1) | ouverture de porte : placement `(entrée de bloc, identifiant)`, angle ±6434 (90°), vitesse 409 par update, son `g_DoorSeTable[flags & 0xf]` ; **exécutée** (rotation du placement) | le son (quartet bas de la zone) et les branches coulissante/inverse ne sont pas lus |
+| 584 (1) | ouverture de porte : placement `(entrée de bloc, identifiant)`, angle ±6434 (90°), vitesse 409 par update, son `g_DoorSeTable[flags & 0xf]` ; **exécutée** (rotation du placement, collision du sous-arbre comprise) | le son est lu (quartet bas de la zone, effets de base 200 à 204) et joué ; les branches coulissante/inverse ne sont pas lues |
 | 328 (1) | enfile le type 3 (déplacement de l'œil et de la cible, comme 304) vers la pose que `020a2b48` calcule pour la caméra de terrain (`GameState+0x3b0`, drapeau 4 de `0202e09c`) en la remettant à son angle par défaut, puis la rétablit : retour de la caméra du jeu au héros, sur `N` mises à jour. **Exécuté** (`Event::CameraToField`) : œil et cible de la caméra du terrain relatifs au héros, tels qu'au début de l'événement **[hypothèse]** | le jeu recalcule la pose depuis l'état de sa caméra, que nous ne portons pas |
 | 809 (9) | montre (`enable≠0`) ou cache l'objet `GameResources+0x4334` (masque 0 ou bit 0) et `+0x4338` (bit 1) ; ces quatre `Object3D` (`+0x4334..0x4340`) sont chargés depuis quatre fichiers par `ov_017::021bdc34` (fonction d'état déclenchée par le drapeau `0x40` de `PartyMember+0x18c`, qui appelle `0218fcf8`, la remise des couleurs, à sa sortie) : **objets de la forme ailée du héros** (ailes, halo) **[hypothèse]**. Appelée avec `1` partout dans les données, en fin de scène | ces objets ne sont pas dessinés (le héros n'a ni ailes ni halo) : `809(1)` est sans effet ici |
 | 815 (2) | écrit 1 puis 0 si trois sondes de l'overlay 29 renvoient les constantes attendues (wiki : contrôle d'intégrité) | overlay 29 obscurci |
@@ -178,11 +178,12 @@ rien changer (`ev010000300.chr`, `ev180003410.chr`, `ev01000s019.chr` n'ont pas 
 comptées : les murs et le sol changent même si aucune image ne les montre.
 
 **Exécutés depuis le lot « scènes restantes »** : légendes 409/411/413 (alpha, centrage,
-silence), caméra à trois os 552 et porte 584. Le son de porte reste rapporté (`door sound`) :
-l'index de `g_DoorSeTable` dépend du quartet bas de la zone, non lu.
+silence), caméra à trois os 552 et porte 584. Le son de porte est joué : le quartet bas de la
+zone (`Zone::sound`) donne `g_DoorSeTable`, effet de base 200 + quartet, une fois par
+ouverture.
 
-**Restent non exécutés** : 547 (transition de combat, hors v0.1 sans combats) et la bascule
-d'écrans (`SwapScreens`, sans objet avec un seul écran).
+**Restent non exécutés** : 547 (transition de combat, hors v0.1 sans combats). La bascule
+d'écrans (`SwapScreens`) est exécutée (redraw et captures).
 
 ## Décompte par famille
 

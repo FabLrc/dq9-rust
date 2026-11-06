@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use dq9_formats::map::{Collision, Map, PartKind};
+use dq9_formats::map::{Collision, Map, PartKind, fix32_cos, fix32_sin};
 use glam::Vec3;
 use nds_rom::compress::decompress;
 use nds_rom::{Error, Narc, Result};
@@ -100,11 +100,30 @@ pub struct Outcome {
     pub started_falling: bool,
 }
 
+/// One placement of a block (`Instance`) and its parent, kept to rotate a door's subtree
+/// (model placement and its collision child) together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Node {
+    /// `Block::entry` the placement belongs to (a door's class).
+    block: u32,
+    /// `Instance::id` (a door's number).
+    id: u16,
+    /// Parent node in the same list.
+    parent: Option<usize>,
+    /// World transform before any door rotation.
+    position: Fx3,
+    angle: i32,
+}
+
 /// Collision meshes and their placements.
 #[derive(Debug, Clone, Default)]
 pub struct CollisionWorld {
     meshes: Vec<Collision>,
     pieces: Vec<Piece>,
+    /// Placement hierarchy of every processed block, parents first.
+    nodes: Vec<Node>,
+    /// Node of each piece (`nodes` index).
+    node_of_piece: Vec<usize>,
 }
 
 impl CollisionWorld {
@@ -114,6 +133,25 @@ impl CollisionWorld {
         let mut archives: HashMap<&str, Narc<'a>> = HashMap::new();
         let mut parsed: HashMap<(usize, usize), usize> = HashMap::new();
         let mut out = Self::default();
+        // The placement hierarchy first: a door rotates its placement and every descendant
+        // (the collision piece is usually a child of the model).
+        let mut block_nodes: HashMap<usize, usize> = HashMap::new();
+        for (block_index, block) in map.blocks.iter().enumerate() {
+            if !block.processed {
+                continue;
+            }
+            let base = out.nodes.len();
+            block_nodes.insert(block_index, base);
+            for instance in &block.instances {
+                out.nodes.push(Node {
+                    block: block.entry,
+                    id: instance.id,
+                    parent: instance.parent.map(|parent| base + parent),
+                    position: instance.world.position,
+                    angle: i32::from(instance.world.angle),
+                });
+            }
+        }
         for (block_index, block) in map.blocks.iter().enumerate() {
             if !block.processed {
                 continue;
@@ -126,7 +164,7 @@ impl CollisionWorld {
             let archive = archives
                 .get(block.archive.as_str())
                 .ok_or(Error::Malformed("collision archive not cached"))?;
-            for instance in &block.instances {
+            for (instance_index, instance) in block.instances.iter().enumerate() {
                 if instance.hidden {
                     continue;
                 }
@@ -157,11 +195,13 @@ impl CollisionWorld {
                         out.meshes.len() - 1
                     }
                 };
+                let node = block_nodes[&block_index] + instance_index;
                 out.pieces.push(Piece {
                     mesh,
                     position: instance.world.position,
                     angle: i32::from(instance.world.angle),
                 });
+                out.node_of_piece.push(node);
             }
         }
         Ok(out)
@@ -169,7 +209,72 @@ impl CollisionWorld {
 
     /// Builds a world from meshes and their placements (tools and tests).
     pub fn from_pieces(meshes: Vec<Collision>, pieces: Vec<Piece>) -> Self {
-        Self { meshes, pieces }
+        Self {
+            meshes,
+            node_of_piece: vec![usize::MAX; pieces.len()],
+            pieces,
+            nodes: Vec::new(),
+        }
+    }
+
+    /// Native 584 (`0x02018b44`, and `Field_TouchDoorways` for a doorway with no destination):
+    /// rotates placement `placement` of block entry `block` and its whole subtree (model
+    /// placement and collision child) by `angle`, a delta in `fx32` added to the placement's
+    /// own rotation (`+0x1922` = +90°). Rotates the collision pieces in place, from the
+    /// transforms read at build time, without re-parsing anything.
+    /// Returns whether any collision piece moved.
+    pub fn set_door_angle(&mut self, block: u32, placement: u16, angle: i32) -> bool {
+        let Some(root) = self
+            .nodes
+            .iter()
+            .position(|node| node.block == block && node.id == placement)
+        else {
+            return false;
+        };
+        let pivot = self.nodes[root].position;
+        let (sin, cos) = (fix32_sin(angle), fix32_cos(angle));
+        let mut moved = false;
+        for index in 0..self.pieces.len() {
+            let mut node = self.node_of_piece[index];
+            let mut inside = false;
+            while node != usize::MAX {
+                if node == root {
+                    inside = true;
+                    break;
+                }
+                node = self
+                    .nodes
+                    .get(node)
+                    .and_then(|n| n.parent)
+                    .unwrap_or(usize::MAX);
+            }
+            if !inside {
+                continue;
+            }
+            let Some(base) = self.nodes.get(self.node_of_piece[index]) else {
+                continue;
+            };
+            let (base_position, base_angle) = (base.position, base.angle);
+            let relative = fx::sub(base_position, pivot);
+            // The map walk's rotation (`MTX_RotY33_` on a row vector, `0x02013168`).
+            let rotated = [
+                ((i64::from(relative[0]) * i64::from(cos)
+                    + i64::from(relative[2]) * i64::from(sin))
+                    >> 12) as i32,
+                relative[1],
+                ((i64::from(relative[2]) * i64::from(cos)
+                    - i64::from(relative[0]) * i64::from(sin))
+                    >> 12) as i32,
+            ];
+            self.pieces[index].position = [
+                rotated[0].wrapping_add(pivot[0]),
+                rotated[1].wrapping_add(pivot[1]),
+                rotated[2].wrapping_add(pivot[2]),
+            ];
+            self.pieces[index].angle = crate::fx::reduce_angle(base_angle.wrapping_add(angle));
+            moved = true;
+        }
+        moved
     }
 
     pub fn meshes(&self) -> &[Collision] {

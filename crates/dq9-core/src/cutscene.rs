@@ -581,11 +581,15 @@ impl Cutscene {
         let light = std::mem::take(&mut self.light);
         let ignored = std::mem::take(&mut self.ignored);
         let display_swap = self.display_swap;
+        // The map's doors are objects of the zone, not of the event: an event that starts
+        // after one opened must keep it open.
+        let doors = std::mem::take(&mut self.props.doors);
         *self = Self::new();
         self.fades = fades;
         self.light = light;
         self.ignored = ignored;
         self.display_swap = display_swap;
+        self.props.doors = doors;
     }
 
     /// Brightness back to normal, unlocked, and the lighting back to the field's: the event
@@ -648,6 +652,41 @@ impl Cutscene {
     /// The doors the script opened (native 584), with their current angle.
     pub fn doors(&self) -> &[Door] {
         &self.props.doors
+    }
+
+    /// Opens a door the field touched (native 584, `Field_TouchDoorways`): the same state the
+    /// scripts use, so the render and the collision read one angle. Returns whether it was
+    /// added (an already open door is left to finish).
+    pub fn open_door(&mut self, block: i32, placement: i32, sound: bool) -> bool {
+        if self
+            .props
+            .doors
+            .iter()
+            .any(|door| door.block == block && door.placement == placement)
+        {
+            return false;
+        }
+        self.props.doors.push(Door {
+            block,
+            placement,
+            angle: 0.0,
+            target: Door::QUARTER_TURN,
+            speed: Door::SPEED,
+            sound,
+        });
+        true
+    }
+
+    /// One tick of the door angles only (a field door opening with no script).
+    pub fn tick_doors(&mut self) {
+        for door in &mut self.props.doors {
+            door.tick();
+        }
+    }
+
+    /// Forgets the map's doors (another map is loaded).
+    pub fn clear_doors(&mut self) {
+        self.props.doors.clear();
     }
 
     /// The caption fields of the current message (natives 409, 411, 413).

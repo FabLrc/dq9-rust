@@ -275,3 +275,35 @@ fn stornway_at_night_marks_its_two_locked_doorways() {
         .collect();
     assert_eq!(used, [24, 22]);
 }
+
+/// X01M07's inner red door (type 2, class 0 number 2, `0x10` side flag, no destination):
+/// native 584 (`0x02018b44`) turns its placement 90° about its origin, and the collision
+/// child must turn with it — the way to the library must open for the hero.
+#[test]
+fn x01m07_inner_door_opens_the_way() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let mut world = World::load(&rom, 4107, None);
+    let ground = world
+        .collision
+        .ground_height(-8.6, -6.0, 3.0)
+        .expect("floor in front of the door");
+    world.hero = Hero::at(Vec3::new(-8.6, ground, -6.0), 0.0);
+    world.walk(Vec3::NEG_Z, 240);
+    let blocked = world.hero.position();
+    assert!(
+        (blocked.z + 6.45).abs() < 0.4,
+        "the closed door stops the hero: {blocked:?}"
+    );
+    // The double door is two placements of two zones (numbers 2 and 3): walking into the
+    // doorway touches both, so both leaves turn.
+    assert!(world.collision.set_door_angle(0, 2, 0x1922));
+    assert!(world.collision.set_door_angle(0, 3, 0x1922));
+    world.hero = Hero::at(Vec3::new(-8.6, ground, -6.0), 0.0);
+    world.walk(Vec3::NEG_Z, 240);
+    let through = world.hero.position();
+    assert!(
+        through.z < -8.0,
+        "the open door lets the hero through: {through:?}"
+    );
+}

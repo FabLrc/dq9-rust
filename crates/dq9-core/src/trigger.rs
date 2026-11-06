@@ -1014,6 +1014,10 @@ pub enum Request {
     },
     /// 0x7c: remove NPC `npc` from the map (its object gets flag 0x8000).
     RemoveNpc(u16),
+    /// A type 2 doorway with no destination was touched: native 584 (`0x02018b44`, called by
+    /// `Field_TouchDoorways`) rotates the placement `placement` of block entry `block` by
+    /// +90° and opens the way. The application animates the rotation.
+    OpenDoor { block: u16, placement: u16 },
     /// Progress changed: the map's triggers are reloaded.
     ReloadTriggers,
     /// A deferred action whose effect is not modelled.

@@ -84,6 +84,8 @@ pub struct Options {
     pub mute: bool,
     /// Mix the sound offline (no device) so that `App::take_recording` can write it.
     pub record_sound: bool,
+    /// Record the pad and action key of every fixed step (`--trace-inputs`).
+    pub trace_inputs: bool,
     /// An event to start as soon as the map is loaded (`--event`).
     pub event: Option<u16>,
     pub story: dq9_formats::cast::Story,
@@ -91,6 +93,46 @@ pub struct Options {
     pub story_override: [Option<u8>; 3],
     /// Start a new game: the first scene of the story (`docs/app.md`, § Nouvelle partie).
     pub new_game: bool,
+}
+
+/// Writes a flag set as a JSON number array, without a per-flag allocation.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_flag_list(out: &mut String, flags: &std::collections::BTreeSet<i32>) {
+    use std::fmt::Write as _;
+    for (index, flag) in flags.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(out, "{flag}");
+    }
+}
+
+/// The d-pad keys of a replay frame (bit 0 up, 1 down, 2 left, 3 right).
+fn pad_input(bits: u8) -> Input {
+    Input {
+        up: bits & 1 != 0,
+        down: bits & 2 != 0,
+        left: bits & 4 != 0,
+        right: bits & 8 != 0,
+    }
+}
+
+/// The world direction the d-pad asks for with the game's camera at yaw 0, diagonal first as
+/// `Hero_ReadDirectionInput` does.
+fn pad_direction(bits: u8) -> Vec3 {
+    let (up, down, left, right) = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+    let direction = match (up, down, left, right) {
+        (true, _, true, _) => Vec3::new(-1.0, 0.0, -1.0),
+        (true, _, _, true) => Vec3::new(1.0, 0.0, -1.0),
+        (_, true, true, _) => Vec3::new(-1.0, 0.0, 1.0),
+        (_, true, _, true) => Vec3::new(1.0, 0.0, 1.0),
+        (true, _, _, _) => Vec3::NEG_Z,
+        (_, true, _, _) => Vec3::Z,
+        (_, _, true, _) => Vec3::NEG_X,
+        (_, _, _, true) => Vec3::X,
+        _ => Vec3::ZERO,
+    };
+    direction.normalize_or_zero()
 }
 
 /// Prints a status line (stderr natively, the console and `#status` element on the web).
@@ -123,6 +165,13 @@ pub struct App {
     /// Map changes chained since the last fixed step (guards against warp loops).
     chain: u8,
     hero: Option<Hero>,
+    /// Direction the headless pilot (`app/auto.rs`) asks the d-pad to walk, in world space.
+    /// Overrides the keyboard for one fixed step; the camera turn is left alone.
+    pilot_dir: Option<Vec3>,
+    /// Doors whose opening already fired the arrival trigger.
+    doors_opened: std::collections::BTreeSet<(i32, i32)>,
+    /// Door angle last applied to the collision, to avoid redoing it every tick.
+    door_angles: std::collections::BTreeMap<(i32, i32), i32>,
     /// NPC conversations and the message window.
     talk: Talk,
     /// Script events: the event task and what it did to the scene.
@@ -133,6 +182,13 @@ pub struct App {
     panel: Option<Panel>,
     /// What the story did since the start, and the fixed step it did it at.
     journal: Journal,
+    /// JSONL snapshots of the story state at the checkpoints the oracle compares.
+    #[cfg(not(target_arch = "wasm32"))]
+    checkpoints: Vec<String>,
+    /// Pad bits and action key of every fixed step (`--trace-inputs`).
+    input_trace: Vec<(u8, bool)>,
+    /// Pad bits a replay frame asks for, consumed by one fixed step.
+    replay_pad: Option<u8>,
     tick: u64,
     hero_instance: Option<usize>,
     /// The protagonist's look (the save's hero, else a new game's), kept across maps.
@@ -192,11 +248,18 @@ impl App {
             state,
             chain: 0,
             hero: None,
+            pilot_dir: None,
+            doors_opened: std::collections::BTreeSet::new(),
+            door_angles: std::collections::BTreeMap::new(),
             talk: Talk::default(),
             events: EventPlayer::new(),
             quiet_events: false,
             panel: None,
             journal: Journal::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            checkpoints: Vec::new(),
+            input_trace: Vec::new(),
+            replay_pad: None,
             tick: 0,
             hero_instance: None,
             look: HeroLook::new_game(),
@@ -275,7 +338,14 @@ impl App {
 
     #[cfg(target_arch = "wasm32")]
     fn set_save(&mut self, save: Vec<u8>) {
+        // Picking a save replaces whatever the page started with (a new game from
+        // `?newgame=1`, a map preview): the save selects the map, the position and the
+        // scenario. Without this, `set_rom` would keep starting the prologue.
+        self.options.new_game = false;
+        self.options.map = None;
+        self.options.event = None;
         self.options.save = Some(save);
+        self.talk.set_identity(None);
         if let Some(rom) = &self.rom {
             self.set_rom(rom.clone());
         }
@@ -349,7 +419,15 @@ impl App {
         let hero_start = loaded.hero.position();
         self.environment = lighting::environment(loaded.lighting.as_ref(), self.day);
         self.lighting_info = loaded.lighting.clone();
+        let previous = self.current.as_ref().map(|(entry, _)| entry.id);
         self.collision = loaded.collision;
+        // The collision was rebuilt: even on the same map, every open door must be applied
+        // again. A real map change also forgets the doors and their triggers.
+        self.door_angles.clear();
+        if previous != Some(loaded.entry.id) {
+            self.events.clear_doors();
+            self.doors_opened.clear();
+        }
         self.field = Some(loaded.field);
         self.talk.enter_map(loaded.npcs);
         self.hero = Some(loaded.hero);
@@ -443,6 +521,9 @@ impl App {
                 }
                 Event::Request(Request::Battle(number)) => self.run_battle(number),
                 Event::Request(Request::RemoveNpc(npc)) => self.talk.remove_npc(npc),
+                Event::Request(Request::OpenDoor { block, placement }) => {
+                    self.open_door(u32::from(block), placement)
+                }
                 Event::Request(Request::Talk { npc, context }) => self.talk_to(npc, context),
                 Event::Request(request) => {
                     status(&format!(
@@ -669,6 +750,9 @@ impl App {
                         self.audio.script_sound(rom, &sound);
                     }
                 }
+                Outcome::DoorSound { block, placement } => {
+                    self.play_door_sound(block, placement);
+                }
                 Outcome::Finished => {}
             }
         }
@@ -739,7 +823,11 @@ impl App {
     /// Runs `due` fixed steps of the game logic.
     fn run_steps(&mut self, due: u32) {
         for _ in 0..due {
+            if self.options.trace_inputs {
+                self.input_trace.push((0, self.talk.confirm_pending()));
+            }
             self.step_sound();
+            self.step_doors();
             self.tick += 1;
             self.journal.note_progress(self.tick, &self.state);
             if self.events.pending_start().is_some() || self.events.is_active() {
@@ -772,6 +860,8 @@ impl App {
                 ));
             }
             let talking = self.talk.is_active();
+            let piloted = std::mem::take(&mut self.pilot_dir);
+            let replay = self.replay_pad.take();
             let mut input = CameraInput {
                 forward: self.axis(
                     &[KeyCode::KeyW, KeyCode::ArrowUp],
@@ -796,34 +886,54 @@ impl App {
                 input.up = 0.0;
             }
             self.camera.step(&input, STEP);
-            let steering = walking && !talking;
-            let pad = Input {
-                up: steering && self.axis(&[KeyCode::KeyW, KeyCode::ArrowUp], &[]) > 0.0,
-                down: steering && self.axis(&[KeyCode::KeyS, KeyCode::ArrowDown], &[]) > 0.0,
-                left: steering && self.axis(&[KeyCode::KeyA, KeyCode::ArrowLeft], &[]) > 0.0,
-                right: steering && self.axis(&[KeyCode::KeyD, KeyCode::ArrowRight], &[]) > 0.0,
+            let steering = walking && !talking && piloted.is_none() && replay.is_none();
+            let pad = match (replay, piloted) {
+                (Some(bits), _) => pad_input(bits),
+                (None, Some(direction)) => Input::from_direction(direction),
+                (None, None) => Input {
+                    up: steering && self.axis(&[KeyCode::KeyW, KeyCode::ArrowUp], &[]) > 0.0,
+                    down: steering && self.axis(&[KeyCode::KeyS, KeyCode::ArrowDown], &[]) > 0.0,
+                    left: steering && self.axis(&[KeyCode::KeyA, KeyCode::ArrowLeft], &[]) > 0.0,
+                    right: steering && self.axis(&[KeyCode::KeyD, KeyCode::ArrowRight], &[]) > 0.0,
+                },
             };
+            if self.options.trace_inputs
+                && let Some(last) = self.input_trace.last_mut()
+            {
+                last.0 = u8::from(pad.up)
+                    | u8::from(pad.down) << 1
+                    | u8::from(pad.left) << 2
+                    | u8::from(pad.right) << 3;
+            }
             if steering {
                 self.turn_camera();
             }
-            // The game's camera yaw turns the other way round from the application's.
-            let camera_yaw = reduce_angle((-self.camera.yaw * 4096.0) as i32);
-            let move_direction = if steering {
-                let (sin, cos) = self.camera.yaw.sin_cos();
-                let forward = Vec3::new(sin, 0.0, -cos);
-                let right = Vec3::new(cos, 0.0, sin);
-                forward
-                    * self.axis(
-                        &[KeyCode::KeyW, KeyCode::ArrowUp],
-                        &[KeyCode::KeyS, KeyCode::ArrowDown],
-                    )
-                    + right
-                        * self.axis(
-                            &[KeyCode::KeyD, KeyCode::ArrowRight],
-                            &[KeyCode::KeyA, KeyCode::ArrowLeft],
-                        )
+            // The game's camera yaw turns the other way round from the application's. The
+            // headless pilot gives world directions, so it walks with the camera at yaw 0.
+            let camera_yaw = if piloted.is_some() || replay.is_some() {
+                0
             } else {
-                Vec3::ZERO
+                reduce_angle((-self.camera.yaw * 4096.0) as i32)
+            };
+            let move_direction = match (replay, piloted) {
+                (Some(bits), _) => pad_direction(bits),
+                (None, Some(direction)) => Vec3::new(direction.x, 0.0, direction.z),
+                (None, None) if steering => {
+                    let (sin, cos) = self.camera.yaw.sin_cos();
+                    let forward = Vec3::new(sin, 0.0, -cos);
+                    let right = Vec3::new(cos, 0.0, sin);
+                    forward
+                        * self.axis(
+                            &[KeyCode::KeyW, KeyCode::ArrowUp],
+                            &[KeyCode::KeyS, KeyCode::ArrowDown],
+                        )
+                        + right
+                            * self.axis(
+                                &[KeyCode::KeyD, KeyCode::ArrowRight],
+                                &[KeyCode::KeyA, KeyCode::ArrowLeft],
+                            )
+                }
+                (None, None) => Vec3::ZERO,
             };
             if let Some(hero) = &mut self.hero {
                 let before = hero.position();
@@ -861,6 +971,225 @@ impl App {
                 return;
             }
         }
+    }
+
+    /// A doorway the field touched (native 584): the shared door state, the same the scripts
+    /// use, and its own effect once.
+    fn open_door(&mut self, block: u32, placement: u16) {
+        if !self.events.open_door(block as i32, placement as i32, false) {
+            return;
+        }
+        self.play_door_sound(block as i32, placement as i32);
+        status(&format!("door {block}/{placement} opens"));
+    }
+
+    /// Native 584's effect: `g_DoorSeTable[low quartet]`, base effects 200 to 204, when the
+    /// map's doorway names that quartet.
+    fn play_door_sound(&mut self, block: i32, placement: i32) {
+        let Some(low) = self
+            .field
+            .as_ref()
+            .and_then(|field| field.door_sound(block as u8, placement as u8))
+        else {
+            status(&format!(
+                "door {block}/{placement}: no sound in this map's doorway"
+            ));
+            return;
+        };
+        if let Some(rom) = self.rom.as_deref() {
+            self.audio.play_base_effect(rom, u16::from(low) + 200);
+        }
+    }
+
+    /// One fixed step of the doors: when no script runs, advance the shared angles and move
+    /// the scene placements; then turn the collision subtree and fire the arrival trigger
+    /// once a door reaches its target.
+    fn step_doors(&mut self) {
+        if self.events.doors().is_empty() {
+            return;
+        }
+        if !(self.events.pending_start().is_some() || self.events.is_active()) {
+            let (Some(rom), Some(scene), Some(hero)) = (
+                self.rom.as_deref(),
+                self.runtime.as_mut(),
+                self.hero.as_mut(),
+            ) else {
+                return;
+            };
+            let mut stage = Stage {
+                rom,
+                world: &self.state,
+                scene,
+                hero,
+                collision: &self.collision,
+                camera: &mut self.camera,
+                talk: &mut self.talk,
+            };
+            self.events.tick_doors(&mut stage);
+        }
+        let count = self.events.doors().len();
+        let mut opened = false;
+        for index in 0..count {
+            let (block, placement, angle, done) = {
+                let door = &self.events.doors()[index];
+                (
+                    door.block,
+                    door.placement,
+                    door.angle_fx(),
+                    door.angle >= door.target,
+                )
+            };
+            let key = (block, placement);
+            if self.door_angles.get(&key).copied() != Some(angle) {
+                self.collision
+                    .set_door_angle(block as u32, placement as u16, angle);
+                self.door_angles.insert(key, angle);
+            }
+            if done && self.doors_opened.insert(key) {
+                opened = true;
+            }
+        }
+        if opened && let Some(field) = &mut self.field {
+            let events = field.door_opened(&mut self.state);
+            self.apply_events(events);
+        }
+    }
+
+    /// One fixed step of a recorded input trace (`--trace-inputs`, replayed): the pad keys and
+    /// the action key are fed exactly as recorded, and the journal checkpoints are captured.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn replay_step(&mut self, bits: u8, confirm: bool) {
+        let recorded = self.journal.steps.len();
+        self.replay_pad = Some(bits);
+        if confirm {
+            self.talk.press(Button::Confirm);
+        }
+        self.run_steps(1);
+        self.capture_journal(recorded);
+        // The pilot's control points are part of the proof: record them the same way.
+        let busy = self.events.is_active() || self.events.pending_start().is_some();
+        if !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
+            let map = self.current.as_ref().map_or(0, |(entry, _)| entry.id);
+            let track = &self.state.tracks[self.state.track];
+            let story = (track.chapter, track.step, track.substep);
+            let last = self
+                .journal
+                .steps
+                .iter()
+                .rev()
+                .find_map(|(_, step)| match step {
+                    Step::Control { story, .. } => Some(*story),
+                    _ => None,
+                });
+            if last.is_none_or(|seen| seen != story) {
+                self.journal.record(self.tick, Step::Control { map, story });
+                self.capture_checkpoint("control");
+            }
+        }
+    }
+
+    /// Records the story state for the oracle (`dq9re state --json` field names): one JSON
+    /// object per checkpoint, in the order the journal recorded them.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn capture_checkpoint(&mut self, kind: &'static str) {
+        use std::fmt::Write as _;
+        let map = self.current.as_ref().map_or(0, |(entry, _)| entry.id);
+        let area = self
+            .current
+            .as_ref()
+            .and_then(|(entry, _)| entry.code.get(..3))
+            .and_then(|family| self.maps.iter().find(|map| map.code == family))
+            .map_or(0, |map| map.id);
+        let daytime = self.day.phase().is_daytime();
+        let mut out = String::new();
+        let _ = write!(
+            out,
+            "{{\"tick\":{},\"seconds\":{:.2},\"kind\":\"{kind}\",\"vblank\":{},\"map\":{},\"area\":{},\"track\":{},\"daytime\":{},",
+            self.tick,
+            self.tick as f64 / 60.0,
+            self.tick,
+            map,
+            area,
+            self.state.track,
+            daytime,
+        );
+        out.push_str("\"tracks\":[");
+        for (index, track) in self.state.tracks.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                out,
+                "{{\"chapter\":{},\"step\":{},\"substep\":{},\"chapter_flags\":[",
+                track.chapter, track.step, track.substep
+            );
+            write_flag_list(&mut out, &track.flags[0]);
+            out.push_str("],\"step_flags\":[");
+            write_flag_list(&mut out, &track.flags[1]);
+            out.push_str("]}");
+        }
+        out.push_str("],\"flags\":[");
+        write_flag_list(&mut out, &self.state.flags);
+        out.push(']');
+        out.push_str(",\"quests\":{");
+        for (index, (quest, state)) in self.state.quests.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(out, "\"{quest}\":{state}");
+        }
+        out.push('}');
+        let event = self
+            .events
+            .current()
+            .map_or_else(|| "null".to_owned(), |event| event.to_string());
+        let hero = self.hero.map_or([0.0; 4], |hero| {
+            [
+                hero.position().x,
+                hero.position().y,
+                hero.position().z,
+                hero.yaw(),
+            ]
+        });
+        let _ = write!(
+            out,
+            ",\"event\":{event},\"hero\":{{\"x\":{:.3},\"y\":{:.3},\"z\":{:.3},\"yaw\":{:.3}}}}}",
+            hero[0], hero[1], hero[2], hero[3]
+        );
+        self.checkpoints.push(out);
+    }
+
+    /// The checkpoints captured so far, one JSON object per line.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn checkpoints_jsonl(&self) -> String {
+        let mut out = self.checkpoints.join("\n");
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out
+    }
+
+    /// The recorded pad and action key, one JSON object per fixed step.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn input_trace_jsonl(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        for (frame, (bits, confirm)) in self.input_trace.iter().enumerate() {
+            let _ = write!(out, "{{\"frame\":{frame},\"pad\":[");
+            let mut first = true;
+            for (bit, name) in [(1u8, "up"), (2, "down"), (4, "left"), (8, "right")] {
+                if bits & bit == 0 {
+                    continue;
+                }
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                let _ = write!(out, "\"{name}\"");
+            }
+            let _ = writeln!(out, "],\"a\":{confirm}}}");
+        }
+        out
     }
 
     fn redraw(&mut self) {

@@ -18,8 +18,8 @@
 use std::f32::consts::PI;
 
 use dq9_formats::map::{
-    FLAG_SIDE, FLAG_WARP, Regions, Warp, ZONE_AREA, ZONE_DOORWAY, Zone, fix32_cos, fix32_sin,
-    reduce_angle,
+    FLAG_SIDE, FLAG_WARP, Regions, Warp, WarpVolume, ZONE_AREA, ZONE_DOORWAY, Zone, ZoneVolume,
+    fix32_cos, fix32_sin, reduce_angle,
 };
 use dq9_formats::table::{Table, Value};
 use dq9_formats::trigger::{Op, Trigger};
@@ -317,8 +317,49 @@ pub struct Exit {
     pub destination: Option<u16>,
     /// A point inside its volume.
     pub position: Vec3,
-    /// Direction to walk to touch a doorway (zero for a warp).
+    /// Direction to walk into a doorway, against its facing (zero for a warp).
     pub heading: Vec3,
+    /// The `0x72` volume of a warp, when this exit is one.
+    pub warp: Option<WarpVolume>,
+    /// The `0x73` volume of a doorway, when this exit is one.
+    pub door: Option<ZoneVolume>,
+    /// Class and number of a doorway (native 584 names the placement `number` of block entry
+    /// `class`); both zero for a warp.
+    pub class: u8,
+    pub number: u8,
+}
+
+/// Whether `position` is inside the trigger volume of `exit`: standing or walking there is
+/// what makes the warp or doorway fire (`ov_017::0219ca88`, `ov_017::02197a64`).
+pub fn exit_contains(exit: &Exit, position: Vec3) -> bool {
+    let p = to_fx(position);
+    if let Some(v) = exit.warp {
+        return in_rotated_box(
+            p,
+            &[
+                v.high[0], v.high[1], v.high[2], v.low[0], v.low[1], v.low[2],
+            ],
+            i32::from(v.angle),
+            v.center,
+            v.radius_sq,
+        );
+    }
+    if let Some(v) = exit.door {
+        if v.size[2] < 1 {
+            return in_cylinder(p, v.center, v.size[0], v.size[1]);
+        }
+        let half = v.size.map(|s| s >> 1);
+        let high = [0, 1, 2].map(|i| v.center[i].wrapping_add(half[i]));
+        let low = [0, 1, 2].map(|i| v.center[i].wrapping_sub(half[i]));
+        return in_rotated_box(
+            p,
+            &[high[0], high[1], high[2], low[0], low[1], low[2]],
+            i32::from(v.angle),
+            v.center,
+            v.radius_sq,
+        );
+    }
+    false
 }
 
 /// Map state of the field: regions with their runtime bits, the area the leader stands in,
@@ -513,6 +554,10 @@ impl Field {
             destination: Some(w.destination),
             position: from_fx(w.volume.center),
             heading: Vec3::ZERO,
+            warp: Some(w.volume),
+            door: None,
+            class: 0,
+            number: 0,
         });
         let doorways = self.doorways.iter().map(|slot| {
             let facing = direction(i32::from(slot.zone.volume.facing));
@@ -523,7 +568,13 @@ impl Field {
                     .filter(|_| slot.flags & FLAG_WARP != 0)
                     .map(|w| w.destination),
                 position: from_fx(slot.zone.volume.center),
-                heading: Vec3::new(facing[0], 0.0, facing[1]),
+                // The game accepts a doorway when the hero walks **against** its facing
+                // (`docs/re/map-archive.md`): the heading is the way into it.
+                heading: Vec3::new(-facing[0], 0.0, -facing[1]),
+                warp: None,
+                door: Some(slot.zone.volume),
+                class: slot.zone.class,
+                number: slot.zone.number,
             }
         });
         warps.chain(doorways).collect()
@@ -535,6 +586,27 @@ impl Field {
         let map = self.areas.iter().map(|s| s.zone.volume.center);
         let added = self.added.iter().map(|a| a.center);
         map.chain(added).map(from_fx).collect()
+    }
+
+    /// Whether `position` is inside the area of `index` (the order of [`Field::area_points`]:
+    /// the map's areas, then the areas triggers added), ignoring its once-only bits. For an
+    /// autopilot that looks for a walkable point inside the area.
+    pub fn area_contains(&self, index: usize, position: Vec3) -> bool {
+        if let Some(slot) = self.areas.get(index) {
+            return zone_contains(&slot.zone, position);
+        }
+        self.added
+            .get(index - self.areas.len())
+            .is_some_and(|area| area.holds(to_fx(position)))
+    }
+
+    /// The sound a doorway plays when it opens (`g_DoorSeTable`, base effects 200 to 204):
+    /// the low quartet of the zone's `0x74` value 3. `None` when the map has no such doorway.
+    pub fn door_sound(&self, class: u8, number: u8) -> Option<u8> {
+        self.doorways
+            .iter()
+            .find(|slot| slot.zone.class == class && slot.zone.number == number)
+            .map(|slot| slot.zone.sound)
     }
 
     /// Whether any map change is among `events`.
@@ -638,9 +710,23 @@ impl Field {
         });
         let changed = self.collect(fired, fallback, events);
         if own.is_none() {
+            // A doorway with no destination only opens (native 584, `0x02018b44`).
+            events.push(Event::Request(Request::OpenDoor {
+                block: u16::from(class),
+                placement: u16::from(number),
+            }));
             self.approach = 0;
         }
         changed
+    }
+
+    /// Native 584 fires trigger event 3 once the door has finished opening (the arrival
+    /// event, as after a map load). Returns what its actions ask for.
+    pub fn door_opened(&mut self, state: &mut State) -> Vec<Event> {
+        let mut events = Vec::new();
+        let fired = self.fire(EVENT_ARRIVAL, &[(3, u32::from(self.room))], state);
+        self.collect(fired, None, &mut events);
+        events
     }
 
     /// `ov_017::0219814c`: events 5 and 2 as the leader moves between the areas of the map.
