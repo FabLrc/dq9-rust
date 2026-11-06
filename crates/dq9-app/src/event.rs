@@ -406,6 +406,7 @@ impl EventPlayer {
     }
 
     /// The event running now (`None` between scenes), for the checkpoints.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn current(&self) -> Option<u16> {
         self.running
     }

@@ -336,7 +336,7 @@ impl App {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", test))]
     fn set_save(&mut self, save: Vec<u8>) {
         // Picking a save replaces whatever the page started with (a new game from
         // `?newgame=1`, a map preview): the save selects the map, the position and the
@@ -1055,6 +1055,41 @@ impl App {
         }
     }
 
+    /// One fixed step of a native `--walk` script: the world direction is fed exactly as the
+    /// pilot feeds it, through the same `Hero::step`/`Field::step`/door path as the window.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn walk_step(&mut self, direction: Vec3) {
+        self.pilot_dir = Some(direction);
+        self.run_steps(1);
+    }
+
+    /// Places the hero at `(x, z)` on the current map (`--start`), on the collision's ground.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn place_hero(&mut self, x: f32, z: f32) -> anyhow::Result<()> {
+        let code = self
+            .current
+            .as_ref()
+            .map(|(entry, _)| entry.code.clone())
+            .unwrap_or_default();
+        let hero = crate::walk::start_hero(&self.collision, &code, (x, z))?;
+        self.hero = Some(hero);
+        if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance) {
+            let world = runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()));
+            if let Some(instance) = runtime.scene.instances.get_mut(index) {
+                instance.world = world;
+            }
+        }
+        Ok(())
+    }
+
+    /// The loaded map, its code and the hero's pose, for the `--walk` logs.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn walk_pose(&self) -> Option<(u16, String, Vec3, f32)> {
+        let (entry, _) = self.current.as_ref()?;
+        let hero = self.hero?;
+        Some((entry.id, entry.code.clone(), hero.position(), hero.yaw()))
+    }
+
     /// One fixed step of a recorded input trace (`--trace-inputs`, replayed): the pad keys and
     /// the action key are fed exactly as recorded, and the journal checkpoints are captured.
     #[cfg(not(target_arch = "wasm32"))]
@@ -1447,5 +1482,61 @@ impl App {
         self.audio
             .take_recording()
             .map(|samples| (crate::audio::RECORD_RATE, samples))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dq9_core::state::GameState;
+    use dq9_formats::save::Save;
+
+    /// The web bug: after "Nouvelle partie", picking a save must load that save, not start
+    /// the prologue again. Exercises the same `set_save` path with a real save and ROM. The
+    /// test event loop needs Windows' any-thread builder (cargo tests are threads).
+    #[cfg(windows)]
+    #[test]
+    fn a_save_selected_after_a_new_game_loads_that_save() {
+        let (Some(rom), Some(save_path)) = (testrom::load(), std::env::var_os("DQ9_SAVE")) else {
+            eprintln!("skipping: DQ9_ROM or DQ9_SAVE missing");
+            return;
+        };
+        let save = std::fs::read(save_path).unwrap();
+        let expected = GameState::from_save(&Save::parse(&save).unwrap()).unwrap();
+        use winit::platform::windows::EventLoopBuilderExtWindows;
+        let Ok(event_loop) = winit::event_loop::EventLoop::<UserEvent>::with_user_event()
+            .with_any_thread(true)
+            .build()
+        else {
+            eprintln!("skipping: no event loop");
+            return;
+        };
+        let options = Options {
+            map: None,
+            save: None,
+            time: None,
+            clock: None,
+            layout: Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: dq9_formats::cast::Story {
+                chapter: 1,
+                step: 1,
+                substep: 1,
+                daytime: true,
+                ..Default::default()
+            },
+            story_override: [None; 3],
+            new_game: true,
+        };
+        let mut app = App::new(event_loop.create_proxy(), options, Some(rom.to_vec()));
+        assert!(app.options.new_game);
+        app.set_save(save);
+        assert!(!app.options.new_game, "the save selects save mode");
+        assert_eq!(app.options.map, None);
+        let map = app.current.as_ref().map(|(entry, _)| entry.id);
+        assert_eq!(map, Some(expected.map), "the save's map is loaded");
     }
 }
