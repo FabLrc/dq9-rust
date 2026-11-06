@@ -1,10 +1,16 @@
 //! `dq9re map`: the files a map loads and how the game assembles them, optionally checked
-//! against the map loaded in a melonDS state.
+//! against the map loaded in a melonDS state, drawn from above, and flooded for reachability.
 
+mod image;
+mod reach;
+
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
+use std::path::PathBuf;
 
 use anyhow::{Context as _, Result, bail};
+use dq9_core::collision::CollisionWorld;
 use dq9_formats::Table;
 use dq9_formats::map::{self, Context, Map, PartKind};
 use dq9_formats::maplist::{self, MapList, MapRecord};
@@ -28,6 +34,27 @@ pub struct MapArgs {
     /// melonDS state whose loaded map (`g_Zone3D+0x41c`) is compared with the assembly.
     #[arg(long)]
     state: Option<std::path::PathBuf>,
+    /// Renders the assembled collision from above: floors by height, walls dark, warp and
+    /// zone outlines with their destination.
+    #[arg(long)]
+    image: Option<PathBuf>,
+    /// Pixels per world unit of `--image` and `--reach-image` (default 8).
+    #[arg(long, default_value_t = 8)]
+    scale: u32,
+    /// Hero marker on the image, world units: `--at X,Z` is stood on the highest floor,
+    /// `--at X,Y,Z` within one unit above a floor. Refused when no floor is found.
+    #[arg(long, num_args = 2..=3, value_name = "X[,Y],Z")]
+    at: Option<Vec<f32>>,
+    /// Flood fill from `X,Z` (highest floor) or `X,Y,Z`, with the real hero step and 3D
+    /// arrival; one line of statistics.
+    #[arg(long, num_args = 2..=3, value_name = "X[,Y],Z")]
+    reach: Option<Vec<f32>>,
+    /// Target of `--reach`: the report says whether a hero reaches it.
+    #[arg(long, num_args = 3, value_name = "X Y Z")]
+    to: Option<Vec<f32>>,
+    /// Writes the same view with the cells of `--reach` tinted green; needs `--reach`.
+    #[arg(long)]
+    reach_image: Option<PathBuf>,
 }
 
 fn text(s: &[u8]) -> String {
@@ -50,6 +77,12 @@ fn find<'a>(list: &'a MapList<'a>, key: &str) -> Result<&'a MapRecord<'a>> {
 }
 
 pub fn run(rom: &Rom, args: &MapArgs) -> Result<()> {
+    if args.reach_image.is_some() && args.reach.is_none() {
+        bail!("--reach-image needs --reach");
+    }
+    if args.to.is_some() && args.reach.is_none() {
+        bail!("--to needs --reach");
+    }
     let table = Table::parse(rom.file_by_path(maplist::PATH)?).context("parsing map list")?;
     let list = MapList::parse(&table)?;
     let state_bytes = match &args.state {
@@ -77,6 +110,13 @@ pub fn run(rom: &Rom, args: &MapArgs) -> Result<()> {
     };
     let map = Map::assemble(record, &table, &list, |p| map::rom_file(rom, p), &ctx)?;
     print(record, &map, &ctx);
+    if args.image.is_some()
+        || args.at.is_some()
+        || args.reach.is_some()
+        || args.reach_image.is_some()
+    {
+        run_collision(rom, &map, &list, args)?;
+    }
     if let Some(state) = &state {
         let differences = compare(state, &map)?;
         if differences.is_empty() {
@@ -87,6 +127,159 @@ pub fn run(rom: &Rom, args: &MapArgs) -> Result<()> {
                 println!("  {d}");
             }
         }
+    }
+    Ok(())
+}
+
+/// Settles a user point on the floor: `[X, Z]` probes the highest floor at that column,
+/// `[X, Y, Z]` looks from `Y` one unit above to ten below. Nothing is projected onto a
+/// guessed height: a point without a floor is an error.
+fn grounded(world: &CollisionWorld, values: &[f32], what: &str) -> Result<[f32; 3]> {
+    let (x, z) = (values[0], values[values.len() - 1]);
+    let y = match values.len() {
+        3 => values[1],
+        _ => reach::highest_ground(world, x, z)
+            .with_context(|| format!("{what} point ({x:.3}, ?, {z:.3})"))?,
+    };
+    let ground = world
+        .ground([
+            (x * 4096.0) as i32,
+            (y * 4096.0) as i32,
+            (z * 4096.0) as i32,
+        ])
+        .with_context(|| {
+            format!(
+                "{what} point ({x:.3}, {y:.3}, {z:.3}) is not on the floor: \
+                 CollisionWorld::ground found nothing within one unit above or ten below"
+            )
+        })?;
+    Ok([x, ground as f32 / 4096.0, z])
+}
+
+/// Builds the collision world of the assembled map and renders and/or floods it.
+fn run_collision(rom: &Rom, map: &Map, list: &MapList<'_>, args: &MapArgs) -> Result<()> {
+    let world = CollisionWorld::build(map, |p| map::rom_file(rom, p))
+        .context("building the collision world")?;
+    println!(
+        "\ncollision: {} meshes, {} placed pieces",
+        world.meshes().len(),
+        world.pieces().len()
+    );
+    let mut codes = HashMap::new();
+    for record in &list.records {
+        if record.id != 0 {
+            codes.insert(record.id, text(record.code));
+        }
+    }
+    let start_record = map.block_list.start.position;
+    let raw_start = start_record.map(|c| c as f32 / 4096.0);
+    let start = match world.ground(start_record) {
+        Some(ground) => Some([raw_start[0], ground as f32 / 4096.0, raw_start[2]]),
+        None => {
+            eprintln!("warning: the map's start record is not on the floor; drawn at its own Y");
+            Some(raw_start)
+        }
+    };
+    let hero = args
+        .at
+        .as_ref()
+        .map(|values| grounded(&world, values, "--at"))
+        .transpose()?;
+    let target = args
+        .to
+        .as_ref()
+        .map(|values| [values[0], values[1], values[2]]);
+    let reach = match &args.reach {
+        Some(values) => {
+            let start = grounded(&world, values, "--reach")?;
+            let start_fx = start.map(|c| (c * 4096.0) as i32);
+            let target_fx = target.map(|c| c.map(|v| (v * 4096.0) as i32));
+            let reach = reach::flood(&world, start_fx, target_fx).context("flood fill")?;
+            println!(
+                "reach from ({:.3}, {:.3}, {:.3}) stood on the floor: {} nodes, y {:.3}..{:.3} \
+                 (step {:.2}, 3D arrival < {:.2}, climb <= {:.1}, fall <= {:.1})",
+                reach.start.x,
+                reach.start.y,
+                reach.start.z,
+                reach.cells.len(),
+                reach.min_y,
+                reach.max_y,
+                reach::GRID_STEP,
+                reach::ARRIVE_DISTANCE,
+                reach::MAX_CLIMB,
+                reach::MAX_FALL
+            );
+            if let Some(target) = reach.target {
+                println!(
+                    "target ({:.3}, {:.3}, {:.3}): {}",
+                    target.x,
+                    target.y,
+                    target.z,
+                    if reach.target_reached == Some(true) {
+                        "reached"
+                    } else {
+                        "not reached"
+                    }
+                );
+            }
+            Some(reach)
+        }
+        None => None,
+    };
+    if let Some(path) = &args.image {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        let rendered = image::render(
+            &world,
+            &map.regions,
+            &codes,
+            image::Markers {
+                start,
+                hero,
+                target,
+                reach: None,
+            },
+            args.scale,
+            path,
+        )?;
+        println!(
+            "image {}: {}x{} px, floor heights {:.3}..{:.3}{}",
+            path.display(),
+            rendered.width,
+            rendered.height,
+            rendered.min_y,
+            rendered.max_y,
+            if hero.is_some() { ", hero marked" } else { "" }
+        );
+    }
+    if let Some(path) = &args.reach_image {
+        let Some(reach) = &reach else {
+            bail!("--reach-image needs --reach");
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        let rendered = image::render(
+            &world,
+            &map.regions,
+            &codes,
+            image::Markers {
+                start,
+                hero,
+                target,
+                reach: Some(reach),
+            },
+            args.scale,
+            path,
+        )?;
+        println!(
+            "reach image {}: {}x{} px, {} cells tinted",
+            path.display(),
+            rendered.width,
+            rendered.height,
+            reach.cells.len()
+        );
     }
     Ok(())
 }

@@ -466,6 +466,83 @@ qui boucle ferait boucler le jeu (erreur ici).
   la comparaison signale les deux instances dont la visibilité change.
 - La table de sinus du SDK est comparée entrée par entrée à celle calculée (test ROM).
 
+## Voir la collision (`dq9re map --image`, `--reach`)
+
+Deux options de `cargo dq9re map` rendent la géométrie visible, sans modèle ni texture :
+`--image` écrit une vue orthographique du dessus des `.col2` assemblés (mêmes archives et
+placements que `CollisionWorld::build`), `--reach` remplit une grille de marche et colorie
+les cellules atteintes sur `--reach-image`.
+
+```powershell
+cargo dq9re map X01M07 --image build/scratch/x01m07.png --scale 16 --at 0 6.8
+cargo dq9re map X01M07 --reach 0 0.17 6.8 --to 0 0.17 17.5 --reach-image build/scratch/x01m07-reach.png
+cargo dq9re map X01M01 --reach 2.77 11.25 18.19 --to 2.77 15.5 18.19 --reach-image build/scratch/x01m01-reach.png
+```
+
+`X,Y,Z` et `X,Z` sont en unités du monde (pas en `fx32`), séparés par des espaces ; sans `Y`,
+le point est cherché sous la surface la plus haute de la colonne. Le point de départ de
+`--at` et de `--reach` est **posé au sol** par `CollisionWorld::ground` (`0x02018fcc`) ; un
+point sans sol à moins de 1 unité au-dessus ou 10 en dessous est refusé avec l'erreur
+`not on the floor`. Une carte sans géométrie de collision échoue de la même façon.
+
+### Légende
+
+| Couleur | Sens |
+|---|---|
+| dégradé bleu → vert → jaune → rouge | sol, de la hauteur minimale à la maximale ; la barre en haut à gauche donne ces deux bornes |
+| gris très sombre | murs et plafonds (`normale y <= 0x800`) ; les faces verticales sont tracées au trait puisque leur projection est une ligne |
+| magenta | volume de warp `0x72`, avec `>CODE` quand la liste des cartes résout sa destination |
+| orange | zone de porte `0x73`/`0x74` de type 2, destination si le drapeau `0x8` la donne |
+| cyan | aire de la carte (type 3) |
+| gris | autres types de zone |
+| carré blanc | point de départ de la carte (`.bmbl` type `0x6e`), posé au sol |
+| carré rouge | héros de `--at` |
+| croix rouge | cible de `--to` |
+| teinte cyan | cellules atteignables de `--reach-image` (masquées sous un sol plus haut) |
+
+La vue montre la **surface la plus haute** de chaque pixel : elle ne superpose pas les étages,
+elle les cache. C'est une vue de développement : ni textures, ni modèles, ni animation, ni
+éclairage, ni caméra du jeu ; les portes sont dessinées à leur position de chargement (fermées).
+
+### `--reach` : portée réelle, en 3D
+
+La grille fait **0,5 unité** et est ancrée au point de départ. Chaque arête est parcourue par
+un vrai `Hero::step` (pas fixe, collision, glissement) et n'est acceptée que si le héros
+s'arrête à moins de **0,3** de la cellule en 3D, avec une montée d'au plus **1,0** et une
+chute d'au plus **10,0**. Les nœuds sont indexés par cellule `x/z` **et par hauteur** (seau de
+0,5) : deux sols superposés restent deux composantes, un simple BFS `x/z` les confondrait.
+
+La commande affiche le nombre de nœuds et les hauteurs atteintes :
+
+```text
+reach from (2.770, 11.250, 18.190) stood on the floor: 9320 nodes, y 4.249..11.251 (step 0.50, 3D arrival < 0.30, climb <= 1.0, fall <= 10.0)
+target (2.770, 15.500, 18.190): not reached
+```
+
+### Exemples vérifiés
+
+- **`X01M07`**, bibliothèque de l'Observatoire (`--scale 16`) : 512×640 px, hauteurs de sol
+  −0,93 à 2,27. La salle, la double porte orange à `z = 18,1` et le warp magenta qui la
+  prolonge sont visibles. Depuis l'arrivée de `X01M05` en `(0 ; 0,17 ; 6,8)`, 2 224 nœuds de
+  −0,57 à 2,37 ; `--to 0 0.17 17.5` répond `reached` (le devant des deux vantaux), tandis que
+  `--to 0 0.17 18.1` (le centre des vantaux fermés) répond `not reached` : la collision des
+  portes fermées bloque ; leur ouverture est l'affaire de l'événement de la scène (native 584).
+- **`X01M01`**, tour de l'Observatoire : image de 736×736 px (échelle 8), hauteurs 0,15 à
+  23,15. Depuis `(2,77 ; 11,25 ; 18,19)`, 9 320 nœuds entre 4,249 et 11,251 ; la cible haute
+  `(2,77 ; 15,5 ; 18,19)` n'est **pas** atteinte. Ces chiffres ne codent aucune route ni
+  conclusion : l'outil les recalcule à chaque exécution.
+
+### Limites
+
+- Pas de caméra joueur : la marche de chaque arête part caméra à l'angle 0, cap braqué vers la
+  cellule, et à vitesse 0 (le vrai héros enchaînerait sans s'arrêter). Le résultat est une
+  borne basse prudente, pas une mesure image par image.
+- Pas d'événements, de portes animées, d'échelles, de personnages qui poussent, ni d'aimant de
+  zones orientées ; ces interactions peuvent ouvrir ou fermer un passage.
+- Les étages d'un même pixel sont fusionnés s'ils tombent dans le même seau de 0,5 ; descendre
+  de plus de 10 unités ou monter de plus de 1 unité coupe la composante.
+- La vue ne remplace pas `melonDS` : elle montre notre collision, pas le rendu du jeu.
+
 ## Écarts avec le wiki DQIX
 
 - Map-Textures : le `.bmbl` « nomme les textures de la carte » — le jeu n'en lit pas le

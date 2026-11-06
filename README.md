@@ -154,7 +154,10 @@ redéclenché que par les chemins qui changent le binaire web (`crates/**`, mani
   <membre>`, `msg`, `font`, `narc <fichier> -d`, `cat <fichier> -d`,
   `talk data/scenario/M02M0.gp2 018_en.bin --quest 11=1 --level 25` (triggers puis réplique
   choisie pour un état donné), `stb data/event/ev03030.gp2` (script d'événement désassemblé
-  avec ses textes).
+  avec ses textes), `map X01M07 --image build/scratch/x01m07.png --scale 16` (vue du dessus
+  de la collision), `map X01M07 --reach 0 0.17 6.8 --to 0 0.17 17.5 --reach-image
+  build/scratch/reach.png` (portée réelle en 3D, voir
+  [`docs/re/map-archive.md`](docs/re/map-archive.md#voir-la-collision-dq9re-map---image---reach)).
 - **Ghidra** : ARM9 dans le bloc `arm9`, ITCM/DTCM à leurs adresses d'exécution, chaque
   overlay dans son espace `ov_NNN`. Requêtes sans interface :
   `scripts/ghidra-query.ps1 decomp|xrefs|calls|disasm <adresse>` (`0x020d91ec` ou
