@@ -489,7 +489,7 @@ mod tests {
         let code = [
             native(571, &[int(1), int(0)]),
             native(571, &[int(2), int(0)]),
-            native(584, &[int(0)]),
+            native(547, &[int(1), int(0)]),
             // Established but without counterpart here, and ids with no handler: silent.
             native(502, &[int(1)]),
             native(999, &[]),
@@ -502,7 +502,7 @@ mod tests {
             events[1..],
             [
                 Event::Unimplemented { id: 571 },
-                Event::Unimplemented { id: 584 }
+                Event::Unimplemented { id: 547 }
             ]
         );
         assert_eq!(s.unimplemented().get(&571), Some(&2));

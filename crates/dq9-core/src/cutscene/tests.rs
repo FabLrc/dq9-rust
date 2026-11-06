@@ -641,3 +641,76 @@ fn the_camera_goes_back_to_the_field_pose_around_the_hero() {
     );
     assert!((view.target - Vec3::new(20.0, 1.0, 0.0)).length() < 1e-3);
 }
+
+#[test]
+fn the_three_bone_camera_is_saved_and_restored() {
+    let mut c = Cutscene::new();
+    c.apply(&Event::Camera(CameraCommand::SetPosition([1.0, 1.0, 1.0])));
+    run(&mut c, 2);
+    c.apply(&Event::Camera(CameraCommand::ThreeBoneCamera {
+        source: -6,
+        target: 0,
+        eye: "eye".into(),
+        lookat: "lookat".into(),
+        foot: "foot".into(),
+    }));
+    let view = c.camera();
+    assert!(view.bones.is_none());
+    let bones = view.three_bone.as_ref().unwrap();
+    assert_eq!((bones.source, bones.target), (-6, 0));
+    assert_eq!(bones.foot, "foot");
+    c.apply(&Event::Camera(CameraCommand::RestoreSaved));
+    let view = c.camera();
+    assert!(view.three_bone.is_none());
+    assert_eq!(view.eye, Vec3::ONE);
+}
+
+#[test]
+fn a_door_turns_a_quarter_turn_in_sixteen_updates() {
+    let mut c = Cutscene::new();
+    c.apply(&Event::OpenDoor {
+        block: 0,
+        placement: 1,
+        sound: true,
+        option: true,
+    });
+    let door = c.doors()[0];
+    assert_eq!((door.block, door.placement), (0, 1));
+    run(&mut c, 2 * 15);
+    assert!(c.doors()[0].angle < Door::QUARTER_TURN);
+    run(&mut c, 2);
+    assert!((c.doors()[0].angle - Door::QUARTER_TURN).abs() < 1e-6);
+    assert_eq!(c.doors()[0].angle_fx(), 6434);
+    // The animation stops at its target.
+    run(&mut c, 20);
+    assert!((c.doors()[0].angle - Door::QUARTER_TURN).abs() < 1e-6);
+    assert_eq!(c.doors()[0].angle_fx(), 6434);
+}
+
+#[test]
+fn a_timed_caption_ramps_in_holds_and_ramps_out() {
+    let mut c = Cutscene::new();
+    c.apply(&Event::CaptionTime { ticks: 140 });
+    c.apply(&Event::CaptionCentered);
+    c.apply(&Event::CaptionSilent);
+    assert_eq!(c.caption_alpha(), 0.0);
+    run(&mut c, 30);
+    assert!((c.caption_alpha() - 0.5).abs() < 1e-6);
+    run(&mut c, 30);
+    assert!((c.caption_alpha() - 1.0).abs() < 1e-6);
+    run(&mut c, 140);
+    assert!((c.caption_alpha() - 1.0).abs() < 1e-6);
+    run(&mut c, 30);
+    assert!((c.caption_alpha() - 0.5).abs() < 1e-6);
+    run(&mut c, 30);
+    assert_eq!(c.caption_alpha(), 0.0);
+    let caption = c.caption();
+    assert!(caption.centered && caption.silent && caption.time == Some(140));
+    // A new message resets the caption fields.
+    c.apply(&Event::Message {
+        text: crate::script::Text::Id(100),
+        flags: 0,
+    });
+    assert_eq!(c.caption_alpha(), 1.0);
+    assert!(!c.caption().centered && !c.caption().silent);
+}

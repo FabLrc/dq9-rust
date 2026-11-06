@@ -99,10 +99,93 @@ impl TexelOp {
     }
 }
 
+/// A map door the script opens (native 584, `ov_001::0215fb44` → `02018310`): the placement
+/// `(block entry, placement id)` turns around its own origin. The handler sets the target
+/// angle to the placement's angle ± 90° (`g_DoorSwingAngle` 6434) and a speed of 409 angle
+/// units per update (`0x02018748`, `0x02018750`); the update that consumes them was not
+/// found, so the per-update interpolation is **[hypothèse]**.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Door {
+    /// `Zone3D` block entry the door belongs to (the doorway's class).
+    pub block: i32,
+    /// Placement id inside that block (the doorway's number).
+    pub placement: i32,
+    /// Current rotation, radians.
+    pub angle: f32,
+    /// Target rotation, radians: the placement's own angle plus 6434/4096.
+    pub target: f32,
+    /// Angle added per 1/60 s tick: 409/4096 per game update (two ticks).
+    pub speed: f32,
+    /// Native 584's `sound` argument: the door sound is not played here (no base-archive
+    /// effect index is established), and the report says so.
+    pub sound: bool,
+}
+
+impl Door {
+    /// Target angle of the door the handler opens with the prologue's flags (`0x40`):
+    /// `(rotation + 1) >> 1` in `0204a170` is a facing, not this; here the placement's own
+    /// angle turns by one quarter turn (`DAT_02018748` 6434 ≈ π/2 × 4096).
+    pub const QUARTER_TURN: f32 = 6434.0 / 4096.0;
+    /// 409 angle units per update, two ticks per update (`DAT_02018750`).
+    pub const SPEED: f32 = 409.0 / 4096.0 / 2.0;
+
+    /// One tick of 1/60 s towards the target.
+    pub fn tick(&mut self) {
+        let remaining = self.target - self.angle;
+        if remaining.abs() <= self.speed {
+            self.angle = self.target;
+        } else {
+            self.angle += remaining.signum() * self.speed;
+        }
+    }
+
+    /// The delta in the game's angle unit (4096 per turn), for the collision world.
+    pub fn angle_fx(&self) -> i32 {
+        (self.angle * 4096.0).round() as i32
+    }
+}
+
+/// The caption fields natives 409, 411 and 413 set on the message window; native 400 resets
+/// them (`0204501c` zeroes `+0x195b` and `+0x9b0`, sets `+0x19b2 = 1`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Caption {
+    /// Native 409's `n`: frames of hold between the one-second alpha ramps.
+    pub time: Option<i32>,
+    /// Native 411: centre the text vertically.
+    pub centered: bool,
+    /// Native 413: no sound while the text types.
+    pub silent: bool,
+    /// Tick the timed caption started.
+    pub started: u64,
+}
+
+impl Caption {
+    /// Alpha of the caption at tick `now`: one second (60 ticks) in, `time` ticks held, one
+    /// second out (`0x1f0000 / 0x8444 = 60`); 1 without 409.
+    pub fn alpha(&self, now: u64) -> f32 {
+        let Some(hold) = self.time else {
+            return 1.0;
+        };
+        let age = now.saturating_sub(self.started);
+        let hold = hold.max(0) as u64;
+        if age < 60 {
+            age as f32 / 60.0
+        } else if age < 60 + hold {
+            1.0
+        } else if age < 120 + hold {
+            1.0 - (age - 60 - hold) as f32 / 60.0
+        } else {
+            0.0
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct Props {
     pub(super) balloon: Option<Balloon>,
     pub(super) changes: Vec<PlacementChange>,
+    pub(super) doors: Vec<Door>,
+    pub(super) caption: Caption,
 }
 
 #[cfg(test)]
