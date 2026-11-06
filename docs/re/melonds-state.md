@@ -45,6 +45,49 @@ cargo dq9re state partie.ml1                       # sections, VBlank, scénario
 cargo dq9re state partie.ml1 --save partie.sav     # + la RAM comparée à la sauvegarde chargée
 cargo dq9re state partie.ml1 --peek 020f33d8:40    # octets en hexadécimal (adresse:longueur)
 cargo dq9re state partie.ml1 --json                # checkpoint de l'histoire (JSON, voir plus bas)
+cargo dq9re state --ram ram.bin --json             # même lecture sur une image RAM de 4 Mio
+cargo dq9re states index build/oracle --out build/oracle/index.json
+cargo dq9re states find --story 1.1.2 --map 4101   # catalogue : quels fichiers, sans les ouvrir
+```
+
+### État neutre : image RAM principale
+
+`--ram FICHIER` lit une image **brute de la RAM principale** : exactement 4 Mio, à la base
+`0x02000000`, sans en-tête (ce que `scripts/melondsds_host.py --dump-ram` écrit, et ce que
+`retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM)` expose). Un chemin passé sans `--ram` est
+aussi accepté : un fichier qui ne commence pas par `MELN` et fait exactement 4 Mio est lu
+comme une image RAM (le contenu décide), ce qui laisse `scripts/oracle-compare.ps1`
+fonctionner sur un dump sans le convertir.
+
+Les deux conteneurs partagent la même vue mémoire (`dq9_formats::melonds::Memory`) : `read`,
+`u32`, VBlank, scénario, bloc d'événements, carte, quêtes, objets et positions n'existent
+qu'une fois, donc `--json` et `--peek` donnent **le même résultat** sur un `.ml1` et sur son
+image RAM (vérifié sur le premier contrôle : `--peek 020f33d8:10` identique octet pour octet).
+Une image RAM ne contient ni ITCM, ni DTCM, ni overlay : les lectures dans ces mémoires
+échouent, et `dq9re state` l'annonce au lieu de comparer le code résident ; `--save` reste
+disponible (toutes les copies de `SAVE_COPIES` sont en RAM principale).
+
+### Catalogue (`dq9re states`)
+
+`states index DOSSIER [--out index.json]` lit chaque fichier du dossier (pas des
+sous-dossiers) : un `.ml1` est reconnu à `MELN`, une image RAM à ses 4 Mio exacts, tout le
+reste est listé dans `invalid` avec son erreur au lieu de faire échouer le scan. Chaque entrée
+donne `file`, `kind`, `vblank`, `map`, `area`, `track`, `story` (`CHAPITRE.ÉTAPE.SOUS-ÉTAPE`),
+`flags` (nombre de drapeaux globaux) et `hero` (`x`, `y`, `z`, `yaw` en unités du monde). Un
+état de reprise du cœur (`retro_serialize`, 19 Mio) commence aussi par `MELN` et se lit donc
+comme un `.ml1`.
+
+`states find [--story 1.1.2] [--map 4101] [--index index.json]` filtre ce catalogue
+(`build/oracle/index.json` par défaut) et imprime une ligne par état : c'est la réponse à
+« quel état est à 1.1.2 ? » sans charger chaque fichier. Exemple réel, sur les états
+conservés du 2026-11-06 :
+
+```
+$ cargo dq9re states find --index build/oracle/index-preserved.json --map 4105
+1.1.1     savestate map  4105 area  4100  (0.660, -0.250, -3.610) flags 18  vblank 31578    bat10.ml1
+1.1.1     savestate map  4105 area  4100  (0.660, -0.250, -3.610) flags 18  vblank 23782    bat4.ml1
+1.1.1     savestate map  4105 area  4100  (0.660, -0.250, -3.610) flags 18  vblank 26379    bat6.ml1
+3 state(s) in …/build/orca/oracle
 ```
 
 Avec la ROM, `dq9re state` compare au contenu de la ROM le module ARM9 statique, chaque bloc
@@ -203,6 +246,62 @@ acceptés, le nom est un caractère tapé au clavier tactile, puis « Begin your
 le combat 26 est joué (A) et gagné normalement. Les états sont des points d'histoire stables,
 pas des images exactes.
 
+### Harnais du cœur melonDS DS (libretro)
+
+Le melonDS autonome exige une fenêtre focalisable et son stub GDB se déconnecte ; le cœur
+officiel [melonDS DS](https://docs.libretro.com/library/melonds_ds/) exécute la ROM par
+callbacks, sans fenêtre ni messages postés. `scripts/melondsds_host.py` l'appelle par son ABI
+C (ctypes) : `retro_set_environment`/`video_refresh`/`audio_sample_batch`/`input_state`,
+`retro_run` **une image à la fois**, `retro_serialize`/`retro_unserialize`,
+`retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM)`. Le cœur (GPL, extérieur au dépôt) et la ROM
+restent hors worktree : `--core tools/build/melondsds_libretro.dll` (archive de référence,
+SHA-256 `b2873cc3…`), `--rom` ou `DQ9_ROM`.
+
+```powershell
+python scripts/melondsds_host.py --rom <ROM> --core <melondsds_libretro.dll> `
+    --input run.jsonl --frames 23050 --checkpoints build/oracle/checkpoints.jsonl `
+    --dump-ram build/oracle/ram.bin --state-out build/oracle/core.bin --shot build/oracle/control.png
+```
+
+Options : `--rom`, `--core`, `--sysdir`, `--savedir`, `--input`, `--frames`, `--checkpoints`,
+`--checkpoint-ram-dir` (garde les images RAM de chaque point), `--checkpoint-every N`,
+`--dq9re` (binaire, sinon `target/release` puis `target/debug`), `--dump-ram` (4 Mio),
+`--state-out`/`--state-in` (état du cœur, donc reprise possible d'une course réelle),
+`--shot`, `--shot-every N`/`--shot-dir`, `--core-log` (journal du cœur, sinon jeté). Le firmware
+est celui du cœur (`melonds_sysfile_mode = builtin`), aucun BIOS n'est requis.
+
+Entrées (`--input`, JSONL, un objet par ligne, **croissant par index d'image**, tenu jusqu'à
+la ligne suivante qui le change — donc un fichier clairsemé suffit, et une ligne par image
+donne un contrôle image par image) :
+
+```json
+{"frame": 1300, "pad": ["start"]}
+{"frame": 1310, "pad": []}
+{"frame": 1700, "touch": [128, 305]}
+{"frame": 1710, "touch": null, "checkpoint": "creation"}
+{"frame": 2200, "shot": "build/oracle/creation.png"}
+```
+
+- `frame` : nombre d'appels à `retro_run` déjà faits (omis = ligne précédente + 1) ;
+- `pad` : `a b x y l r start select up down left right`, remplace l'ensemble tenu (`[]`
+  relâche) ;
+- `touch` : `[x, y]` en **pixels de l'image** (256×384, écran du haut puis du bas ; le harnais
+  convertit vers la plage pointeur de libretro `-0x8000..0x7fff`, sans quoi le cœur ne reçoit
+  aucun appui), ou `null` pour lever le stylet ;
+- `checkpoint` : capture un point avant que l'image ne tourne (`true` ou un nom de `kind`) ;
+- `shot` : PNG avant que l'image ne tourne.
+
+`--checkpoints` écrit le JSONL du contrat de `dq9-app --checkpoints` : `tick` (index d'image),
+`seconds` (`tick/60`), `kind`, puis les champs de `dq9re state --json` (`vblank`, `map`,
+`area`, `track`, `daytime`, `tracks`, `flags`, `quests`, `hero`), `event` restant `null`
+(l'original n'expose pas l'id de scène). Chaque point passe par `dq9re state --ram` sur une
+image RAM temporaire : **une seule** implémentation des offsets, et `--checkpoint-ram-dir`
+les garde pour le catalogue ou pour `oracle-compare.ps1`.
+
+Limites : l'image vidéo capturée est celle de la **dernière** image exécutée ; seuls joypad
+et stylet sont fournis (pas de micro, pas de Wi-Fi, pas de RTC réglée) ; l'A en boucle avance
+les dialogues mais ne suffit pas à finir une conversation qui rouvre (voir plus bas).
+
 ### Mesure du 2026-11-06 (ROM EU, melonDS 1.1, BIOS libres)
 
 Référence : nouvelle partie réelle, combat 26 gagné, états pris toutes les 20 s. Le premier
@@ -253,11 +352,58 @@ le balcon gauche s'arrête à z = 9,5, le PNJ 105 est en bas à (−18,5 ; 0,45 
 coordonnées sont partagées avec le worker du parcours ; la suite (tour `X01M03`, warp
 y = 15,5) reste à franchir en marche réelle.
 
+#### Premier contrôle par le cœur libretro (2026-11-06)
+
+Course réelle rejouée par `scripts/melondsds_host.py` (ROM EU, cœur 1.4.0, firmware intégré) :
+écran titre (`start` à l'image 1300), menu, création du personnage, « Yes », puis A toutes
+les 24 images jusqu'à l'image 23050. Le fichier d'entrées fait 1698 lignes ; les appuis
+clavier sont `start` (10 images) puis `a` (6 images toutes les 24), et un seul appui tactile
+(`[128, 305]`, la ligne « Female », images 1700–1710). Les champs de création sont donc
+laissés à leurs valeurs courantes, à l'exception du sexe, et le nom devient `11111` (un A par
+caractère). Commande :
+
+```powershell
+python scripts/melondsds_host.py --rom <ROM> --core <melondsds_libretro.dll> `
+    --input build/tmp/in11.jsonl --frames 23050 `
+    --checkpoints build/oracle/checkpoints.jsonl --dump-ram build/oracle/ram23050.bin `
+    --state-out build/oracle/core23050.bin --shot build/oracle/control.png
+cargo dq9re state --ram build/oracle/ram23050.bin --json
+```
+
+| | `bat6.ml1` (melonDS 1.1) | image RAM du cœur (vblank 23033) |
+|---|---|---|
+| carte, area | `4105`, `4100` | `4105`, `4100` |
+| histoire, piste | 1.1.1, piste 0 | 1.1.1, piste 0 |
+| `step_flags` piste 0 | `{1}` | `{1}` |
+| héros (fx32 → monde) | (0,660 ; −0,250 ; −3,610), cap 4,86 | (0,660 ; −0,250 ; −3,610), cap 4,86 |
+| drapeaux globaux | 18 | 18 |
+
+Identiques : carte, area, progression, drapeaux de piste, position et cap du héros (mêmes
+fx32), et le nombre de drapeaux globaux. `scripts/oracle-compare.ps1` sur l'image RAM et ce
+point de contrôle répond `OK: story point and flags identical` ; contre `bat6.ml1` il ne
+signale que **deux** écarts, un bit de chaque côté :
+
+```
+DIFF global flags only in melonDS: 4212
+DIFF global flags only in the runtime: 4135
+```
+
+`4135` n'est pas une constante : deux autres courses réelles, identiques sauf le sexe du
+héros (aucun appui tactile, ou appui sur « Male »), ont **17** drapeaux, sans `4135` ni
+`4212` — l'apparence du membre 0 y est octet pour octet celle de `bat6`
+(`cf32573f40232823…`). `4212` est en revanche présent dans les trois états `bat*.ml1` (18
+drapeaux, vblank 23782/26379/31578) et déjà dans `pro11.ml1` (vblank 18384, carte 20101), donc
+posé tôt dans le prologue de la course autonome : la branche qui le pose n'est pas encore
+établie et **aucun drapeau n'a été forcé** pour la faire coïncider. `bat6` a par ailleurs été
+pris 3346 images (VBlank) plus tard que l'image ci-dessus, dans la même scène : les deux
+points ne sont pas le même instant.
+
 ### Limites
 
 - La création du personnage est pilotée au temps réel (A, OK tactile) : la séquence est
   reproductible mais pas à l'image près ; les points de contrôle sont lus en RAM, jamais
-  déduits d'une capture d'écran.
+  déduits d'une capture d'écran. Avec le harnais libretro elle est à l'image près, mais la
+  cadence des A (24 images) reste un choix, pas le rythme d'un joueur.
 - Le A en boucle avance les dialogues mais **rouvre** la conversation à la fin (le héros fait
   toujours face au PNJ) : il ne suffit pas à progresser. Au-delà du premier contrôle,
   atteindre Angel Falls exige le **vrai chemin physique** (escaliers, portes, PNJ à qui
@@ -276,9 +422,13 @@ y = 15,5) reste à franchir en marche réelle.
 
 ## Suite
 
-- Rejouer dans melonDS les entrées du parcours réel (premier contrôle → Angel Falls → quêtes
-  → fin du prologue) et comparer chaque checkpoint ; puis le critère J2 « même nombre
-  d'images » demande un pas à pas exact : `pause`/`frame:N` existent mais melonDS 1.1
-  n'avance que ~0,5 image par pression sous messages postés.
+- Rejouer les entrées du parcours réel (premier contrôle → Angel Falls → quêtes → fin du
+  prologue) dans le **cœur libretro** : le harnais fournit les mêmes touches image par image,
+  donc le critère J2 « même nombre d'images » devient atteignable en traduisant une trace
+  `dq9-app --trace-inputs` en JSONL d'entrées. melonDS 1.1 autonome, lui, n'avance que ~0,5
+  image par pression sous messages postés (`pause`/`frame:N`).
+- Établir la provenance de `4212` (posé tôt dans la course autonome, absent des courses du
+  cœur) et de `4135` (course avec un héros féminin) : causes et conditions, pas une liste
+  recopiée des checkpoints.
 - L'état contient aussi l'ARM7 et le son (`SPU.`) : hors périmètre tant que l'audio n'est pas
   porté.

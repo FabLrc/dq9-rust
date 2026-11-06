@@ -158,6 +158,19 @@ redéclenché que par les chemins qui changent le binaire web (`crates/**`, mani
   de la collision), `map X01M07 --reach 0 0.17 6.8 --to 0 0.17 17.5 --reach-image
   build/scratch/reach.png` (portée réelle en 3D, voir
   [`docs/re/map-archive.md`](docs/re/map-archive.md#voir-la-collision-dq9re-map---image---reach)).
+- **États oracle** : `cargo dq9re state état.ml1` (sections, VBlank, scénario, code comparé à
+  la ROM), `--json` (le point d'histoire que compare le runtime), `--peek 020f33d8:40`, et
+  `state --ram ram.bin` sur une image RAM principale brute de 4 Mio (`--dump-ram` du harnais),
+  ou un nom de fichier sans `--ram` ; `cargo dq9re states index build/oracle --out
+  build/oracle/index.json` puis `states find --story 1.1.2 [--map 4101]` pour retrouver un
+  état sans l'ouvrir ([`docs/re/melonds-state.md`](docs/re/melonds-state.md)).
+- **Harnais libretro** : `python scripts/melondsds_host.py --rom <ROM> --core
+  tools/build/melondsds_libretro.dll --input run.jsonl --frames 23050 --checkpoints
+  build/oracle/checkpoints.jsonl --dump-ram build/oracle/ram.bin --state-out
+  build/oracle/core.bin --shot build/oracle/control.png` exécute la ROM dans le cœur melonDS
+  DS, sans fenêtre ni focus : entrées image par image (`pad`, `touch`, `checkpoint`, `shot`),
+  RAM, états et PNG ; il atteint le premier contrôle de l'Observatoire en original (format
+  des entrées et limites dans [`docs/re/melonds-state.md`](docs/re/melonds-state.md)).
 - **Ghidra** : ARM9 dans le bloc `arm9`, ITCM/DTCM à leurs adresses d'exécution, chaque
   overlay dans son espace `ov_NNN`. Requêtes sans interface :
   `scripts/ghidra-query.ps1 decomp|xrefs|calls|disasm <adresse>` (`0x020d91ec` ou
@@ -218,7 +231,7 @@ Il affiche l'adresse et le nom européens, l'adresse USA, le chemin source et un
 | `docs/re/lighting.md` | éclairage `.bats`, brouillard, heure du jour |
 | `docs/re/sdat.md` | son : SDAT, séquences, effets, jingles, musique des cartes |
 | `docs/re/save.md` | sauvegarde DS : conteneur, sommes de contrôle, champs typés, inconnus |
-| `docs/re/melonds-state.md` | oracle melonDS : lecture des sauvegardes d'état, adresses utiles, vérification restante |
+| `docs/re/melonds-state.md` | oracle melonDS : états `.ml1` et images RAM, catalogue, harnais libretro, adresses utiles, vérification restante |
 | `docs/re/outils.md` | cache des requêtes Ghidra, adresse européenne vers source de la décompilation USA |
 | `AGENTS.md` | contexte et règles pour les agents de développement |
 
