@@ -10,7 +10,7 @@ use nds_rom::{Error, Result};
 
 use crate::cast::Story;
 use crate::maplist::MapList;
-use crate::save::Slot;
+use crate::save::{EVENT_FLAGS_SIZE, EventFlags, Slot};
 
 /// Start of main RAM in the ARM9 address space.
 pub const MAIN_RAM_BASE: u32 = 0x0200_0000;
@@ -82,6 +82,50 @@ pub struct NpcPlacement {
     pub order: u16,
     pub quest: i16,
     pub flags: u32,
+}
+
+/// One scenario track of the event block (`docs/re/save.md`, § « Bloc d'événements »):
+/// progress bytes and the flags set in each of its two sets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackState {
+    pub chapter: u8,
+    pub step: u8,
+    pub substep: u8,
+    /// Set 0 (13 bytes), cleared when the chapter changes; flag indices set.
+    pub chapter_flags: Vec<i32>,
+    /// Set 1 (12 bytes), cleared when the step changes; flag indices set.
+    pub step_flags: Vec<i32>,
+}
+
+/// The story state a differential run compares at a checkpoint: the whole event block
+/// (tracks, global flags, quests), the current map and the frame counter. Built from the
+/// same RAM layout the save's event block uses (`State::checkpoint`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checkpoint {
+    /// SDK VBlank counter (`0x027ffc3c`): the frame the checkpoint was taken on.
+    pub vblank: u32,
+    /// Current map id and area (`Zone3D+0`, `+4`).
+    pub map: u16,
+    pub area: u16,
+    /// Index of the current scenario track (`quest manager +0x332`).
+    pub current_track: usize,
+    pub tracks: Vec<TrackState>,
+    /// `Save_IsDaytime` (`GameState+0x3dc` ≠ 0).
+    pub daytime: bool,
+    /// Global flags set (`Flags_Test`, bit indices).
+    pub flags: Vec<i32>,
+    /// Quest nibbles that are non-zero (`quest manager +0x2cc`).
+    pub quests: Vec<(i32, u8)>,
+}
+
+impl Checkpoint {
+    /// Progress of the current track, `(chapter, step, substep)`; `None` only if the
+    /// checkpoint was built with an out-of-range index (the reader rejects that).
+    pub fn scenario(&self) -> Option<(u8, u8, u8)> {
+        self.tracks
+            .get(self.current_track)
+            .map(|t| (t.chapter, t.step, t.substep))
+    }
 }
 
 /// A byte range of a save slot that `Save_LoadSlot` (`0x020aaf94`) and the functions it
@@ -598,6 +642,54 @@ impl<'a> State<'a> {
         })
     }
 
+    /// The game's event block as `Save_UnpackEvents` leaves it in RAM: tracks, global flags,
+    /// quest nibbles and the current track (`quest manager`, `0x334` bytes; `docs/re/save.md`,
+    /// § « Bloc d'événements »).
+    pub fn event_flags(&self) -> Result<EventFlags<'a>> {
+        let bytes = self.read(QUEST_MANAGER, EVENT_FLAGS_SIZE)?;
+        EventFlags::from_bytes(bytes).ok_or(Error::Malformed("event block shorter than 0x334"))
+    }
+
+    /// The checkpoint a differential run compares (`docs/re/melonds-state.md`, § « Oracle
+    /// différentiel »): the whole event block, the current map and the frame counter.
+    pub fn checkpoint(&self) -> Result<Checkpoint> {
+        let events = self.event_flags()?;
+        let bits = |bytes: &[u8]| -> Vec<i32> {
+            (0..bytes.len() * 8)
+                .filter(|&i| bytes[i / 8] >> (i % 8) & 1 != 0)
+                .map(|i| i as i32)
+                .collect()
+        };
+        let tracks: Vec<TrackState> = (0..)
+            .map_while(|i| events.track(i))
+            .map(|t| TrackState {
+                chapter: t.chapter(),
+                step: t.step(),
+                substep: t.substep(),
+                chapter_flags: bits(t.chapter_flags()),
+                step_flags: bits(t.step_flags()),
+            })
+            .collect();
+        let current_track = events.current_track();
+        if current_track >= tracks.len() {
+            return Err(Error::Malformed("current scenario track out of range"));
+        }
+        let (map, area) = self.current_map()?;
+        Ok(Checkpoint {
+            vblank: self.vblank_count()?,
+            map,
+            area,
+            current_track,
+            tracks,
+            daytime: self.u32(GAME_STATE + 0x3dc)? != 0,
+            flags: bits(events.global_flags()),
+            quests: (0..0xcc)
+                .map(|q| (q, events.quest(q)))
+                .filter(|&(_, n)| n != 0)
+                .collect(),
+        })
+    }
+
     /// The entries of the NPC table ([`NPC_TABLE`]), in table order.
     pub fn npcs(&self) -> Result<Vec<NpcEntry>> {
         let count = self.u32(NPC_TABLE + 0x8c)?.min(NPC_SLOTS);
@@ -905,6 +997,47 @@ mod tests {
         );
         assert_eq!(st.object(0).unwrap(), None);
         assert_eq!(st.object(OBJECT_COUNT).unwrap(), None);
+    }
+
+    #[test]
+    fn checkpoint_reads_tracks_flags_and_map() {
+        let data = synthetic_with(|m| {
+            let mut put = |addr: u32, bytes: &[u8]| {
+                let o = (addr & 0x3f_ffff) as usize;
+                m[o..o + bytes.len()].copy_from_slice(bytes);
+            };
+            // Track 0: 1.2.3, chapter flag 0 set, step flag 1 set.
+            put(QUEST_MANAGER, &[1, 2, 3]);
+            put(QUEST_MANAGER + 3, &[0x01]);
+            put(QUEST_MANAGER + 16, &[0x02]);
+            put(QUEST_MANAGER + 0x332, &[0]);
+            // Global flag 0x13f, quests 4 = 3 and 5 = 1.
+            put(QUEST_MANAGER + 0x8c + 0x27, &[0x80]);
+            put(QUEST_MANAGER + 0x2cc + 2, &[0x13]);
+            // Map 1100, area 3, daytime.
+            put(ZONE_3D, &[0x4c, 0x04, 0, 0, 3, 0]);
+            put(GAME_STATE + 0x3dc, &1u32.to_le_bytes());
+        });
+        let st = State::parse(&data).unwrap();
+        let c = st.checkpoint().unwrap();
+        assert_eq!(c.scenario(), Some((1, 2, 3)));
+        assert_eq!((c.map, c.area, c.current_track), (1100, 3, 0));
+        assert!(c.daytime);
+        assert_eq!(c.tracks.len(), 5);
+        assert_eq!(c.tracks[0].chapter_flags, [0]);
+        assert_eq!(c.tracks[0].step_flags, [1]);
+        assert!(c.flags.contains(&0x13f));
+        assert_eq!(c.quests, [(4, 3), (5, 1)]);
+        assert_eq!(c.vblank, 1234);
+    }
+
+    #[test]
+    fn checkpoint_rejects_an_out_of_range_track() {
+        let data = synthetic_with(|m| {
+            m[(QUEST_MANAGER + 0x332) as usize & 0x3f_ffff] = 5;
+        });
+        let st = State::parse(&data).unwrap();
+        assert!(st.checkpoint().is_err());
     }
 
     #[test]

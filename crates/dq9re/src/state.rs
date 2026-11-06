@@ -14,9 +14,19 @@ use nds_rom::Rom;
 /// address range agree on far fewer bytes; `.data` writes keep a loaded one below 100 %.
 const LOADED: f64 = 0.9;
 
-pub fn run(path: &Path, peek: &[String], save: Option<&Path>, rom: Option<&Path>) -> Result<()> {
+pub fn run(
+    path: &Path,
+    peek: &[String],
+    save: Option<&Path>,
+    rom: Option<&Path>,
+    json: bool,
+) -> Result<()> {
     let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let state = State::parse(&bytes).context("parsing savestate")?;
+    if json {
+        println!("{}", checkpoint_json(&state)?);
+        return Ok(());
+    }
     if peek.is_empty() {
         for s in state.sections() {
             println!(
@@ -27,8 +37,29 @@ pub fn run(path: &Path, peek: &[String], save: Option<&Path>, rom: Option<&Path>
             );
         }
         println!("SDK VBlank count: {}", state.vblank_count()?);
-        let (chapter, step, substep) = state.scenario()?;
-        println!("scenario: chapter {chapter} step {step} substep {substep}");
+        let checkpoint = state.checkpoint().context("reading the story checkpoint")?;
+        let (chapter, step, substep) = checkpoint
+            .scenario()
+            .context("current scenario track out of range")?;
+        println!(
+            "scenario: chapter {chapter} step {step} substep {substep} (track {})",
+            checkpoint.current_track
+        );
+        println!(
+            "map {} area {}; {} global flags, {} quests",
+            checkpoint.map,
+            checkpoint.area,
+            checkpoint.flags.len(),
+            checkpoint.quests.len()
+        );
+        for (i, t) in checkpoint.tracks.iter().enumerate() {
+            println!(
+                "track {i}: {}.{}.{} chapter flags {:?} step flags {:?}",
+                t.chapter, t.step, t.substep, t.chapter_flags, t.step_flags
+            );
+        }
+        println!("global flags: {:?}", checkpoint.flags);
+        println!("quests: {:?}", checkpoint.quests);
         let hero = state.protagonist_index()?;
         for index in 0..4 {
             if let Some(at) = state.object(index)? {
@@ -70,6 +101,39 @@ pub fn run(path: &Path, peek: &[String], save: Option<&Path>, rom: Option<&Path>
         println!("{addr:08x}  {hex}");
     }
     Ok(())
+}
+
+fn checkpoint_json(state: &State) -> Result<String> {
+    let c = state.checkpoint()?;
+    let tracks: Vec<serde_json::Value> = c
+        .tracks
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "chapter": t.chapter,
+                "step": t.step,
+                "substep": t.substep,
+                "chapter_flags": t.chapter_flags,
+                "step_flags": t.step_flags,
+            })
+        })
+        .collect();
+    let quests: serde_json::Map<String, serde_json::Value> = c
+        .quests
+        .iter()
+        .map(|&(q, n)| (q.to_string(), serde_json::json!(n)))
+        .collect();
+    let value = serde_json::json!({
+        "vblank": c.vblank,
+        "map": c.map,
+        "area": c.area,
+        "track": c.current_track,
+        "daytime": c.daytime,
+        "tracks": tracks,
+        "flags": c.flags,
+        "quests": quests,
+    });
+    Ok(serde_json::to_string(&value)?)
 }
 
 fn compare_with_save(state: &State, path: &Path) -> Result<()> {
