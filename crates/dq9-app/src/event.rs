@@ -404,7 +404,6 @@ impl EventPlayer {
 
     /// Whether the DS display engines are swapped (natives 109/110): the field and the message
     /// window must be drawn on the other screen of the layout.
-    #[allow(dead_code)] // app.rs wiring is the field worker's side
     pub fn screen_swapped(&self) -> bool {
         self.cutscene.screen_swapped()
     }
@@ -711,9 +710,6 @@ impl EventPlayer {
                 // here, so the sound is reported rather than guessed.
                 self.coverage.miss("door sound");
             }
-            // The cutscene keeps the `POWCNT1` bit, but `app.rs` (field worker) has not wired
-            // the layout yet: report it until the field and the window move screens.
-            Event::SwapScreens(_) => self.coverage.miss("screen swap"),
             _ => {}
         }
         for output in self.cutscene.apply(&event) {

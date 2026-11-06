@@ -91,7 +91,6 @@ pub fn screens(layout: Layout, width: u32, height: u32) -> Screens {
     }
 }
 
-#[allow(dead_code)] // app.rs wiring is the field worker's side
 impl Screens {
     /// The viewport of the 3D field and of the message window. Native 109/110 swap the DS
     /// display engines (`POWCNT1` bit 15): with `swapped`, the field moves to the bottom screen
@@ -106,9 +105,13 @@ impl Screens {
     }
 
     /// The viewport the panel (the other DS engine) fills: the bottom screen normally, the top
-    /// one after a display swap.
+    /// one after a display swap. A one-screen layout has no second engine: no overlay.
     pub fn overlay(self, swapped: bool) -> Option<Viewport> {
-        if swapped { Some(self.top) } else { self.bottom }
+        if swapped {
+            self.bottom.map(|_| self.top)
+        } else {
+            self.bottom
+        }
     }
 }
 
@@ -216,6 +219,7 @@ mod tests {
         // A one-screen layout has nothing to swap to.
         let one = screens(Layout::Top, 1024, 768);
         assert_eq!(one.field(true), one.top);
-        assert_eq!(one.overlay(true), Some(one.top));
+        assert_eq!(one.overlay(true), None, "no panel over the only screen");
+        assert_eq!(one.overlay(false), None);
     }
 }
