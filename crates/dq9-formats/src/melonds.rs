@@ -119,11 +119,12 @@ pub struct Checkpoint {
 }
 
 impl Checkpoint {
-    /// Progress of the current track, `(chapter, step, substep)`.
-    pub fn scenario(&self) -> (u8, u8, u8) {
+    /// Progress of the current track, `(chapter, step, substep)`; `None` only if the
+    /// checkpoint was built with an out-of-range index (the reader rejects that).
+    pub fn scenario(&self) -> Option<(u8, u8, u8)> {
         self.tracks
             .get(self.current_track)
-            .map_or((0, 0, 0), |t| (t.chapter, t.step, t.substep))
+            .map(|t| (t.chapter, t.step, t.substep))
     }
 }
 
@@ -659,7 +660,7 @@ impl<'a> State<'a> {
                 .map(|i| i as i32)
                 .collect()
         };
-        let tracks = (0..)
+        let tracks: Vec<TrackState> = (0..)
             .map_while(|i| events.track(i))
             .map(|t| TrackState {
                 chapter: t.chapter(),
@@ -669,12 +670,16 @@ impl<'a> State<'a> {
                 step_flags: bits(t.step_flags()),
             })
             .collect();
+        let current_track = events.current_track();
+        if current_track >= tracks.len() {
+            return Err(Error::Malformed("current scenario track out of range"));
+        }
         let (map, area) = self.current_map()?;
         Ok(Checkpoint {
             vblank: self.vblank_count()?,
             map,
             area,
-            current_track: events.current_track(),
+            current_track,
             tracks,
             daytime: self.u32(GAME_STATE + 0x3dc)? != 0,
             flags: bits(events.global_flags()),
@@ -1015,7 +1020,7 @@ mod tests {
         });
         let st = State::parse(&data).unwrap();
         let c = st.checkpoint().unwrap();
-        assert_eq!(c.scenario(), (1, 2, 3));
+        assert_eq!(c.scenario(), Some((1, 2, 3)));
         assert_eq!((c.map, c.area, c.current_track), (1100, 3, 0));
         assert!(c.daytime);
         assert_eq!(c.tracks.len(), 5);
@@ -1024,6 +1029,15 @@ mod tests {
         assert!(c.flags.contains(&0x13f));
         assert_eq!(c.quests, [(4, 3), (5, 1)]);
         assert_eq!(c.vblank, 1234);
+    }
+
+    #[test]
+    fn checkpoint_rejects_an_out_of_range_track() {
+        let data = synthetic_with(|m| {
+            m[(QUEST_MANAGER + 0x332) as usize & 0x3f_ffff] = 5;
+        });
+        let st = State::parse(&data).unwrap();
+        assert!(st.checkpoint().is_err());
     }
 
     #[test]

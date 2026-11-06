@@ -38,7 +38,9 @@ pub fn run(
         }
         println!("SDK VBlank count: {}", state.vblank_count()?);
         let checkpoint = state.checkpoint().context("reading the story checkpoint")?;
-        let (chapter, step, substep) = checkpoint.scenario();
+        let (chapter, step, substep) = checkpoint
+            .scenario()
+            .context("current scenario track out of range")?;
         println!(
             "scenario: chapter {chapter} step {step} substep {substep} (track {})",
             checkpoint.current_track

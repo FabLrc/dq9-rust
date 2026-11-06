@@ -159,14 +159,21 @@ Le worker du parcours ajoute `--checkpoints FICHIER` (JSONL, mêmes noms de cham
 ### Comparateur
 
 ```powershell
+# rapport texte : le rapport ne nomme pas la piste courante, il faut la donner
 powershell -ExecutionPolicy Bypass -File scripts/oracle-compare.ps1 `
-    -State build/melonds-oracle/observatory.ml1 -Report build/oracle/runtime-auto.txt
+    -State build/melonds-oracle/observatory.ml1 -Report build/oracle/runtime-auto.txt -TrackIndex 0
+# contrat JSONL du runtime : un seul objet (une ligne de --checkpoints)
+powershell -ExecutionPolicy Bypass -File scripts/oracle-compare.ps1 `
+    -State build/melonds-oracle/observatory.ml1 -RuntimeJson build/oracle/checkpoint.json
 ```
 
-Il exécute `dq9re state --json` sur l'état, lit la dernière ligne de chaque piste et les
-drapeaux globaux du rapport, puis compare carte, progression et les deux jeux de drapeaux de
-chaque piste et les drapeaux globaux ; code de sortie non nul et une ligne `DIFF` par écart.
-Les quêtes ne sont pas encore dans le rapport du runtime : elles ne sont pas comparées.
+Il exécute `dq9re state --json` sur l'état, puis compare **strictement** la carte, l'indice de
+la piste courante, la progression et les deux jeux de drapeaux de chaque piste, les drapeaux
+globaux, `daytime` et — quand `-RuntimeJson` les fournit — les quêtes. Une piste courante
+absente du rapport texte est un écart (code non nul), jamais un `OK` : c'est `-TrackIndex` ou
+`-RuntimeJson` qui la donne. Des quêtes non nulles côté melonDS sans quêtes côté runtime sont
+aussi un écart. Code de sortie non nul et une ligne `DIFF` par écart ; les ensembles vides
+sont valides (pas de test de véracité sur un ensemble).
 
 ### Piloter melonDS (`scripts/melonds-play.ps1`)
 
