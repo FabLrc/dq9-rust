@@ -171,7 +171,7 @@ fournit les acteurs (`add_actor`, `play_actor`, `actor_bone`, `play_hero`, `set_
 - **Caméra.** Œil, cible, orbite, champ de vision (demi-angle, 15° par défaut), roulis, secousses,
   suivi d'un acteur et caméra portée par deux os d'un modèle (native 572, utilisée par
   l'ouverture) sont celles du script ; la caméra libre reprend à la fin. Une scène est cadrée en
-  4:3 (un écran DS), comme `--ds-aspect`.
+  4:3 sur l'écran haut (`screens.rs`).
 - **Messages.** La fenêtre de conversation (`talk.rs`) affiche le texte de la table de la scène ;
   sans balise de fin elle attend l'action (`Dialogue::for_event`) ; la native 401 la ferme, la
   native 410 en retire le cadre. Le joueur est verrouillé (pas de marche, pas de conversation).

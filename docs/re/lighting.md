@@ -206,7 +206,7 @@ Implémentation : `dq9_render::lighting` (`Environment`), `shader.wgsl`, `backgr
 | diffuse des sprites et des personnages | `spriteDiffuseColor_`, `modelDiffuseColor_` | multiplie leur couleur ; couleur de la carte de base lue de `.bats` |
 | fond | `DrawBackgroundGradient` | dégradé appliqué ; **non comparé** (la caméra de `C01M09` ne voit pas le fond) |
 | brouillard | `func_020c54a4`, `FOG_COLOR`, `FOG_TABLE`, équation melonDS | **validé à melonDS** sur la densité (ci-dessous), mode alpha seul non validé |
-| marquage des contours | `DISP3DCNT` bit 5, `EDGE_COLOR` | appliqué (`edge.wgsl`, règle de melonDS : voisin d'identifiant de polygone différent et plus éloigné), validé à l'œil seulement sur `C01M09` ; sur `M01` il cerne des taches de sol d'identifiant 1 à 6, tracé instable car décalques coplanaires (comportement DS non vérifié). Largeur : un pixel DS (`--ds-aspect`), sinon 1 pixel écran |
+| marquage des contours | `DISP3DCNT` bit 5, `EDGE_COLOR` | appliqué (`edge.wgsl`, règle de melonDS : voisin d'identifiant de polygone différent et plus éloigné), validé à l'œil seulement sur `C01M09` ; sur `M01` il cerne des taches de sol d'identifiant 1 à 6, tracé instable car décalques coplanaires (comportement DS non vérifié). Largeur : un pixel DS (hauteur de l'écran 3D / 192) |
 | toon, surbrillance, anticrénelage | bits 1 et 4 de `DISP3DCNT` | toon/surbrillance : bit 1 à 0, donc inutile ; anticrénelage non fait |
 
 Équation de brouillard (melonDS `CalculateFogDensity`, vérifiée sur matériel par ses auteurs) :
