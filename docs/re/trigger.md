@@ -389,6 +389,10 @@ mise à jour (`Door::SPEED`, `Door::QUARTER_TURN` de `dq9_core::cutscene`). La c
 suit la rotation (`CollisionWorld::set_door_angle`, delta `fx32`), sinon le passage reste fermé.
 L'événement 17 part avant la rotation ; l'événement 3 (arrivée) part quand elle est finie. Le
 son est `g_DoorSeTable[quartet bas de la valeur 3 du 0x74]`, effets de base **200 à 204**.
+Preuve directe de la table : `dq9re state build/orca/oracle/bat6.ml1 --peek 0x020e6e84:14`
+donne `c8000000 c9000000 ca000000 cb000000 cc000000` (200, 201, 202, 203, 204) ; le pointeur
+`0x020e6e84` vaut `0x02018754`, `02018310` copie exactement cinq entrées et indexe
+`flags & 0xf` : `200 + quartet bas` est juste pour les indices 0 à 4.
 
 Preuves sur la ROM :
 

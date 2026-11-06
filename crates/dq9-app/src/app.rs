@@ -336,7 +336,7 @@ impl App {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", test))]
     fn set_save(&mut self, save: Vec<u8>) {
         // Picking a save replaces whatever the page started with (a new game from
         // `?newgame=1`, a map preview): the save selects the map, the position and the
@@ -1447,5 +1447,61 @@ impl App {
         self.audio
             .take_recording()
             .map(|samples| (crate::audio::RECORD_RATE, samples))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dq9_core::state::GameState;
+    use dq9_formats::save::Save;
+
+    /// The web bug: after "Nouvelle partie", picking a save must load that save, not start
+    /// the prologue again. Exercises the same `set_save` path with a real save and ROM. The
+    /// test event loop needs Windows' any-thread builder (cargo tests are threads).
+    #[cfg(windows)]
+    #[test]
+    fn a_save_selected_after_a_new_game_loads_that_save() {
+        let (Some(rom), Some(save_path)) = (testrom::load(), std::env::var_os("DQ9_SAVE")) else {
+            eprintln!("skipping: DQ9_ROM or DQ9_SAVE missing");
+            return;
+        };
+        let save = std::fs::read(save_path).unwrap();
+        let expected = GameState::from_save(&Save::parse(&save).unwrap()).unwrap();
+        use winit::platform::windows::EventLoopBuilderExtWindows;
+        let Ok(event_loop) = winit::event_loop::EventLoop::<UserEvent>::with_user_event()
+            .with_any_thread(true)
+            .build()
+        else {
+            eprintln!("skipping: no event loop");
+            return;
+        };
+        let options = Options {
+            map: None,
+            save: None,
+            time: None,
+            clock: None,
+            layout: Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: dq9_formats::cast::Story {
+                chapter: 1,
+                step: 1,
+                substep: 1,
+                daytime: true,
+                ..Default::default()
+            },
+            story_override: [None; 3],
+            new_game: true,
+        };
+        let mut app = App::new(event_loop.create_proxy(), options, Some(rom.to_vec()));
+        assert!(app.options.new_game);
+        app.set_save(save);
+        assert!(!app.options.new_game, "the save selects save mode");
+        assert_eq!(app.options.map, None);
+        let map = app.current.as_ref().map(|(entry, _)| entry.id);
+        assert_eq!(map, Some(expected.map), "the save's map is loaded");
     }
 }
