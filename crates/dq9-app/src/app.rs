@@ -95,6 +95,34 @@ pub struct Options {
     pub new_game: bool,
 }
 
+/// The d-pad keys of a replay frame (bit 0 up, 1 down, 2 left, 3 right).
+fn pad_input(bits: u8) -> Input {
+    Input {
+        up: bits & 1 != 0,
+        down: bits & 2 != 0,
+        left: bits & 4 != 0,
+        right: bits & 8 != 0,
+    }
+}
+
+/// The world direction the d-pad asks for with the game's camera at yaw 0, diagonal first as
+/// `Hero_ReadDirectionInput` does.
+fn pad_direction(bits: u8) -> Vec3 {
+    let (up, down, left, right) = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+    let direction = match (up, down, left, right) {
+        (true, _, true, _) => Vec3::new(-1.0, 0.0, -1.0),
+        (true, _, _, true) => Vec3::new(1.0, 0.0, -1.0),
+        (_, true, true, _) => Vec3::new(-1.0, 0.0, 1.0),
+        (_, true, _, true) => Vec3::new(1.0, 0.0, 1.0),
+        (true, _, _, _) => Vec3::NEG_Z,
+        (_, true, _, _) => Vec3::Z,
+        (_, _, true, _) => Vec3::NEG_X,
+        (_, _, _, true) => Vec3::X,
+        _ => Vec3::ZERO,
+    };
+    direction.normalize_or_zero()
+}
+
 /// Prints a status line (stderr natively, the console and `#status` element on the web).
 pub fn status(message: &str) {
     #[cfg(not(target_arch = "wasm32"))]
@@ -147,6 +175,8 @@ pub struct App {
     checkpoints: Vec<String>,
     /// Pad bits and action key of every fixed step (`--trace-inputs`).
     input_trace: Vec<(u8, bool)>,
+    /// Pad bits a replay frame asks for, consumed by one fixed step.
+    replay_pad: Option<u8>,
     tick: u64,
     hero_instance: Option<usize>,
     /// The protagonist's look (the save's hero, else a new game's), kept across maps.
@@ -217,6 +247,7 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             checkpoints: Vec::new(),
             input_trace: Vec::new(),
+            replay_pad: None,
             tick: 0,
             hero_instance: None,
             look: HeroLook::new_game(),
@@ -818,6 +849,7 @@ impl App {
             }
             let talking = self.talk.is_active();
             let piloted = std::mem::take(&mut self.pilot_dir);
+            let replay = self.replay_pad.take();
             let mut input = CameraInput {
                 forward: self.axis(
                     &[KeyCode::KeyW, KeyCode::ArrowUp],
@@ -842,10 +874,11 @@ impl App {
                 input.up = 0.0;
             }
             self.camera.step(&input, STEP);
-            let steering = walking && !talking && piloted.is_none();
-            let pad = match piloted {
-                Some(direction) => Input::from_direction(direction),
-                None => Input {
+            let steering = walking && !talking && piloted.is_none() && replay.is_none();
+            let pad = match (replay, piloted) {
+                (Some(bits), _) => pad_input(bits),
+                (None, Some(direction)) => Input::from_direction(direction),
+                (None, None) => Input {
                     up: steering && self.axis(&[KeyCode::KeyW, KeyCode::ArrowUp], &[]) > 0.0,
                     down: steering && self.axis(&[KeyCode::KeyS, KeyCode::ArrowDown], &[]) > 0.0,
                     left: steering && self.axis(&[KeyCode::KeyA, KeyCode::ArrowLeft], &[]) > 0.0,
@@ -865,13 +898,15 @@ impl App {
             }
             // The game's camera yaw turns the other way round from the application's. The
             // headless pilot gives world directions, so it walks with the camera at yaw 0.
-            let camera_yaw = match piloted {
-                Some(_) => 0,
-                None => reduce_angle((-self.camera.yaw * 4096.0) as i32),
+            let camera_yaw = if piloted.is_some() || replay.is_some() {
+                0
+            } else {
+                reduce_angle((-self.camera.yaw * 4096.0) as i32)
             };
-            let move_direction = match piloted {
-                Some(direction) => Vec3::new(direction.x, 0.0, direction.z),
-                None if steering => {
+            let move_direction = match (replay, piloted) {
+                (Some(bits), _) => pad_direction(bits),
+                (None, Some(direction)) => Vec3::new(direction.x, 0.0, direction.z),
+                (None, None) if steering => {
                     let (sin, cos) = self.camera.yaw.sin_cos();
                     let forward = Vec3::new(sin, 0.0, -cos);
                     let right = Vec3::new(cos, 0.0, sin);
@@ -886,7 +921,7 @@ impl App {
                                 &[KeyCode::KeyA, KeyCode::ArrowLeft],
                             )
                 }
-                None => Vec3::ZERO,
+                (None, None) => Vec3::ZERO,
             };
             if let Some(hero) = &mut self.hero {
                 let before = hero.position();
@@ -1005,6 +1040,39 @@ impl App {
         if opened && let Some(field) = &mut self.field {
             let events = field.door_opened(&mut self.state);
             self.apply_events(events);
+        }
+    }
+
+    /// One fixed step of a recorded input trace (`--trace-inputs`, replayed): the pad keys and
+    /// the action key are fed exactly as recorded, and the journal checkpoints are captured.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn replay_step(&mut self, bits: u8, confirm: bool) {
+        let recorded = self.journal.steps.len();
+        self.replay_pad = Some(bits);
+        if confirm {
+            self.talk.press(Button::Confirm);
+        }
+        self.run_steps(1);
+        self.capture_journal(recorded);
+        // The pilot's control points are part of the proof: record them the same way.
+        let busy = self.events.is_active() || self.events.pending_start().is_some();
+        if !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
+            let map = self.current.as_ref().map_or(0, |(entry, _)| entry.id);
+            let track = &self.state.tracks[self.state.track];
+            let story = (track.chapter, track.step, track.substep);
+            let last = self
+                .journal
+                .steps
+                .iter()
+                .rev()
+                .find_map(|(_, step)| match step {
+                    Step::Control { story, .. } => Some(*story),
+                    _ => None,
+                });
+            if last.is_none_or(|seen| seen != story) {
+                self.journal.record(self.tick, Step::Control { map, story });
+                self.capture_checkpoint("control");
+            }
         }
     }
 

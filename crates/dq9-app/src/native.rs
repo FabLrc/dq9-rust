@@ -143,6 +143,10 @@ struct Cli {
     /// With `--auto`: writes the pad and action key of every fixed step as JSONL, for replay.
     #[arg(long, requires = "auto")]
     trace_inputs: Option<PathBuf>,
+    /// Replays a `--trace-inputs` file without the pilot: each line feeds the pad and the
+    /// action key of one fixed step (`--new-game --headless --replay inputs.jsonl`).
+    #[arg(long, requires = "headless", conflicts_with = "auto")]
+    replay: Option<PathBuf>,
 }
 
 impl Cli {
@@ -271,6 +275,37 @@ fn find_rom() -> Result<PathBuf> {
     bail!("no *.nds found in rom/ or the current directory; pass --rom or set DQ9_ROM")
 }
 
+/// Reads a `--trace-inputs` JSONL file: the pad bits (bit 0 up, 1 down, 2 left, 3 right) and
+/// the action key of each fixed step, in order.
+fn read_inputs(path: &std::path::Path) -> anyhow::Result<Vec<(u8, bool)>> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut frames = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let pad = line
+            .split("\"pad\":[")
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .unwrap_or_default();
+        let mut bits = 0u8;
+        for name in pad.split(',') {
+            match name.trim().trim_matches('"') {
+                "up" => bits |= 1,
+                "down" => bits |= 2,
+                "left" => bits |= 4,
+                "right" => bits |= 8,
+                _ => {}
+            }
+        }
+        frames.push((bits, line.contains("\"a\":true")));
+    }
+    Ok(frames)
+}
+
 pub fn main() -> Result<()> {
     let cli = Cli::parse();
     let path = match &cli.rom {
@@ -313,6 +348,18 @@ pub fn main() -> Result<()> {
         new_game: cli.new_game,
     };
     let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
+    if let Some(path) = &cli.replay {
+        let frames = read_inputs(path)?;
+        for (bits, confirm) in &frames {
+            app.replay_step(*bits, *confirm);
+        }
+        println!("replayed {} fixed steps", frames.len());
+        if let Some(path) = &cli.checkpoints {
+            std::fs::write(path, app.checkpoints_jsonl())
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
+        return Ok(());
+    }
     if cli.auto {
         let stop = app.play_auto(u64::from(cli.headless_steps.unwrap_or(200_000)), cli.pilot);
         print!("{}", app.auto_report(&stop));

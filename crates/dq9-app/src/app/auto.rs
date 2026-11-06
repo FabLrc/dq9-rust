@@ -687,19 +687,7 @@ impl App {
                 }
             }
             self.run_steps(1);
-            for index in recorded..self.journal.steps.len() {
-                let kind = match &self.journal.steps[index].1 {
-                    Step::Map { .. } | Step::MapChange { .. } => Some("map"),
-                    Step::Progress { .. } => Some("progress"),
-                    Step::EventStarted(_) => Some("event_start"),
-                    Step::EventEnded(_) => Some("event_end"),
-                    Step::Battle { .. } => Some("battle"),
-                    _ => None,
-                };
-                if let Some(kind) = kind {
-                    self.capture_checkpoint(kind);
-                }
-            }
+            self.capture_journal(recorded);
             let busy = self.events.is_active() || self.events.pending_start().is_some();
             started |= busy;
             if started && !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
@@ -738,6 +726,24 @@ impl App {
             Stop::Limit
         } else {
             Stop::NotStarted
+        }
+    }
+
+    /// Captures a checkpoint for every journal step recorded since `from`, with the state at
+    /// the end of the step.
+    pub(crate) fn capture_journal(&mut self, from: usize) {
+        for index in from..self.journal.steps.len() {
+            let kind = match &self.journal.steps[index].1 {
+                Step::Map { .. } | Step::MapChange { .. } => Some("map"),
+                Step::Progress { .. } => Some("progress"),
+                Step::EventStarted(_) => Some("event_start"),
+                Step::EventEnded(_) => Some("event_end"),
+                Step::Battle { .. } => Some("battle"),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                self.capture_checkpoint(kind);
+            }
         }
     }
 

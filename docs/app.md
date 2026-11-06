@@ -279,6 +279,9 @@ cargo run -p dq9-app --release -- --new-game --headless --auto --pilot
 # Checkpoints JSONL (mêmes champs que `dq9re state --json`) et entrées image par image :
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot `
   --checkpoints build/checkpoints.jsonl --trace-inputs build/inputs.jsonl
+# Rejoue la trace sans pilote : mêmes entrées, mêmes checkpoints (octet pour octet) :
+cargo run -p dq9-app --release -- --new-game --headless `
+  --replay build/inputs.jsonl --checkpoints build/replay.jsonl
 ```
 
 `--checkpoints` écrit un objet JSON par prise de contrôle, changement de carte ou d'histoire,
@@ -291,8 +294,12 @@ drapeaux d'étape `{1}`, héros `(0,660, -0,250, -3,610)`), à l'écart des 17 d
 (voir `docs/re/trigger.md`).
 
 `--trace-inputs` écrit le pavé et la touche action de chaque pas fixe (`frame`, `pad`
-`up/down/left/right`, `a`). Le pilote donne des directions du monde avec la caméra à l'angle 0 :
-la trace reproduit la preuve dans notre moteur, pas telle quelle une manette melonDS.
+`up/down/left/right`, `a`). `--replay` relit ce fichier sans pilote : chaque ligne alimente le
+pavé et la touche action d'un pas fixe. La trace du parcours ci-dessus (20 570 pas) rejouée
+donne **les mêmes 45 checkpoints, octet pour octet** (dont l'arrivée à 1.1.2 et les 1170
+scènes), ce qui est la preuve d'entrées reproductibles. Le pilote donne des directions du monde
+avec la caméra à l'angle 0 : la trace reproduit la preuve dans notre moteur, pas telle quelle
+une manette melonDS.
 
 Sur le Web : bouton « Nouvelle partie » de la page (ou `?newgame=1`), après avoir choisi la ROM.
 
