@@ -339,11 +339,11 @@ mouvements 545/546 ; palette (238) ; retour de la caméra (328) — détail et p
 [stb-natives.md](stb-natives.md#effets-exécutés-à-lécran-j3).
 
 - Échange d'écrans (109/110) : `Cutscene::screen_swapped` conserve le bit `POWCNT1` 15 entre
-  événements ; `screens::field/overlay` placent le champ et la fenêtre sur l'autre écran.
+  événements ; `screens::field/overlay` et `app.rs` (fenêtre et capture) placent le champ et la
+  fenêtre sur l'autre écran.
 
 **Non exécuté** (rapporté par `--events-report`) : native 547 (transition de combat, hors v0.1) ;
-le son de porte (584) ; l'échange d'écrans tant que le layout de `app.rs` n'applique pas
-`screen_swapped()` ; 559, 560, 571, 815, 581, 582 et 809 sont sans effet visible établi ou
+le son de porte (584) ; 559, 560, 571, 815, 581, 582 et 809 sont sans effet visible établi ou
 sans objet dessiné.
 
 ## Enchaînement du prologue (`dq9-core::scenario`)

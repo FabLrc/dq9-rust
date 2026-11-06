@@ -194,8 +194,9 @@ mouvements des PNJ (`play_npc`), les feuilles `.spr` de script (`add_sprite`) et
 - **Fondus.** Un rectangle noir ou blanc sur tout l'écran 3D, de niveau −16 à +16 ; un moteur
   verrouillé (`112`, `114`, `116`) ignore les fondus simples. L'écran « principal » est pris pour
   l'écran 3D **[hypothèse]** ; le fondu de l'autre moteur est ignoré. L'échange d'écrans
-  (109/110) conserve `POWCNT1` bit 15 dans `Cutscene` et `screens::field/overlay` placent le
-  champ et la fenêtre sur l'autre écran ; le panneau remplit l'écran libéré.
+  (109/110) conserve `POWCNT1` bit 15 dans `Cutscene` ; `app.rs` et le chemin capture utilisent
+  `screens::field/overlay` pour placer le champ et la fenêtre sur l'autre écran, le panneau
+  remplissant l'écran libéré (Top : pas de panneau).
 
 **Résultat sur le prologue** (`--events-report 1.1-3`, ROM EU, textes anglais ; les 30 scripts
 vont à leur terme, aucune scène « non jouée » ; le son est joué par `audio.rs` et rapporté nulle
@@ -205,19 +206,16 @@ le modèle n'a pas le nom :
 [`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)). Les **placements de
 collision** (574/575) ne sont plus exclus : le rapport les compte depuis le lot « scènes
 restantes ». Avant le chantier J3-effets : **22 scènes partielles sur 30** (18 lignes du
-rapport) ; après : **4 scènes partielles** (3 lignes), les deux échanges d'écrans de 21593 et
-21595 n'étant pas encore appliqués au layout.
+rapport) ; après : **2 scènes partielles** (1 ligne).
 
 | Scène(s) | Cartes | Résultat | Ce qui manque |
 |---|---|---|---|
 | 1130, 1140, 1150, 1160, 1170, 1310, 1320, 1340, 1350, 1360, 1370, 1380, 1390, 1410, 1600, 1610 | `X01M05`, `X01M07`, `X01M01`, `M01`, `M01M04` | complet | — |
 | 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | complet | — |
-| 21591, 21592, 21594, 21597 | `X01M05`, `M01`, `X01M04` | complet | — |
+| 21591, 21592, 21593, 21594, 21595, 21597 | `X01M05`, `M01`, `X01M04` | complet | — |
 | 1330 | `M01M06` | complet | — |
 | 21510 | `X01M04` | complet | — |
-| 21500 + 21507 | `M01M12` | partiel | collision placement ×7 (murs/sol non modifiés), door sound ×1 (index non lu), motion absent ×1, 547 (transition de combat, J4), 571 (sans lecteur), screen swap ×3 (layout non branché) |
-| 21593 | `M01` | partiel | screen swap ×2 (layout non branché), motion absent ×1, 571, 582, 809, 815 |
-| 21595 | `M01` | partiel | screen swap ×2 (layout non branché), motion absent ×1, 559, 571, 581, 582, 809, 815 |
+| 21500 + 21507 | `M01M12` | partiel | collision placement ×7 (murs/sol non modifiés), door sound ×1 (index non lu), motion absent ×1, 547 (transition de combat, J4), 571 (sans lecteur) |
 
 La chaîne du prologue se joue de bout en bout sans intervention : `21500 → 21507` (native 538),
 puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la victoire (trigger
@@ -249,7 +247,8 @@ puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la
   captures `21500` images 2900/2960, où le panneau change d'orientation. Le son reste rapporté
   tant que l'index (`g_DoorSeTable[quartet bas]`, 200–204) n'est pas branché.
 - **Échange d'écrans (109/110).** L'état `POWCNT1` bit 15 est partagé avec le layout ; six
-  échanges dans l'ouverture font passer le champ et la fenêtre d'un écran à l'autre.
+  échanges dans l'ouverture font passer le champ et la fenêtre d'un écran à l'autre. Captures
+  `stacked`/`side`/`top` avant/après le premier 109 (images 100 et 5000 de 21500).
 
 `--eye`/`--target` avec `--event` et `--screenshot` regardent la scène que le script a laissée
 (ils remplacent la caméra du script) : utile pour inspecter un acteur.
