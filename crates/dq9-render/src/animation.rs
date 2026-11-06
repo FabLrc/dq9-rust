@@ -106,7 +106,7 @@ struct ModelAnimation {
 }
 
 #[derive(Debug)]
-struct SpriteAnimation {
+pub(crate) struct SpriteAnimation {
     model: usize,
     angle: i32,
     frames: Vec<(usize, f32, f32)>,
@@ -116,7 +116,12 @@ struct SpriteAnimation {
     elapsed: u32,
     duration: u32,
     seated: bool,
+    /// Walking (`+0x5c` bit 3, native 545): the four `walk_*` animations instead of the eight
+    /// `stand_*` ones.
+    walking: bool,
     flip_y: bool,
+    /// The sheet's animation `animation` plays whatever the camera does.
+    fixed: bool,
 }
 
 /// An uploaded scene's independent CPU clock and deformation state. [`Scene::build`] and
@@ -128,6 +133,8 @@ pub struct AnimatedScene {
     sprites: Vec<SpriteAnimation>,
     hero: Option<HeroRig>,
     actors: Vec<actor::ActorRig>,
+    /// The model NPCs of the cast and the motions an event can make them play.
+    npc_rigs: Vec<actor::NpcRig>,
     pub frame: u64,
 }
 
@@ -159,6 +166,7 @@ impl AnimatedScene {
             hero: None,
             actors: Vec::new(),
             frame: 0,
+            npc_rigs: Vec::new(),
         };
         let ambl = Narc::parse(required(&file, &map.files.ambl)?)?;
         let tex_bytes = map
@@ -307,7 +315,13 @@ impl AnimatedScene {
                         let model = own
                             .model_data()?
                             .ok_or(Error::Malformed("NPC archive without model"))?;
-                        out.character(&path, model, clips, npc)?;
+                        // The named motions an event can start later (`play_npc`): the NPC's
+                        // own archive, then its extra package.
+                        let mut named = actor::collect_motions(&own).unwrap_or_default();
+                        if let Some(extra) = &extra {
+                            named.extend(actor::collect_motions(extra).unwrap_or_default());
+                        }
+                        out.character(&path, model, clips, named, npc)?;
                     }
                 }
             }
@@ -337,43 +351,7 @@ impl AnimatedScene {
                 .chain(sources.tex.iter().cloned())
                 .collect(),
         };
-        let mut b = Builder {
-            sources: &ordered,
-            scene: std::mem::take(&mut self.scene),
-            texture_ids: HashMap::new(),
-            lit: false,
-        };
-        for clip in &clips {
-            let f = G3dFile::parse(&clip.bytes)?;
-            for pattern in &f.patterns {
-                for track in &pattern.tracks {
-                    let Some(material) = m.materials.iter().find(|m| m.name == track.material)
-                    else {
-                        continue;
-                    };
-                    let mut palette = material.palette_name;
-                    // The first pass starts with the model palette; subsequent loops
-                    // retain the last explicitly selected palette for 0xff keys.
-                    for _ in 0..2 {
-                        for key in &track.keyframes {
-                            if let Some(p) = key.palette() {
-                                palette = Some(pattern.palette_names[usize::from(p)]);
-                            }
-                            let texture = pattern.texture_names[usize::from(key.texture_idx)];
-                            if let std::collections::hash_map::Entry::Vacant(e) =
-                                textures.entry((texture, palette))
-                            {
-                                let id = b
-                                    .decode(&texture, palette.as_ref())
-                                    .ok_or(Error::Malformed("PAT texture or palette missing"))?;
-                                e.insert(id);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        self.scene = b.scene;
+        self.bind_patterns(m, &clips, &ordered, &mut textures)?;
         self.models.push(ModelAnimation {
             model,
             bytes,
@@ -386,11 +364,64 @@ impl AnimatedScene {
         Ok(())
     }
 
+    /// Decodes into the scene the textures that the pattern animations of `clips` switch the
+    /// materials of `m` between, so that every frame finds its texture bound.
+    fn bind_patterns(
+        &mut self,
+        m: &nds_rom::g3d::Model<'_>,
+        clips: &[Clip],
+        ordered: &TextureSources<'_>,
+        textures: &mut HashMap<(Name, Option<Name>), usize>,
+    ) -> Result<()> {
+        let mut b = Builder {
+            sources: ordered,
+            scene: std::mem::take(&mut self.scene),
+            texture_ids: HashMap::new(),
+            lit: false,
+        };
+        let bound = (|| -> Result<()> {
+            for clip in clips {
+                let f = G3dFile::parse(&clip.bytes)?;
+                for pattern in &f.patterns {
+                    for track in &pattern.tracks {
+                        let Some(material) = m.materials.iter().find(|m| m.name == track.material)
+                        else {
+                            continue;
+                        };
+                        let mut palette = material.palette_name;
+                        // The first pass starts with the model palette; subsequent loops
+                        // retain the last explicitly selected palette for 0xff keys.
+                        for _ in 0..2 {
+                            for key in &track.keyframes {
+                                if let Some(p) = key.palette() {
+                                    palette = Some(pattern.palette_names[usize::from(p)]);
+                                }
+                                let texture = pattern.texture_names[usize::from(key.texture_idx)];
+                                if let std::collections::hash_map::Entry::Vacant(e) =
+                                    textures.entry((texture, palette))
+                                {
+                                    let id = b.decode(&texture, palette.as_ref()).ok_or(
+                                        Error::Malformed("PAT texture or palette missing"),
+                                    )?;
+                                    e.insert(id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })();
+        self.scene = b.scene;
+        bound
+    }
+
     fn character(
         &mut self,
         path: &str,
         model_bytes: &[u8],
         clips: Vec<Clip>,
+        motions: Vec<actor::Motion>,
         npc: &cast::Npc<'_>,
     ) -> Result<()> {
         let f = G3dFile::parse(model_bytes)?;
@@ -422,9 +453,17 @@ impl AnimatedScene {
             ids.push(id);
         }
         self.scene = b.scene;
+        let bytes: Arc<[u8]> = model_bytes.into();
+        if let Some(&model) = ids.first() {
+            self.npc_rigs.push(actor::NpcRig::new(
+                npc.member.id,
+                model,
+                bytes.clone(),
+                motions,
+            ));
+        }
         // NPC archives contain one model; keep a separate clock for each placed NPC.
         if !clips.is_empty() {
-            let bytes: Arc<[u8]> = model_bytes.into();
             for (index, id) in ids.into_iter().enumerate() {
                 let copies = clips
                     .iter()
@@ -614,6 +653,11 @@ impl AnimatedScene {
             renderer.update_draws(hero.model, &model.draws);
             hero.dirty = false;
         }
+        if let Some(hero) = &self.hero {
+            for (i, material) in self.scene.models[hero.model].materials.iter().enumerate() {
+                renderer.update_material(device, queue, hero.model, i, material)?;
+            }
+        }
         for sprite in &self.sprites {
             let model = &self.scene.models[sprite.model];
             if !renderer.update_vertices(queue, sprite.model, &model.vertices) {
@@ -635,8 +679,73 @@ fn name(s: &str) -> Option<Name> {
     Some(Name(bytes))
 }
 
+/// What distinguishes a sprite object of the scene: a map NPC, a sprite of a script, a balloon.
+struct SpriteSpec {
+    name: String,
+    /// Half translucent (alpha 16): the NPC placement flag `0x20`.
+    half_alpha: bool,
+    position: Vec3,
+    /// [`SceneInstance::instance`]: the NPC's id, `usize::MAX` for the others.
+    instance: usize,
+    angle: i32,
+    seated: bool,
+    flip_y: bool,
+    /// The animation of the sheet that plays whatever the camera does (a balloon).
+    fixed: Option<usize>,
+    /// A 2D sprite of the interface: neither fogged nor lit by the zone.
+    overlay: bool,
+}
+
 impl AnimatedScene {
     fn sprite(&mut self, path: &str, bytes: &[u8], npc: &cast::Npc<'_>) -> Result<()> {
+        self.sprite_object(
+            path,
+            bytes,
+            SpriteSpec {
+                name: npc.member.name_str(),
+                half_alpha: npc.placement.flags & 0x20 != 0,
+                position: Vec3::from_array(npc.placement.position.map(|v| v as f32 / 4096.0)),
+                instance: usize::from(npc.member.id),
+                angle: i32::from(npc.placement.angle).wrapping_add(npc.placement.seat_angle),
+                seated: npc.placement.flags & 0x800 != 0,
+                flip_y: npc.placement.flags & 0x400 != 0,
+                fixed: None,
+                overlay: false,
+            },
+        )
+        .map(|_| ())
+    }
+
+    /// Adds the sprite sheet `bytes` (a `.spr`) to the scene as a billboard hidden until it is
+    /// given a world matrix, and returns its scene instance. A script's sprite (`overlay`
+    /// false) shows its `stand_*` or `walk_*` animation like a map NPC; with `fixed` set it
+    /// plays that animation of the sheet whatever the camera does, and an `overlay` is lit
+    /// and fogged by nothing. Call before the scene is uploaded.
+    pub fn add_sprite(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        fixed: Option<usize>,
+        overlay: bool,
+    ) -> Result<usize> {
+        self.sprite_object(
+            name,
+            bytes,
+            SpriteSpec {
+                name: name.to_owned(),
+                half_alpha: false,
+                position: Vec3::ZERO,
+                instance: usize::MAX,
+                angle: 0,
+                seated: false,
+                flip_y: false,
+                fixed,
+                overlay,
+            },
+        )
+    }
+
+    fn sprite_object(&mut self, path: &str, bytes: &[u8], spec: SpriteSpec) -> Result<usize> {
         let sprite = Sprite::parse(bytes)?;
         let mut frames = Vec::with_capacity(sprite.frames.len());
         for i in 0..sprite.frames.len() {
@@ -665,7 +774,7 @@ impl AnimatedScene {
         self.scene.models.push(SceneModel {
             archive: path.into(),
             member: path.into(),
-            name: npc.member.name_str(),
+            name: spec.name,
             vertices: vec![
                 SceneVertex {
                     color: [1.0; 3],
@@ -680,20 +789,20 @@ impl AnimatedScene {
                 palette_name: None,
                 texture: Some(frames[0].0),
                 wrap: [Wrap::Clamp; 2],
-                alpha: if npc.placement.flags & 0x20 != 0 {
-                    16
-                } else {
-                    31
-                },
+                alpha: if spec.half_alpha { 16 } else { 31 },
                 cull: Cull::None,
                 mode: PolygonMode::Modulate,
                 depth_equal: false,
                 translucent_depth_write: false,
                 uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
                 light: MaterialLight {
-                    shade: Shade::Sprite,
+                    shade: if spec.overlay {
+                        Shade::Unlit
+                    } else {
+                        Shade::Sprite
+                    },
                     // Observed in melonDS: the DS fogs the cast's polygons.
-                    fog: true,
+                    fog: !spec.overlay,
                     ..MaterialLight::default()
                 },
             }],
@@ -706,15 +815,21 @@ impl AnimatedScene {
             lit: false,
             tinted: false,
         });
-        let position = Vec3::from_array(npc.placement.position.map(|v| v as f32 / 4096.0));
+        let instance = self.scene.instances.len();
+        let world = if spec.instance == usize::MAX {
+            Mat4::from_scale(Vec3::ZERO)
+        } else {
+            Mat4::from_translation(spec.position)
+        };
         self.scene.instances.push(SceneInstance {
             model,
-            world: Mat4::from_translation(position),
+            world,
             block: usize::MAX,
-            instance: usize::from(npc.member.id),
+            instance: spec.instance,
         });
-        let animation = sprite
-            .first_animation()
+        let animation = spec
+            .fixed
+            .unwrap_or_else(|| sprite.first_animation())
             .min(sprite.animations.len().saturating_sub(1));
         let duration = sprite
             .animations
@@ -723,7 +838,7 @@ impl AnimatedScene {
             .map_or(0, |s| s.duration);
         self.sprites.push(SpriteAnimation {
             model,
-            angle: i32::from(npc.placement.angle).wrapping_add(npc.placement.seat_angle),
+            angle: spec.angle,
             frames,
             animations: sprite
                 .animations
@@ -734,10 +849,12 @@ impl AnimatedScene {
             step: 0,
             elapsed: 0,
             duration,
-            seated: npc.placement.flags & 0x800 != 0,
-            flip_y: npc.placement.flags & 0x400 != 0,
+            seated: spec.seated,
+            walking: false,
+            flip_y: spec.flip_y,
+            fixed: spec.fixed.is_some(),
         });
-        Ok(())
+        Ok(instance)
     }
 }
 
@@ -754,10 +871,16 @@ impl SpriteAnimation {
             let step = steps
                 .get(self.step)
                 .ok_or(Error::Malformed("sprite step missing"))?;
-            self.step = step.next as usize;
-            if self.step >= steps.len() {
+            let next = step.next as usize;
+            if next >= steps.len() {
+                // A sheet of one still frame (`ev_mark`, `field_qu`) points past its only step:
+                // the game does not animate it (`SPRSprite::Update` needs `unknown_84_1_`).
+                if self.fixed {
+                    return Ok(());
+                }
                 return Err(Error::Malformed("sprite next step out of range"));
             }
+            self.step = next;
             self.duration = step.duration;
             self.elapsed = 0;
         }
@@ -781,13 +904,18 @@ impl SpriteAnimation {
                 "stand_left" => ("sleep_right", true),
                 _ => ("sleep_r_down", true),
             }
+        } else if self.walking {
+            (cast::sprite_walk(self.angle, camera_angle), false)
         } else {
             (stand, false)
         };
-        let selected = self
-            .animations
-            .iter()
-            .position(|(n, _)| n == wanted.as_bytes());
+        let selected = (!self.fixed)
+            .then(|| {
+                self.animations
+                    .iter()
+                    .position(|(n, _)| n == wanted.as_bytes())
+            })
+            .flatten();
         if let Some(index) = selected.filter(|&i| i != self.animation) {
             self.animation = index;
             self.step = 0;
@@ -960,7 +1088,9 @@ mod tests {
             elapsed: 3,
             duration: 8,
             seated: false,
+            walking: false,
             flip_y: false,
+            fixed: false,
         };
         sprite.face(&Camera::default(), &mut scene).unwrap();
         assert_eq!(sprite.animation, 0);

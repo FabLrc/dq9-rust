@@ -330,6 +330,44 @@ pub enum Event {
         slot: i32,
         visible: bool,
     },
+    /// 545 (`moving`), 546: the character of a binding slot starts or stops walking: the motions
+    /// `run` and `stand` of a model (`02036e44`), the walking or standing animations of a sprite
+    /// (bit 8 of `+0x5c`).
+    SlotMotion {
+        slot: i32,
+        moving: bool,
+    },
+    /// 574: the map placement `(group, id)` is shown or hidden (`hidden`: bit 2 of its `+2`).
+    Placement {
+        group: i32,
+        id: i32,
+        hidden: bool,
+    },
+    /// 575: the map placement `(group, id)` is moved to a world position.
+    PlacementMove {
+        group: i32,
+        id: i32,
+        position: [f32; 3],
+    },
+    /// 541: a balloon sprite of the field (`kind` 14 to 16, `docs/re/stb-natives.md`) over the
+    /// actor `actor`, nudged by `offset` DS pixels.
+    Balloon {
+        actor: i32,
+        kind: i32,
+        offset: [i32; 2],
+    },
+    /// 561: moves the balloon by `offset` pixels.
+    BalloonNudge {
+        offset: [i32; 2],
+    },
+    /// 542: takes the balloon down.
+    BalloonEnd,
+    /// 238: a palette operation on the model of a binding slot (`docs/re/stb-natives.md`).
+    Tint {
+        slot: i32,
+        rgb: [i32; 3],
+        mode: i32,
+    },
     /// 235, 236: attaches the object of `child` to a bone of the object of `parent`.
     AttachBone {
         child: i32,
@@ -345,6 +383,11 @@ pub enum Event {
         command: ActorCommand,
     },
     Camera(Camera),
+    /// 328: both eye and target move over `duration` to where the field camera stands for the
+    /// hero (`ov_001::0215e14c`, `020a2b48`).
+    CameraToField {
+        duration: i32,
+    },
     Sound(Sound),
     /// 566: a cast member declared for the scene build. `character` is the id the game
     /// reserves for it (modes 4, 6, 7, 8: −1, −2, …; mode 5 copies `reference`).

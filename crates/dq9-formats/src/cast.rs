@@ -914,6 +914,19 @@ pub fn sprite_stand(npc_angle: i32, camera_angle: i32) -> &'static str {
     SECTOR[(q >> 12 & 7) as usize]
 }
 
+/// Name of the walk animation a sprite NPC shows while its `+0x5c` bit 3 is set (native 545):
+/// four sectors of the NPC's angle minus the camera's (`NpcSprite_FaceCamera`, `0x0203cbe8`:
+/// `((rel + 2π) × 4 + π) / 2π & 3`, table `0x020e7928` of indices 9, 0xb, 8, 0xa into the
+/// names at `0x020efd00`).
+pub fn sprite_walk(npc_angle: i32, camera_angle: i32) -> &'static str {
+    const TURN: i32 = 0x6488;
+    const SECTOR: [&str; 4] = ["walk_down", "walk_right", "walk_up", "walk_left"];
+    let rel = (npc_angle.wrapping_sub(camera_angle)).rem_euclid(TURN);
+    let num = i64::from((rel + TURN) * 4 + 0x3244);
+    let q = (((num << 32) / i64::from(TURN)) + 0x80000) >> 20;
+    SECTOR[(q >> 12 & 3) as usize]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1154,5 +1167,16 @@ mod tests {
         assert_eq!(sprite_stand(0x3244, 0), "stand_up");
         assert_eq!(sprite_stand(0x1922, 0), "stand_right");
         assert_eq!(sprite_stand(-0x1922, 0), "stand_left");
+    }
+
+    #[test]
+    fn walking_sprites_use_four_directions() {
+        // The four-sector table `0x020e7928` (`NpcSprite_FaceCamera`): down, right, up, left.
+        assert_eq!(sprite_walk(0, 0), "walk_down");
+        assert_eq!(sprite_walk(0x1922, 0), "walk_right");
+        assert_eq!(sprite_walk(0x3244, 0), "walk_up");
+        assert_eq!(sprite_walk(-0x1922, 0), "walk_left");
+        // A diagonal falls on the nearer quarter, as the standing view rounds to eighths.
+        assert_eq!(sprite_walk(0x0c91 - 100, 0), "walk_down");
     }
 }

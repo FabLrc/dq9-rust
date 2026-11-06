@@ -100,6 +100,15 @@ pub enum Shade {
 /// lights), completed by the bits a material's mask selects.
 const DEFAULT_POLYGON_ATTR: u32 = (0x1f << 16) | (1 << 7) | 0xf;
 
+/// `texel × mul + add`, clamped, on the colour of every texel of a model: what the game does to
+/// the palettes of a character (native 238, `ov_017::0218f968`, `0218fd34`): adds a colour
+/// (mode 0, `mul` 1), fills with it (mode 1, `mul` 0) or multiplies by it (mode 2, `add` 0).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TexelTint {
+    pub mul: [f32; 3],
+    pub add: [f32; 3],
+}
+
 /// What the DS lighting equation needs from a material (`DIF_AMB`, `SPE_EMI`, `POLYGON_ATTR`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MaterialLight {
@@ -117,6 +126,8 @@ pub struct MaterialLight {
     /// Terrain model of an advanced zone: its ambient colour is the zone's
     /// (`LightingManager::ApplyAmbientColorToModel`, `0x02052348`).
     pub terrain: bool,
+    /// An operation on the colours of the model's palettes (native 238), done on the texels.
+    pub texel_tint: Option<TexelTint>,
 }
 
 impl Default for MaterialLight {
@@ -131,6 +142,7 @@ impl Default for MaterialLight {
             fog: false,
             polygon_id: 0,
             terrain: false,
+            texel_tint: None,
         }
     }
 }
@@ -150,6 +162,7 @@ impl MaterialLight {
             fog: attr & (1 << 15) != 0,
             polygon_id: ((attr >> 24) & 0x3f) as u8,
             terrain: false,
+            texel_tint: None,
         }
     }
 }
@@ -242,6 +255,13 @@ pub struct Scene {
     /// materials draw untextured **[hypothesis: as the DS draws a material whose texture the
     /// library left unbound]**.
     pub unbound_textures: Vec<String>,
+    /// The scene instances of each map placement: `(block entry, placement id, instance)`,
+    /// which is how scripts name them (natives 574, 575). Placements hidden at the chosen time
+    /// of day have no instance.
+    pub placements: Vec<(u32, u16, usize)>,
+    /// The placements of the map with no instance in the scene: `(block entry, placement id,
+    /// collision part)`. A collision part has no model to show, a hidden one is not built.
+    pub undrawn_placements: Vec<(u32, u16, bool)>,
     /// Files that could not be read or decoded, skipped.
     pub warnings: Vec<String>,
 }
@@ -585,6 +605,11 @@ impl Scene {
                     continue;
                 };
                 if inst.hidden || !matches!(part.kind, PartKind::Model | PartKind::Object) {
+                    b.scene.undrawn_placements.push((
+                        block.entry,
+                        inst.id,
+                        part.kind == PartKind::Collision,
+                    ));
                     continue;
                 }
                 let Some(name) = &part.file else { continue };
@@ -614,6 +639,9 @@ impl Scene {
                     });
                 let world = world_matrix(&inst.world);
                 for &model in models.iter() {
+                    b.scene
+                        .placements
+                        .push((block.entry, inst.id, b.scene.instances.len()));
                     b.scene.instances.push(SceneInstance {
                         model,
                         world,

@@ -424,6 +424,36 @@ impl HeroRig {
         Vec3::from_array(self.scale)
     }
 
+    /// World matrix of the body bone `bone` in rig space, in the pose of the current frame
+    /// (the matrix the render commands hold after `MulObject`); `None` when no part of the
+    /// rig has such a bone.
+    pub(crate) fn bone(&self, bone: &str) -> Result<Option<Mat4>> {
+        let clip = self
+            .custom
+            .as_ref()
+            .unwrap_or(&self.clips[self.gait.index()]);
+        let anim = G3dFile::parse(&clip.bytes)?;
+        let joint = anim
+            .joint_animations
+            .first()
+            .ok_or(Error::Malformed("hero motion without joint animation"))?;
+        for part in &self.parts {
+            if !matches!(part.kind, Kind::Rig) {
+                continue;
+            }
+            let f = G3dFile::parse(&part.bytes)?;
+            let m = &f.models[0];
+            let Some(i) = m.objects.iter().position(|o| o.name.is(bone)) else {
+                continue;
+            };
+            let objects = joint.pose_at(m, Fx12(clip.frame))?;
+            if let Some(world) = object_worlds(m, &objects)?[i] {
+                return Ok(Some(to_glam(&world)));
+            }
+        }
+        Ok(None)
+    }
+
     /// One 60 Hz update of the current motion.
     pub(crate) fn step(&mut self, scene: &mut Scene) -> Result<()> {
         match &mut self.custom {

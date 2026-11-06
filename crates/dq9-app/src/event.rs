@@ -13,14 +13,19 @@
 //! character needs, adds them to the scene, and the application uploads the scene once.
 
 use std::cell::OnceCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use dq9_core::cutscene::{Cutscene, Output, Pose, Target};
+use dq9_core::cutscene::{
+    Balloon, ClockCommand, Cutscene, Node, Output, PlacementChange, Pose, SceneLight, Target,
+    TexelOp,
+};
 use dq9_core::field::{angle_of_yaw, yaw_of_angle};
 use dq9_core::script::{Director, Event, Files, Frame, Signal, Sound, Text};
 use dq9_core::trigger::{Request, State};
 use dq9_core::{CollisionWorld, Hero};
-use dq9_render::{AnimatedScene, Camera};
+use dq9_formats::lighting::LightingInfo;
+use dq9_render::camera::DS_ASPECT;
+use dq9_render::{AnimatedScene, Camera, Environment, TexelTint};
 use glam::{EulerRot, Mat4, Vec3};
 use nds_rom::Rom;
 
@@ -80,6 +85,12 @@ struct Scan {
     updates: u32,
     /// The script did not load or stopped on an error.
     failure: Option<String>,
+    /// Map NPCs the script gives a motion (`AnimatedScene::prepare_npc_motions`).
+    npc_motions: BTreeSet<u16>,
+    /// Motion packages the script adds to map NPCs (natives 229, 567), by NPC id.
+    npc_packages: Vec<(u16, String)>,
+    /// Field sprite ids of the balloons it puts up.
+    balloons: BTreeSet<i32>,
 }
 
 /// Plays `event` headless up to its end, noting the models and packages each target gets.
@@ -94,6 +105,9 @@ fn scan(rom: &[u8], event: u16, world: &State) -> Scan {
         out.updates += 1;
         for e in &events {
             cutscene.apply(e);
+            if let Some(balloon) = cutscene.balloon() {
+                out.balloons.insert(balloon.sprite);
+            }
             if let Some(signal) = e.instant_signal() {
                 director.signal(signal);
             }
@@ -131,7 +145,7 @@ fn note(cutscene: &Cutscene, out: &mut Scan) {
                     }
                 }
             }
-            Target::Model(_) | Target::Cast(_) => {
+            Target::Model(_) | Target::Cast(_) | Target::Object(_) => {
                 let Some(path) = &node.model else { continue };
                 let plan = match out
                     .models
@@ -151,6 +165,18 @@ fn note(cutscene: &Cutscene, out: &mut Scan) {
                 for (package, _) in &node.packages {
                     if !plan.packages.contains(package) {
                         plan.packages.push(package.clone());
+                    }
+                }
+            }
+            Target::Npc(id) => {
+                if let Ok(id) = u16::try_from(id) {
+                    if node.animation.is_some() {
+                        out.npc_motions.insert(id);
+                    }
+                    for (path, _) in &node.packages {
+                        if !out.npc_packages.contains(&(id, path.clone())) {
+                            out.npc_packages.push((id, path.clone()));
+                        }
                     }
                 }
             }
@@ -208,6 +234,14 @@ struct Bindings {
     homes: Vec<(usize, Mat4)>,
     /// Animation request last started for each target.
     played: HashMap<Target, u32>,
+    /// Scene instance of each scripted sprite sheet (cast mode 3).
+    sprites: HashMap<(Target, String), usize>,
+    /// Scene instance of each balloon sprite, by the field's sprite id.
+    balloons: HashMap<i32, usize>,
+    /// What the scripts did to each map placement instance: its world before, and now.
+    placements: HashMap<usize, Placement>,
+    /// The palette operation applied to each target.
+    tinted: HashMap<Target, Option<TexelOp>>,
 }
 
 /// The event task and what it did to the scene.
@@ -228,6 +262,8 @@ pub struct EventPlayer {
     started: Vec<u16>,
     /// The event whose scene [`EventPlayer::prepare`] built and that has not started yet.
     prepared: Option<u16>,
+    /// The scene lighting the renderer's environment was last built from.
+    applied_light: SceneLight,
 }
 
 impl Default for EventPlayer {
@@ -266,6 +302,7 @@ impl EventPlayer {
             running: None,
             started: Vec::new(),
             prepared: None,
+            applied_light: SceneLight::default(),
         }
     }
 
@@ -299,6 +336,37 @@ impl EventPlayer {
         self.hero_hidden
     }
 
+    /// The environment the running events give the map (time of day, light fade, fog), when it
+    /// changed since the last call; `info` and `clock` are the map's lighting script and the
+    /// game's day clock. After the last event ends this returns the map's own environment once.
+    pub fn environment(
+        &mut self,
+        info: Option<&LightingInfo>,
+        clock: dq9_core::state::DayClock,
+    ) -> Option<Environment> {
+        let light = self.cutscene.light();
+        if light.same_look(&self.applied_light) {
+            return None;
+        }
+        self.applied_light = light.clone();
+        Some(crate::lighting::scene_environment(
+            info,
+            clock,
+            &self.applied_light,
+        ))
+    }
+
+    /// A map was loaded: its environment and its placements are the map's own again.
+    pub fn map_loaded(&mut self) {
+        self.applied_light = SceneLight::default();
+        self.bindings.placements.clear();
+    }
+
+    /// The requests of the scripts on the day clock (natives 579, 808) since the last call.
+    pub fn take_clock_commands(&mut self) -> Vec<ClockCommand> {
+        self.cutscene.take_clock_commands()
+    }
+
     /// The instances whose world matrix changed since the last call.
     pub fn take_dirty(&mut self) -> Vec<usize> {
         std::mem::take(&mut self.dirty)
@@ -329,6 +397,13 @@ impl EventPlayer {
             }
         }
         self.bindings.actors.clear();
+        // The hero and the map's NPCs keep their palettes until the script resets them; the
+        // models of the previous event are gone.
+        self.bindings
+            .tinted
+            .retain(|target, _| matches!(target, Target::Hero | Target::Npc(_)));
+        self.bindings.sprites.clear();
+        self.bindings.balloons.clear();
         self.bindings.played.clear();
         self.restore_npcs(stage);
         self.cutscene.restart();
@@ -357,7 +432,19 @@ impl EventPlayer {
         }
         for plan in &scanned.models {
             if plan.path.ends_with(".spr") {
-                self.coverage.miss(format!("2D sprite actor {}", plan.path));
+                match data(&format!("ani/{}", plan.path)) {
+                    Some(bytes) => match stage.scene.add_sprite(&plan.path, bytes, None, false) {
+                        Ok(instance) => {
+                            self.bindings.instances.push(instance);
+                            self.bindings
+                                .sprites
+                                .insert((plan.target, plan.path.clone()), instance);
+                            added = true;
+                        }
+                        Err(e) => self.fail(format!("sprite {}: {e}", plan.path)),
+                    },
+                    None => self.fail(format!("sprite {}: not in the ROM", plan.path)),
+                }
                 continue;
             }
             // A monster is the `.cchr` of its member of `enemy.gp2` (`native 233`).
@@ -402,6 +489,40 @@ impl EventPlayer {
                     added = true;
                 }
                 Err(e) => self.fail(format!("model {}: {e}", plan.path)),
+            }
+        }
+        for (id, path) in &scanned.npc_packages {
+            match data(path) {
+                Some(bytes) => {
+                    if let Err(e) = stage.scene.add_npc_package(*id, bytes) {
+                        self.fail(format!("package {path} of NPC {id}: {e}"));
+                    }
+                }
+                None => self.fail(format!("package {path}: not in the ROM")),
+            }
+        }
+        for &id in &scanned.npc_motions {
+            match stage.scene.prepare_npc_motions(id) {
+                Ok(changed) => added |= changed,
+                Err(e) => self.fail(format!("motions of NPC {id}: {e}")),
+            }
+        }
+        for &sprite in &scanned.balloons {
+            let Some(name) = field_sprite(sprite) else {
+                self.fail(format!("balloon sprite {sprite} unknown"));
+                continue;
+            };
+            let Some(bytes) = icon_sprite(&files, name) else {
+                self.fail(format!("balloon sprite {name}: not in icon.nsarc"));
+                continue;
+            };
+            // `SetAnimation(1)`, which is also the animation a sheet starts with.
+            match stage.scene.add_sprite(name, &bytes, Some(1), true) {
+                Ok(instance) => {
+                    self.bindings.balloons.insert(sprite, instance);
+                    added = true;
+                }
+                Err(e) => self.fail(format!("balloon sprite {name}: {e}")),
             }
         }
         self.seed(stage);
@@ -492,6 +613,7 @@ impl EventPlayer {
         if let Some(runtime) = self.director.runtime_mut() {
             self.cutscene.sync_runtime(runtime);
         }
+        self.apply_placements(stage);
         self.present(stage);
         outcomes
     }
@@ -566,6 +688,21 @@ impl EventPlayer {
             }
         }
         self.bindings.actors.clear();
+        // The field draws the hero and the map's NPCs with their own colours again.
+        for (target, applied) in std::mem::take(&mut self.bindings.tinted) {
+            if applied.is_none() {
+                continue;
+            }
+            match target {
+                Target::Hero => stage.scene.tint_hero(None),
+                Target::Npc(id) => {
+                    if let Ok(id) = u16::try_from(id) {
+                        stage.scene.tint_npc(id, None);
+                    }
+                }
+                _ => {}
+            }
+        }
         self.hero_hidden = false;
         if let Some(camera) = self.saved_camera.take() {
             *stage.camera = camera;
@@ -615,32 +752,86 @@ impl EventPlayer {
                 Some(path) => self.bindings.actors.get(&(target, path.clone())).copied(),
                 None => None,
             };
+            let sprite = node
+                .model
+                .as_ref()
+                .and_then(|path| self.bindings.sprites.get(&(target, path.clone())).copied());
+            if self.bindings.tinted.get(&target).copied().flatten() != node.tint
+                && (node.tint.is_some() || self.bindings.tinted.contains_key(&target))
+            {
+                let tint = node.tint.map(|op| TexelTint {
+                    mul: op.mul(),
+                    add: op.add(),
+                });
+                let done = match target {
+                    Target::Hero => {
+                        stage.scene.tint_hero(tint);
+                        true
+                    }
+                    Target::Model(_) | Target::Cast(_) => {
+                        actor.is_some_and(|a| stage.scene.tint_actor(a, tint))
+                    }
+                    Target::Npc(id) => {
+                        u16::try_from(id).is_ok_and(|id| stage.scene.tint_npc(id, tint))
+                    }
+                    _ => false,
+                };
+                if !done && node.tint.is_some() {
+                    self.coverage
+                        .miss(format!("palette operation on {target:?}"));
+                }
+                // Whether it was done or has nothing to act on (a model that is gone).
+                self.bindings.tinted.insert(target, node.tint);
+            }
             if let Some(animation) = requested {
                 self.bindings.played.insert(target, animation.serial);
                 let started = match target {
                     Target::Hero => stage
                         .scene
                         .play_hero(&animation.name, animation.plays_once()),
-                    Target::Model(_) | Target::Cast(_) => actor.is_some_and(|a| {
+                    Target::Model(_) | Target::Cast(_) | Target::Object(_) => match sprite {
+                        Some(s) => stage.scene.play_sprite(s, &animation.name),
+                        None => actor.is_some_and(|a| {
+                            stage
+                                .scene
+                                .play_actor(a, &animation.name, animation.plays_once(), 1.0)
+                        }),
+                    },
+                    Target::Npc(id) => u16::try_from(id).is_ok_and(|id| {
                         stage
                             .scene
-                            .play_actor(a, &animation.name, animation.plays_once(), 1.0)
+                            .play_npc(id, &animation.name, animation.plays_once(), 1.0)
                     }),
                     _ => false,
                 };
                 if !started {
                     // Nothing to wait for: the script goes on.
-                    self.coverage
-                        .miss(format!("motion {} of {target:?}", animation.name));
+                    let has_model = match target {
+                        Target::Model(_) | Target::Cast(_) => sprite.is_none() && actor.is_some(),
+                        Target::Npc(id) => {
+                            u16::try_from(id).is_ok_and(|id| stage.scene.npc_has_model(id))
+                        }
+                        _ => false,
+                    };
+                    if has_model {
+                        // `MaybeSetRegularAnimation` (`02036e44`) searches the model's motion
+                        // tables by name and returns without changing anything when none has it.
+                        self.coverage.miss(ABSENT_MOTION);
+                    } else {
+                        self.coverage
+                            .miss(format!("motion {} of {target:?}", animation.name));
+                    }
                     finished.push((target, animation.serial));
                 }
             }
             if let Some(animation) = &node.animation {
                 let wraps = match target {
                     Target::Hero => stage.scene.hero_wraps(),
+                    Target::Model(_) | Target::Cast(_) | Target::Object(_) if sprite.is_some() => 1,
                     Target::Model(_) | Target::Cast(_) => {
                         actor.map_or(0, |a| stage.scene.actor_wraps(a))
                     }
+                    Target::Npc(id) => u16::try_from(id).map_or(1, |id| stage.scene.npc_wraps(id)),
                     _ => 0,
                 };
                 if wraps > 0 && self.bindings.played.get(&target) == Some(&animation.serial) {
@@ -689,20 +880,41 @@ impl EventPlayer {
                     };
                     self.set_world(stage.scene, instance, world);
                 }
-                Target::Model(_) | Target::Cast(_) => {
+                Target::Model(_) | Target::Cast(_) | Target::Object(_) => {
+                    if let Some(instance) = sprite {
+                        // A script's sprite is a billboard turned by its rotation (`NpcSprite_FaceCamera`).
+                        stage.scene.set_sprite_angle(instance, node.pose.rotation.y);
+                        let world = if node.visible && node.placed {
+                            Mat4::from_translation(node.pose.position)
+                                * Mat4::from_scale(node.pose.scale)
+                        } else {
+                            Mat4::from_scale(Vec3::ZERO)
+                        };
+                        self.set_world(stage.scene, instance, world);
+                        continue;
+                    }
                     let Some(instance) = actor.and_then(|a| stage.scene.actor_instance(a)) else {
                         continue;
                     };
-                    let shown = node.visible && node.placed && node.model.is_some();
-                    self.set_world(stage.scene, instance, world_of(&node.pose, shown));
+                    let world = match self.attachment_base(stage.scene, &node, 0) {
+                        Some(base) => {
+                            base * world_of(&node.pose, node.visible && node.model.is_some())
+                        }
+                        None => world_of(
+                            &node.pose,
+                            node.visible && node.placed && node.model.is_some(),
+                        ),
+                    };
+                    self.set_world(stage.scene, instance, world);
                 }
-                Target::Object(_) | Target::Detached(_) => {}
+                Target::Detached(_) => {}
             }
         }
         for (target, serial) in finished {
             self.cutscene.animation_finished(target, serial);
         }
         self.present_camera(stage);
+        self.present_balloon(stage);
     }
 
     fn present_camera(&mut self, stage: &mut Stage) {
@@ -737,6 +949,188 @@ impl EventPlayer {
             Some(world.transform_point3(bone.w_axis.truncate()))
         };
         Some((at(&bones.eye)?, at(&bones.target)?))
+    }
+
+    /// World matrix a target is drawn with now: the hero, a map NPC, or a model, which hangs on
+    /// a bone of another target while it is attached.
+    fn target_world(&self, scene: &AnimatedScene, target: Target, depth: u32) -> Option<Mat4> {
+        let node = self.cutscene.node(target)?;
+        match target {
+            Target::Hero => Some(scene.hero_world(node.pose.position, node.pose.rotation.y)),
+            Target::Npc(id) => {
+                let instance = scene.npc_instance(u16::try_from(id).ok()?)?;
+                scene.scene.instances.get(instance).map(|i| i.world)
+            }
+            Target::Model(_) | Target::Cast(_) => {
+                let local = world_of(&node.pose, node.visible && node.model.is_some());
+                Some(
+                    self.attachment_base(scene, node, depth)
+                        .map_or(local, |base| base * local),
+                )
+            }
+            Target::Object(_) | Target::Detached(_) => None,
+        }
+    }
+
+    /// The matrix a model attached to a bone of another target (natives 235, 236) is placed in:
+    /// the parent's world times the bone's (`02037868`, `020378a0`); the model's own pose is
+    /// relative to it **[hypothèse]** (the scripts reset the scale of the attached models to
+    /// 1, which only makes sense if the parent's scale is inherited). `None` when the model
+    /// is not attached or its parent cannot be resolved.
+    fn attachment_base(&self, scene: &AnimatedScene, node: &Node, depth: u32) -> Option<Mat4> {
+        let (parent, bone) = node.attached.as_ref()?;
+        if depth > 4 {
+            return None;
+        }
+        if !self.cutscene.node(*parent)?.visible {
+            return Some(Mat4::from_scale(Vec3::ZERO));
+        }
+        let world = self.target_world(scene, *parent, depth + 1)?;
+        let bone = match parent {
+            Target::Hero => scene.hero_bone(bone),
+            Target::Model(_) | Target::Cast(_) => {
+                let model = self.cutscene.node(*parent)?.model.clone()?;
+                match self.bindings.actors.get(&(*parent, model)) {
+                    Some(actor) => scene.actor_bone(*actor, bone),
+                    None => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        };
+        Some(world * bone.ok().flatten().unwrap_or(Mat4::IDENTITY))
+    }
+
+    /// The balloon of natives 541, 561 and 542: a billboard sprite that lands where the game
+    /// draws its 2D sprite, the actor's position projected on the 256 × 192 screen, then offset
+    /// (`ov_017::0219b43c`). The scene draws it in the world instead: it is placed on the ray
+    /// through that pixel, a little in front of the actor, and scaled so that a texel is one DS
+    /// pixel at that depth.
+    fn present_balloon(&mut self, stage: &mut Stage) {
+        let shown = self.cutscene.balloon().copied().and_then(|balloon| {
+            let instance = *self.bindings.balloons.get(&balloon.sprite)?;
+            Some((instance, self.balloon_world(stage, &balloon, instance)?))
+        });
+        let all: Vec<usize> = self.bindings.balloons.values().copied().collect();
+        for instance in all {
+            let world = match shown {
+                Some((i, world)) if i == instance => world,
+                _ => Mat4::from_scale(Vec3::ZERO),
+            };
+            self.set_world(stage.scene, instance, world);
+        }
+    }
+
+    fn balloon_world(&self, stage: &Stage, balloon: &Balloon, instance: usize) -> Option<Mat4> {
+        let target = self
+            .cutscene
+            .actor_target(usize::try_from(balloon.actor).ok()?)?;
+        let node = self.cutscene.node(target)?;
+        if !node.visible || !node.placed {
+            return None;
+        }
+        let camera = &*stage.camera;
+        let view = camera.view();
+        let at = view.transform_point3(node.pose.position);
+        let depth = -at.z;
+        if depth <= camera.near {
+            return None;
+        }
+        let (width, height) = stage.scene.sprite_size(instance)?;
+        let half = (camera.fovy / 2.0).tan();
+        // DS pixels (256 × 192, y down) of the actor, then of the sprite's centre.
+        let px = (
+            (at.x / (depth * half * DS_ASPECT) + 1.0) * 0.5 * 256.0,
+            (1.0 - at.y / (depth * half)) * 0.5 * 192.0,
+        );
+        let centre = (
+            px.0 + balloon.offset[0] as f32 + width * 0.5,
+            px.1 + balloon.offset[1] as f32 + height * 0.5,
+        );
+        let distance = (depth - 0.25).max(camera.near + 0.05);
+        let pixel = 2.0 * distance * half / 192.0;
+        let ndc = (centre.0 / 256.0 * 2.0 - 1.0, 1.0 - centre.1 / 192.0 * 2.0);
+        let point = Vec3::new(
+            ndc.0 * distance * half * DS_ASPECT,
+            ndc.1 * distance * half,
+            -distance,
+        );
+        let centre = view.inverse().transform_point3(point);
+        // A billboard has 143/4096 world units per texel and its pivot half a sheet above the
+        // placement (`0x0203f54c`).
+        let scale = pixel / (143.0 / 4096.0);
+        Some(
+            Mat4::from_translation(centre - Vec3::Y * (height * 0.5 * pixel))
+                * Mat4::from_scale(Vec3::splat(scale)),
+        )
+    }
+
+    /// Natives 574 and 575: the placements of the map the scripts hide, show or move. The game
+    /// keeps these changes until the zone is loaded again.
+    fn apply_placements(&mut self, stage: &mut Stage) {
+        for change in self.cutscene.take_placement_changes() {
+            let (group, id) = match change {
+                PlacementChange::Hidden { group, id, .. }
+                | PlacementChange::Moved { group, id, .. } => (group, id),
+            };
+            let instances: Vec<usize> = stage
+                .scene
+                .scene
+                .placements
+                .iter()
+                .filter(|&&(entry, placement, _)| {
+                    i64::from(entry) == i64::from(group) && i32::from(placement) == id
+                })
+                .map(|&(_, _, instance)| instance)
+                .collect();
+            if instances.is_empty() {
+                let undrawn =
+                    stage
+                        .scene
+                        .scene
+                        .undrawn_placements
+                        .iter()
+                        .find(|&&(entry, placement, _)| {
+                            i64::from(entry) == i64::from(group) && i32::from(placement) == id
+                        });
+                match (undrawn, change) {
+                    // A collision mesh: only the walls and floor change, nothing to draw.
+                    (Some(&(_, _, true)), _) => self.coverage.miss(COLLISION_PLACEMENT),
+                    // Hidden at this time of day and not built: hiding it changes nothing.
+                    (Some(_), PlacementChange::Hidden { hidden: true, .. }) => {}
+                    (Some(_), _) => self.coverage.miss("hidden placement shown or moved"),
+                    (None, _) => self
+                        .coverage
+                        .miss(format!("placement ({group}, {id}) not in the map")),
+                }
+                continue;
+            }
+            for instance in instances {
+                let current = stage.scene.scene.instances[instance].world;
+                let state = self
+                    .bindings
+                    .placements
+                    .entry(instance)
+                    .or_insert(Placement {
+                        home: current,
+                        hidden: false,
+                        position: None,
+                    });
+                match change {
+                    PlacementChange::Hidden { hidden, .. } => state.hidden = hidden,
+                    PlacementChange::Moved { position, .. } => {
+                        state.position = Some(Vec3::from_array(position));
+                    }
+                }
+                let mut world = state.home;
+                if let Some(position) = state.position {
+                    world.w_axis = position.extend(1.0);
+                }
+                if state.hidden {
+                    world = Mat4::from_scale(Vec3::ZERO);
+                }
+                self.set_world(stage.scene, instance, world);
+            }
+        }
     }
 }
 
@@ -780,3 +1174,48 @@ fn monster_archive(files: &LazyRom, path: &str) -> Option<Vec<u8>> {
         .find(|e| e.path.ends_with(".cchr"))?;
     nds_rom::compress::decompress(monster.file(cchr.id).ok()?).ok()
 }
+
+/// A map placement a script hid or moved: its world before the first change and what it is
+/// now.
+#[derive(Debug, Clone, Copy)]
+struct Placement {
+    home: Mat4,
+    hidden: bool,
+    position: Option<Vec3>,
+}
+
+/// The sheet of a sprite the field draws by itself (`fieldSpriteFiles`, `docs/re/stb-natives.md`).
+fn field_sprite(id: i32) -> Option<&'static str> {
+    Some(match id {
+        2 => "fuki_com",
+        3 => "fuki_in",
+        4 => "fuki_hkn",
+        12 => "field_mon01",
+        13 => "ev_mark",
+        14 => "field_qu",
+        15 => "fuki_com_q",
+        16 => "fuki_com_apc",
+        _ => return None,
+    })
+}
+
+/// A sprite sheet of `data/bin/icon.nsarc`, where the field keeps its own.
+fn icon_sprite(files: &LazyRom, name: &str) -> Option<Vec<u8>> {
+    let narc = nds_rom::Narc::parse(files.file("data/bin/icon.nsarc")?).ok()?;
+    let wanted = format!("{name}.spr");
+    let entry = narc
+        .names
+        .files
+        .iter()
+        .find(|e| e.path.eq_ignore_ascii_case(&wanted))?;
+    narc.file(entry.id).ok().map(<[u8]>::to_vec)
+}
+
+/// Natives 574 and 575 on a collision mesh of the map: the walls and the floor change, which no
+/// image shows (`docs/re/stb-natives.md`). Not counted against an event by the report.
+pub const COLLISION_PLACEMENT: &str = "collision placement";
+
+/// A script asks a model for a motion none of its archives has: the game's name search fails
+/// and nothing changes (`ov_001::02164578` → `Object3D::MaybeSetRegularAnimation`, `02036e44`).
+/// Not counted against an event by the report.
+pub const ABSENT_MOTION: &str = "motion absent from the model";

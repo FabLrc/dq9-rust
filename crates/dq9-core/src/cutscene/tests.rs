@@ -1,5 +1,5 @@
 use super::*;
-use crate::script::event::ActorCommand as A;
+use crate::script::event::{ActorCommand as A, Camera as CameraCommand};
 
 fn no_ground(_: f32, _: f32, _: f32) -> Option<f32> {
     None
@@ -425,4 +425,219 @@ fn shake_lasts_its_duration_and_a_negative_one_never_ends() {
         target_only: false,
     }));
     assert!(run(&mut c, 600).is_empty());
+}
+
+#[test]
+fn an_attached_model_hangs_on_a_bone_of_its_parent_until_detached() {
+    let mut c = scene();
+    c.apply(&Event::LoadModel {
+        path: "chara_sub/s069.chr".into(),
+        character: -16,
+        selector: 0,
+    });
+    c.apply(&Event::BindSlot {
+        slot: 16,
+        character: -16,
+        kind: 1,
+    });
+    let attach = |bone: Option<&str>| Event::AttachBone {
+        child: 16,
+        parent: 0,
+        bone: bone.map(str::to_owned),
+    };
+    c.apply(&attach(Some("head")));
+    let node = c.node(Target::Model(-16)).unwrap();
+    assert_eq!(node.attached, Some((Target::Hero, "head".to_owned())));
+    // Without a name the bone of the previous attachment is kept (`02037868`).
+    c.apply(&attach(None));
+    assert_eq!(
+        c.node(Target::Model(-16)).unwrap().attached,
+        Some((Target::Hero, "head".to_owned()))
+    );
+    assert!(!c.ignored().contains_key("bone attachments"));
+    c.apply(&Event::DetachBone { slot: 16 });
+    assert_eq!(c.node(Target::Model(-16)).unwrap().attached, None);
+    // A slot nothing is bound to cannot be attached: reported as not executed.
+    c.apply(&Event::AttachBone {
+        child: 30,
+        parent: 0,
+        bone: Some("head".into()),
+    });
+    assert_eq!(c.ignored().get("bone attachments"), Some(&1));
+}
+
+#[test]
+fn a_character_id_loaded_again_is_a_new_object() {
+    let mut c = scene();
+    let load = |path: &str| Event::LoadModel {
+        path: path.into(),
+        character: -4,
+        selector: 1,
+    };
+    c.apply(&load("chara_sub/s058.chr"));
+    c.apply(&Event::BindSlot {
+        slot: 4,
+        character: -4,
+        kind: 1,
+    });
+    c.apply(&actor(4, A::SetPosition([1.0, 2.0, 3.0])));
+    c.apply(&Event::CharacterVisible {
+        character: -4,
+        visible: false,
+    });
+    c.apply(&load("chara_sub/s019f07.chr"));
+    let node = c.node(Target::Model(-4)).unwrap();
+    assert_eq!(node.pose.position, Vec3::ZERO);
+    assert!(node.visible);
+    assert_eq!(node.model.as_deref(), Some("chara_sub/s019f07.chr"));
+}
+
+#[test]
+fn a_script_sprite_is_an_object_the_slots_of_type_two_designate() {
+    let mut c = scene();
+    c.apply(&Event::CreateSprite {
+        name: "n013a".into(),
+        handle: 0,
+    });
+    c.apply(&Event::BindSlot {
+        slot: 17,
+        character: 0,
+        kind: 2,
+    });
+    let node = c.node(Target::Object(0)).unwrap();
+    assert_eq!(node.model.as_deref(), Some("n013a.spr"));
+    // 545 and 546 start and stop its walk like those of a character.
+    c.apply(&Event::SlotMotion {
+        slot: 17,
+        moving: true,
+    });
+    assert_eq!(
+        c.node(Target::Object(0))
+            .unwrap()
+            .animation
+            .as_ref()
+            .map(|a| a.name.as_str()),
+        Some("run")
+    );
+    c.apply(&Event::DestroySprite { handle: 0 });
+    assert_eq!(c.node(Target::Object(0)).unwrap().model, None);
+    assert!(!c.ignored().contains_key("slot motion of a map object"));
+}
+
+#[test]
+fn balloons_follow_the_script_and_end_with_it() {
+    let mut c = scene();
+    c.apply(&Event::Balloon {
+        actor: 1,
+        kind: 15,
+        offset: [0, -10],
+    });
+    assert_eq!(
+        c.balloon().map(|b| (b.sprite, b.offset)),
+        Some((13, [-6, -86]))
+    );
+    c.apply(&Event::BalloonNudge { offset: [0, -3] });
+    assert_eq!(c.balloon().unwrap().offset, [-6, -89]);
+    c.apply(&Event::BalloonEnd);
+    assert!(c.balloon().is_none());
+    // The event over takes a balloon the script forgot down too.
+    c.apply(&Event::Balloon {
+        actor: 1,
+        kind: 2,
+        offset: [0, 0],
+    });
+    c.clear_fades();
+    assert!(c.balloon().is_none());
+}
+
+#[test]
+fn placement_natives_are_queued_for_the_application() {
+    let mut c = scene();
+    c.apply(&Event::Placement {
+        group: 0,
+        id: 5,
+        hidden: true,
+    });
+    c.apply(&Event::PlacementMove {
+        group: 0,
+        id: 6,
+        position: [1.0, 2.0, 3.0],
+    });
+    assert_eq!(
+        c.take_placement_changes(),
+        [
+            PlacementChange::Hidden {
+                group: 0,
+                id: 5,
+                hidden: true
+            },
+            PlacementChange::Moved {
+                group: 0,
+                id: 6,
+                position: [1.0, 2.0, 3.0]
+            }
+        ]
+    );
+    assert!(c.take_placement_changes().is_empty());
+}
+
+#[test]
+fn a_palette_operation_stays_on_its_model_until_reset_or_released() {
+    let mut c = scene();
+    let tint = |rgb| Event::Tint {
+        slot: 0,
+        rgb,
+        mode: 0,
+    };
+    c.apply(&tint([8, 6, 16]));
+    let op = c.node(Target::Hero).unwrap().tint.unwrap();
+    assert_eq!((op.mode, op.rgb), (0, [8, 6, 16]));
+    // Adding black restores the model (the scripts' reset).
+    c.apply(&tint([0, 0, 0]));
+    assert!(c.node(Target::Hero).unwrap().tint.is_none());
+    c.apply(&Event::LoadModel {
+        path: "chara_sub/s019.chr".into(),
+        character: -3,
+        selector: 0,
+    });
+    c.apply(&Event::BindSlot {
+        slot: 3,
+        character: -3,
+        kind: 1,
+    });
+    c.apply(&Event::Tint {
+        slot: 3,
+        rgb: [8, 6, 16],
+        mode: 2,
+    });
+    assert!(c.node(Target::Model(-3)).unwrap().tint.is_some());
+    c.apply(&Event::ReleaseModel { character: -3 });
+    assert!(c.node(Target::Model(-3)).unwrap().tint.is_none());
+}
+
+#[test]
+fn the_camera_goes_back_to_the_field_pose_around_the_hero() {
+    let mut c = scene();
+    c.seed(
+        Target::Hero,
+        Pose {
+            position: Vec3::new(10.0, 0.0, 10.0),
+            ..Pose::default()
+        },
+    );
+    c.seed_camera(Vec3::new(10.0, 5.0, 30.0), Vec3::new(10.0, 1.0, 10.0), 15.0);
+    // The script moves the hero and the camera away, then asks for the field camera.
+    c.apply(&actor(0, A::SetPosition([20.0, 0.0, 0.0])));
+    c.apply(&Event::Camera(CameraCommand::SetPosition([0.0, 0.0, 0.0])));
+    run(&mut c, 2);
+    c.apply(&Event::CameraToField { duration: 1 });
+    let signals = run(&mut c, 3);
+    assert!(signals.contains(&Signal::CameraIdle));
+    let view = c.camera();
+    assert!(
+        (view.eye - Vec3::new(20.0, 5.0, 20.0)).length() < 1e-3,
+        "{:?}",
+        view.eye
+    );
+    assert!((view.target - Vec3::new(20.0, 1.0, 0.0)).length() < 1e-3);
 }

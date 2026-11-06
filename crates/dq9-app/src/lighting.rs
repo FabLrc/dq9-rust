@@ -1,6 +1,7 @@
 //! Glue between the game's lighting model (`dq9_core::lighting`) and the renderer: the `.bats`
 //! script of a map, the day clock the options select, and the renderer's [`Environment`].
 
+use dq9_core::cutscene::{SceneLight, SceneTime};
 use dq9_core::lighting::{DayState, Lighting, settle_basic_entry};
 use dq9_core::state::{DayClock, TimeOfDay};
 use dq9_formats::lighting::{LightingInfo, LightingMode};
@@ -68,12 +69,33 @@ pub fn parse_time(text: &str) -> Result<u32, String> {
 
 /// What the game shows for the zone at `clock` (a basic zone entered near the end of a phase
 /// moves the clock on, `ProcessZoneChange`), as the renderer's environment.
-pub fn environment(info: Option<&LightingInfo>, mut clock: DayClock) -> Environment {
-    if info.is_some_and(|i| i.mode == LightingMode::Basic) {
-        settle_basic_entry(&mut clock);
+pub fn environment(info: Option<&LightingInfo>, clock: DayClock) -> Environment {
+    scene_environment(info, clock, &SceneLight::default())
+}
+
+/// [`environment`] as a running script shapes it: the time of day it forces (588, 589), the
+/// lighting index (548), the light scale fade (578) and the fog switch (804).
+pub fn scene_environment(
+    info: Option<&LightingInfo>,
+    mut clock: DayClock,
+    light: &SceneLight,
+) -> Environment {
+    let day = match light.time {
+        SceneTime::Clock => {
+            if info.is_some_and(|i| i.mode == LightingMode::Basic) {
+                settle_basic_entry(&mut clock);
+            }
+            DayState::from_clock(&clock)
+        }
+        SceneTime::Forced(phase) => DayState::at(self::phase(phase as u32)),
+        SceneTime::Saved => DayState::at(clock.phase()),
+    };
+    let lighting = Lighting::select(info, day, light.index_override, light.scale());
+    let mut environment = convert(&lighting);
+    if !light.fog {
+        environment.fog = None;
     }
-    let lighting = Lighting::select(info, DayState::from_clock(&clock), 0, 1.0);
-    convert(&lighting)
+    environment
 }
 
 fn unit(color: u16) -> [f32; 3] {

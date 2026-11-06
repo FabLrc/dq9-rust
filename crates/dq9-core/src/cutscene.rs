@@ -31,6 +31,14 @@ use crate::script::event::{ActorCommand, Camera as CameraCommand, Event, Lock, S
 use crate::script::natives::{ACTORS, SLOTS};
 use crate::script::{Runtime, Signal};
 
+mod light;
+mod props;
+
+use props::Props;
+
+pub use light::{ClockCommand, SceneLight, SceneTime};
+pub use props::{Balloon, PlacementChange, TexelOp};
+
 /// Ticks per script update: durations of timed commands count updates (`stb-natives.md`).
 const TICKS_PER_UNIT: f32 = 2.0;
 /// Alpha of an opaque object (5 bits, `Object3D` `+0x40`).
@@ -114,6 +122,8 @@ pub struct Node {
     pub attached: Option<(Target, String)>,
     /// The model this one was cloned from (native 228).
     pub cloned_from: Option<Target>,
+    /// The palette operation the script did on the model (native 238).
+    pub tint: Option<TexelOp>,
 }
 
 impl Default for Node {
@@ -127,6 +137,7 @@ impl Default for Node {
             animation: None,
             attached: None,
             cloned_from: None,
+            tint: None,
         }
     }
 }
@@ -505,6 +516,10 @@ pub struct Cutscene {
     /// Models loaded by natives 200 and 233, by character id.
     models: BTreeMap<i32, String>,
     fades: Fades,
+    light: SceneLight,
+    props: Props,
+    /// Eye and target of the field camera relative to the hero (native 328).
+    field_camera: (Vec3, Vec3),
     cam: Cam,
     saved_cam: Option<Box<Cam>>,
     serial: u32,
@@ -527,27 +542,55 @@ impl Cutscene {
             nodes: BTreeMap::new(),
             models: BTreeMap::new(),
             fades: Fades::new(),
+            light: SceneLight::default(),
+            props: Props::default(),
             cam: Cam::default(),
             saved_cam: None,
             serial: 0,
             ticks: 0,
             ignored: BTreeMap::new(),
+            field_camera: (Vec3::new(0.0, 5.0, 20.0), Vec3::ZERO),
         }
     }
 
-    /// A new event starts: the scene is empty again, the brightness stays (a chained event
-    /// begins where the previous one left the screen).
+    /// A new event starts: the scene is empty again, the brightness and the lighting stay (a
+    /// chained event begins where the previous one left the screen).
     pub fn restart(&mut self) {
         let fades = self.fades;
+        let light = std::mem::take(&mut self.light);
         let ignored = std::mem::take(&mut self.ignored);
         *self = Self::new();
         self.fades = fades;
+        self.light = light;
         self.ignored = ignored;
     }
 
-    /// Brightness back to normal, unlocked: the event task ended and the game goes on.
+    /// Brightness back to normal, unlocked, and the lighting back to the field's: the event
+    /// task ended and the game goes on.
     pub fn clear_fades(&mut self) {
         self.fades = Fades::new();
+        self.light = SceneLight::default();
+        self.props.balloon = None;
+    }
+
+    /// The lighting the script set up.
+    pub fn light(&self) -> &SceneLight {
+        &self.light
+    }
+
+    /// The requests on the game's clock (natives 579, 808) made since the last call.
+    pub fn take_clock_commands(&mut self) -> Vec<ClockCommand> {
+        self.light.take_clock_commands()
+    }
+
+    /// The changes of map placements (natives 574, 575) made since the last call.
+    pub fn take_placement_changes(&mut self) -> Vec<PlacementChange> {
+        std::mem::take(&mut self.props.changes)
+    }
+
+    /// The balloon over a character, if the script put one up (natives 541, 561, 542).
+    pub fn balloon(&self) -> Option<&Balloon> {
+        self.props.balloon.as_ref()
     }
 
     /// Starts the camera where the field's is (until the script moves it).
@@ -555,6 +598,12 @@ impl Cutscene {
         self.cam.eye = eye;
         self.cam.target = target;
         self.cam.half_fov = half_fov;
+        // The field camera follows the hero: keep its offsets from the hero as seeded.
+        let hero = self
+            .nodes
+            .get(&Target::Hero)
+            .map_or(Vec3::ZERO, |n| n.pose.position);
+        self.field_camera = (eye - hero, target - hero);
     }
 
     /// Declares the pose a target starts from (the hero, a map NPC) before its first command.
@@ -682,6 +731,13 @@ impl Cutscene {
                 let node = self.node_mut(Target::Model(*character));
                 node.model = Some(path.clone());
                 node.packages.clear();
+                // A new object: a character id that is loaded again starts from the origin,
+                // unattached and visible (the slot of an earlier model leaves nothing behind).
+                node.pose = Pose::default();
+                node.attached = None;
+                node.visible = true;
+                node.animation = None;
+                node.tint = None;
                 // Selector 0 models are the size of the map's characters; those the scripts
                 // load with selector 1 are sized by the script (`SetScale`) **[hypothèse]**:
                 // it fits the camera rigs and the attached models of the prologue.
@@ -702,6 +758,7 @@ impl Cutscene {
                 if let Some(node) = self.nodes.get_mut(&Target::Model(*character)) {
                     node.model = None;
                     node.animation = None;
+                    node.tint = None;
                 }
             }
             Event::CloneModel {
@@ -756,19 +813,84 @@ impl Cutscene {
                     self.node_mut(target).visible = *visible;
                 }
             }
+            Event::SlotMotion { slot, moving } => {
+                // `02036e44(object, "run" | "stand", 0)`, at once (545, 546 queue nothing).
+                let name = if *moving { "run" } else { "stand" };
+                match self.slot_target(*slot) {
+                    Some(
+                        target @ (Target::Hero
+                        | Target::Npc(_)
+                        | Target::Model(_)
+                        | Target::Cast(_)
+                        | Target::Object(_)),
+                    ) => {
+                        let serial = &mut self.serial;
+                        start_animation(
+                            self.nodes.entry(target).or_default(),
+                            serial,
+                            name,
+                            0,
+                            1.0,
+                        );
+                    }
+                    _ => self.ignore("slot motion of a map object"),
+                }
+            }
+            Event::Placement { group, id, hidden } => {
+                self.props.changes.push(PlacementChange::Hidden {
+                    group: *group,
+                    id: *id,
+                    hidden: *hidden,
+                });
+            }
+            Event::PlacementMove {
+                group,
+                id,
+                position,
+            } => {
+                self.props.changes.push(PlacementChange::Moved {
+                    group: *group,
+                    id: *id,
+                    position: *position,
+                });
+            }
+            Event::Balloon {
+                actor,
+                kind,
+                offset,
+            } => self.props.balloon = Some(Balloon::new(*actor, *kind, *offset)),
+            Event::BalloonNudge { offset } => {
+                if let Some(balloon) = &mut self.props.balloon {
+                    balloon.offset[0] += offset[0];
+                    balloon.offset[1] += offset[1];
+                }
+            }
+            Event::BalloonEnd => self.props.balloon = None,
+            Event::Tint { slot, rgb, mode } => match self.slot_target(*slot) {
+                Some(target) => self.node_mut(target).tint = TexelOp::new(*mode, *rgb),
+                None => self.ignore("palette operation on an empty slot"),
+            },
             Event::AttachBone {
                 child,
                 parent,
                 bone,
             } => {
-                if let (Some(child), Some(parent)) =
-                    (self.slot_target(*child), self.slot_target(*parent))
-                {
-                    self.node_mut(child).attached =
-                        Some((parent, bone.clone().unwrap_or_default()));
+                // `02037868`: without a name the bone index stored by the previous attachment
+                // is reused.
+                let attached = match (self.slot_target(*child), self.slot_target(*parent)) {
+                    (Some(child), Some(parent)) => {
+                        let node = self.node_mut(child);
+                        let bone = bone
+                            .clone()
+                            .or_else(|| node.attached.as_ref().map(|a| a.1.clone()));
+                        node.attached = Some((parent, bone.unwrap_or_default()));
+                        true
+                    }
+                    _ => false,
+                };
+                if !attached {
+                    self.ignore("bone attachments");
                 }
-                // Recorded in the node; no application draws a model on a bone yet.
-                self.ignore("bone attachments");
             }
             Event::DetachBone { slot } => {
                 if let Some(target) = self.slot_target(*slot) {
@@ -776,6 +898,22 @@ impl Cutscene {
                 }
             }
             Event::Actor { actor, command } => self.actor_command(*actor, command),
+            Event::CameraToField { duration } => {
+                // `0215e14c`: the standing of the field camera (`020a2b48`) as a move of both
+                // eye and target. It follows the hero, which is where it was at the start of
+                // the event **[hypothèse]** (the game recomputes it from its own state).
+                let hero = self
+                    .nodes
+                    .get(&Target::Hero)
+                    .map_or(Vec3::ZERO, |n| n.pose.position);
+                let (eye, target) = self.field_camera;
+                self.camera_command(&CameraCommand::MoveBoth {
+                    position: (hero + eye).to_array(),
+                    target: (hero + target).to_array(),
+                    duration: *duration,
+                    snap: false,
+                });
+            }
             Event::Camera(command) => self.camera_command(command),
             Event::DeclareCast {
                 mode,
@@ -794,14 +932,33 @@ impl Cutscene {
             Event::Sound(_) => {}
             Event::SwapScreens(_) => self.ignore("screen swap"),
             Event::Preload(_) | Event::ReleasePreloaded => {}
-            Event::CreateSprite { .. } | Event::DestroySprite { .. } => self.ignore("2D sprites"),
+            Event::CreateSprite { name, handle } => {
+                // `0215f3fc`: a new object under the handle; the slots of type 2 and 6 designate
+                // it (`bind_slot`). A sheet name without suffix gets `.spr`.
+                let node = self.node_mut(Target::Object(*handle));
+                *node = Node::default();
+                node.model = Some(if name.ends_with(".spr") {
+                    name.clone()
+                } else {
+                    format!("{name}.spr")
+                });
+            }
+            Event::DestroySprite { handle } => {
+                // `0215f740`: the object is freed.
+                if let Some(node) = self.nodes.get_mut(&Target::Object(*handle)) {
+                    node.model = None;
+                    node.animation = None;
+                }
+            }
             Event::LightingOverride(_)
             | Event::LightIntensity { .. }
             | Event::DayTimerStopped(_)
             | Event::SceneTimeOfDay(_)
             | Event::SyncSceneTimeOfDay
-            | Event::SetTimeOfDay(_) => self.ignore("lighting and time of day"),
-            Event::Fog(_) => self.ignore("fog"),
+            | Event::SetTimeOfDay(_)
+            | Event::Fog(_) => {
+                self.light.apply(event);
+            }
             Event::AddSceneFlags(_) | Event::Chaining(_) => {}
             Event::LoadFailed { .. } | Event::Fault(_) => {}
         }
@@ -987,6 +1144,7 @@ impl Cutscene {
         self.ticks += 1;
         self.fades.main.tick(1);
         self.fades.sub.tick(1);
+        self.light.tick();
         let mut signals = Vec::new();
         for index in 0..self.actors.len() {
             self.tick_actor(index, ground);

@@ -27,5 +27,5 @@ pub use panel::Panel;
 pub use renderer::{Renderer, Viewport};
 pub use scene::{
     MaterialLight, Scene, SceneInstance, SceneMaterial, SceneModel, SceneTexture, SceneVertex,
-    Shade,
+    Shade, TexelTint,
 };

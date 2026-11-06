@@ -84,10 +84,23 @@ pub fn play(
     Ok(played)
 }
 
-/// Natives with no visible effect established (`docs/re/stb-natives.md`): 559 and 815 (a flag
-/// nothing reads, an integrity probe), 560 (a subsystem test) and 571 (a bit of
-/// `Object3D::flags_` nothing reads). Not executing them is not counted against an event.
-const NO_VISIBLE_EFFECT: [&str; 4] = ["native 559", "native 560", "native 571", "native 815"];
+/// What the report does not count against an event (`docs/re/stb-natives.md`, § « Sans effet
+/// dans le rendu »): 559 and 815 (a flag nothing reads, an integrity probe), 560 (a subsystem
+/// test), 571 (a bit of `Object3D::flags_` nothing reads); 581 and 582 (which NPCs the shadows
+/// are drawn for) and 809 (shows two objects of the hero's angel form), whose targets the
+/// renderer does not draw **[hypothèse]**; the changes of a map's collision meshes (574, 575)
+/// and the motions a model has no name for (a no-op in the game).
+const NO_VISIBLE_EFFECT: [&str; 9] = [
+    "native 559",
+    "native 560",
+    "native 571",
+    "native 581",
+    "native 582",
+    "native 809",
+    "native 815",
+    crate::event::COLLISION_PLACEMENT,
+    crate::event::ABSENT_MOTION,
+];
 
 /// How much of an event is played, from what the player could not execute.
 fn verdict(played: &Played, started: &[u16], missing: &[(String, u32)]) -> &'static str {

@@ -328,7 +328,7 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     let event = cli.event_id(rom)?;
     let place = event.and_then(|e| crate::event::place(rom, e));
     let start = load::start(cli.map.as_deref(), save)?;
-    let clock = lighting::day_clock(start.state.as_ref().map(|s| s.clock), cli.time, cli.clock);
+    let mut clock = lighting::day_clock(start.state.as_ref().map(|s| s.clock), cli.time, cli.clock);
     let time = clock.phase().index();
     // An event happens on the map its record names, the hero at its start.
     let (map, spawn) = match place {
@@ -351,6 +351,7 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     )?;
     let script = cli.walk.as_deref().map(walk::parse_script).transpose()?;
     let mut hidden = false;
+    let mut event_environment = None;
     let mut hero = loaded.hero;
     if let Some(at) = cli.start {
         hero = walk::start_hero(&loaded.collision, &start.map, at)?;
@@ -447,6 +448,20 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
             player.unimplemented()
         );
         hidden = player.hero_hidden();
+        for command in player.take_clock_commands() {
+            match command {
+                dq9_core::cutscene::ClockCommand::Running(running) => clock.set_running(running),
+                dq9_core::cutscene::ClockCommand::SetPhase(phase) => {
+                    clock.set_phase(lighting::phase(phase as u32));
+                }
+            }
+        }
+        event_environment = player.environment(loaded.lighting.as_ref(), clock);
+        // An explicit `--eye`/`--target` looks at the scene the script left, whatever its
+        // camera did (to inspect the actors).
+        if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
+            camera.look_at(eye, target);
+        }
     } else {
         for frame in 0..cli.frame {
             let direction = script
@@ -481,8 +496,8 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     }
     loaded.runtime.face_camera(&camera)?;
     let mut renderer = Renderer::new(&device, &queue, format, &loaded.runtime.scene);
-    renderer.environment = lighting::environment(loaded.lighting.as_ref(), clock);
-
+    renderer.environment =
+        event_environment.unwrap_or_else(|| lighting::environment(loaded.lighting.as_ref(), clock));
     if let Some(fog) = cli.fog {
         renderer.environment.fog = Some(fog);
     }

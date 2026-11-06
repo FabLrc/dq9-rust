@@ -46,6 +46,9 @@ struct Material {
     specular: vec4<f32>,
     // rgb: emission, w: 1 when POLYGON_ATTR bit 15 enables fog.
     emission: vec4<f32>,
+    // Native 238: texel colour times xyz plus xyz.
+    tint_mul: vec4<f32>,
+    tint_add: vec4<f32>,
 }
 
 @group(1) @binding(0) var<uniform> material: Material;
@@ -179,7 +182,10 @@ fn fog_density(depth: f32) -> f32 {
 }
 
 fn shade(in: VertexOut) -> vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    let sampled = textureSample(tex, samp, in.uv);
+    // The palette operation of native 238, in 5-bit steps like the palette itself.
+    let tinted = floor(clamp(sampled.rgb * material.tint_mul.xyz + material.tint_add.xyz, vec3<f32>(0.0), vec3<f32>(1.0)) * 31.0 + 0.5) / 31.0;
+    let t = vec4<f32>(select(tinted, sampled.rgb, all(material.tint_mul.xyz == vec3<f32>(1.0)) && all(material.tint_add.xyz == vec3<f32>(0.0))), sampled.a);
     let alpha = material.params.x;
     var c: vec4<f32>;
     if material.params.y > 0.5 {

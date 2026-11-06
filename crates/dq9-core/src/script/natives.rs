@@ -369,6 +369,11 @@ impl Ctx<'_> {
                 }
             }
             // --- camera ---
+            328 => {
+                self.rt.camera_busy = true;
+                self.events
+                    .push(Event::CameraToField { duration: a.int(0) });
+            }
             300 => self.camera(Camera::Reset),
             301 => out.int(a, 0, i32::from(self.rt.camera_busy)),
             302 => self.camera(Camera::SetPosition(vec3(a, 0))),
@@ -462,6 +467,36 @@ impl Ctx<'_> {
             405 => out.int(a, 0, i32::from(self.rt.message_open)),
             410 => self.events.push(Event::HideMessageFrame),
             558 => out.int(a, 0, self.rt.answer),
+            // `0215cf98`: a 5-bit colour, and the mode when a fifth argument is given.
+            238 => self.events.push(Event::Tint {
+                slot: a.int(0),
+                rgb: [a.int(1), a.int(2), a.int(3)],
+                mode: if a.len() > 4 { a.int(4) } else { 0 },
+            }),
+            // --- map characters, placements and balloons ---
+            541 => self.events.push(Event::Balloon {
+                actor: a.int(0),
+                kind: a.int(1),
+                offset: [a.int_or(2, 0), a.int_or(3, 0)],
+            }),
+            542 => self.events.push(Event::BalloonEnd),
+            545 | 546 => self.events.push(Event::SlotMotion {
+                slot: a.int(0),
+                moving: id == 545,
+            }),
+            561 => self.events.push(Event::BalloonNudge {
+                offset: [a.int(0), a.int(1)],
+            }),
+            574 => self.events.push(Event::Placement {
+                group: a.int(0),
+                id: a.int(1),
+                hidden: a.int(2) == 0,
+            }),
+            575 => self.events.push(Event::PlacementMove {
+                group: a.int(0),
+                id: a.int(1),
+                position: [a.float(2), a.float(3), a.float(4)],
+            }),
             // --- scene ---
             506 | 845 => {
                 let paths = (0..a.len()).filter(|&i| a.is_str(i)).map(|i| text(a, i));

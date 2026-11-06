@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use crate::screens::{self, Layout};
 use dq9_core::camera::FieldCamera;
+use dq9_core::cutscene::ClockCommand;
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
 use dq9_core::fx::reduce_angle;
 use dq9_core::scenario::{Journal, Step};
@@ -138,6 +139,8 @@ pub struct App {
     audio: Audio,
     /// Lighting, fog and background of the loaded map at the selected time of day.
     environment: dq9_render::Environment,
+    /// The lighting script of the loaded map (`None` without one).
+    lighting_info: Option<dq9_formats::lighting::LightingInfo>,
     camera: Camera,
     /// The game's camera turn (`L`/`R`) and the yaw it is measured from: the one the map was
     /// entered with.
@@ -198,6 +201,7 @@ impl App {
             renderer: None,
             audio,
             environment: dq9_render::Environment::default(),
+            lighting_info: None,
             camera: Camera::default(),
             field_camera: FieldCamera::default(),
             camera_home: 0.0,
@@ -266,6 +270,29 @@ impl App {
         }
     }
 
+    /// What the running events did to the lighting and to the day clock (natives 578 to 589,
+    /// 548, 549, 804, 808): the renderer's environment follows, the clock obeys.
+    fn apply_event_lighting(&mut self) {
+        for command in self.events.take_clock_commands() {
+            match command {
+                ClockCommand::Running(running) => self.day.set_running(running),
+                ClockCommand::SetPhase(phase) => {
+                    self.day.set_phase(lighting::phase(phase as u32));
+                    self.time = self.day.phase().index();
+                }
+            }
+        }
+        if let Some(environment) = self
+            .events
+            .environment(self.lighting_info.as_ref(), self.day)
+        {
+            if let Some(renderer) = &mut self.renderer {
+                renderer.environment = environment.clone();
+            }
+            self.environment = environment;
+        }
+    }
+
     /// Shows the current map at another time of day.
     fn set_time(&mut self, phase: TimeOfDay) {
         self.day.set_phase(phase);
@@ -310,6 +337,8 @@ impl App {
         };
         let hero_start = loaded.hero.position();
         self.environment = lighting::environment(loaded.lighting.as_ref(), self.day);
+        self.lighting_info = loaded.lighting.clone();
+        self.events.map_loaded();
         self.collision = loaded.collision;
         self.field = Some(loaded.field);
         self.talk.enter_map(loaded.npcs);
@@ -595,6 +624,7 @@ impl App {
             self.events.step(&mut stage)
         };
         self.talk.step();
+        self.apply_event_lighting();
         for outcome in outcomes {
             match outcome {
                 Outcome::Started(id) => self.journal.record(self.tick, Step::EventStarted(id)),

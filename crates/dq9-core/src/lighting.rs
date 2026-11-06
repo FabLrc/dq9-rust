@@ -372,6 +372,22 @@ impl Lighting {
         override_index: usize,
         rgb_scale: f32,
     ) -> Lighting {
+        let mut lighting = Self::select_unscaled_background(info, day, override_index, rgb_scale);
+        if rgb_scale != 1.0 {
+            // `DrawBackgroundGradient` (`0x02052420`) multiplies the gradient colours by
+            // `lightRGBScale_` too (USA `LightingManager.cpp` l.1087).
+            lighting.background = scale_channels(lighting.background, rgb_scale);
+            lighting.horizon = scale_channels(lighting.horizon, rgb_scale);
+        }
+        lighting
+    }
+
+    fn select_unscaled_background(
+        info: Option<&LightingInfo>,
+        day: DayState,
+        override_index: usize,
+        rgb_scale: f32,
+    ) -> Lighting {
         let none = Lighting {
             mode: LightingMode::None,
             index: 0,

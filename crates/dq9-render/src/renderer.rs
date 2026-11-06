@@ -16,7 +16,9 @@ use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
 use crate::lighting::{EnvUniform, Environment, gradient};
-use crate::scene::{Cull, PolygonMode, Scene, SceneDraw, SceneMaterial, SceneTexture, Shade, Wrap};
+use crate::scene::{
+    Cull, PolygonMode, Scene, SceneDraw, SceneMaterial, SceneTexture, Shade, TexelTint, Wrap,
+};
 
 /// Depth buffer format.
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -52,6 +54,8 @@ struct MaterialUniform {
     ambient: [f32; 4],
     specular: [f32; 4],
     emission: [f32; 4],
+    tint_mul: [f32; 4],
+    tint_add: [f32; 4],
 }
 
 /// Colours of the background gradient (`Bg` of `background.wgsl`).
@@ -168,6 +172,10 @@ fn material_uniform(m: &SceneMaterial) -> MaterialUniform {
     let [s, t] = m.uv_transform;
     let decal = m.mode == PolygonMode::Decal && m.texture.is_some();
     let l = &m.light;
+    let tint = l.texel_tint.unwrap_or(TexelTint {
+        mul: [1.0; 3],
+        add: [0.0; 3],
+    });
     MaterialUniform {
         uv_s: [s[0], s[1], s[2], 0.0],
         uv_t: [t[0], t[1], t[2], 0.0],
@@ -206,6 +214,8 @@ fn material_uniform(m: &SceneMaterial) -> MaterialUniform {
             l.emission[2],
             f32::from(u8::from(l.fog)),
         ],
+        tint_mul: [tint.mul[0], tint.mul[1], tint.mul[2], 0.0],
+        tint_add: [tint.add[0], tint.add[1], tint.add[2], 0.0],
     }
 }
 
