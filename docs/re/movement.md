@@ -80,8 +80,16 @@ sont négligeables à cette cadence.
 le yaw ne peut pas entrer dans la bande `(π/4, 7π/4)` : il s'arrête sur son bord. `L` et `R`
 ensemble ramènent le yaw au yaw de base à `0,00225 × Δms × 4096` par mise à jour (arrêt à
 `0x28`). L'application (`Q`/`E` en orbite) mesure le yaw depuis celui de l'entrée sur la carte.
-La hauteur, la distance et la cible de la caméra du jeu (`Camera_SetOrbit` `0x0202e5e8`) ne
-sont pas reportées : la caméra libre de l'application les garde.
+L'application initialise l'orbite aux valeurs du constructeur (`0x0202df78`) : distance 11,
+œil 6 unités au-dessus de la cible, champ vertical 30°. La cible suit la position du héros
++ la moitié de sa hauteur (0,75), comme `FieldCamera_Update` (`0x020a213c`). Le cadrage des
+bornes de toute la carte reste réservé au vol libre (`F`) ; `F` en orbite rétablit le suivi.
+
+Une scène garde les paramètres de la caméra de terrain ; un changement de carte dans la
+chaîne remplace ce point de retour par celui de la destination. Le dernier état de scène est
+appliqué **avant** la restitution, puis la cible rejoint le héros à sa pose finale : aucune
+présentation inactive ne peut réinstaller le dernier gros plan. Le vol libre, lui, retrouve
+son point de vue sans suivre le héros. La projection des caméras cinématiques reste séparée.
 
 ### Hors périmètre (non porté)
 
@@ -189,6 +197,6 @@ mesure, de ± 1 image** ; la validation image par image reste à faire.
 
 ## Reste à faire
 
-Toutes les entrées non portées de « Hors périmètre » ; la caméra de terrain complète (hauteur,
-distance, suivi lissé, zones de caméra) ; une comparaison position par position à nombre
-d'images égal sous melonDS.
+Toutes les entrées non portées de « Hors périmètre » ; le suivi lissé et les zones de caméra
+(l'orbite par défaut et le suivi direct du héros sont appliqués) ; une comparaison position
+par position à nombre d'images égal sous melonDS.

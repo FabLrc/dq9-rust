@@ -357,9 +357,12 @@ impl EventPlayer {
     }
 
     /// A map was loaded: its environment and its placements are the map's own again.
-    pub fn map_loaded(&mut self) {
+    pub fn map_loaded(&mut self, camera: &Camera) {
         self.applied_light = SceneLight::default();
         self.bindings.placements.clear();
+        if self.saved_camera.is_some() {
+            self.saved_camera = Some(*camera);
+        }
     }
 
     /// The requests of the scripts on the day clock (natives 579, 808) since the last call.
@@ -586,6 +589,9 @@ impl EventPlayer {
 
     /// One fixed step (one tick of 1/60 s). Returns what the application must do.
     pub fn step(&mut self, stage: &mut Stage) -> Vec<Outcome> {
+        if self.running.is_none() && !self.director.is_active() {
+            return Vec::new();
+        }
         let mut outcomes = Vec::new();
         if self.ticks.is_multiple_of(2) {
             // An update of the game: the script runs once.
@@ -593,10 +599,6 @@ impl EventPlayer {
             let events = self.director.step(&files, Frame::default(), stage.world);
             for event in events {
                 self.handle(event, stage, &mut outcomes);
-            }
-            if self.running.is_some() && !self.director.is_active() {
-                self.finish(stage);
-                outcomes.push(Outcome::Finished);
             }
         }
         self.ticks = self.ticks.wrapping_add(1);
@@ -615,6 +617,12 @@ impl EventPlayer {
         }
         self.apply_placements(stage);
         self.present(stage);
+        // Present the final script pose before returning ownership. Presenting after
+        // `finish` would overwrite the restored camera with the last cinematic view.
+        if self.running.is_some() && !self.director.is_active() {
+            self.finish(stage);
+            outcomes.push(Outcome::Finished);
+        }
         outcomes
     }
 
@@ -704,7 +712,8 @@ impl EventPlayer {
             }
         }
         self.hero_hidden = false;
-        if let Some(camera) = self.saved_camera.take() {
+        if let Some(mut camera) = self.saved_camera.take() {
+            camera.follow_hero(stage.hero.position());
             *stage.camera = camera;
         }
         // Whatever the cutscene made of the unrendered parts is gone with it.

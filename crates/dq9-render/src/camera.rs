@@ -73,6 +73,28 @@ impl Default for Camera {
 }
 
 impl Camera {
+    /// Field orbit from `Camera_SetOrbit` (`0x0202df78`, `0x0202e5e8`): distance 11,
+    /// eye height 6 above the target. `FieldCamera_Update` (`0x020a213c`) targets the
+    /// character's position plus half its height (the hero is 1.5 units tall).
+    pub fn field(position: Vec3, yaw: f32) -> Self {
+        let mut camera = Self {
+            yaw,
+            pitch: (6.0f32 / 11.0).asin(),
+            distance: 11.0,
+            ..Self::default()
+        };
+        camera.follow_hero(position);
+        camera
+    }
+
+    /// Reanchors an orbit to the hero without changing its projection or orbit settings.
+    /// Fly mode is independent of the hero.
+    pub fn follow_hero(&mut self, position: Vec3) {
+        if self.mode == CameraMode::Orbit {
+            self.target = position + Vec3::Y * 0.75;
+        }
+    }
+
     /// Unit view direction.
     pub fn forward(&self) -> Vec3 {
         let (sy, cy) = self.yaw.sin_cos();

@@ -272,9 +272,12 @@ ne sont pas alignés en nombre d'images, le critère différentiel de J2 n'est p
 
 Déplacement fidèle : porté dans `dq9-core` (`fx`, `movement`, `collision`, `camera`), constantes
 comparées à la ROM par `tests/movement_rom.rs` ; vitesse mesurée sous melonDS (une mesure, ± 1 image,
-compatible : [`re/movement.md`](re/movement.md)). Restent : personnages et objets de zone qui poussent le
-héros, aimantation sur les zones orientées, échelles, caméra complète (hauteur, distance,
-suivi), comparaison position par position à nombre d'images égal.
+compatible : [`re/movement.md`](re/movement.md)). L'orbite de terrain démarre à la distance 11
+et à la hauteur relative 6 du constructeur, suit le héros à mi-hauteur et reprend après les
+scènes, y compris les chaînes qui changent de carte (vérifié en natif et dans Chromium :
+`M01`, sauvegarde `C01M09`, nouvelle partie jusqu'à `X01M05`). Restent : personnages et objets
+de zone qui poussent le héros, aimantation sur les zones orientées, échelles, suivi lissé et
+zones de caméra, comparaison position par position à nombre d'images égal.
 
 ## J3 — Parler et scènes : **v0.1 jouable**
 

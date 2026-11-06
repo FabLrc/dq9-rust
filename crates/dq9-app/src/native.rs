@@ -420,16 +420,12 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         gpu::device(&adapter).await
     })?;
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let mut camera = Camera::default();
-    match (cli.eye, cli.target, s.bounds()) {
-        (Some(eye), Some(target), _) => camera.look_at(eye, target),
-        (_, _, Some(bounds)) => {
-            camera.frame(bounds);
-            if loaded.placed || cli.input.is_some() {
-                camera.target = hero.position();
-            }
-        }
-        _ => {}
+    let mut camera = Camera::field(
+        hero.position(),
+        if loaded.placed { hero.yaw() } else { 0.0 },
+    );
+    if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
+        camera.look_at(eye, target);
     }
     camera.far = camera.far.max(camera.distance * 4.0);
     loaded.runtime.face_camera(&camera)?;
@@ -486,6 +482,9 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
                 .map_or(Vec3::ZERO, |s| walk::direction_at(s, frame));
             let before = hero.position();
             hero.step(&loaded.collision, Input::from_direction(direction), 0, 1);
+            if cli.eye.is_none() || cli.target.is_none() {
+                camera.follow_hero(hero.position());
+            }
             let moved = hero.position() - before;
             let speed = Vec3::new(moved.x, 0.0, moved.z).length() / crate::app::STEP;
             loaded.runtime.set_hero_gait(Gait::from_speed(speed));

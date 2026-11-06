@@ -112,7 +112,9 @@ marche à 5,76 unités/s comme `Character_Update`, bloqué par les murs et posé
 carte ([`re/movement.md`](re/movement.md)) ; `Q`/`E` (physiques `A`/`E` en AZERTY) sont les
 boutons `L`/`R` du jeu : ils tournent la caméra de ± 45° au plus autour de son yaw d'entrée sur
 la carte, ensemble ils la ramènent. `Tab` passe en vol libre, où les touches de déplacement
-déplacent la caméra et `Q`/`E` la cible vers le bas/haut ; `Maj` accélère la caméra. `F` recadre, `R` change la disposition des écrans (`stacked`, `side`, `top`),
+déplacent la caméra et `Q`/`E` la cible vers le bas/haut ; `Maj` accélère la caméra. `F` rétablit
+l'orbite de terrain autour du héros (distance 11, hauteur relative 6, cible à mi-hauteur), ou
+cadre toute la carte en vol libre. `R` change la disposition des écrans (`stacked`, `side`, `top`),
 `T` moment suivant (liste « Moment » sur le Web), `M` coupe/rétablit la musique, `PageHaut`/`PageBas` carte précédente/suivante, `Entrée`/`Espace` parler, `Échap` quitter.
 
 **Son** : à chaque chargement de carte, `dq9-app` joue la séquence de `bgm.sdat` que le jeu
@@ -176,8 +178,10 @@ mouvements des PNJ (`play_npc`), les feuilles `.spr` de script (`add_sprite`) et
   fichier du paquet de type 0. Le héros joue les mouvements des paquets `evNNNNNp000.chr`.
 - **Caméra.** Œil, cible, orbite, champ de vision (demi-angle, 15° par défaut), roulis, secousses,
   suivi d'un acteur et caméra portée par deux os d'un modèle (native 572, utilisée par
-  l'ouverture) sont celles du script ; la caméra libre reprend à la fin. Une scène est cadrée en
-  4:3 sur l'écran haut (`screens.rs`).
+  l'ouverture) sont celles du script ; la caméra de terrain reprend à la fin, recentrée sur la
+  pose finale du héros sans garder le gros plan, le roulis ou le champ de la scène. Si la chaîne
+  a changé de carte, elle reprend l'orbite de la destination ; le vol libre retrouve sa vue
+  indépendante. Une scène est cadrée en 4:3 sur l'écran haut (`screens.rs`).
 - **Messages.** La fenêtre de conversation (`talk.rs`) affiche le texte de la table de la scène ;
   sans balise de fin elle attend l'action (`Dialogue::for_event`) ; la native 401 la ferme, la
   native 410 en retire le cadre. Le joueur est verrouillé (pas de marche, pas de conversation).

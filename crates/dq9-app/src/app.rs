@@ -345,7 +345,6 @@ impl App {
         let hero_start = loaded.hero.position();
         self.environment = lighting::environment(loaded.lighting.as_ref(), self.day);
         self.lighting_info = loaded.lighting.clone();
-        self.events.map_loaded();
         self.collision = loaded.collision;
         self.field = Some(loaded.field);
         self.talk.enter_map(loaded.npcs);
@@ -368,17 +367,31 @@ impl App {
             status(&format!("  warning: {w}"));
         }
         if frame || self.framed.is_none() {
-            if let Some(bounds) = s.bounds() {
-                self.camera.frame(bounds);
+            if self.camera.mode == CameraMode::Orbit {
+                self.camera = Camera::field(
+                    hero_start,
+                    if loaded.placed {
+                        loaded.hero.yaw()
+                    } else {
+                        0.0
+                    },
+                );
+            } else {
+                if let Some(bounds) = s.bounds() {
+                    self.camera.frame(bounds);
+                }
+                self.camera.target = hero_start;
+                if loaded.placed {
+                    self.camera.yaw = loaded.hero.yaw();
+                }
             }
             self.framed = s.bounds();
-        }
-        if loaded.placed {
-            self.camera.yaw = loaded.hero.yaw();
+        } else {
+            self.camera.follow_hero(hero_start);
         }
         self.camera_home = self.camera.yaw;
         self.field_camera = FieldCamera::default();
-        self.camera.target = hero_start;
+        self.events.map_loaded(&self.camera);
         let flags = |flag: u16| self.state.flags.contains(&i32::from(flag));
         self.audio.set_map(rom, loaded.entry.id, self.time, &flags);
         self.journal.record(
@@ -541,7 +554,11 @@ impl App {
                 self.update_title();
             }
             KeyCode::KeyF => {
-                if let Some(bounds) = self.framed {
+                if self.camera.mode == CameraMode::Orbit {
+                    if let Some(hero) = &self.hero {
+                        self.camera = Camera::field(hero.position(), self.camera_home);
+                    }
+                } else if let Some(bounds) = self.framed {
                     self.camera.frame(bounds);
                 }
             }
@@ -807,7 +824,7 @@ impl App {
             if let Some(hero) = &mut self.hero {
                 let before = hero.position();
                 hero.step(&self.collision, pad, camera_yaw, 1);
-                self.camera.target += hero.position() - before;
+                self.camera.follow_hero(hero.position());
                 if let Some(field) = &mut self.field {
                     let leader = Leader {
                         position: hero.position(),

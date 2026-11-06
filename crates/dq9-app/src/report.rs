@@ -275,7 +275,7 @@ mod tests {
         .unwrap();
         let mut hero = loaded.hero;
         let mut camera = Camera::default();
-        let before = camera;
+        let mut before = camera;
         let mut talk = Talk::default();
         talk.set_rom(rom);
         let mut player = EventPlayer::new();
@@ -297,6 +297,7 @@ mod tests {
         assert!(played.finished && played.elsewhere.is_none());
         assert_eq!(player.started(), [1130]);
         // The cutscene's own camera was used, and given back at the end.
+        before.follow_hero(hero.position());
         assert_eq!(camera, before);
         assert!(!player.hero_hidden());
         // Nothing the script needed was missing: only the effects the notes list.
