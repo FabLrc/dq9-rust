@@ -380,8 +380,9 @@ prologue ; ils ne passent ni par les triggers ni par les natives des scripts.
 - **Réimplémentation** (`dq9-core`) : `script::load::scene_flag` lit le rang dans
   `eventlist_lv5.bin` et ajoute la base puis `0x38e` — test `scene_flags_match_the_oracle_checkpoints`
   sur la ROM (`21500`→1450 … `21596`→1461, sans liste de constantes d'événements). Le
-  branchement (insertion dans l'état du champ au démarrage effectif de la scène) est fait dans
-  `dq9-app`, pas dans `GameState::new_game` : c'est un effet de l'exécution des scènes.
+  branchement est fait dans `dq9-app::begin_event`, après `EventPlayer::prepare` et avant la
+  première mise à jour du script (jamais dans `GameState::new_game`) : c'est un effet de
+  l'exécution des scènes.
 
 ### Drapeau de carte visitée (`Flags_SetMapVisited`, `0x0201ba78`)
 

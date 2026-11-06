@@ -491,6 +491,11 @@ impl App {
                 code: loaded.entry.code.clone(),
             },
         );
+        // `0201ba78` (map visited): the original sets `2710 + map / 100` when the map loads,
+        // before its triggers run.
+        if let Some(flag) = dq9_core::state::map_visit_flag(loaded.entry.id) {
+            self.state.flags.insert(i32::from(flag));
+        }
         self.current = Some((loaded.entry, loaded.label));
         if let Err(e) = loaded.runtime.face_camera(&self.camera) {
             status(&format!("facing cast: {e}"));
@@ -694,6 +699,14 @@ impl App {
                 status(&format!("event {event}: map {} did not load", place.map));
             }
         }
+        // `EventTask_Update` (`021bc77c`): the opening scenes set `540/770 + list rank + 0x38e`
+        // on their first non-loading update. Re-borrow the ROM after the map load above.
+        let Some(rom) = self.rom.as_deref() else {
+            return;
+        };
+        let scene_flag = nds_rom::Rom::parse(rom)
+            .ok()
+            .and_then(|parsed| dq9_core::script::load::scene_flag(&parsed, event));
         let (Some(rom), Some(scene), Some(hero)) = (
             self.rom.as_deref(),
             self.runtime.as_mut(),
@@ -710,7 +723,11 @@ impl App {
             camera: &mut self.camera,
             talk: &mut self.talk,
         };
-        if self.events.prepare(rom, event, &mut stage) {
+        let prepared = self.events.prepare(rom, event, &mut stage);
+        if prepared {
+            if let Some(flag) = scene_flag {
+                self.state.flags.insert(i32::from(flag));
+            }
             self.upload();
         }
     }
