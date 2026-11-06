@@ -22,10 +22,18 @@ impl App {
         }
     }
 
-    /// The current track supplies the cast's story after a new game or a save load.
-    pub(super) fn current_story(&self) -> dq9_formats::cast::Story {
+    /// The destination track supplies the cast's story after a new game or a save load.
+    pub(super) fn current_story(&self, key: &str) -> dq9_formats::cast::Story {
         if self.options.new_game || (self.options.save.is_some() && self.options.map.is_none()) {
-            crate::load::story_from_state(&self.options.story, &self.state)
+            let id = key.parse::<u16>().ok();
+            let room = self.maps.iter().find(|entry| {
+                id.map_or_else(|| entry.code.eq_ignore_ascii_case(key), |id| entry.id == id)
+            });
+            crate::load::story_from_state(
+                &self.options.story,
+                &self.state,
+                room.map(|entry| entry.id),
+            )
         } else {
             self.options.story.clone()
         }

@@ -25,6 +25,9 @@ sélectionne la piste de la salle avant la conversation. Les variantes d'une mê
 cartes gardent les trois mêmes caractères ; ce n'est pas une recherche de chemins de secours.
 La progression de la piste choisit la lettre, puis son étape et sa sous-étape choisissent la
 réplique. Les options explicites de progression remplacent les champs correspondants.
+Lors d'un changement de salle, la distribution des PNJ est construite à partir de la piste
+**de destination** avant que `Field::enter` ne sélectionne cette même piste pour les triggers
+et les conversations ; l'état courant n'est pas modifié pendant la préparation du cast.
 
 Contrôles : sauvegarde de démonstration `19.2.1`, PNJ 25 en zone 80 : le navigateur ouvre
 `C01Q0/025_en.bin`, enregistrement 0, et la ligne s'affiche ; chargement sauvegarde avant ou

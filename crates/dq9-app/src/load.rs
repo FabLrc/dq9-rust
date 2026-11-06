@@ -90,10 +90,17 @@ pub fn trigger_state(
     state
 }
 
-/// Cast settings from the active trigger track.
-pub fn story_from_state(story: &Story, state: &dq9_core::trigger::State) -> Story {
+/// Cast settings for the destination room's track (`FUN_02064ba8`).
+pub fn story_from_state(
+    story: &Story,
+    state: &dq9_core::trigger::State,
+    room: Option<u16>,
+) -> Story {
     let mut story = story.clone();
-    let track = &state.tracks[state.track];
+    let track_index = room.map_or(state.track, |id| {
+        dq9_core::trigger::track_of_room(i32::from(id))
+    });
+    let track = &state.tracks[track_index];
     (story.chapter, story.step, story.substep) = (track.chapter, track.step, track.substep);
     story.daytime = state.time_of_day != 0;
     story.flags = state.flags.clone();

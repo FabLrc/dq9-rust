@@ -332,7 +332,7 @@ impl App {
         state: Option<&GameState>,
         transition: bool,
     ) -> bool {
-        let story = self.current_story();
+        let story = self.current_story(key);
         let Some(rom) = &self.rom else { return false };
         let started = Instant::now();
         let mut loaded = match load::load(rom, key, self.time, &story, spawn, state, &self.look) {

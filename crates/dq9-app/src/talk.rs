@@ -768,4 +768,92 @@ mod saved_dialogue_tests {
         assert!(archive_path("C01", 0).is_err());
         assert!(archive_path("C01", 20).is_err());
     }
+
+    #[test]
+    fn transition_uses_destination_track_for_cast_and_dialogue() {
+        use dq9_core::field::Field;
+        use dq9_formats::cast::{Story, run_placements};
+        use dq9_formats::dialogue::{self, Kind, Line, Session, TalkState};
+        use dq9_formats::map::Regions;
+        use dq9_formats::table::{Record, Table, Value};
+
+        let mut state = dq9_core::trigger::State::default();
+        (
+            state.tracks[0].chapter,
+            state.tracks[0].step,
+            state.tracks[0].substep,
+        ) = (1, 1, 1);
+        (
+            state.tracks[3].chapter,
+            state.tracks[3].step,
+            state.tracks[3].substep,
+        ) = (11, 4, 2);
+        let story = crate::load::story_from_state(&Story::default(), &state, Some(200));
+        let placements = Table {
+            records: vec![Record {
+                kind: 5,
+                values: vec![
+                    Value::Int(11),
+                    Value::Int(4),
+                    Value::Int(1),
+                    Value::Int(11),
+                    Value::Int(4),
+                    Value::Int(3),
+                    Value::Int(2),
+                    Value::Int(200),
+                    Value::Int(7),
+                    Value::Float(1.0),
+                    Value::Float(0.0),
+                    Value::Float(2.0),
+                    Value::Float(0.0),
+                ],
+            }],
+            string_count: 0,
+        };
+        let (cast, _) = run_placements(&placements, 200, &story);
+        assert!(cast.contains_key(&7));
+        let old_story = crate::load::story_from_state(&Story::default(), &state, Some(109));
+        assert!(
+            !run_placements(&placements, 200, &old_story)
+                .0
+                .contains_key(&7)
+        );
+        assert_eq!(state.track, 0);
+
+        let mut field = Field::new(200, &Regions::default(), None).unwrap();
+        field.enter(&mut state, true);
+        let track = &state.tracks[state.track];
+        assert_eq!(
+            archive_path("C02M01", track.chapter).unwrap(),
+            "data/scenario/C02S0.gp2"
+        );
+        let lines = [
+            Line {
+                kind: Some(Kind::Step),
+                a: 1,
+                b: 1,
+                night: None,
+                slot: 0,
+                text: Some(b"old"),
+            },
+            Line {
+                kind: Some(Kind::Step),
+                a: 4,
+                b: 4,
+                night: None,
+                slot: 0,
+                text: Some(b"destination"),
+            },
+        ];
+        let talk = TalkState {
+            step: i32::from(track.step),
+            substep: i32::from(track.substep),
+            context: 0,
+            talk_count: [0; 2],
+            daytime: true,
+            session: Session::default(),
+            quest: &|_| 0,
+        };
+        assert_eq!(dialogue::select(&lines, &talk), Some(1));
+    }
 }

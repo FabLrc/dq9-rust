@@ -347,7 +347,13 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         [cli.chapter, cli.step, cli.substep],
     );
     let story = if start.state.is_some() {
-        load::story_from_state(&cli.story(), &trigger_state)
+        load::story_from_state(
+            &cli.story(),
+            &trigger_state,
+            map.parse()
+                .ok()
+                .or_else(|| start.state.as_ref().map(|s| s.map)),
+        )
     } else {
         cli.story()
     };
