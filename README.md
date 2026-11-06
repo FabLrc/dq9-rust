@@ -5,6 +5,11 @@ pour Windows, macOS, Linux et le Web, avec à terme le multijoueur de la DS rend
 ligne. Le jeu est rétro-analysé et ses ressources sont lues depuis **votre propre ROM** ; aucune
 donnée du jeu n'est incluse dans ce dépôt.
 
+**[Tester DQ9 Rust dans le navigateur](https://fablrc.github.io/dq9-rust/?newgame=1)** —
+sélectionnez votre propre ROM européenne (`YDQP01`), puis cliquez dans le jeu pour utiliser
+le clavier. Les fichiers ROM et sauvegarde restent locaux : aucun envoi au serveur.
+La démo est publique, expérimentale et nécessite un navigateur récent avec WebGPU ou WebGL 2.
+
 **État** : une première preuve technique se joue, en natif comme dans un navigateur.
 `cargo run -p dq9-app --release -- --new-game` lance l'ouverture et enchaîne les scènes du
 prologue jusqu'au contrôle libre à l'Observatoire. `--map M01`, ou une sauvegarde passée en

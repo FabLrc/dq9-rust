@@ -314,6 +314,25 @@ drapeaux, aires déjà prises), ou plafond de pas atteint. Limites connues :
 
 ## Lancer dans un navigateur
 
+### Démo hébergée (GitHub Pages)
+
+Ouvrir **https://fablrc.github.io/dq9-rust/?newgame=1**, choisir sa ROM européenne `YDQP01`
+et cliquer dans le jeu pour utiliser le clavier. Flèches : marcher ; Entrée/Espace : parler
+et avancer les messages ; Q/E : caméra ; M : son. Une sauvegarde DS est facultative.
+Les fichiers sont lus localement : aucune ROM ni sauvegarde n'est envoyée à GitHub.
+Un ordinateur avec clavier et un navigateur récent WebGPU ou WebGL 2 sont recommandés.
+Les limites de la preuve technique restent applicables : combats sautés, effets incomplets
+et écran inférieur provisoire.
+
+Le workflow `.github/workflows/pages.yml` compile la version wasm optimisée à chaque push
+sur `main` (ou lancement manuel), installe la version de `wasm-bindgen-cli` de `Cargo.lock`
+et déploie uniquement `index.html` et les bindings JavaScript/WebAssembly dans GitHub Pages.
+Le dépôt reste privé ; le site et le programme compilé sont publics. Le chemin relatif
+`./pkg/dq9-app.js` permet de servir la page sous `/dq9-rust/` sans nom de domaine personnalisé.
+Aucune donnée du jeu n'entre dans l'artefact Pages.
+
+### Compilation et serveur local
+
 ```powershell
 cargo build -p dq9-app --release --target wasm32-unknown-unknown
 # Une fois : la version de wasm-bindgen-cli doit être celle de Cargo.lock.

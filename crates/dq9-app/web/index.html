@@ -8,6 +8,9 @@
     html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 14px sans-serif; }
     body { display: flex; flex-direction: column; }
     header { padding: 6px 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; flex: none; }
+    .intro { flex-basis: 100%; }
+    .intro summary { cursor: pointer; }
+    .intro p { margin: 6px 0; max-width: 85ch; }
     #status { opacity: 0.8; overflow-wrap: anywhere; }
     main { flex: 1; min-height: 0; position: relative; }
     canvas#dq9 { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; outline: none; }
@@ -15,6 +18,18 @@
 </head>
 <body>
   <header>
+    <details class="intro">
+      <summary><strong>DQ9 Rust</strong> — démo technique : aide et limites</summary>
+      <p>Sélectionnez votre propre ROM européenne de Dragon Quest IX (YDQP01), puis cliquez
+        sur « Nouvelle partie ». Une sauvegarde DS peut aussi être chargée. Ces fichiers
+        restent dans votre navigateur : ils ne sont jamais envoyés au serveur.</p>
+      <p>Cliquez dans le jeu pour utiliser le clavier : flèches pour marcher, Entrée ou
+        Espace pour parler et avancer les messages, Q/E pour tourner la caméra.
+        M coupe le son ; le navigateur ne l'autorise qu'après une interaction.</p>
+      <p>Version expérimentale : combats sautés, effets encore incomplets et écran inférieur
+        provisoire. Navigateur récent avec WebGPU ou WebGL 2 requis ; ordinateur et clavier
+        recommandés. Aucune ROM n'est fournie.</p>
+    </details>
     <label>ROM (.nds) : <input type="file" id="rom" accept=".nds"></label>
     <label>Sauvegarde (.sav, facultative) : <input type="file" id="save" accept=".sav"></label>
     <label>Moment : <select id="time">
