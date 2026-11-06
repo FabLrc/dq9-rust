@@ -46,6 +46,34 @@ mod flow;
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
 
+/// A type 2 doorway opening: native 584 (`0x02018b44`) turns the placement by +90° in 16
+/// updates of 2 ticks, 409/4096 rad each, and triggers event 3 at the end.
+struct DoorAnim {
+    /// Block entry (the doorway's class).
+    block: u32,
+    /// Placement id (the doorway's number).
+    placement: u16,
+    /// Fixed steps elapsed (one update every two ticks).
+    ticks: u32,
+    /// Scene instances of the placement and their world matrix before the rotation.
+    homes: Vec<(usize, glam::Mat4)>,
+}
+
+impl DoorAnim {
+    /// `Door::SPEED` / `Door::QUARTER_TURN` (scenes contract): 409 per update of 2 ticks,
+    /// 6434 = +90°.
+    const TICKS: u32 = 32;
+    const TURN: i32 = 0x1922;
+
+    fn angle(&self) -> i32 {
+        (((self.ticks.min(Self::TICKS) * 409) / 2) as i32).min(Self::TURN)
+    }
+
+    fn done(&self) -> bool {
+        self.ticks >= Self::TICKS
+    }
+}
+
 /// Events delivered to the loop from outside (async GPU setup, ROM/save picked on the web).
 #[derive(Debug)]
 pub enum UserEvent {
@@ -123,6 +151,11 @@ pub struct App {
     /// Map changes chained since the last fixed step (guards against warp loops).
     chain: u8,
     hero: Option<Hero>,
+    /// Direction the headless pilot (`app/auto.rs`) asks the d-pad to walk, in world space.
+    /// Overrides the keyboard for one fixed step; the camera turn is left alone.
+    pilot_dir: Option<Vec3>,
+    /// Doorways being opened (native 584), for the collision and the scene.
+    doors: Vec<DoorAnim>,
     /// NPC conversations and the message window.
     talk: Talk,
     /// Script events: the event task and what it did to the scene.
@@ -192,6 +225,8 @@ impl App {
             state,
             chain: 0,
             hero: None,
+            pilot_dir: None,
+            doors: Vec::new(),
             talk: Talk::default(),
             events: EventPlayer::new(),
             quiet_events: false,
@@ -275,7 +310,14 @@ impl App {
 
     #[cfg(target_arch = "wasm32")]
     fn set_save(&mut self, save: Vec<u8>) {
+        // Picking a save replaces whatever the page started with (a new game from
+        // `?newgame=1`, a map preview): the save selects the map, the position and the
+        // scenario. Without this, `set_rom` would keep starting the prologue.
+        self.options.new_game = false;
+        self.options.map = None;
+        self.options.event = None;
         self.options.save = Some(save);
+        self.talk.set_identity(None);
         if let Some(rom) = &self.rom {
             self.set_rom(rom.clone());
         }
@@ -350,6 +392,7 @@ impl App {
         self.environment = lighting::environment(loaded.lighting.as_ref(), self.day);
         self.lighting_info = loaded.lighting.clone();
         self.collision = loaded.collision;
+        self.doors.clear();
         self.field = Some(loaded.field);
         self.talk.enter_map(loaded.npcs);
         self.hero = Some(loaded.hero);
@@ -443,6 +486,9 @@ impl App {
                 }
                 Event::Request(Request::Battle(number)) => self.run_battle(number),
                 Event::Request(Request::RemoveNpc(npc)) => self.talk.remove_npc(npc),
+                Event::Request(Request::OpenDoor { block, placement }) => {
+                    self.open_door(u32::from(block), placement)
+                }
                 Event::Request(Request::Talk { npc, context }) => self.talk_to(npc, context),
                 Event::Request(request) => {
                     status(&format!(
@@ -740,6 +786,7 @@ impl App {
     fn run_steps(&mut self, due: u32) {
         for _ in 0..due {
             self.step_sound();
+            self.step_doors();
             self.tick += 1;
             self.journal.note_progress(self.tick, &self.state);
             if self.events.pending_start().is_some() || self.events.is_active() {
@@ -772,6 +819,7 @@ impl App {
                 ));
             }
             let talking = self.talk.is_active();
+            let piloted = std::mem::take(&mut self.pilot_dir);
             let mut input = CameraInput {
                 forward: self.axis(
                     &[KeyCode::KeyW, KeyCode::ArrowUp],
@@ -796,34 +844,43 @@ impl App {
                 input.up = 0.0;
             }
             self.camera.step(&input, STEP);
-            let steering = walking && !talking;
-            let pad = Input {
-                up: steering && self.axis(&[KeyCode::KeyW, KeyCode::ArrowUp], &[]) > 0.0,
-                down: steering && self.axis(&[KeyCode::KeyS, KeyCode::ArrowDown], &[]) > 0.0,
-                left: steering && self.axis(&[KeyCode::KeyA, KeyCode::ArrowLeft], &[]) > 0.0,
-                right: steering && self.axis(&[KeyCode::KeyD, KeyCode::ArrowRight], &[]) > 0.0,
+            let steering = walking && !talking && piloted.is_none();
+            let pad = match piloted {
+                Some(direction) => Input::from_direction(direction),
+                None => Input {
+                    up: steering && self.axis(&[KeyCode::KeyW, KeyCode::ArrowUp], &[]) > 0.0,
+                    down: steering && self.axis(&[KeyCode::KeyS, KeyCode::ArrowDown], &[]) > 0.0,
+                    left: steering && self.axis(&[KeyCode::KeyA, KeyCode::ArrowLeft], &[]) > 0.0,
+                    right: steering && self.axis(&[KeyCode::KeyD, KeyCode::ArrowRight], &[]) > 0.0,
+                },
             };
             if steering {
                 self.turn_camera();
             }
-            // The game's camera yaw turns the other way round from the application's.
-            let camera_yaw = reduce_angle((-self.camera.yaw * 4096.0) as i32);
-            let move_direction = if steering {
-                let (sin, cos) = self.camera.yaw.sin_cos();
-                let forward = Vec3::new(sin, 0.0, -cos);
-                let right = Vec3::new(cos, 0.0, sin);
-                forward
-                    * self.axis(
-                        &[KeyCode::KeyW, KeyCode::ArrowUp],
-                        &[KeyCode::KeyS, KeyCode::ArrowDown],
-                    )
-                    + right
+            // The game's camera yaw turns the other way round from the application's. The
+            // headless pilot gives world directions, so it walks with the camera at yaw 0.
+            let camera_yaw = match piloted {
+                Some(_) => 0,
+                None => reduce_angle((-self.camera.yaw * 4096.0) as i32),
+            };
+            let move_direction = match piloted {
+                Some(direction) => Vec3::new(direction.x, 0.0, direction.z),
+                None if steering => {
+                    let (sin, cos) = self.camera.yaw.sin_cos();
+                    let forward = Vec3::new(sin, 0.0, -cos);
+                    let right = Vec3::new(cos, 0.0, sin);
+                    forward
                         * self.axis(
-                            &[KeyCode::KeyD, KeyCode::ArrowRight],
-                            &[KeyCode::KeyA, KeyCode::ArrowLeft],
+                            &[KeyCode::KeyW, KeyCode::ArrowUp],
+                            &[KeyCode::KeyS, KeyCode::ArrowDown],
                         )
-            } else {
-                Vec3::ZERO
+                        + right
+                            * self.axis(
+                                &[KeyCode::KeyD, KeyCode::ArrowRight],
+                                &[KeyCode::KeyA, KeyCode::ArrowLeft],
+                            )
+                }
+                None => Vec3::ZERO,
             };
             if let Some(hero) = &mut self.hero {
                 let before = hero.position();
@@ -860,6 +917,71 @@ impl App {
                 self.renderer = None;
                 return;
             }
+        }
+    }
+
+    /// Starts opening a doorway, once.
+    fn open_door(&mut self, block: u32, placement: u16) {
+        if self
+            .doors
+            .iter()
+            .any(|door| door.block == block && door.placement == placement)
+        {
+            return;
+        }
+        let mut homes = Vec::new();
+        if let Some(runtime) = &self.runtime {
+            for &(entry, id, index) in &runtime.scene.placements {
+                if entry == block
+                    && id == placement
+                    && let Some(instance) = runtime.scene.instances.get(index)
+                {
+                    homes.push((index, instance.world));
+                }
+            }
+        }
+        // Native 584: the door's own effect (200 + low quartet), once, when the map names it.
+        if let (Some(field), Some(rom)) = (&self.field, &self.rom)
+            && let Some(low) = field.door_sound(block as u8, placement as u8)
+        {
+            self.audio.play_base_effect(rom, u16::from(low) + 200);
+        }
+        status(&format!("door {block}/{placement} opens"));
+        self.doors.push(DoorAnim {
+            block,
+            placement,
+            ticks: 0,
+            homes,
+        });
+    }
+
+    /// One fixed step of every opening door: the collision subtree turns with the placement
+    /// (native 584), the scene follows, and the arrival trigger fires once it is open.
+    fn step_doors(&mut self) {
+        let mut opened = false;
+        for door in &mut self.doors {
+            if door.done() {
+                continue;
+            }
+            door.ticks += 1;
+            let angle = door.angle();
+            self.collision
+                .set_door_angle(door.block, door.placement, angle);
+            if let Some(runtime) = &mut self.runtime {
+                let radians = angle as f32 / 4096.0;
+                for (index, home) in &door.homes {
+                    if let Some(instance) = runtime.scene.instances.get_mut(*index) {
+                        instance.world = *home * glam::Mat4::from_rotation_y(radians);
+                    }
+                }
+            }
+            if door.done() {
+                opened = true;
+            }
+        }
+        if opened && let Some(field) = &mut self.field {
+            let events = field.door_opened(&mut self.state);
+            self.apply_events(events);
         }
     }
 

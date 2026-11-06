@@ -586,6 +586,12 @@ pub struct Partner {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Talk {
+    /// The partner `Talk_NearestNpc` would pick at `position`/`yaw`, as [`Talk::begin`] does:
+    /// what an autopilot needs to know before pressing the action key.
+    pub fn nearest(&self, position: glam::Vec3, yaw: f32) -> Option<talk::Target> {
+        talk::nearest(&self.npcs, position, yaw)
+    }
+
     /// The conversations the map offers: for each NPC, a standing point in each of its talk
     /// zones and one free spot beside it, each checked with the game's partner search
     /// ([`talk::nearest`]).

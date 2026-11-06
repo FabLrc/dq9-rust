@@ -294,11 +294,37 @@ contrôle il simule sur des copies (`Talk::simulate`, `Field::step`) chaque conv
 carte offre (point d'appui et réponse « première » choisis par la recherche de partenaire du
 jeu) et chaque aire de la carte ; il joue celle qui fait le plus avancer l'histoire (progression,
 événement lancé, combat, changement de carte, drapeaux) et, à défaut, prend une sortie de la
-famille de cartes (`X01`, `M01`…) qu'il n'a pas prise, en revenant sur ses pas si besoin. Il ne
-marche pas : le héros est posé dans la zone ou la sortie, ce qui n'est pas de la marche, de la
-collision ni de la caméra. Sur le prologue il traverse les étapes 1.1 à 1.4 (30 scènes) et
-arrive au chapitre 2 (`2.1.1`, `M01M10`, 652 s de jeu, 59 scènes) où il s'arrête faute de
-conversation ou d'aire utile.
+famille de cartes (`X01`, `M01`…) qu'il n'a pas prise, en revenant sur ses pas si besoin.
+
+Il **marche réellement** : à chaque pas fixe il donne au pavé une direction du monde, `Hero::step`
+tourne et accélère le héros, la collision de la carte le pousse, et seul `Field::step` décide
+qu'une aire, une porte ou une zone de conversation est atteinte. Les trajets viennent d'une
+grille de sol construite en sondant la collision avec le rayon et la sphère du héros
+(`CollisionWorld`), multi-étages (jusqu'à huit sols par colonne), avec des arêtes validées en
+faisant marcher un héros de cellule en cellule ; un déplacement qui coince est appris et évité.
+La touche action est pressée quand `Talk_NearestNpc` voit le PNJ visé ; une porte interne sans
+destination est poussée, ouverte par le champ (native 584, `trigger.md`) et la grille est
+reconstruite. Aucun téléport n'entre dans la preuve.
+
+Parcours vérifié sur la ROM européenne, à 60 Hz (`--new-game --headless --auto --pilot`) :
+
+| Temps | Carte | Fait |
+|---:|---|---|
+| 210 s | `X01M05` | première main ; conversations 1140 et 1130 en marchant |
+| 244–276 s | `X01M05`/`X01M06`/`X01M07` | sorties et warp 9 réels |
+| 295–299 s | `X01M07` | porte de bibliothèque (deux vantaux 2 et 3) poussée, ouverte, traversée |
+| 299 s | `X01M07` | aire 2 (ajoutée par l'événement 20) atteinte à pied → `1150` |
+| 314 s | `X01M07` | NPC 130, `1600` |
+| 335 s | `X01M01` | NPC 127, `1170` → histoire **1.1.2** |
+| 344 s | `X01M01` | arrêt : le warp vers `X01M03` (y 15,5) n'est pas joignable à pied |
+
+Limite précise : sur `X01M01` (tour de l'Observatoire), la terrasse haute n'est pas reliée par
+la collision de marche (le graphe atteint y 11,2 au plus, le warp de `X01M03` est à y 15,5).
+Les zones `0x73` de **type 1** (43 sur la ROM, trois sur `X01M01`, aux positions
+`(-33,5, 4, -21)`, `(-18,25, 11, 9)` et `(26, 8, -4,5)`) sont lues par le champ
+(`Field_CheckRegions`, tâche 8) mais **non modélisées** : elles sont la cause probable du
+passage manquant. Le pilote s'arrête donc à 1.1.2 ; le chapitre 2 n'est plus atteint en
+téléportant.
 
 **S'arrête où et pourquoi** (journal de fin de `--pilot`) : prise de contrôle sans rien qui fasse
 avancer l'histoire d'après la simulation (conversations qui ne changent plus ni progression ni
@@ -310,6 +336,7 @@ drapeaux, aires déjà prises), ou plafond de pas atteint. Limites connues :
 - `Other(141)` (fin de `21510`, `21595`, `21593`) et les natives sans effet (`stb.md`) sont
   journalisés mais ne font rien.
 - Le pilote rejoue parfois la même conversation (`2110`) tant que son déclencheur change un drapeau.
+- Les zones de type 1 de l'Observatoire ne sont pas jouées (voir la limite ci-dessus).
 - L'ordre et les durées ne sont pas comparés à melonDS.
 
 ## Lancer dans un navigateur
