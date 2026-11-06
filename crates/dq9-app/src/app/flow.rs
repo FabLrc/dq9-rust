@@ -7,7 +7,6 @@ use dq9_core::state::GameState;
 use dq9_core::trigger::Member;
 
 use super::{App, status};
-use crate::event::EventPlayer;
 use crate::lighting;
 
 impl App {
@@ -85,7 +84,7 @@ impl App {
         self.state.characters.insert(0, hero);
         self.state.party = vec![hero];
         self.look = dq9_formats::hero::HeroLook::new_game();
-        self.events = EventPlayer::new();
+        self.reset_session();
         self.journal = Default::default();
         self.tick = 0;
         self.journal.note_progress(0, &self.state);

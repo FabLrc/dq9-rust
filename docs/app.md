@@ -572,8 +572,15 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
 
 - Chargement d'une sauvegarde après « Nouvelle partie » : scénario natif Windows exercé
   avec la ROM EU et une sauvegarde locale (`a_save_selected_after_a_new_game_loads_that_save`).
-  `new_game` devient faux et `C01M09` (carte 109) remplace le prologue. Le test et ses imports
-  sont compilés uniquement sous Windows ; le chemin navigateur reste compilé en wasm.
+  `new_game` devient faux et `C01M09` (carte 109) remplace le prologue. Le test couvre un
+  événement encore en attente, puis un prologue actif avec légende ouverte : tâche et
+  dialogue sont annulés et ne reprennent pas pendant les 120 pas fixes suivants. Le test et
+  ses imports sont compilés uniquement sous Windows ; le chemin navigateur reste en wasm.
+- Portes internes de la version publiée `17bef8c` : sur `X01M07`, ROM choisie localement,
+  marche au clavier autour des colonnes puis ouverture des deux vantaux (`door 0/3 opens`,
+  `door 0/2 opens`) et franchissement visible jusque dans la bibliothèque. Capture conservée
+  hors dépôt : `build/orca/pages-door-crossing-17bef8c.png`. CI Linux `42229577289` et
+  déploiement Pages `42229577139` réussis ; ce smoke ne valide pas tout le prologue.
 - Lot navigateur et chaîne de livraison (6 novembre 2026) : page wasm locale servie par
   `python -m http.server` (`?newgame=1&mute=1`, Chromium 150, 1929 × 921, DPR 1, WebGPU et
   WebGL 2 disponibles), ROM européenne locale de 256 Mio lue par `<input type=file>`. Le
