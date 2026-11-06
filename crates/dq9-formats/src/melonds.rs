@@ -1179,7 +1179,7 @@ mod tests {
             put(GAME_STATE + 8, &object.to_le_bytes());
             put(
                 object + 0x44,
-                &[0x8f, 0x0a, 0, 0, 0, 0, 0, 0, 0x1e, 0xbf, 0xff, 0xff],
+                &[0x8f, 0x0a, 0, 0, 0x00, 0xfc, 0xff, 0xff, 0x3e, 0xc6, 0xff, 0xff],
             );
             put(object + 0x54, &0x3400u32.to_le_bytes());
         });
