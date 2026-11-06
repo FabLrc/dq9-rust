@@ -175,7 +175,8 @@ vers la ROM, `dq9.sav`), écrit un `melonDS.toml` valide (sans BOM) avec les tou
 (`Up`/`Down`/`Left`/`Right`, `A = X`, `B = Z`, `Start = Retour`), puis poste les messages à
 la fenêtre (pas de premier plan, fenêtre non redimensionnée). Actions : `waitstart` (bouton
 START orange), `tap`, `key`, `hold:up+left:2`, `spam`/`play` (A toutes les N secondes, états
-tous les M), `save`, `loadstate`, `shot`. Exemple de référence nouvelle partie :
+tous les M), `save`, `loadstate`, `shot`, `pause`/`frame:N` (hotkeys melonDS, voir les
+limites). Exemple de référence nouvelle partie :
 
 ```powershell
 # écran titre -> menu -> création du personnage (A x10, OK tactile, « Yes ») -> prologue
@@ -216,26 +217,41 @@ Pendant l'ouverture (`M01M12`, 1.1.1) les mêmes 7 drapeaux de base sont déjà 
 état (vblank 5217) et `1450`, puis `1451`, apparaissent pendant la scène : ce sont des
 candidats « initialisation/scripts », pas des drapeaux de piste.
 
+**Franchissement du premier contrôle (relevé réel, reproductible).** Depuis
+(0,660 ; −0,250 ; −3,610) : `Up` 8 s (escaliers), `Left` 4 s → (−16,45 ; 2,25 ; −17,47),
+`Down` 4 s (balcon) → (−16,45 ; 2,25 ; 5,75), `Right` 1,1 s + `Down` 0,3 s →
+(−10,77 ; 2,25 ; 8,16), puis A : l'event 1140 se joue avec le PNJ 111, à
+(−11,27 ; 2,25 ; 9,04). La conversation se ferme après **8** pressions A (la 9ᵉ la rouvre) ;
+le balcon gauche s'arrête à z = 9,5, le PNJ 105 est en bas à (−18,5 ; 0,45 ; 20,31). Ces
+coordonnées sont partagées avec le worker du parcours ; la suite (tour `X01M03`, warp
+y = 15,5) reste à franchir en marche réelle.
+
 ### Limites
 
 - La création du personnage est pilotée au temps réel (A, OK tactile) : la séquence est
   reproductible mais pas à l'image près ; les points de contrôle sont lus en RAM, jamais
   déduits d'une capture d'écran.
-- Le A en boucle ne marche pas : au-delà du premier contrôle, atteindre Angel Falls exige le
-  **vrai chemin physique** (escaliers, portes, PNJ à qui parler). Les entrées du parcours réel
-  du worker field seront rejouées dans melonDS ; aucun téléport ne servira de référence.
+- Le A en boucle avance les dialogues mais **rouvre** la conversation à la fin (le héros fait
+  toujours face au PNJ) : il ne suffit pas à progresser. Au-delà du premier contrôle,
+  atteindre Angel Falls exige le **vrai chemin physique** (escaliers, portes, PNJ à qui
+  parler). Les entrées du parcours réel du worker field seront rejouées dans melonDS ; aucun
+  téléport ne servira de référence.
 - Le combat 26 est un vrai combat (pas de contournement), mais le runtime le substitue : les
   drapeaux posés par le combat/le moteur peuvent manquer (c'est l'écart ci-dessus).
 - Aucun quartet de quête à ces points ; les checkpoints « quêtes du village » et « fin de
   prologue » attendent le chemin physique.
 - La sauvegarde d'état passe par le menu (environ 2 s, temps réel) ; ce sont des points
   d'histoire stables, pas des numéros d'image alignés.
+- Le pas à pas (`pause` + `frame:N`, hotkeys `HK_Pause`/`HK_FrameStep`) fonctionne mais
+  melonDS 1.1 n'avance qu'environ **0,5 image par pression** sous messages postés (mesuré :
+  +3 VBlank pour 10 pressions, +25 pour 50) : le nombre d'images réel se lit au compteur
+  VBlank, et ce n'est pas encore assez exact pour le critère J2 « même nombre d'images ».
 
 ## Suite
 
 - Rejouer dans melonDS les entrées du parcours réel (premier contrôle → Angel Falls → quêtes
   → fin du prologue) et comparer chaque checkpoint ; puis le critère J2 « même nombre
-  d'images » demande un pilotage image par image (pause + `HK_FrameStep`) que ce script ne
-  fait pas encore.
+  d'images » demande un pas à pas exact : `pause`/`frame:N` existent mais melonDS 1.1
+  n'avance que ~0,5 image par pression sous messages postés.
 - L'état contient aussi l'ARM7 et le son (`SPU.`) : hors périmètre tant que l'audio n'est pas
   porté.

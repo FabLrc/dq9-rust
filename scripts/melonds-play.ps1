@@ -23,6 +23,10 @@
 #                             press A every INTERVAL seconds and save a state every EVERY
 #                             seconds to PREFIX1.ml1, PREFIX2.ml1...
 #   autosave:SECONDS:INTERVAL:PREFIX
+#   pause                     press the Pause hotkey (melonDS.toml HK_Pause)
+#   frame:N                   press the Frame step hotkey N times (HK_FrameStep). melonDS 1.1
+#                             advances about 0.5 frame per press under posted keys: measure the
+#                             VBlank delta, this is not yet exact enough for the J2 criterion.
 #   log                       print the client size
 #
 # The ROM comes from -Rom, else DQ9_ROM, else the only *.nds in rom/. The working directory is
@@ -76,6 +80,8 @@ Right = 16777236
 A = 88
 B = 90
 Start = 16777220
+HK_Pause = 80
+HK_FrameStep = 70
 '@ | Set-Content (Join-Path $Work 'melonDS.toml') -Encoding ascii
 }
 if ($Fresh) { Remove-Item (Join-Path $Work 'dq9.sav') -ErrorAction SilentlyContinue }
@@ -234,7 +240,7 @@ try {
                 $interval = if ($p.Count -gt 2) { [double]$p[2] } else { 2.0 }
                 $deadline = (Get-Date).AddSeconds($duration)
                 while ((Get-Date) -lt $deadline) {
-                    [W]::Key($h, [uint32]$vk['a'], 60)
+                    [W]::Key($h, [uint32]$vk['a'], 120)
                     Start-Sleep -Milliseconds ([int]($interval * 1000))
                 }
             }
@@ -244,7 +250,7 @@ try {
                 $next = (Get-Date).AddSeconds($every); $n = 0
                 $deadline = (Get-Date).AddSeconds($duration)
                 while ((Get-Date) -lt $deadline) {
-                    [W]::Key($h, [uint32]$vk['a'], 60)
+                    [W]::Key($h, [uint32]$vk['a'], 120)
                     Start-Sleep -Milliseconds ([int]($interval * 1000))
                     if ((Get-Date) -ge $next) {
                         Save-State ''
@@ -264,6 +270,11 @@ try {
                     $n++
                     Copy-Item (Join-Path $Work 'dq9.ml1') (Join-Path $Work "$prefix$n.ml1") -Force
                 }
+            }
+            'pause' { [W]::Key($h, 0x50, 80) }
+            'frame' {
+                $n = [int]$p[1]
+                1..$n | ForEach-Object { [W]::Key($h, 0x46, 30); Start-Sleep -Milliseconds 120 }
             }
             'log' { Write-Host "client $([W]::Client($h).Width)x$([W]::Client($h).Height), touch top $touch" }
             default { throw "unknown action $action" }

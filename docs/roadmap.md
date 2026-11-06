@@ -165,8 +165,10 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       (`1450–1454,1461,2721,2751,2774,3191,3775,3955,4046,4212,4283,4410,4414`), `337` commun
       (preuves et limites dans [`re/melonds-state.md`](re/melonds-state.md), § « Oracle
       différentiel »). **Reste** : Angel Falls, quêtes du village et fin du prologue exigent
-      le chemin physique réel (les entrées du parcours seront rejouées dans melonDS) ; le
-      critère J2 « même nombre d'images » demande le pilotage image par image.
+      le chemin physique réel (les entrées du parcours seront rejouées dans melonDS ; le premier
+      PNJ de `X01M05` et ses coordonnées sont relevés dans `re/melonds-state.md`) ; le critère
+      J2 « même nombre d'images » demande un pas à pas exact (`pause`/`frame` mesuré à ~0,5
+      image par pression, pas encore suffisant).
 - [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-render` et
       `dq9-app` faites (J1) ; reste `dq9-audio` ; l'état modélisé des triggers est passé de
       `dq9-formats` à `dq9-core` (`dq9-core/src/trigger.rs` ; `dq9-formats::trigger` ne garde que le parsing).
