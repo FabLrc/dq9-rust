@@ -405,6 +405,11 @@ impl EventPlayer {
         self.cutscene.doors()
     }
 
+    /// The event running now (`None` between scenes), for the checkpoints.
+    pub fn current(&self) -> Option<u16> {
+        self.running
+    }
+
     /// A doorway the field touched (native 584): the shared door state both the render
     /// (`apply_placements`) and the collision (`CollisionWorld::set_door_angle`) read.
     /// Returns whether the door was added.

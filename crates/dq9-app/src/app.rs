@@ -1141,9 +1141,13 @@ impl App {
                 hero.yaw(),
             ]
         });
+        let event = self
+            .events
+            .current()
+            .map_or_else(|| "null".to_owned(), |event| event.to_string());
         let _ = write!(
             out,
-            "],\"flags\":[{flags}],\"quests\":{{{quests}}},\"event\":null,\"hero\":{{\"x\":{:.3},\"y\":{:.3},\"z\":{:.3},\"yaw\":{:.3}}}}}",
+            "],\"flags\":[{flags}],\"quests\":{{{quests}}},\"event\":{event},\"hero\":{{\"x\":{:.3},\"y\":{:.3},\"z\":{:.3},\"yaw\":{:.3}}}}}",
             hero[0], hero[1], hero[2], hero[3]
         );
         self.checkpoints.push(out);
