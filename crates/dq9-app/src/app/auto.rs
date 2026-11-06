@@ -798,7 +798,12 @@ impl App {
         };
         // A door that finished opening changed the collision: the walkable graph must be
         // probed again, or the grid keeps the closed door as a wall.
-        let done = self.doors.iter().filter(|door| door.done()).count();
+        let done = self
+            .events
+            .doors()
+            .iter()
+            .filter(|door| door.angle >= door.target)
+            .count();
         if bot.grid_doors != done {
             bot.grids.remove(&room);
             bot.blocked.retain(|(at, _)| *at != room);
@@ -1293,11 +1298,9 @@ impl App {
                     door: Some((class, number)),
                     ..
                 } => {
-                    if self
-                        .doors
-                        .iter()
-                        .any(|d| d.block == u32::from(class) && d.placement == u16::from(number))
-                    {
+                    if self.events.doors().iter().any(|door| {
+                        door.block == i32::from(class) && door.placement == i32::from(number)
+                    }) {
                         bot.wait = 40;
                     } else {
                         bot.opened.remove(&(class, number));

@@ -331,7 +331,8 @@ grille de sol construite en sondant la collision avec le rayon et la sphère du 
 faisant marcher un héros de cellule en cellule ; un déplacement qui coince est appris et évité.
 La touche action est pressée quand `Talk_NearestNpc` voit le PNJ visé ; une porte interne sans
 destination est poussée, ouverte par le champ (native 584, `trigger.md`) et la grille est
-reconstruite. Aucun téléport n'entre dans la preuve.
+reconstruite. L'état des portes est unique (`EventPlayer::doors()`) : la scène et la collision
+lisent le même angle (`angle_fx`). Aucun téléport n'entre dans la preuve.
 
 Parcours vérifié sur la ROM européenne, à 60 Hz (`--new-game --headless --auto --pilot`) :
 

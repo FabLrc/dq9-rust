@@ -46,34 +46,6 @@ mod flow;
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
 
-/// A type 2 doorway opening: native 584 (`0x02018b44`) turns the placement by +90° in 16
-/// updates of 2 ticks, 409/4096 rad each, and triggers event 3 at the end.
-struct DoorAnim {
-    /// Block entry (the doorway's class).
-    block: u32,
-    /// Placement id (the doorway's number).
-    placement: u16,
-    /// Fixed steps elapsed (one update every two ticks).
-    ticks: u32,
-    /// Scene instances of the placement and their world matrix before the rotation.
-    homes: Vec<(usize, glam::Mat4)>,
-}
-
-impl DoorAnim {
-    /// `Door::SPEED` / `Door::QUARTER_TURN` (scenes contract): 409 per update of 2 ticks,
-    /// 6434 = +90°.
-    const TICKS: u32 = 32;
-    const TURN: i32 = 0x1922;
-
-    fn angle(&self) -> i32 {
-        (((self.ticks.min(Self::TICKS) * 409) / 2) as i32).min(Self::TURN)
-    }
-
-    fn done(&self) -> bool {
-        self.ticks >= Self::TICKS
-    }
-}
-
 /// Events delivered to the loop from outside (async GPU setup, ROM/save picked on the web).
 #[derive(Debug)]
 pub enum UserEvent {
@@ -154,8 +126,8 @@ pub struct App {
     /// Direction the headless pilot (`app/auto.rs`) asks the d-pad to walk, in world space.
     /// Overrides the keyboard for one fixed step; the camera turn is left alone.
     pilot_dir: Option<Vec3>,
-    /// Doorways being opened (native 584), for the collision and the scene.
-    doors: Vec<DoorAnim>,
+    /// Doors whose opening already fired the arrival trigger.
+    doors_opened: std::collections::BTreeSet<(i32, i32)>,
     /// NPC conversations and the message window.
     talk: Talk,
     /// Script events: the event task and what it did to the scene.
@@ -226,7 +198,7 @@ impl App {
             chain: 0,
             hero: None,
             pilot_dir: None,
-            doors: Vec::new(),
+            doors_opened: std::collections::BTreeSet::new(),
             talk: Talk::default(),
             events: EventPlayer::new(),
             quiet_events: false,
@@ -391,8 +363,12 @@ impl App {
         let hero_start = loaded.hero.position();
         self.environment = lighting::environment(loaded.lighting.as_ref(), self.day);
         self.lighting_info = loaded.lighting.clone();
+        let previous = self.current.as_ref().map(|(entry, _)| entry.id);
         self.collision = loaded.collision;
-        self.doors.clear();
+        if previous != Some(loaded.entry.id) {
+            self.events.clear_doors();
+            self.doors_opened.clear();
+        }
         self.field = Some(loaded.field);
         self.talk.enter_map(loaded.npcs);
         self.hero = Some(loaded.hero);
@@ -920,62 +896,64 @@ impl App {
         }
     }
 
-    /// Starts opening a doorway, once.
+    /// A doorway the field touched (native 584): the shared door state, the same the scripts
+    /// use, and its own effect (200 + low quartet) once.
     fn open_door(&mut self, block: u32, placement: u16) {
-        if self
-            .doors
-            .iter()
-            .any(|door| door.block == block && door.placement == placement)
-        {
+        if !self.events.open_door(block as i32, placement as i32, false) {
             return;
         }
-        let mut homes = Vec::new();
-        if let Some(runtime) = &self.runtime {
-            for &(entry, id, index) in &runtime.scene.placements {
-                if entry == block
-                    && id == placement
-                    && let Some(instance) = runtime.scene.instances.get(index)
-                {
-                    homes.push((index, instance.world));
-                }
-            }
-        }
-        // Native 584: the door's own effect (200 + low quartet), once, when the map names it.
         if let (Some(field), Some(rom)) = (&self.field, &self.rom)
             && let Some(low) = field.door_sound(block as u8, placement as u8)
         {
             self.audio.play_base_effect(rom, u16::from(low) + 200);
         }
         status(&format!("door {block}/{placement} opens"));
-        self.doors.push(DoorAnim {
-            block,
-            placement,
-            ticks: 0,
-            homes,
-        });
     }
 
-    /// One fixed step of every opening door: the collision subtree turns with the placement
-    /// (native 584), the scene follows, and the arrival trigger fires once it is open.
+    /// One fixed step of the doors: when no script runs, advance the shared angles and move
+    /// the scene placements; then turn the collision subtree and fire the arrival trigger
+    /// once a door reaches its target.
     fn step_doors(&mut self) {
+        if self.events.doors().is_empty() {
+            return;
+        }
+        if !(self.events.pending_start().is_some() || self.events.is_active()) {
+            let (Some(rom), Some(scene), Some(hero)) = (
+                self.rom.as_deref(),
+                self.runtime.as_mut(),
+                self.hero.as_mut(),
+            ) else {
+                return;
+            };
+            let mut stage = Stage {
+                rom,
+                world: &self.state,
+                scene,
+                hero,
+                collision: &self.collision,
+                camera: &mut self.camera,
+                talk: &mut self.talk,
+            };
+            self.events.tick_doors(&mut stage);
+        }
+        let doors: Vec<(i32, i32, i32, bool)> = self
+            .events
+            .doors()
+            .iter()
+            .map(|door| {
+                (
+                    door.block,
+                    door.placement,
+                    door.angle_fx(),
+                    door.angle >= door.target,
+                )
+            })
+            .collect();
         let mut opened = false;
-        for door in &mut self.doors {
-            if door.done() {
-                continue;
-            }
-            door.ticks += 1;
-            let angle = door.angle();
+        for (block, placement, angle, done) in doors {
             self.collision
-                .set_door_angle(door.block, door.placement, angle);
-            if let Some(runtime) = &mut self.runtime {
-                let radians = angle as f32 / 4096.0;
-                for (index, home) in &door.homes {
-                    if let Some(instance) = runtime.scene.instances.get_mut(*index) {
-                        instance.world = *home * glam::Mat4::from_rotation_y(radians);
-                    }
-                }
-            }
-            if door.done() {
+                .set_door_angle(block as u32, placement as u16, angle);
+            if done && self.doors_opened.insert((block, placement)) {
                 opened = true;
             }
         }

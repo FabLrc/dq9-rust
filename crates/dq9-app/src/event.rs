@@ -402,6 +402,31 @@ impl EventPlayer {
         self.cutscene.doors()
     }
 
+    /// A doorway the field touched (native 584): the shared door state both the render
+    /// (`apply_placements`) and the collision (`CollisionWorld::set_door_angle`) read.
+    /// Returns whether the door was added.
+    pub fn open_door(&mut self, block: i32, placement: i32, sound: bool) -> bool {
+        self.cutscene.open_door(block, placement, sound)
+    }
+
+    /// Another map is loaded: its doors are forgotten.
+    pub fn clear_doors(&mut self) {
+        self.cutscene.clear_doors();
+    }
+
+    /// One tick of the door animations when no script runs (a doorway the field opened):
+    /// advances the angles and moves the scene placements with them.
+    pub fn tick_doors(&mut self, stage: &mut Stage) {
+        if self.cutscene.doors().is_empty() {
+            return;
+        }
+        let collision = stage.collision;
+        let _ = self
+            .cutscene
+            .tick(&|x, z, y| collision.ground_height(x, z, y));
+        self.apply_placements(stage);
+    }
+
     /// Whether the DS display engines are swapped (natives 109/110): the field and the message
     /// window must be drawn on the other screen of the layout.
     pub fn screen_swapped(&self) -> bool {

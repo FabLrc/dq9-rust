@@ -650,6 +650,34 @@ impl Cutscene {
         &self.props.doors
     }
 
+    /// Opens a door the field touched (native 584, `Field_TouchDoorways`): the same state the
+    /// scripts use, so the render and the collision read one angle. Returns whether it was
+    /// added (an already open door is left to finish).
+    pub fn open_door(&mut self, block: i32, placement: i32, sound: bool) -> bool {
+        if self
+            .props
+            .doors
+            .iter()
+            .any(|door| door.block == block && door.placement == placement)
+        {
+            return false;
+        }
+        self.props.doors.push(Door {
+            block,
+            placement,
+            angle: 0.0,
+            target: Door::QUARTER_TURN,
+            speed: Door::SPEED,
+            sound,
+        });
+        true
+    }
+
+    /// Forgets the map's doors (another map is loaded).
+    pub fn clear_doors(&mut self) {
+        self.props.doors.clear();
+    }
+
     /// The caption fields of the current message (natives 409, 411, 413).
     pub fn caption(&self) -> Caption {
         self.props.caption
