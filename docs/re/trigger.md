@@ -406,15 +406,26 @@ gestionnaire de quêtes :
 
 ### Reste inconnu
 
-Aucun écrivain n'a été trouvé, dans les 41 appelants de `Flags_Set` décompilés, les 76
-fichiers `trigger*.bin`, les `.bmbl`/`.bmdj` des cartes du prologue ni les tables
-`eventlist*.bin`/`evl_quest.bin` pour les drapeaux **3191, 3775, 3955, 4046, 4212, 4283,
-4410 et 4414** du premier contrôle. Ils ne sont pas non plus produits par les règles
-ci-dessus avec les identifiants de carte du prologue. Pistes non épuisées : gestionnaires
-d'enregistrements de placement (table `ov_017::021d8000`, modes 1/7/8 des bases 0x212/0x33e/
-0x79e) et enregistrements de scène dont le champ de rang est négatif (valeur fournie par la
-donnée au lieu du compteur). Ne pas coder ces huit constantes : leur provenance n'est pas
-établie.
+**Mesure après branchement** (`--new-game --headless --auto`, comparateur strict sur
+`bat6.ml1`) : le runtime pose 337, **1450 à 1454**, **1461**, **2721** et **2751**. Écart
+restant : **2774** et **3191, 3775, 3955, 4046, 4212, 4283, 4410, 4414**.
+
+- **2774** est expliqué par la règle de carte visitée (`2710 + 64`, groupe `S14`) : la carte
+  du train n'est pas chargée avant le prologue par le runtime, qui ne rejoue pas cette
+  scène. Ce n'est pas un écrivain inconnu mais un chaînon de parcours manquant.
+- Les huit autres n'ont **aucun écrivain trouvé** : ni dans les 41 appelants de `Flags_Set`
+  décompilés, ni dans les 76 `trigger*.bin`, ni dans les `.bmbl`/`.bmdj`/`.npc`/`place.bin`
+  (tous les `*.npc` du dépôt parcourus), ni dans les tables `eventlist*.bin`/`evl_quest.bin`.
+  Contrôles négatifs supplémentaires : aucun bloc de 0x234 octets prérempli avec les
+  drapeaux de `pro1`/`bat6` dans l'ARM9 ni les overlays (pas de modèle recopié) ; les bases
+  d'objets/placement 0x212/0x33e/0x79e/0x776 ne donnent ces valeurs pour aucun
+  enregistrement de `place.bin` (les correspondances trouvées sont des identifiants de PNJ) ;
+  la base « objet obtenu » 0xc76 ne donne que 3192–3194 pour l'équipement de départ ; aucun
+  enregistrement de scène ne porte l'indice négatif ou la grande valeur qu'il faudrait.
+  Ne pas coder ces constantes : leur provenance n'est pas établie. Piste suivante :
+  instrumentation de melonDS (GPL, outil seulement) pour journaliser l'appelant et l'indice
+  de `Flags_Set` entre le boot et `pro1` ; le stub GDB de melonDS 1.1 coupe la connexion,
+  aucune trace PC n'existe encore.
 
 ## Combats scriptés (action `0x78`)
 
