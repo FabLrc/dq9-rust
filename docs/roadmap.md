@@ -327,17 +327,19 @@ Avancement :
       `Signal` (message fermé, acteur au repos, caméra au repos…). Le `Director` démarre l'événement
       d'une requête `Request::Event` des triggers et enchaîne la native 538. Les 30 scripts du
       prologue (étapes 1.1 à 1.3) vont à leur terme sans erreur (`cargo dq9re script 1.1-3`, test
-      réel `prologue_scripts_run_to_completion`) ; 24 natives de rôle inconnu sont rapportées une
-      fois et ignorées. **Exécution à l'écran** (`dq9_core::cutscene`, `dq9-app/src/event.rs`,
+      réel `prologue_scripts_run_to_completion`) ; 13 natives de rôle inconnu ou sans effet
+      rendu sont rapportées une fois et ignorées. **Exécution à l'écran** (`dq9_core::cutscene`, `dq9-app/src/event.rs`,
       [`app.md`](app.md) § « Événements », [`re/stb.md`](re/stb.md) § « Exécution à l'écran ») :
       `--stage 1.1` / `--event N` jouent les scènes (fondus, messages dans la fenêtre de
       conversation, acteurs qui bougent, tournent et jouent leurs mouvements, caméra du script
-      dont celle portée par les os d'un modèle, déplacements au pas du jeu) ; les 30 scripts du
-      prologue vont à leur terme (`--events-report 1.1-3` : 8 sans manque visible, 22 partielles,
-      aucune « non jouée »). Restent : la lumière/heure, le brouillard, les sprites 2D,
-      les attachements d'os, les mouvements des PNJ de la carte, ~20 natives d'effets (liste dans
-      `app.md`), comparer l'ordre, les durées et les poses à melonDS, l'appelant de l'entrée 200
-      et les natives sans rôle (`re/stb.md`, § Interpréteur).
+      dont celle portée par les os d'un modèle, déplacements au pas du jeu, lumière et heure,
+      brouillard, attachements d'os du halo et des ailes, mouvements des PNJ de la carte, bulles,
+      sprites de script, palette des personnages) ; les 30 scripts du prologue vont à leur terme
+      (`--events-report 1.1-3` : 26 sans manque visible, 4 partielles — 22 avant les effets de
+      scène —, aucune « non jouée »). Restent : les effets du texte des légendes (409/411/413),
+      547, 552, 584, les placements masqués à l'heure choisie que 574 montre, comparer l'ordre,
+      les durées et les poses à melonDS, l'appelant de l'entrée 200 et les natives sans rôle
+      (`re/stb.md`, § Interpréteur).
 - **Deux écrans DS** (`dq9-app/src/screens.rs`, `dq9_render::Panel`) : écran haut = champ 3D avec
   la caméra du jeu (`0x0202df78`) ; écran bas = fond uni, contenu tactile non identifié
   **[inconnu]** ; dispositions `stacked`, `side`, `top` (`--layout`, touche `R`, select Web).

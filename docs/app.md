@@ -159,7 +159,9 @@ Sur le Web, `?event=N`. Dans la fenêtre, un déclencheur qui demande `Request::
 **Architecture.** `dq9_core::cutscene` tient l'état de la scène que le script a produit (acteurs,
 caméra, fondus) sans E/S ; `dq9-app/src/event.rs` (`EventPlayer`) fait tourner le `Director`,
 applique cet état au rendu et renvoie les `Signal` au script ; `dq9_render::AnimatedScene`
-fournit les acteurs (`add_actor`, `play_actor`, `actor_bone`, `play_hero`, `set_npc_angle`).
+fournit les acteurs (`add_actor`, `play_actor`, `actor_bone`, `play_hero`, `set_npc_angle`), les
+mouvements des PNJ (`play_npc`), les feuilles `.spr` de script (`add_sprite`) et la palette
+(`tint_hero`, `tint_actor`, `tint_npc`).
 
 - **Cadence.** Un pas fixe de 60 Hz est un tick ; le script avance toutes les deux ticks (une
   mise à jour du jeu, [`re/stb-natives.md`](re/stb-natives.md) § « Temps et unités »), la scène à
@@ -185,32 +187,52 @@ fournit les acteurs (`add_actor`, `play_actor`, `actor_bone`, `play_hero`, `set_
 
 **Résultat sur le prologue** (`--events-report 1.1-3`, ROM EU, textes anglais ; les 30 scripts
 vont à leur terme, aucune scène « non jouée » ; le son est joué par `audio.rs` et rapporté nulle
-part). « Complet » : tout ce que le script demande est exécuté, aux natives sans effet
-visible établi près (559, 560, 571, 815).
+part). « Complet » : tout ce que le script demande est exécuté, aux natives sans effet rendu
+près (559, 560, 571, 815 ; 581, 582, 809 dont les objets ne sont pas dessinés ; placements de
+collision ; mouvements dont le modèle n'a pas le nom, sans effet dans le jeu non plus :
+[`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)). Avant le chantier
+J3-effets : **22 scènes partielles sur 30** (18 lignes du rapport) ; après : **4 scènes
+partielles** (3 lignes).
 
 | Scène(s) | Cartes | Résultat | Ce qui manque (visible) |
 |---|---|---|---|
-| 1130, 1140, 1310, 1350, 1360, 1370, 1390, 1410 | `X01M05`, `M01` | complet | — |
-| 1150, 1160, 1600, 1610 | `X01M07` | partiel | mouvements `stand`/`walk`/`talk_loop` des PNJ de la carte (sprites ou modèles) et héros de référence (cast mode 4, personnage 99/139/130 de la table des personnages, non dessinés) ; bulles 541/542/561 |
-| 1170, 1320 | `X01M01`, `M01` | partiel | natives 545/546 (`run`/`stand` d'un personnage), 328 (caméra) |
-| 1330, 1340, 1380 | `M01M06`, `M01M04`, `M01` | partiel | mouvement 1 d'un acteur déclaré, bulles 541/542/561, `574` (bit des placements de carte) |
-| 21500 + 21507 | `M01M12` | partiel | pas de lumière/heure (588, 589…), sprites 2D (521), 8 attachements d'os (tête, torse : halo, ailes), natives 238 (teinte), 409/411/413 (effets de fenêtre), 541/542/561, 547, 552 (caméra à trois os), 574, 584, mouvement `nozoki_loop` absent des données |
-| 21510 | `X01M04` | partiel | 574, attachement d'os |
-| 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | partiel | brouillard (804), lumière/heure, teinte 238, 574, 809, 6 attachements d'os |
-| 21591, 21592, 21594, 21597 | `X01M05`, `M01`, `X01M04` | partiel | sprites 2D (21591), 575/574, 581/582, 809, lumière, attachements d'os (21592, 21597) |
-| 21593, 21595 | `M01` | partiel | sprites 2D, brouillard, teinte 238, bulles, 559, 581/582, 809, mouvement 1 d'un acteur |
+| 1130, 1140, 1150, 1160, 1170, 1310, 1320, 1340, 1350, 1360, 1370, 1380, 1390, 1410, 1600, 1610 | `X01M05`, `X01M07`, `X01M01`, `M01`, `M01M04` | complet | — |
+| 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | complet | — |
+| 21591, 21592, 21593, 21594, 21595, 21597 | `X01M05`, `M01`, `X01M04` | complet | — |
+| 1330 | `M01M06` | partiel | un placement de carte masqué à l'heure choisie que 574 montre (`Scene::build` laisse les instances masquées de côté) |
+| 21510 | `X01M04` | partiel | idem (placement 3) |
+| 21500 + 21507 | `M01M12` | partiel | 409/411/413 (effets du texte des légendes), 547 (transition de combat), 552 (caméra à trois os), 584 (ouverture d'une porte) |
 
 La chaîne du prologue se joue de bout en bout sans intervention : `21500 → 21507` (native 538),
 puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la victoire (trigger
 15) lance `21520 → 21521 → 21522 → 21596` (natives 538), voir « Nouvelle partie » ci-dessous.
 
+**Effets de scène** (J3, `dq9_core::cutscene`, `dq9-app/src/event.rs`, détail et preuves dans
+[`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)) :
+
+- **Lumière et heure.** 578 (échelle de lumière avec fondu), 588/589 (phase de la scène), 548/549,
+  804 (brouillard) construisent l'`Environment` du rendu par `dq9_app::lighting::scene_environment`
+  (`Lighting::select` : l'échelle pondère les lumières, le fond et le brouillard, comme
+  `lightRGBScale_`) ; 579 et 808 arrêtent ou règlent l'horloge du jour. Les captures
+  `--screenshot` appliquent les mêmes états ; en fenêtre l'environnement est remplacé quand le
+  script le change et rendu à la carte à la fin.
+- **Attachements d'os (235/236).** Un modèle accroché à l'os `head` ou `chest` du héros (halo,
+  ailes) ou d'un acteur suit la pose de cet os (`AnimatedScene::hero_bone`, `actor_bone`).
+- **PNJ de la carte.** Mouvements nommés des PNJ à modèle (`play_npc`, archive du PNJ, paquet
+  supplémentaire et paquets d'événement) ; `walk`/`stand` des sprites ; bulles « ! » (541/561/542) ;
+  feuilles `.spr` créées par script (521/522) ; placements cachés, montrés ou déplacés (574/575) ;
+  palette des personnages (238) ; retour de la caméra au héros (328).
+
+`--eye`/`--target` avec `--event` et `--screenshot` regardent la scène que le script a laissée
+(ils remplacent la caméra du script) : utile pour inspecter un acteur.
+
 **Limites et hypothèses.** Voir aussi [`re/stb.md`](re/stb.md), § « Exécution » : liaison par défaut
 du membre déclaré `n` au créneau et à l'acteur `n`, taille par défaut des modèles chargés (0x10a
 avec le sélecteur 0, 1 avec le sélecteur 1), canaux des acteurs, sens du roulis, unité des
-durées de la caméra. Les PNJ de la carte ne changent pas de mouvement ; seuls leur position, leur
-direction (les sprites montrent le côté qui regarde la caméra) et leur visibilité suivent le
-script ; ils retrouvent leur place à la fin. Les modèles ne sont pas encore comparés
-à melonDS.
+durées de la caméra et de la lumière, pose de la caméra du terrain pour 328, bulle posée dans le
+monde. Le héros du jeu a des ailes et un halo (forme ailée) que le rendu ne dessine pas ; hors
+événement, les PNJ gardent leur mouvement initial ; les ombres des PNJ ne sont pas dessinées. Les
+modèles ne sont pas encore comparés à melonDS.
 
 ## Nouvelle partie (`--new-game`) et parcours automatique
 

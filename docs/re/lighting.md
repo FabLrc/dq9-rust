@@ -185,14 +185,25 @@ Module `dq9_core::lighting`. Sources : `GameTime.cpp`, `LightingManager.cpp`, `A
   de la caméra (`MaybeComputeHorizonPosition`, `0x02052360`), plus `gradientCenterOffset_`.
 - Le jeu superpose `Fog::OFF` quand `maybeMode_` n'est ni 1 ni 2 (carte sans `.bats`).
 
+### Piloté par les scripts d'événements (J3)
+
+`BeginFade` (`lightRGBScale_`, native 578), l'indice de remplacement non nul (548/549), la phase
+de la scène (588/589) et le brouillard (804) sont posés par les événements
+(`dq9_core::cutscene::SceneLight`, `dq9_app::lighting::scene_environment`, [`stb-natives.md`](stb-natives.md#effets-exécutés-à-lécran-j3)) :
+l'échelle pondère les couleurs des lumières, du fond **et du fond de dégradé** (`DrawBackgroundGradient`,
+USA `LightingManager.cpp` l. 1087 ; `Lighting::select` applique `scale_channels` au fond et à
+l'horizon), la durée est comptée en `2 × valeur` ticks **[hypothèse]**. Contrôle : sur `21520`,
+`SceneLight::scale` passe de 1,0 à 0,6 sur 80 ticks puis revient (test
+`fade_is_linear_and_ends_on_target`, capture plus sombre pendant le fondu).
+
 ### Non modélisé
 
-`BeginFade` (échelle de lumière `lightRGBScale_`, pondère couleurs des lumières et fond ; l'API
-`Lighting::select` la prend en paramètre, l'application passe 1.0), indice de remplacement non
-nul, mode forcé de `ov_017` (`1 << 9` : phase de bataille lue en `+5`), l'entrée 4 du wagon du
+Mode forcé de `ov_017` (`1 << 9` : phase de bataille lue en `+5`), l'entrée 4 du wagon du
 Starflight Express (`zone 6401`), couleurs `ambient` des PNJ (`ApplyAmbientColorToModel` n'est
 appliquée qu'aux modèles de terrain d'un monde avancé, cf. `func_02016874`), effets de brillance (table
-`SetShininessTable`).
+`SetShininessTable`). Sur les cartes de base, l'échelle de lumière ne change pas la teinte des
+sommets (`ColorTransformTintBrightnessContrast` n'en dépend pas dans notre modèle) : seul le fond
+la suit **[hypothèse]**.
 
 ## Rendu et validation à melonDS
 

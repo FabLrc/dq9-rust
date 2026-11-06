@@ -231,9 +231,9 @@ d'animation **[hypothèse]**, les modes 9 et 10 de 566 ne sont pas modélisés *
 les 30 scripts vont à leur terme, sans erreur de la machine, de 56 mises à jour (`ev01140`) à
 3 579 (`ev21500`, 1 023 événements, environ deux minutes à 30 Hz ; il enchaîne `ev21507` par la
 native 538) ; chaque message `Text::Id`
-existe dans la table du script ; 24 natives restent sans effet modélisé : 238, 328, 409,
-411, 413, 541, 542, 545, 546, 547, 552, 554, 559, 560, 561, 571, 574, 575, 581, 582, 584, 712,
-809 et 815 (les mêmes que « non identifiées » dans [stb-natives.md](stb-natives.md)). Ce n'est
+existe dans la table du script ; 13 natives restent sans effet modélisé dans `dq9-core` : 409, 411,
+413, 547, 552, 559, 560, 571, 581, 582, 584, 809 et 815 (les mêmes que « non
+identifiées » dans [stb-natives.md](stb-natives.md)). Ce n'est
 pas une validation sous émulateur : l'ordre et les durées ne sont pas comparés à melonDS.
 
 ## Exécution à l'écran (`dq9-core::cutscene`, `dq9-app`)
@@ -259,8 +259,10 @@ Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/
   = héros, `attach 0` mode 0 ; acteur 1 = PNJ 105, `attach 1` mode 5 ; acteur 2 = modèle
   `effect/ev999990700.chr`, `attach 2` mode 2 ; `ev01330` déclare 3, 4, 2, 1 dans cet ordre).
   Modes : 0 le héros, 2/3/6/7 un modèle (ou sprite) de chemin donné, 4/5 un PNJ de la carte par son
-  numéro (`reference`). Pour le mode 4 le numéro (99, 139, 7, 210) n'est pas un PNJ de la carte
-  mais une entrée de la table des personnages (`Chara_Get`) **[inconnu]** : non dessiné.
+  numéro (`reference`). Le mode 4 aussi : `Event_BuildScene` le cherche dans la table des PNJ
+  (`NpcTable_FindById`) et lui réserve un emplacement `Chara_Get` ([stb-natives.md](stb-natives.md#effets-exécutés-à-lécran-j3)) ;
+  ses mouvements (`stand`, `walk`, `talk_loop`) viennent de l'archive du PNJ et des paquets de
+  l'événement.
 - Une liaison explicite (202) vise un personnage par son type : 4 avec le personnage 0 est le
   héros, 1 avec un identifiant négatif un modèle chargé par 200/228/233, 2 un objet de carte.
 - Un clone (228) voit les paquets d'animation ajoutés ensuite à son modèle d'origine : en `ev21507`
@@ -295,12 +297,27 @@ Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/
 - Fondus : le moteur « principal » est l'écran 3D ; un moteur verrouillé (112, 114, 116) ignore
   les fondus simples (100, 101, 105, 106, 107) jusqu'à un fondu qui le déverrouille
   (117 à 122) ; l'état revient à la normale quand la dernière scène finit.
+- Lumière : la durée de 578 est comptée comme celle des acteurs (2 ticks par unité, le jeu la
+  multiplie par `s16(02010218(save))`, ≈ 33 ms) ; la phase forcée par 588 est prise au début de la
+  phase, sans fondu vers la suivante ; 579 et 808 changent l'horloge du jour de l'application
+  (rechargement d'une carte ensuite). La phase des cartes de base se règle comme à l'entrée
+  d'une zone (`settle_basic_entry`) seulement quand le script ne la force pas.
+- Un modèle accroché à un os (235) est dessiné dans le repère du parent × la matrice de l'os
+  (`HeroRig::bone`, `actor_bone`), sa propre pose étant relative à cet os ; l'échelle du parent
+  est héritée **[hypothèse]**, que les scripts remettent à 1 pour le modèle accroché.
+- La bulle (541) est un sprite posé sur le rayon qui passe par le pixel de l'écran DS (projection
+  de l'acteur décalée de `(−6, −76)`), un peu devant l'acteur, à l'échelle d'un texel par pixel
+  DS **[hypothèse]** : le jeu la dessine en 2D par-dessus l'image.
 
-**Non exécuté** (rapporté par `--events-report`) : échange d'écrans, lumière et heure
-(578, 579, 588, 589, 808), brouillard (804), sprites 2D (521), attachements d'os (235, 236),
-mouvements des PNJ de la carte et des modèles absents, natives 238, 328, 409, 411, 413, 541,
-542, 545, 546, 547, 552, 561, 574, 575, 581, 582, 584, 809 ; 559, 560, 571 et 815
-sont sans effet visible établi.
+**Exécuté depuis J3** : lumière et heure (578, 579, 588, 589, 548/549, 808) et brouillard (804)
+par `dq9_core::cutscene::SceneLight` ; attachements d'os (235, 236) ; mouvements nommés des PNJ de
+la carte ; sprites 2D de script (521/522) ; bulles (541/542/561) ; placements (574/575) ;
+mouvements 545/546 ; palette (238) ; retour de la caméra (328) — détail et preuves dans
+[stb-natives.md](stb-natives.md#effets-exécutés-à-lécran-j3).
+
+**Non exécuté** (rapporté par `--events-report`) : échange d'écrans, natives 409, 411, 413, 547,
+552, 584 (voir la fin de la même section) ; 559, 560, 571, 815, 581, 582 et 809 sont sans effet
+visible établi ou sans objet dessiné.
 
 ## Enchaînement du prologue (`dq9-core::scenario`)
 
@@ -328,8 +345,10 @@ Ce qui enchaîne les scènes est établi (ROM EU, Ghidra, `cargo dq9re triggers`
 
 ## Questions ouvertes
 
-- Natives encore sans rôle (571, 574/575, 541/542/561, 238, 554, 559, 560, 409/411/413,
-  etc.) : tableau « non identifiées » de [stb-natives.md](stb-natives.md#prologue-dangel-falls--natives-employées-j0).
+- Natives encore sans rôle (571, 559, 560, 409/411/413, 547, 552, 584, 815) :
+  tableau « non identifiées » de [stb-natives.md](stb-natives.md#prologue-dangel-falls--natives-employées-j0).
+- Palette de 238 : les modes 1 et 2 ne sont pas observés ; objets de 809 et ombres de 581/582
+  **[hypothèse]**.
 - Nature (30 Hz ou 60 Hz) de `currentNumTicks_` : [hypothèse] VBlank, non démontrée.
 - Sens de l'op 0x16, de l'op 0x1c et du deuxième mot des enregistrements de fonction.
 - Champs inconnus des listes d'événements.

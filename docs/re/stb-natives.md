@@ -116,19 +116,19 @@ handler et de ses callees directs, source USA, wiki `Engine-Functions`/`Event-Sc
 | ID (appels) | Établi | Pourquoi pas de nom |
 |---|---|---|
 | 571 (172) | masque `0x10` de `Object3D::flags_` (bit 4 : `OBJECT3D_FLAG_4`, **sans lecteur dans la source USA**) et bit `0x40` du premier mot d'un placement (type 2), positionnés si `b=0` ; toujours appelée avec 570 (`570(s,b); 571(s,b)`) | consommateur du bit non trouvé (aucune référence au masque `0x10` dans `Object3D.cpp` ; les lecteurs hors de la source n'ont pas été cherchés) |
-| 574 (68), 575 (5) | enregistrement de placement de carte `(groupe,id)` ; 574 : bit `0x4` de `+2` positionné si `b=0`, bit `0x40` toujours ; 575 : position fx32 en `+8/+0xc/+0x10` | le wiki lit le bit `0x4` comme « masqué par le dessin » (non revérifié) |
-| 541 (14), 542 (14), 561 (14) | 541 : `0219b43c` choisit un sprite 2D `SPRSprite` (indice `kind` : 2→2, 5→3, 6→4, 14→0xc, 15→0xd, 16→0xe, tableau de `0x88` octets à `ctx+0x2b90`), le place à la projection écran de la position de l'acteur décalée de `(−6 ou −12, −76)` pixels `+(p,q)` ; 542 : `ctx+0x3630=0` ; 561 : décale ce sprite de `(a,b)` | nature du sprite (bulle d'émotion selon le wiki) **[hypothèse]** |
-| 545 (8), 546 (7) | personnages : animation `run` / `stand` (`MaybeSetRegularAnimation`) ; placements 2/6 : bit 8 de `+0x5c` du sprite et vitesse `value` / `1.0` | polymorphe selon le type du slot |
-| 238 (32) | couleur 5/5/5 `c0\|c1<<5\|c2<<10`, mode en `Object3D+0x9e` (`SetField9e`), puis `0218fcf8` (ids 0–3) ou `0218f92c` après un test `02191fec` | callees `0218f968/0218fd34` hors table de fonctions ; wiki : recoloration de palette, modes 0 ajout / 1 remplissage / 2 multiplication **[hypothèse]** |
+| 574 (68), 575 (5) | enregistrement de placement de carte `(groupe,id)` : `02019518` parcourt les blocs de la carte (`Zone3D+0x41c`, champ `+0` = identifiant de l'entrée de bloc, ici « groupe », toujours 0) puis ses placements (`0x70` octets, `u16` en `+0` = identifiant) ; 574 : bit `0x4` de `+2` (« caché à cette heure ») positionné si `b=0`, bit `0x40` toujours ; 575 : position en `+8/+0xc/+0x10` (`fx32`, valeur flottante × 4096). **Exécutés** : un placement dessiné est caché ou déplacé (`Event::Placement`, `PlacementMove`) ; sur les données (`M01M12`, `X01M04`, `M01M06`) la plupart visent des **collisions** (`part` de type 1), qui ne se dessinent pas | placement caché à l'heure choisie : jamais construit, donc ni montré ni déplacé (« hidden placement shown or moved ») |
+| 541 (14), 542 (14), 561 (14) | 541 `(acteur, kind, [p, q])` : `0219b43c` choisit un sprite 2D `SPRSprite` (indice `kind` : 2→2, 5→3, 6→4, 14→0xc, 15→0xd, 16→0xe, tableau de `0x88` octets à `ctx+0x2b90`), le place à la projection écran de la position de l'acteur (`0202ec84`) décalée de `(−6 ou −12, −76)` pixels `+(p,q)` ; 542 : `ctx+0x3630=0` ; 561 `(a, b)` : décale ce sprite de `(a,b)` pixels (`0219b578`). **Exécutés** : les indices 12 à 16 sont les feuilles du terrain (`fieldSpriteFiles`, wiki `Sprites.md`) : 13 `ev_mark` (le « ! » des scripts), dans `data/bin/icon.nsarc` ; dessinés par `add_sprite` (superposition sans brouillard) à la position de l'écran DS | les indices 2 à 4 (`fuki_*`) sont décrits mais les scripts du prologue n'emploient que 15 (→ 13) |
+| 545 (8), 546 (7) | personnages : animation `run` / `stand` (`MaybeSetRegularAnimation`) ; placements 2/6 : bit 8 de `+0x5c` du sprite et vitesse `value` / `1.0`. **Exécutés** (`Event::SlotMotion`) : héros, PNJ, modèles de script ; sprites (PNJ ou 521) : `walk_*` (4 secteurs, `NpcSprite_FaceCamera`, bit 3 de `+0x5c`) à la place des `stand_*` (8 secteurs) | polymorphe selon le type du slot |
+| 238 (32) | `(slot, c0, c1, c2, [mode])`, couleur 5/5/5 `c0\|c1<<5\|c2<<10`, mode en `Object3D+0x9e` (`SetField9e`, 0 sans cinquième argument), puis `0218fcf8` (ids 0–3 : le héros et ses 11 objets d'équipement `Chara_Get(0x13+12·id…)`) ou `0218f92c` après le test `02191fec`. Les deux relisent la **palette d'origine** du modèle (`GetTEX0`) : mode 0 **ajoute** la couleur à chaque entrée (plafond 31 par canal), mode 1 remplace chaque entrée, mode 2 multiplie chaque canal par `c/31`. **Exécuté** (`Event::Tint`, `TexelOp`) : opération faite sur les texels, dans le fragment (`tint_mul`/`tint_add` du matériau), sur le héros, les acteurs et les PNJ à modèle ; `238(s,0,0,0)` remet les couleurs | les 32 appels du prologue n'ont que quatre arguments (mode 0, ajout de `(8, 6, 16)/31`, une lueur bleutée de nuit) ; les modes 1 et 2 ne sont pas observés |
 | 554 (11) | écrit `W+0x99c` | lecteur non trouvé dans `020439c0`/`0204501c` ; wiki : sélection du son de la « voix » **[hypothèse]** |
 | 409, 411, 413 (5 chacune) | 409 : `W+0x195b \|= 4`, `W+0x9a8 = n` ; 411 : `W+0x195b \|= 0x40` ; 413 : `W+0x19b2 = 0` (défaut 1 posé par `0204501c`) | consommateurs non revérifiés ; wiki : légende temporisée, centrage, texte muet |
 | 559 (2) | octet `+0x490` du singleton `0205ec44` | aucun lecteur connu |
 | 560 (9) | `1` si `0202b7e8()==0` ou `0202c1b4()==0` | sous-système inconnu ; wiki : « scène enchaînée sur une conversation » **[hypothèse]** |
 | 547 (1), 552 (1) | 547 : transition de combat scripté (objet du slot de type 1 rendu visible, masque `0x40000000`) ; 552 : caméra à trois os, même `ctx+4` que 572/531 | usage unique |
-| 581 (2), 582 (4) | bit 2 de `+0x98` du gestionnaire de sprites ; 582 efface en plus `0x10000` des 32 entrées | rôle du bit (lié à 568, bit `0x20`) |
-| 584 (1) | variante d'ouverture de porte de 540 (ajoute `0x280` aux indicateurs) | mode exact |
-| 328 (1) | enfile le type 3 vers une pose calculée par `020a2b48` | destination non lue |
-| 809 (9) | montre/cache un des objets `GameResources+0x4334/+0x4338` (`MakeVisible`/`MakeHidden`) selon le masque | identité des objets |
+| 581 (2), 582 (4) | bit 1 (valeur 2) de `NpcTable+0x98` (`0203cf5c`) : `581(0)` le positionne, `581(1)` et `582` l'effacent, `582` efface aussi `0x10000` des 32 PNJ (« PNJ de la distribution d'événement », que 566 modes 4 et 5 positionnent). Seul lecteur trouvé : `0203de94` (boucle des PNJ vers `0208f87c`, avec `zone+0x38/+0x3c`) ne traite un PNJ que si `+0x98 = 0` ou s'il porte `0x10000`. Le bit 0 de `+0x98` coupe lui le dessin des sprites (`0203dda4`, `0203ddf0`) | **[hypothèse]** : `0208f87c` dessine l'ombre des PNJ ; le moteur d'ici n'en dessine aucune, donc 581/582 sont sans effet visible |
+| 584 (1) | variante d'ouverture de porte de 540 (ajoute `0x280` aux indicateurs) | mode exact ; animation d'objet de carte non portée |
+| 328 (1) | enfile le type 3 (déplacement de l'œil et de la cible, comme 304) vers la pose que `020a2b48` calcule pour la caméra de terrain (`GameState+0x3b0`, drapeau 4 de `0202e09c`) en la remettant à son angle par défaut, puis la rétablit : retour de la caméra du jeu au héros, sur `N` mises à jour. **Exécuté** (`Event::CameraToField`) : œil et cible de la caméra du terrain relatifs au héros, tels qu'au début de l'événement **[hypothèse]** | le jeu recalcule la pose depuis l'état de sa caméra, que nous ne portons pas |
+| 809 (9) | montre (`enable≠0`) ou cache l'objet `GameResources+0x4334` (masque 0 ou bit 0) et `+0x4338` (bit 1) ; ces quatre `Object3D` (`+0x4334..0x4340`) sont chargés depuis quatre fichiers par `ov_017::021bdc34` (fonction d'état déclenchée par le drapeau `0x40` de `PartyMember+0x18c`, qui appelle `0218fcf8`, la remise des couleurs, à sa sortie) : **objets de la forme ailée du héros** (ailes, halo) **[hypothèse]**. Appelée avec `1` partout dans les données, en fin de scène | ces objets ne sont pas dessinés (le héros n'a ni ailes ni halo) : `809(1)` est sans effet ici |
 | 815 (2) | écrit 1 puis 0 si trois sondes de l'overlay 29 renvoient les constantes attendues (wiki : contrôle d'intégrité) | overlay 29 obscurci |
 | 712 (48) | sans sortie : archive de base `+0xb4` ; avec sortie : archive `+0xc4`, handle écrit | deux comportements, pas de nom unique ; joué par `audio.rs` depuis le chantier J3 son (`re/sdat.md`, § Gestionnaire de son) |
 | 724 (1) | stub : `return 1`, sans effet | n'a pas de rôle |
@@ -136,6 +136,46 @@ handler et de ses callees directs, source USA, wiki `Engine-Functions`/`Event-Sc
 Le wiki décompte 570 par millions d'appels à l'exécution ; le handler ne renvoie rien par
 adresse (deux entiers lus, retour 1) : ce n'est **pas** un prédicat interrogé en boucle, mais
 une commande répétée par les scripts.
+
+### Effets exécutés à l'écran (J3)
+
+`dq9-app` joue ces effets (`docs/re/stb.md`, § Exécution à l'écran ; `cargo dq9re script` les
+décode en `Event`). Preuves : lignes des natives ci-dessous et du tableau précédent.
+
+| Natives | Effet à l'écran | Module |
+|---|---|---|
+| 578, 548/549, 588, 589, 804 | échelle de lumière (`lightRGBScale_`, `BeginFade` : interpolation linéaire sur `2 × durée` ticks, appliquée aux deux lumières, au fond, au brouillard), phase forcée (588 : début de la phase ; 589 : phase de la sauvegarde), indice d'éclairage forcé, brouillard coupé ou remis | `dq9_core::cutscene::SceneLight`, `dq9_app::lighting::scene_environment` |
+| 579, 808 | horloge du jour arrêtée ou relancée (579 : `Running(!stop)`), mise au début d'une phase (808 : `SetTimeOfDay`) ; changent la phase des cartes chargées ensuite | `ClockCommand`, `App::apply_event_lighting` |
+| 235, 236 | un modèle (ou un sprite d'acteur) accroché à un os d'un autre : monde du parent × matrice de l'os (héros par `HeroRig::bone`, acteurs par `actor_bone`) ; sans nom, l'os de l'attache précédente | `Node::attached`, `EventPlayer::attachment_base` |
+| 238 | opération de palette sur les couleurs d'un modèle (voir sa ligne) | `TexelOp`, `MaterialLight::texel_tint` |
+| 328 | retour de la caméra à la pose du terrain autour du héros | `Event::CameraToField` |
+| 521, 522 | une feuille `.spr` de `data/ani` créée par handle ; les slots de type 2 et 6 la désignent ; dessinée comme un PNJ de carte (billboard, `stand_*` ou `walk_*`) | `Target::Object`, `AnimatedScene::add_sprite` |
+| 541, 542, 561 | bulle « ! » au-dessus d'un acteur | `Balloon`, `EventPlayer::present_balloon` |
+| 545, 546 | `run` / `stand` d'un personnage ou d'un sprite | `Event::SlotMotion` |
+| 574, 575 | placement de carte caché, montré ou déplacé | `PlacementChange`, `Scene::placements` |
+| 566 (modes 4, 5), 210/224 sur un PNJ de carte | mouvements nommés d'un PNJ à modèle (archive, paquet supplémentaire, paquets d'événement 229/567) | `AnimatedScene::play_npc`, `add_npc_package` |
+
+**Mode 4 de 566 (résolu).** `Event_BuildScene` (`ov_001::021539d8`, cas 4) cherche le PNJ de
+la carte de numéro `reference` dans la table des PNJ (`NpcTable_FindById`, `0x0203df88` : les
+32 entrées de `g_NpcTable`, comparaison du numéro de membre de `<carte>.npc`), le range dans
+l'emplacement `Chara_Get` réservé (`0xa0 + compteur`, `short` en `+2` du descripteur) et lui
+met le drapeau `0x10000` ; le mode 5 fait de même sans emplacement réservé (il utilise le
+numéro lui-même). Les numéros 99, 139, 130… de 1150, 1160, 1600 sont donc des **PNJ de la
+carte** (`dq9re cast X01M07` : `99 s019`, `139 s018`) : les mouvements `stand`/`walk`/
+`talk_loop` s'appliquent à leur modèle. Ce que le wiki lisait comme une « table des
+personnages » est cette table de PNJ.
+
+**Sans effet dans le rendu** (le rapport ne les compte pas contre une scène) : 559, 560,
+571, 815 (voir leurs lignes ; 554 et 712 sont des sons, joués par `audio.rs`), 581/582 (ombres des PNJ **[hypothèse]**, non dessinées),
+809 (objets de la forme ailée du héros **[hypothèse]**, non dessinés), les modifications de
+placements qui visent une **collision**, et les mouvements dont aucun paquet du modèle n'a le
+nom : `MaybeSetRegularAnimation` (`02036e44`) cherche le nom dans les tables BCFG et rend 0 sans
+rien changer (`ev010000300.chr`, `ev180003410.chr`, `ev01000s019.chr` n'ont pas `1` ni
+`nozoki_loop`).
+
+**Restent non exécutés** : 409/411/413 (rendu du texte du message), 547 (transition de combat),
+552 (caméra à trois os), 584 (porte) et la bascule d'écrans (`SwapScreens`, sans objet avec un
+seul écran).
 
 ## Décompte par famille
 

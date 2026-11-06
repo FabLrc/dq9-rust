@@ -335,6 +335,7 @@ ov_001::0215ca4c StbNat_LoadMonsterCharacter arm # native 233
 ov_001::0215ccdc StbNat_GetAnimationActive arm # native 234
 ov_001::0215cd50 StbNat_AttachCharacterToBone arm # native 235
 ov_001::0215cdf8 StbNat_DetachCharacter arm # native 236
+ov_001::0215cf98 StbNat_SetCharacterPalette arm # native 238: 5-5-5 colour + mode in Object3D+0x9e, then ov_017::0218fcf8 / 0218f92c
 ov_001::0215d134 StbNat_ResetCameraCommands arm # native 300
 ov_001::0215d168 StbNat_GetCameraBusy arm # native 301
 ov_001::0215d19c StbNat_SetCameraPosition arm # native 302
@@ -351,10 +352,14 @@ ov_001::0215dd58 StbNat_MoveCameraTargetAndOrbit arm # native 322
 ov_001::0215dfc4 StbNat_FollowActorWithCameraTarget arm # native 324
 ov_001::0215e0c0 StbNat_StopCameraTargetFollow arm # native 325
 ov_001::0215e0dc StbNat_SetCameraRoll arm # native 327
+ov_001::0215e14c StbNat_MoveCameraToFieldPose arm # native 328: type-3 move to the pose 020a2b48 computes for the field camera
 ov_001::0215e2a4 StbNat_Message arm # native 400: message id of the event's text table
 ov_001::0215e374 StbNat_GetMessageState arm # native 405
 ov_001::0215e398 StbNat_CloseMessage arm # native 401
+ov_001::0215e4b4 StbNat_SetMessageEffect409 arm # native 409: W+0x195b |= 4, W+0x9a8 = n
 ov_001::0215e4f0 StbNat_DisableMessageBox arm # native 410
+ov_001::0215e514 StbNat_SetMessageEffect411 arm # native 411: W+0x195b |= 0x40
+ov_001::0215e564 StbNat_ClearMessageField413 arm # native 413: W+0x19b2 = 0
 ov_001::0215eab0 StbNat_RestoreTextureArena arm # native 502
 ov_001::0215eb3c StbNat_SaveTextureArena arm # native 503
 ov_001::0215ed2c StbNat_PreloadResources arm # native 506
@@ -367,18 +372,27 @@ ov_001::0215f740 StbNat_DestroySprite arm # native 522
 ov_001::0215f930 StbNat_RestoreSavedCamera arm # native 531
 ov_001::0215f968 StbNat_SetCameraFov arm # native 532
 ov_001::0215f9dc StbNat_SetNextEvent arm # native 538
+ov_001::0215fb44 StbNat_OpenDoorVariant arm # native 584
+ov_001::0215fe50 StbNat_ShowBalloon arm # native 541: (actor, kind, p, q), via Balloon_Show
+ov_001::0215fef4 StbNat_EndBalloon arm # native 542: ctx+0x3630 = 0
 ov_001::0215ff10 StbNat_GetActorPosition arm # native 543
 ov_001::0215ffc0 StbNat_GetActorRotation arm # native 544
+ov_001::02160070 StbNat_SetSlotMoving arm # native 545: "run" (characters) or sprite walk bit (types 2/6)
+ov_001::0216013c StbNat_SetSlotStanding arm # native 546: "stand" or clears the sprite walk bit
 ov_001::02160338 StbNat_SetLightingIndexOverride arm # native 548
 ov_001::021603b0 StbNat_ClearLightingIndexOverride arm # native 549
 ov_001::021603d8 StbNat_SetSceneTimeOfDay arm # native 588
 ov_001::02160504 StbNat_SyncLightingToTimeOfDay arm # native 589
+ov_001::02160768 StbNat_InstallThreeBoneCamera arm # native 552
 ov_001::021609c0 StbNat_GetMessageAnswer arm # native 558
+ov_001::02160a48 StbNat_NudgeBalloon arm # native 561: (a, b) pixels, via Balloon_Nudge
 ov_001::02160da8 StbNat_DeclareCastMember arm # native 566: deferred, consumed by Event_BuildScene
 ov_001::021612c8 StbNat_DeclareCharacterArchive arm # native 567
 ov_001::02161374 StbNat_AddSceneSuppressFlags arm # native 568
 ov_001::02161408 StbNat_SetSlotVisible arm # native 570
 ov_001::02161650 StbNat_InstallBoneCamera arm # native 572
+ov_001::0216184c StbNat_SetNpcShadowFilter arm # native 581: NpcTable+0x98 bit 1 [hypothesis: shadows only for the event cast]
+ov_001::02161880 StbNat_ClearNpcShadowFilter arm # native 582: clears it and the 0x10000 mark of the 32 NPCs
 ov_001::02161900 StbNat_FreeAllocatorFront arm # native 587
 ov_001::02161a90 StbNat_IsEventSkipped arm # native 595
 ov_001::02161ab8 StbNat_GetActorStatus arm # native 596
@@ -386,6 +400,7 @@ ov_001::02161ce8 StbNat_GetSceneTimeOfDay arm # native 597
 ov_001::02161d08 StbNat_GetPartyLeaderId arm # native 598
 ov_001::02161e8c StbNat_SetFogEnabled arm # native 804
 ov_001::02162148 StbNat_SetTimeOfDay arm # native 808
+ov_001::02162174 StbNat_ShowHeroAngelObjects arm # native 809: GameResources+0x4334/+0x4338 shown or hidden [hypothesis: wings, halo]
 ov_001::02163284 StbNat_GetTickCount arm # native 840
 ov_001::021632e4 StbNat_TestGlobalFlag arm # native 600
 ov_001::02163390 StbNat_TestStepFlag arm # native 602
@@ -404,6 +419,9 @@ ov_001::0216393c StbNat_StopBgm arm # native 721
 ov_001::02163970 StbNat_LoadSecondarySeGroup arm # native 730
 ov_001::02163994 StbNat_RestoreSecondarySeHeap arm # native 731
 ov_001::021639ac StbNat_PlaySecondarySe arm # native 732
+ov_001::02163ccc StbNat_BeginScriptedBattle arm # native 547: object of a type-1 slot, mask 0x40000000 [hypothesis: battle transition]
+ov_001::02163dec StbNat_SetPlacementHidden arm # native 574: (group, id, b): bit 2 of the placement's +2, via Zone3D_FindPlacement
+ov_001::02163e50 StbNat_SetPlacementPosition arm # native 575: (group, id, x, y, z) into the placement's +8/+0xc/+0x10
 ov_001::02164004 StbNat_SetLightIntensity arm # native 578
 ov_001::02164080 StbNat_SetDayTimerStopped arm # native 579
 ov_001::021640b4 StbNat_MoveCameraFov arm # native 580
@@ -747,11 +765,18 @@ ov_017::0218dfd8 Field_PushFromNpcs   # leader pushed out of the NPC cylinders (
 ov_017::02193290 Character_CollideObjects # zone objects' 8-triangle colliders within 1 unit (not ported)
 
 # --- Characters (docs/re/characters.md) ---
+ov_017::0218f968 Character_PaletteOp         # native 238 on a character: mode in Object3D+0x9e, 0 adds, 1 fills, 2 multiplies the TEX0 palette
+ov_017::0218fd34 Hero_PaletteOp              # same for the hero's 12 objects (Chara_Get 0x13+12n...)
+ov_017::0219b43c Balloon_Show                # sprite id from the kind (2,5,6,14,15,16 -> 2,3,4,0xc,0xd,0xe) at the actor's screen position + (-6|-12, -76)
+ov_017::0219b578 Balloon_Nudge               # +(a, b) pixels on ctx+0x3630's sprite
 ov_017::021a2c14 Cast_LoadMap               # data/scenario/<area>.npc: place.bin, npc.bin, NpcTable_Build, ground snap
 0x02018fcc Zone3D_GroundHeight              # ray y+1..y-10 over the collision, hit + 0x199
-0x0203cbe8 NpcSprite_FaceCamera             # stand_* by (NPC angle - camera angle), 8 sectors (0x020e7948)
+0x02019518 Zone3D_FindPlacement             # (zone, block entry, placement id): walks Zone3D+0x41c blocks, 0x70-byte placements
+0x0203cbe8 NpcSprite_FaceCamera             # stand_* by (NPC angle - camera angle), 8 sectors (0x020e7948); walk_* with 4 when +0x5c bit 0 or 3 (0x020e7928)
 0x0203cf5c NpcTable_Get                     # returns g_NpcTable
 0x0203d038 NpcTable_Build                   # one 0x20-byte entry per cast member: sprite / chara_sub model / enemy.gp2 monster
+0x0203de94 NpcTable_DrawEntries             # per NPC: skipped when +0x98 != 0 and no 0x10000 mark; calls 0208f87c [hypothesis: shadows]
+0x0203df88 NpcTable_FindById                # the NPC of member number n among the 32 entries (566 mode 4/5 use it)
 0x0203e2d4 NpcTable_RestorePositions        # positions kept for this map (+0x9e list)
 0x0203fcf0 NpcSprite_LoadSheet              # "data/ani/%s" when the name ends in 'r'
 0x020415a8 NpcModel_SetMotionIndex          # +0xc4, Object3D::MaybeSetBCFGAnimation
