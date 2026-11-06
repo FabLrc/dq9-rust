@@ -714,3 +714,15 @@ fn a_timed_caption_ramps_in_holds_and_ramps_out() {
     assert_eq!(c.caption_alpha(), 1.0);
     assert!(!c.caption().centered && !c.caption().silent);
 }
+
+#[test]
+fn the_display_swap_survives_a_chained_event() {
+    let mut c = Cutscene::new();
+    assert!(!c.screen_swapped());
+    c.apply(&Event::SwapScreens(true));
+    assert!(c.screen_swapped());
+    c.restart();
+    assert!(c.screen_swapped());
+    c.apply(&Event::SwapScreens(false));
+    assert!(!c.screen_swapped());
+}

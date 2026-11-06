@@ -110,10 +110,11 @@ fn verdict(played: &Played, started: &[u16], missing: &[(String, u32)]) -> &'sta
     if !played.finished {
         return "stopped";
     }
-    // The screen swap has no meaning with one screen.
+    // The screen swap is a real layout effect: the field and the message window change screen
+    // (`POWCNT1` bit 15). It stays reported until the layout applies it.
     let partial = missing
         .iter()
-        .any(|(k, _)| !(k == "screen swap" || NO_VISIBLE_EFFECT.contains(&k.as_str())));
+        .any(|(k, _)| !NO_VISIBLE_EFFECT.contains(&k.as_str()));
     if partial { "partial" } else { "complete" }
 }
 

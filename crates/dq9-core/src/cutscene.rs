@@ -534,6 +534,9 @@ pub struct Cutscene {
     models: BTreeMap<i32, String>,
     fades: Fades,
     light: SceneLight,
+    /// 109/110: the DS display swap bit (`POWCNT1` bit 15). It persists across chained events
+    /// and is not a per-scene effect; the application applies it to its screen layout.
+    display_swap: bool,
     props: Props,
     /// Eye and target of the field camera relative to the hero (native 328).
     field_camera: (Vec3, Vec3),
@@ -560,6 +563,7 @@ impl Cutscene {
             models: BTreeMap::new(),
             fades: Fades::new(),
             light: SceneLight::default(),
+            display_swap: false,
             props: Props::default(),
             cam: Cam::default(),
             saved_cam: None,
@@ -576,10 +580,12 @@ impl Cutscene {
         let fades = self.fades;
         let light = std::mem::take(&mut self.light);
         let ignored = std::mem::take(&mut self.ignored);
+        let display_swap = self.display_swap;
         *self = Self::new();
         self.fades = fades;
         self.light = light;
         self.ignored = ignored;
+        self.display_swap = display_swap;
     }
 
     /// Brightness back to normal, unlocked, and the lighting back to the field's: the event
@@ -682,6 +688,12 @@ impl Cutscene {
         &self.fades
     }
 
+    /// Whether the DS display engines are swapped (`POWCNT1` bit 15, natives 109/110): the
+    /// application draws the field and the message window on the other screen.
+    pub fn screen_swapped(&self) -> bool {
+        self.display_swap
+    }
+
     /// The model loaded under a negative character id.
     pub fn model_of(&self, character: i32) -> Option<&str> {
         self.models.get(&character).map(String::as_str)
@@ -766,7 +778,11 @@ impl Cutscene {
                     flags: *flags,
                 });
             }
-            Event::CloseMessage => out.push(Output::CloseMessage),
+            Event::CloseMessage => {
+                // 401 tears the window down; the next 400 starts from the reset fields.
+                self.props.caption = Caption::default();
+                out.push(Output::CloseMessage);
+            }
             Event::HideMessageFrame => out.push(Output::HideMessageFrame),
             Event::CaptionTime { ticks } => {
                 self.props.caption.time = Some(*ticks);
@@ -1009,7 +1025,7 @@ impl Cutscene {
             Event::Started { .. } | Event::Phase { .. } | Event::Ended { .. } => {}
             Event::Unimplemented { id } => self.ignore(format!("native {id}")),
             Event::Sound(_) => {}
-            Event::SwapScreens(_) => self.ignore("screen swap"),
+            Event::SwapScreens(swapped) => self.display_swap = *swapped,
             Event::Preload(_) | Event::ReleasePreloaded => {}
             Event::CreateSprite { name, handle } => {
                 // `0215f3fc`: a new object under the handle; the slots of type 2 and 6 designate

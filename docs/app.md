@@ -187,12 +187,16 @@ mouvements des PNJ (`play_npc`), les feuilles `.spr` de script (`add_sprite`) et
   sans balise de fin elle attend l'action (`Dialogue::for_event`) ; la native 401 la ferme, la
   native 410 en retire le cadre. Les natives 409, 411 et 413 en font une **légende** : alpha
   temporisé (`W+0x9a8`, fondu d'une seconde, maintien, fondu), texte centré verticalement sous
-  `(192 − (lignes−1)×20 − 8)/2 − 16` quand le cadre est retiré, et bip de frappe coupé. L'arrêt
-  du compteur de message pendant l'alpha n'est pas modélisé **[hypothèse]**. Le joueur est
+  `(192 − (lignes−1)×20 − 8)/2 − 16` quand le cadre est retiré, et bip de frappe coupé. Pendant
+  la légende, le compteur de message est gelé (`020657c8`) : l'action ne peut ni avancer ni
+  fermer la fenêtre avant 401, donc 405 ne tombe pas avant la fin du fondu. Le joueur est
   verrouillé (pas de marche, pas de conversation).
 - **Fondus.** Un rectangle noir ou blanc sur tout l'écran 3D, de niveau −16 à +16 ; un moteur
   verrouillé (`112`, `114`, `116`) ignore les fondus simples. L'écran « principal » est pris pour
-  l'écran 3D **[hypothèse]** ; le fondu de l'autre moteur et l'échange des écrans sont ignorés.
+  l'écran 3D **[hypothèse]** ; le fondu de l'autre moteur est ignoré. L'échange d'écrans
+  (109/110) conserve `POWCNT1` bit 15 dans `Cutscene` ; `app.rs` et le chemin capture utilisent
+  `screens::field/overlay` pour placer le champ et la fenêtre sur l'autre écran, le panneau
+  remplissant l'écran libéré (Top : pas de panneau).
 
 **Résultat sur le prologue** (`--events-report 1.1-3`, ROM EU, textes anglais ; les 30 scripts
 vont à leur terme, aucune scène « non jouée » ; le son est joué par `audio.rs` et rapporté nulle
@@ -211,7 +215,7 @@ rapport) ; après : **2 scènes partielles** (1 ligne).
 | 21591, 21592, 21593, 21594, 21595, 21597 | `X01M05`, `M01`, `X01M04` | complet | — |
 | 1330 | `M01M06` | complet | — |
 | 21510 | `X01M04` | complet | — |
-| 21500 + 21507 | `M01M12` | partiel | collision placement ×7 (murs/sol non modifiés), door sound ×1 (index non lu), motion absent ×1, 547 (transition de combat, J4), 571 (sans lecteur), screen swap |
+| 21500 + 21507 | `M01M12` | partiel | collision placement ×7 (murs/sol non modifiés), door sound ×1 (index non lu), motion absent ×1, 547 (transition de combat, J4), 571 (sans lecteur) |
 
 La chaîne du prologue se joue de bout en bout sans intervention : `21500 → 21507` (native 538),
 puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la victoire (trigger
@@ -240,7 +244,11 @@ puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la
   `foot` porte le personnage cible ; capture `21507` image 1820 (point de vue haut dans le ciel),
   contre 1780 avant l'installation.
 - **Porte (584).** Le placement `(entrée de bloc, identifiant)` tourne de 90° en 16 updates ;
-  captures `21500` images 2900/2960, où le panneau change d'orientation. Le son reste rapporté.
+  captures `21500` images 2900/2960, où le panneau change d'orientation. Le son reste rapporté
+  tant que l'index (`g_DoorSeTable[quartet bas]`, 200–204) n'est pas branché.
+- **Échange d'écrans (109/110).** L'état `POWCNT1` bit 15 est partagé avec le layout ; six
+  échanges dans l'ouverture font passer le champ et la fenêtre d'un écran à l'autre. Captures
+  `stacked`/`side`/`top` avant/après le premier 109 (images 100 et 5000 de 21500).
 
 `--eye`/`--target` avec `--event` et `--screenshot` regardent la scène que le script a laissée
 (ils remplacent la caméra du script) : utile pour inspecter un acteur.
@@ -251,9 +259,11 @@ avec le sélecteur 0, 1 avec le sélecteur 1), canaux des acteurs, sens du rouli
 durées de la caméra et de la lumière, pose de la caméra du terrain pour 328, bulle posée dans le
 monde. Le héros du jeu a des ailes et un halo (forme ailée) que le rendu ne dessine pas ; hors
 événement, les PNJ gardent leur mouvement initial ; les ombres des PNJ ne sont pas dessinées. Les
-modèles ne sont pas encore comparés à melonDS. Pour les légendes, l'arrêt du compteur de message
-pendant le fondu n'est pas reproduit ; pour 584, le son et les branches coulissante/inverse ne
-sont pas lus ; pour 552, le byte `+0x265` de 839 n'est pas piloté.
+modèles ne sont pas encore comparés à melonDS. Pour 584, le son et les branches
+coulissante/inverse ne sont pas lus (le quartet bas de la zone est la seule source de l'index) ;
+pour 552, le byte `+0x265` de 839 n'est pas piloté, 839 n'apparaissant pas dans les scènes du
+prologue (seulement `ev28920`). 571 reste non identifiée : bit `0x10` sans lecteur, sans effet
+visible établi.
 
 ## Nouvelle partie (`--new-game`) et parcours automatique
 

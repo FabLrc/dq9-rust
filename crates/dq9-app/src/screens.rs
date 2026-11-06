@@ -91,6 +91,30 @@ pub fn screens(layout: Layout, width: u32, height: u32) -> Screens {
     }
 }
 
+impl Screens {
+    /// The viewport of the 3D field and of the message window. Native 109/110 swap the DS
+    /// display engines (`POWCNT1` bit 15): with `swapped`, the field moves to the bottom screen
+    /// and the other screen stays empty (or shows the panel); `top` layouts have one screen and
+    /// ignore the swap.
+    pub fn field(self, swapped: bool) -> Viewport {
+        if swapped {
+            self.bottom.unwrap_or(self.top)
+        } else {
+            self.top
+        }
+    }
+
+    /// The viewport the panel (the other DS engine) fills: the bottom screen normally, the top
+    /// one after a display swap. A one-screen layout has no second engine: no overlay.
+    pub fn overlay(self, swapped: bool) -> Option<Viewport> {
+        if swapped {
+            self.bottom.map(|_| self.top)
+        } else {
+            self.bottom
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +207,19 @@ mod tests {
         assert_eq!(Layout::parse("side"), Ok(Layout::Side));
         assert!(Layout::parse("wide").is_err());
         assert_eq!(Layout::Stacked.next().next().next(), Layout::Stacked);
+    }
+
+    #[test]
+    fn a_display_swap_moves_the_field_to_the_bottom_screen() {
+        let s = screens(Layout::Stacked, 512, 768);
+        assert_eq!(s.field(false), s.top);
+        assert_eq!(s.field(true), s.bottom.unwrap());
+        assert_eq!(s.overlay(false), s.bottom);
+        assert_eq!(s.overlay(true), Some(s.top));
+        // A one-screen layout has nothing to swap to.
+        let one = screens(Layout::Top, 1024, 768);
+        assert_eq!(one.field(true), one.top);
+        assert_eq!(one.overlay(true), None, "no panel over the only screen");
+        assert_eq!(one.overlay(false), None);
     }
 }
