@@ -1,9 +1,22 @@
 name: CI
 
 on:
+  # Documentation and reference data do not change the binaries: skipping them keeps the
+  # Linux jobs from rerunning on doc-only commits, including the README block committed by
+  # `coverage` below (whose push by the workflow token would not trigger a run anyway).
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 're/**'
+      - 'rom/**'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 're/**'
+      - 'rom/**'
 
 env:
   CARGO_TERM_COLOR: always
