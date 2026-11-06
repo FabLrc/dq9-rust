@@ -431,6 +431,16 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
 
 ## Vérification
 
+- Vérification navigateur de la version intégrée (Chromium, 6 novembre 2026, fenêtre
+  1000 × 808, DPR 1,25, son coupé) : ROM et sauvegarde chargées localement, conversation
+  du PNJ 25 sur `C01M09` avec `C01Q0/025_en.bin`, réplique avancée puis fermée ; dispositions
+  superposée, côte à côte et haut seul avec marges noires. Nouvelle partie jouée jusqu'à
+  la fin de `21596` après `21500`, `21507`, `21520`, `21521` et `21522` : retour au héros
+  sur `X01M05`, marche et suivi caméra contrôlés à l'écran. Chargement direct de `M01` :
+  cadrage terrain et marche contrôlés également. Aucune erreur de page observée.
+  Limites conservées : effets non portés signalés dans le journal, écran du bas uni,
+  toits/poutres pouvant masquer le héros ; ce parcours ne vérifie ni le son ni la fidélité
+  image par image à melonDS.
 - `crates/dq9-render/tests/real_rom.rs` : les 738 jeux d'archives distincts (moment 0,
   environnement de grotte 1) se construisent sans erreur : 3 501 modèles, 3 646 instances,
   18 570 textures décodées, 697 035 triangles ; 28 834 matériaux, dont 48 sans texture et
