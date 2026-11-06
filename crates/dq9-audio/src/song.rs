@@ -119,8 +119,8 @@ impl Song {
             if offset as usize >= stream.len() {
                 return Err(Error::Malformed("SSAR entry starts past its stream"));
             }
-            if !kits.contains_key(&entry.bank) {
-                kits.insert(entry.bank, kit(sdat, entry.bank)?);
+            if let std::collections::hash_map::Entry::Vacant(slot) = kits.entry(entry.bank) {
+                slot.insert(kit(sdat, entry.bank)?);
             }
             let kit = &kits[&entry.bank];
             effects.push(Some(Self {

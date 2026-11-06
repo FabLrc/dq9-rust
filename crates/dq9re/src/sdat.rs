@@ -178,12 +178,6 @@ pub fn run_se(rom: &Rom, args: &SeArgs) -> Result<()> {
         "commands: {}",
         hex(&ssar.stream[at..(at + 24).min(ssar.stream.len())])
     );
-    if std::env::var_os("SE_DEBUG").is_some() {
-        let bank = sdat.bank(usize::from(entry.bank))?;
-        for (i, ins) in bank.instruments.iter().enumerate().take(24) {
-            println!("  instrument {i}: {ins:?}");
-        }
-    }
     let mut player = Player::new(song, args.rate);
     let mut samples: Vec<f32> = Vec::new();
     let mut buffer = vec![0f32; 2 * 1024];
