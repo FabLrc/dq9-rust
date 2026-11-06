@@ -432,7 +432,9 @@ ROM qui n'est pas `YDQP01`, moteur graphique absent) s'affichent en rouge dans `
 une ROM refusée désactive de nouveau « Nouvelle partie ».
 
 Le workflow `.github/workflows/pages.yml` compile la version wasm optimisée à chaque push
-sur `main` (ou lancement manuel), installe la version de `wasm-bindgen-cli` de `Cargo.lock`
+sur `main` qui touche le binaire web (`crates/**`, `Cargo.toml`, `Cargo.lock`,
+`rust-toolchain*`) ou le workflow lui-même, ainsi que sur lancement manuel : un commit de
+documentation ne redéploie rien. Il installe la version de `wasm-bindgen-cli` de `Cargo.lock`
 et déploie uniquement `index.html` et les bindings JavaScript/WebAssembly dans GitHub Pages.
 Une liste blanche vérifie l'artefact avant l'envoi (seuls `index.html` et
 `pkg/*.js`/`pkg/*.wasm`) : toute ROM, sauvegarde, capture ou autre fichier fait échouer le
@@ -461,6 +463,53 @@ le clavier revient au canevas ensuite. La page signale les erreurs en rouge et n
 fichier refusé.
 WebGPU quand le navigateur le propose, sinon WebGL 2. `crates/dq9-app/web/pkg/` est généré
 (ignoré par git).
+
+## Boucle de développement
+
+`scripts/verify.ps1` enchaîne les contrôles de la CI dans le même ordre et s'arrête au premier
+échec :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast   # fmt + clippy
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1          # + tests du workspace + build wasm
+```
+
+`-Fast` ne lance que `cargo fmt --all --check` et `cargo clippy --workspace --all-targets --
+-D warnings`, pour une passe courte pendant l'édition. Sans option, il ajoute
+`cargo test --workspace`, puis la compilation des crates portables et de `dq9-app` pour
+`wasm32-unknown-unknown`. Le résumé final donne la durée de chaque étape ; une seule passe
+complète avant `git push` suffit, la CI reprenant les mêmes commandes. En local, une ROM dans
+`rom/` fait aussi tourner les tests `tests/real_rom.rs`, que la CI ignore.
+
+Les worktrees Orca n'ont pas à recompiler les mêmes crates : il suffit de partager la cible
+de Cargo.
+
+```powershell
+$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target"   # cmd : %LOCALAPPDATA%\dq9-target
+# Pour toutes les sessions : setx CARGO_TARGET_DIR "%LOCALAPPDATA%\dq9-target"
+```
+
+Cargo verrouille une cible : deux worktrees qui compilent en même temps s'attendent au lieu de
+se marcher dessus, et le premier build remplit le cache pour les suivants. La cible partagée
+reste hors du dépôt (`build/` ne sert qu'aux sorties du projet : captures, ROM extraite).
+
+`sccache` est facultatif : il met les invocations de `rustc` en cache, utile quand la cible
+partagée est absente ou jetée (changement de branche, nettoyage), inutile quand elle est
+chaude.
+
+```powershell
+cargo install sccache --locked
+$env:RUSTC_WRAPPER = 'sccache'
+```
+
+`cargo nextest` est facultatif aussi : il exécute les tests d'intégration et unitaires plus
+vite et nomme les plus lents. La CI garde `cargo test` ; les doctests du workspace ne font pas
+partie d'une exécution nextest et restent couverts par `cargo test --doc`.
+
+```powershell
+cargo install cargo-nextest --locked
+cargo nextest run --workspace
+```
 
 ## Rendu
 

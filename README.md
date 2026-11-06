@@ -114,6 +114,8 @@ powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save partie.
 ## Développement
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1          # fmt, clippy, tests, build wasm
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast    # fmt et clippy seulement
 cargo test --workspace                        # tests sur la vraie ROM inclus si elle est présente
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
@@ -121,8 +123,15 @@ cargo build -p nds-rom -p dq9-formats -p dq9-core -p dq9-render -p dq9-app --tar
 cargo dq9re coverage --readme README.md       # avancement (sans ROM), réécrit le bloc ci-dessus
 ```
 
+`scripts/verify.ps1` enchaîne les contrôles dans l'ordre de la CI et s'arrête au premier
+échec ; les cibles partagées entre worktrees et les outils facultatifs (`sccache`,
+`cargo nextest`) sont décrits dans [`docs/app.md`](docs/app.md#boucle-de-développement).
+
 La CI exécute fmt, clippy, les tests sous Linux et la compilation wasm, sans jamais avoir accès
-à la ROM, puis calcule l'avancement et met à jour ce README sur `main`.
+à la ROM, puis calcule l'avancement et met à jour ce README sur `main`. Un commit qui ne touche
+que la documentation, `re/` ou `rom/` ne relance pas la CI, et le déploiement Pages n'est
+redéclenché que par les chemins qui changent le binaire web (`crates/**`, manifestes,
+`rust-toolchain*`).
 
 ## Rétro-ingénierie
 
