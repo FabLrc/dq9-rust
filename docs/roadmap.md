@@ -14,9 +14,17 @@ avec un prologue intégralement jouable.
 
 ### Intégré et publié
 
-- Dernier commit de jeu sur `main` : **`e51a0bd`** ; outillage : **`7683e57`**. CI Linux
-  [42238441418](https://github.com/FabLrc/dq9-rust/actions/runs/42238441418) et déploiement
-  [Pages 42238441285](https://github.com/FabLrc/dq9-rust/actions/runs/42238441285) réussis.
+- Dernier commit de jeu sur `main` : **`e51a0bd`** ; outillage complet : **`c5e1380`**.
+  CI Linux [42238441418](https://github.com/FabLrc/dq9-rust/actions/runs/42238441418) et
+  déploiement [Pages 42238441285](https://github.com/FabLrc/dq9-rust/actions/runs/42238441285)
+  réussis ; le lot watch a sa CI verte
+  ([42257346009](https://github.com/FabLrc/dq9-rust/actions/runs/42257346009)).
+- Harnais oracle libretro (outil GPL externe, hors crates) : création du personnage et
+  **premier contrôle original** reproductibles sans GUI, `dq9re state --ram` sur les images
+  RAM de 4 Mio, catalogue `states index/find`, `state diff` et `state watch`. Le premier
+  contrôle donne carte 4105, area 4100, histoire 1.1.1, pose `fx32` identique à `bat6` et
+  17 des 18 drapeaux (4135 au lieu de 4212). Preuves et entrées conservées sous
+  `build/oracle-host/` (ignoré).
 - Outillage (6 novembre 2026) : `scripts/verify.ps1` (fmt, clippy, tests, wasm), filtres de
   chemins CI/Pages vérifiés (un commit de documentation ne déclenche plus rien),
   `scripts/decomp.ps1` (adresse EU → source USA) et cache Ghidra (9,3 s → 0,96 s),
@@ -52,21 +60,18 @@ octet. Ce n'est ni un parcours complet ni une preuve de parité avec melonDS.
 
 ### Blocages et ordre de reprise
 
-1. **Intégrer les lots après revue**, en conservant ce point de reprise et les limites
-   documentées ; vérifier les contrats/tests/docs concernés, puis refaire une seule passe
-   de contrôles et un smoke du parcours changé.
-2. **Obtenir une référence originale pilotable.** Le melonDS autonome ne peut pas être
-   focalisé dans cette session ; les touches postées restent bloquées après le dialogue
-   1140 et le stub GDB se déconnecte. `PauseLostFocus` est déjà faux. Le nouveau
-   [cœur melonDS DS libretro](https://docs.libretro.com/library/melonds_ds/) (outil GPL
-   extérieur au runtime Rust) exécute réellement la ROM via callbacks, sans focus :
-   version rapportée 1.4.0, rendu logiciel 256×384, sérialisation et RAM accessibles.
-   La création du personnage y est terminée et le **premier contrôle original** est atteint
-   sans GUI : carte 4105, area 4100, histoire 1.1.1, pose `fx32` identique à `bat6` et 17 des
-   18 drapeaux identiques (la course donne 4135 au lieu de 4212, à expliquer par les entrées
-   et choix de création). L'ancien `bat6.ml1` n'est pas compatible avec `retro_unserialize` ;
-   poursuivre une **nouvelle partie réelle**. Ne pas fabriquer un état ou modifier les
-   coordonnées/drapeaux pour contourner le blocage.
+1. **Reprendre depuis la référence outillée.** Le harnais, `state --ram`, le catalogue et le
+   traceur sont intégrés. Produire les états originaux des points suivants (1.1.2, Angel
+   Falls, quêtes, fin du prologue) avec le même harnais, puis les comparer au runtime par
+   `state diff` et `compare-runs.ps1` aux mêmes points d'histoire. Ne pas réintégrer les
+   anciennes branches d'outillage : elles sont déjà dans `main`.
+2. **Poursuivre le parcours original au-delà du premier contrôle.** Le harnais libretro
+   exécute la ROM sans focus (rendu logiciel, RAM et `retro_serialize` accessibles) et la
+   création du personnage y est terminée. `bat6.ml1` n'est pas compatible avec
+   `retro_unserialize` : repartir d'une **nouvelle partie réelle** et enregistrer un état
+   (`--dump-ram`, `--state-out`, `--checkpoints`) à chaque point. Le prochain jalon est
+   l'arrivée à 1.1.2 puis Angel Falls ; ne pas fabriquer d'état ni modifier les
+   coordonnées/drapeaux pour contourner un blocage.
 3. **Résoudre l'accès à la tour `X01M01` → `X01M03`.** La grille 3D plafonne à y = 11,25 ;
    le passage haut n'est pas atteint. Une route vérifiée seulement en X/Z était fausse.
    La proposition de contourner la tour via 21591 est également rejetée : ce trigger n'est
@@ -83,7 +88,10 @@ octet. Ce n'est ni un parcours complet ni une preuve de parité avec melonDS.
    ces deux derniers apparaissent pendant 21596 sans passer par `Flags_Set`. La nouvelle
    course originale donne **4135** au lieu de **4212** : ce dernier n'est pas une constante
    d'ouverture, et la cause de la différence (entrées, choix de création) doit être établie
-   avant toute correction.
+   avant toute correction. Outils prêts : `dq9re state diff` entre deux états et
+   `dq9re state watch --file` sur un log `--watch` du harnais pour dater chaque bit ; si le
+   `LR` de l'écriture est nécessaire, `DQIX_WATCH` de DQIX Enhanced est documenté dans
+   [`re/outils.md`](re/outils.md).
 5. **Valider toute la v0.1** : prologue, quêtes du village, checkpoints strictement identiques
    à l'original aux mêmes points, déplacement à nombre d'images contrôlé, puis parcours
    sur la version GitHub Pages publiée. Aucun de ces critères finaux n'est déclaré acquis.
