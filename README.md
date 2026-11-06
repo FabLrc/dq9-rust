@@ -159,7 +159,9 @@ redéclenché que par les chemins qui changent le binaire web (`crates/**`, mani
   overlay dans son espace `ov_NNN`. Requêtes sans interface :
   `scripts/ghidra-query.ps1 decomp|xrefs|calls|disasm <adresse>` (`0x020d91ec` ou
   `ov_017::0218c0f4`) ; une requête verrouille le projet, en lancer plusieurs demande des
-  copies de `re/ghidra` désignées par `DQ9_GHIDRA_PROJECT`.
+  copies de `re/ghidra` désignées par `DQ9_GHIDRA_PROJECT`. Les résultats sont mis en cache
+  dans `build/ghidra-cache/` (clé : commande, adresses, ROM, SHA-256 de `Query.java`) ;
+  `-Refresh` force la requête.
   Les imports et `scripts/ghidra-apply-symbols.ps1` appliquent les noms et bornes de
   `re/functions.txt`, puis les surcharges de `re/symbols.txt` ; détails et limites
   dans [`docs/re/rom-layout.md`](docs/re/rom-layout.md#noms-et-bornes-dans-ghidra).
@@ -177,6 +179,21 @@ Consigner une découverte :
    contrôles sur données), hypothèses marquées **[hypothèse]**.
 3. Implémenter dans la crate correspondante avec un test sur données synthétiques et, si
    pertinent, un invariant sur la vraie ROM (`tests/real_rom.rs`).
+
+### Accès rapide au code d'origine
+
+`scripts/decomp.ps1` relie une adresse ou un nom européens au fichier source de la
+décompilation USA (Unlicense, checkout non commité, attendu dans `tools/dqix-decomp`) :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/decomp.ps1 0x02010250   # GameState::AdvanceDayTimer
+powershell -ExecutionPolicy Bypass -File scripts/decomp.ps1 GameState::SetDayTimer -Context 80
+powershell -ExecutionPolicy Bypass -File scripts/decomp.ps1 -List SetDayTimer
+```
+
+Il affiche l'adresse et le nom européens, l'adresse USA, le chemin source et un extrait ;
+`-Decomp PATH` désigne un autre checkout. Détails, cache Ghidra et limites :
+[`docs/re/outils.md`](docs/re/outils.md).
 
 ## Documentation
 
@@ -199,6 +216,7 @@ Consigner une découverte :
 | `docs/re/sdat.md` | son : SDAT, séquences, effets, jingles, musique des cartes |
 | `docs/re/save.md` | sauvegarde DS : conteneur, sommes de contrôle, champs typés, inconnus |
 | `docs/re/melonds-state.md` | oracle melonDS : lecture des sauvegardes d'état, adresses utiles, vérification restante |
+| `docs/re/outils.md` | cache des requêtes Ghidra, adresse européenne vers source de la décompilation USA |
 | `AGENTS.md` | contexte et règles pour les agents de développement |
 
 ## Légal
