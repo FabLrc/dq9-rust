@@ -166,23 +166,34 @@ try {
     $touch = [W]::Client($h).Height - 192
     $vk = @{ up = 0x26; down = 0x28; left = 0x25; right = 0x27; a = 0x58; b = 0x5A; start = 0x0D }
 
+    # Qt menu popups are separate windows; the number of Down presses reaches "Save state"
+    # (9) or "Load state" (10). Retried once because a posted tap can race the popup.
     function Open-Menu([int] $downs) {
-        [W]::Tap($h, 14, 12)
-        $deadline = (Get-Date).AddSeconds(5)
-        while ([W]::Popups($proc.Id, $h).Count -lt 1) {
-            if ((Get-Date) -gt $deadline) { throw 'File menu did not open' }
-            Start-Sleep -Milliseconds 100
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            try {
+                [W]::Tap($h, 14, 12)
+                $deadline = (Get-Date).AddSeconds(5)
+                while ([W]::Popups($proc.Id, $h).Count -lt 1) {
+                    if ((Get-Date) -gt $deadline) { throw 'File menu did not open' }
+                    Start-Sleep -Milliseconds 100
+                }
+                $file = [W]::Popups($proc.Id, $h)[0]
+                1..$downs | ForEach-Object { [W]::Key($file, 0x28, 30) }
+                [W]::Key($file, 0x27, 30)
+                $deadline = (Get-Date).AddSeconds(5)
+                while ([W]::Popups($proc.Id, $h).Count -lt 2) {
+                    if ((Get-Date) -gt $deadline) { throw 'state submenu did not open' }
+                    Start-Sleep -Milliseconds 100
+                }
+                $sub = [W]::Popups($proc.Id, $h) | Where-Object { $_ -ne $file } | Select-Object -First 1
+                [W]::Key($sub, 0x0D, 30)
+                return
+            } catch {
+                if ($attempt -eq 2) { throw }
+                [W]::Key($h, 0x1B, 30)
+                Start-Sleep -Milliseconds 700
+            }
         }
-        $file = [W]::Popups($proc.Id, $h)[0]
-        1..$downs | ForEach-Object { [W]::Key($file, 0x28, 30) }
-        [W]::Key($file, 0x27, 30)
-        $deadline = (Get-Date).AddSeconds(5)
-        while ([W]::Popups($proc.Id, $h).Count -lt 2) {
-            if ((Get-Date) -gt $deadline) { throw 'state submenu did not open' }
-            Start-Sleep -Milliseconds 100
-        }
-        $sub = [W]::Popups($proc.Id, $h) | Where-Object { $_ -ne $file } | Select-Object -First 1
-        [W]::Key($sub, 0x0D, 30)
     }
 
     function Save-State([string] $name) {
