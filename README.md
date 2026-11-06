@@ -127,6 +127,21 @@ cargo dq9re coverage --readme README.md       # avancement (sans ROM), réécrit
 échec ; les cibles partagées entre worktrees et les outils facultatifs (`sccache`,
 `cargo nextest`) sont décrits dans [`docs/app.md`](docs/app.md#boucle-de-développement).
 
+Deux outils de diagnostic, sans effet sur le jeu :
+
+```powershell
+# Liste (puis supprime avec -Apply) les vieux états d'émulateur sous build/
+powershell -ExecutionPolicy Bypass -File scripts/prune-build.ps1
+# Compare deux runs par point d'histoire, pas par tick
+powershell -ExecutionPolicy Bypass -File scripts/compare-runs.ps1 `
+    -Original build/oracle/original.jsonl -Runtime build/oracle/runtime.jsonl
+```
+
+`prune-build.ps1` ne touche ni aux `.sav`, ni aux `.nds`, ni aux JSON ou images, et refuse la
+racine du dépôt. `compare-runs.ps1` aligne les checkpoints JSONL sur la carte et la piste
+courante, puis compare progression, drapeaux et quêtes ; il complète `oracle-compare.ps1`, qui
+part d'un état melonDS unique.
+
 La CI exécute fmt, clippy, les tests sous Linux et la compilation wasm, sans jamais avoir accès
 à la ROM, puis calcule l'avancement et met à jour ce README sur `main`. Un commit qui ne touche
 que la documentation, `re/` ou `rom/` ne relance pas la CI, et le déploiement Pages n'est
