@@ -14,9 +14,15 @@ avec un prologue intégralement jouable.
 
 ### Intégré et publié
 
-- Dernier commit de code sur `main` : **`e51a0bd`**. CI Linux
+- Dernier commit de jeu sur `main` : **`e51a0bd`** ; outillage : **`7683e57`**. CI Linux
   [42238441418](https://github.com/FabLrc/dq9-rust/actions/runs/42238441418) et déploiement
   [Pages 42238441285](https://github.com/FabLrc/dq9-rust/actions/runs/42238441285) réussis.
+- Outillage (6 novembre 2026) : `scripts/verify.ps1` (fmt, clippy, tests, wasm), filtres de
+  chemins CI/Pages vérifiés (un commit de documentation ne déclenche plus rien),
+  `scripts/decomp.ps1` (adresse EU → source USA) et cache Ghidra (9,3 s → 0,96 s),
+  `scripts/compare-runs.ps1` (alignement par point d'histoire), `scripts/prune-build.ps1`
+  (purge sûre des états) et règles de propriété/preuve dans `AGENTS.md`. Détails :
+  [`docs/app.md`](app.md#boucle-de-développement), [`re/outils.md`](re/outils.md), README.
 - Ouverture, dialogues, légendes temporisées, caméra de scène et échange des écrans intégrés.
   Les deux vantaux de la bibliothèque de `X01M07` s'ouvrent et le héros les franchit :
   vérification native **et sur la page publiée**, par entrées clavier, sans téléportation.
@@ -51,9 +57,12 @@ octet. Ce n'est ni un parcours complet ni une preuve de parité avec melonDS.
    [cœur melonDS DS libretro](https://docs.libretro.com/library/melonds_ds/) (outil GPL
    extérieur au runtime Rust) exécute réellement la ROM via callbacks, sans focus :
    version rapportée 1.4.0, rendu logiciel 256×384, sérialisation et RAM accessibles.
-   L'ancien `bat6.ml1` n'est pas compatible avec `retro_unserialize` ; poursuivre une
-   **nouvelle partie réelle**, finir la saisie du nom, puis comparer le premier contrôle.
-   Ne pas fabriquer un état ou modifier les coordonnées/drapeaux pour contourner le blocage.
+   La création du personnage y est terminée et le **premier contrôle original** est atteint
+   sans GUI : carte 4105, area 4100, histoire 1.1.1, pose `fx32` identique à `bat6` et 17 des
+   18 drapeaux identiques (la course donne 4135 au lieu de 4212, à expliquer par les entrées
+   et choix de création). L'ancien `bat6.ml1` n'est pas compatible avec `retro_unserialize` ;
+   poursuivre une **nouvelle partie réelle**. Ne pas fabriquer un état ou modifier les
+   coordonnées/drapeaux pour contourner le blocage.
 3. **Résoudre l'accès à la tour `X01M01` → `X01M03`.** La grille 3D plafonne à y = 11,25 ;
    le passage haut n'est pas atteint. Une route vérifiée seulement en X/Z était fausse.
    La proposition de contourner la tour via 21591 est également rejetée : ce trigger n'est
@@ -62,12 +71,15 @@ octet. Ce n'est ni un parcours complet ni une preuve de parité avec melonDS.
    Comparer au vrai parcours original ; ne pas abaisser les murs ou les limites de marche.
    L'égalité de quelques constantes et placements ne prouve pas que tout le port est correct.
 4. **Finir les drapeaux.** Le premier contrôle de la branche field contient
-   `{337,1450..1454,1461,2721,2751}`, contre 18 drapeaux dans la référence `bat6`.
-   Neuf restent absents. Les dernières traces attribuent `3191/3775/3955/4046` à
-   l'acquisition de l'équipement initial (`0xc76 + index 1/585/765/856`), `2774` à la carte
-   S14 6405 et `4414` à `KeyManager::RefreshKeys` : reprendre les **causes et conditions**,
-   pas une liste de constantes copiée du checkpoint. L'origine de `4212`, `4283` et `4410`
-   reste à établir ; ces deux derniers apparaissent pendant 21596 sans passer par `Flags_Set`.
+   `{337,1450..1454,1461,2721,2751}`, contre 18 drapeaux dans la référence `bat6` ; neuf
+   restent absents. Les dernières traces attribuent `3191/3775/3955/4046` à l'acquisition de
+   l'équipement initial (`0xc76 + index 1/585/765/856`), `2774` à la carte S14 6405 et `4414`
+   à `KeyManager::RefreshKeys` : reprendre les **causes et conditions**, pas une liste de
+   constantes copiée du checkpoint. L'origine de `4212`, `4283` et `4410` reste à établir ;
+   ces deux derniers apparaissent pendant 21596 sans passer par `Flags_Set`. La nouvelle
+   course originale donne **4135** au lieu de **4212** : ce dernier n'est pas une constante
+   d'ouverture, et la cause de la différence (entrées, choix de création) doit être établie
+   avant toute correction.
 5. **Valider toute la v0.1** : prologue, quêtes du village, checkpoints strictement identiques
    à l'original aux mêmes points, déplacement à nombre d'images contrôlé, puis parcours
    sur la version GitHub Pages publiée. Aucun de ces critères finaux n'est déclaré acquis.
