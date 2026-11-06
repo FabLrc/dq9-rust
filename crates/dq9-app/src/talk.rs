@@ -338,7 +338,7 @@ impl Talk {
     }
 
     /// Chooses the NPC's line (`Talk_SelectLine`) and opens the dialogue.
-    fn start(
+    pub fn start(
         &mut self,
         rom: &[u8],
         map_code: &str,

@@ -71,13 +71,13 @@ Chaque appelant passe une constante (relevée dans `r1` avant chaque appel) :
 | Événement | Triggers | Déclencheur | Paramètres |
 |---|---|---|---|
 | 0 | 2 831 | début de conversation (`Talk_Start`) | 0 = PNJ, 5 = zone de conversation |
-| 1 | 1 143 | fin de conversation (`TalkTask_Update`, états de fermeture) | 0 = PNJ, 5 = contexte de la conversation |
+| 1 | 1 143 | fin de conversation (`TalkTask_Update`, états de fermeture) ; branché : `Field::talk_ended` | 0 = PNJ, 5 = contexte de la conversation (celui qui a choisi la réplique), `+0x954` = réponse au dernier `<YESNO>` (0 sans question) |
 | 2 / 5 | 110 / 0 | le meneur entre dans / sort d'une zone (`ov_017::0219814c`, `02198e30`) | 1 = zone : objet de carte de type 3 ou zone ajoutée par l'action 0x8f |
 | 3 | 249 | arrivée dans une salle après une transition (`ov_017::0219e384`, `0219fc88`, via `FUN_02064a04`) | 3 = salle |
 | 6 | 35 | le meneur entre dans la boîte d'un warp `0x72` (`Field_CheckWarps`, `ov_017::0219ca88`) : le transport est prêt (`Save_Warp`), le trigger s'exécute avant le changement de carte | 3 = salle quittée |
 | 9 / 19 | 0 / 11 | `FUN_02064a50` (personnage local) / `FUN_02064aac` (meneur), appelé par `FUN_02053644` quand un compteur d'un personnage atteint sa cible | 1 = zone courante ; octets `+0x2a..+0x2d` = quatre octets du personnage (`+0x178`) **[sens inconnu]** |
 | 11 | 669 | fin d'un événement scripté (`ov_017::021bc77c`) | 2 = numéro de l'événement |
-| 15 / 16 | 47 / 33 | fin d'un combat scripté (`ov_017::021b790c`) ; 16 si un octet d'état vaut 2 **[sens inconnu ; 15 lance presque toujours un événement]** | 6 = numéro de combat (champ 0 de `data/event/eventbattle.bin` : les 40 valeurs y figurent) |
+| 15 / 16 | 47 / 33 | fin d'un combat scripté (`BattleTask_Update`, `ov_017::021b790c` → `Trig_FireBattleEnd` `0x02064a18` / `Trig_FireBattleEndAlt` `0x02064a34`) : 15 quand il est gagné, 16 quand l'octet `+0x8e14` de la structure de combat vaut 2 (défaite) ; branché : `Field::battle_ended` (§ « Combats scriptés ») | 6 = numéro de combat (champ 0 de `data/event/eventbattle.bin` : les 40 valeurs y figurent) |
 | 17 | 504 | porte de type 2 touchée : le meneur a marché 3 images contre son orientation, une quatrième la prend (`Field_TouchDoorways`, `ov_017::02198f84`, liste `+0x36bc`) | 7 = (classe `+0x2c`, numéro `+0x2d`), 10 = orientation `+0x20` |
 | 20 | 195 | fin du chargement des triggers de la salle (`Trig_LoadTable`) | 3 = salle |
 | 22 | 41 | overlay 2 (`ov_002::02155960`), cartes H18 et M08 **[sens inconnu]** | — |
@@ -289,7 +289,7 @@ synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
 | 0x73 / 0x75 † | retire l'objet `arg` (1 / `haut`), sac d'abord puis équipement | 163 / 26 |
 | 0x76 † | conversation avec le PNJ `arg`, contexte `haut` | 3 378 |
 | 0x77, 0x80 † | lance l'événement `arg` : les 524 valeurs de 0x77 sont des `data/event/evNNNNN.gp2`, `data/evspt_lv5/evNNNNN.gp2` ou des entrées de `eventlist6.bin` / `evl_quest.bin` (`stb.md`) | 622 / 0 |
-| 0x78 † | tâche `+0x3718` avec `arg + 0x8005` **[sens inconnu]** | 65 |
+| 0x78 † | lance le combat scripté `arg` (enregistrement d'index `arg` de `data/event/eventbattle.bin`), § « Combats scriptés » | 65 |
 | 0x79, 0x89, 0xe1 † | transport vers la salle `arg` (structure `+0x3f8` de la sauvegarde) | 163, 0, 22 |
 | 0x85, 0x8a, 0xe2 † | idem avec un point d'entrée `haut` | 30, 1, 5 |
 | 0x7a / 0x7b † | position (3 flottants × 4096) / direction du transport | 179 / 33 |
@@ -345,6 +345,47 @@ Différées, dans l'ordre de la liste (`dq9_core::trigger::run_deferred`) : obje
 appliqués à l'état, le reste est rendu sous forme de demandes (`Request::Talk`, `Event`,
 `Warp`, `RemoveNpc`). Une progression qui change recharge les triggers de la carte
 (`Request::ReloadTriggers`).
+
+## Combats scriptés (action `0x78`)
+
+**Trouvé** en lisant `Trig_RunDeferred` (`0x0206f82c`), cas `0x78` (Ghidra, adresses EU). Le
+wiki DQIX (`Triggers.md`, opération 120) le dit aussi (« starts set battle *n* ») : nous l'avons
+vérifié sur le code et les données avant de le reprendre.
+
+- Le cas prend la tâche `+0x3718` du gestionnaire de champ, l'initialise (`BattleTask_Init`,
+  `ov_017::021b6f18`), remplit une requête de `0x18` octets (octet 0 = 1, octet 1 = personnage local,
+  demi-mot `+4` = `arg + 0x8005`, mot `+8` = `arg`, `+0xc`/`+0xd` = états lus sur le monstre de
+  terrain et le type de carte au trésor par `ov_017::021b6e70`, octet `+0x12` = moment de la journée)
+  puis la copie dans la tâche (`BattleTask_Setup`, `021b7104` : numéro de combat en `+0x28`,
+  `arg + 0x8005` en `+0x24`) et la met en file (`0x020469b4`).
+- La tâche (`BattleTask_Update`, `ov_017::021b790c`) conduit le combat. À sa fin, si `+0x28 ≥ 0`,
+  elle construit le bloc de paramètres de `Trig_Fire` (`0x34` octets, **mot 6 = `+0x28`**) et appelle
+  `Trig_FireBattleEnd` (`0x02064a18`, événement 15) ou, quand l'octet `+0x8e14` de la structure de
+  combat vaut 2, `Trig_FireBattleEndAlt` (`0x02064a34`, événement 16), puis `Trig_RunDeferred`. C'est
+  le mot 6 que lit la condition `0xc` (`12 : n` du wiki). Ce que vaut `arg + 0x8005` (identifiant
+  de la tâche, comparé à `+0x44ae` des ressources de jeu à la fin) reste **[inconnu]**.
+- Vérification sur les données (`tests/scenario_rom.rs`) : toutes les actions `0x78` des fichiers de
+  triggers (65) nomment un enregistrement de `eventbattle.bin`, et chacune a, dans le même fichier
+  et pour la même salle, un trigger d'événement 15 sur ce numéro, sans exception (le wiki en
+  comptait 65 sur 66 par fichier).
+
+Dans `dq9-core` : `Request::Battle(n)` (`run_deferred`), `scenario::battle(files, n)` lit
+l'enregistrement (monstres, musique, arène), `Field::battle_ended(n, gagné, état)` tire 15 ou 16.
+**Il n'y a pas de système de combat avant J4** : l'application ne joue pas le combat, elle le
+déclare gagné aussitôt (`scenario::stand_in`, visible dans le journal et sur la sortie d'erreur) puis
+tire l'événement 15, comme le ferait la tâche. Ce n'est pas un modèle du combat : il sert à atteindre
+les scènes qui le suivent. Exemple du prologue : fin de `ev21507` (`M01`, salle 1112, trigger 11
+`8 : 21507` → `0x78(26)`), combat 26 (monstres 290, 292 et 290, musique 23, arène 30116), victoire
+(`triggerM01.bin` et `triggerF.bin`, événement 15, `12 : 26` → `0x77(21520)`).
+
+## Fin de conversation (événement 1)
+
+`Field::talk_ended(pnj, contexte, réponse, état)` tire l'événement 1 quand la fenêtre d'une
+conversation se ferme : mot 0 = PNJ, mot 5 = contexte qui a choisi la réplique (celui du trigger
+d'événement 0, `0x76(pnj, contexte)`, sinon la zone), `+0x954` = réponse au dernier `<YESNO>`
+(0 = oui ; 0 sans question, car la fenêtre le met à 0 à l'ouverture). C'est la suite des répliques :
+`0x6(101) 0xb(193) 0x10(0)` → `0x77(21591)` (descendre vers Angel Falls après avoir répondu oui au
+gardien de l'Observatoire). Branché dans `dq9-app` (`Talk::take_ended`).
 
 ## Exemples
 

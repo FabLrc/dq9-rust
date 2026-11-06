@@ -300,8 +300,31 @@ Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/
 (578, 579, 588, 589, 808), brouillard (804), sprites 2D (521), attachements d'os (235, 236),
 mouvements des PNJ de la carte et des modèles absents, natives 238, 328, 409, 411, 413, 541,
 542, 545, 546, 547, 552, 561, 574, 575, 581, 582, 584, 809 ; 559, 560, 571 et 815
-sont sans effet visible établi. **[inconnu]** : ce qui enchaîne `ev21507` à `ev21520` (le
-trigger 11 rend `Other(120)`, action `0x78`).
+sont sans effet visible établi.
+
+## Enchaînement du prologue (`dq9-core::scenario`)
+
+Ce qui enchaîne les scènes est établi (ROM EU, Ghidra, `cargo dq9re triggers`) :
+
+- `ev21500` → `ev21507` : native 538 du script (`Director`).
+- `ev21507` → `ev21520` : la fin de `ev21507` tire le trigger 11 de `M01` (`8 : 21507`), dont
+  l'action `0x78(26)` est **un combat scripté**, pas une tâche inconnue (`trigger.md`, § Combats
+  scriptés : `Trig_RunDeferred` cas `0x78` remplit la tâche de combat `+0x3718`, numéro 26 dans
+  `eventbattle.bin`). La victoire tire le trigger 15 (`12 : 26`), qui lance `ev21520`
+  (`triggerM01.bin` et `triggerF.bin`). Il n'y a pas de combat avant J4 : l'application le
+  déclare gagné (`scenario::stand_in`).
+- `ev21520 → 21521 → 21522 → 21596` : natives 538 ; changements de carte (`F01M01`, `X01`,
+  `X01M01`, `X01M05`) demandés par les scripts d'après l'enregistrement de la liste des
+  événements. À la fin de `21596`, le trigger 11 de `X01M05` lève le drapeau 337, donne l'objet
+  22159 et rend la main au joueur.
+- Ensuite, tout vient des triggers : conversations (trigger 0 puis 1 à la fermeture :
+  `Field::talk_ended`), aires (2), portes et warps (17, 6), arrivée (20, 3), et le trigger 11 des
+  scènes (suite, étape `0x84`, transport `0xe1`/`0x85`). Exemple : `21591` (descendre à Angel
+  Falls) part de la conversation avec le PNJ 101 (`6 : 101`, `11 : 193`, `16 : 0` → `0x77(21591)`),
+  se termine par `0xe1(1100)` ; `21592` part du trigger d'arrivée (3) de `M01` à l'étape 1.2 ;
+  `21593` d'une conversation (PNJ 99) et se termine par `0x84(1, 4, 1)` (étape 1.4) et `0x85(4105)`.
+- Parcours complet : `dq9-app --new-game --headless --auto [--pilot]` (`app.md`, § « Nouvelle
+  partie »).
 
 ## Questions ouvertes
 

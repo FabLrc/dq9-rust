@@ -390,6 +390,7 @@ impl App {
                 }
                 Event::Request(Request::Battle(number)) => self.run_battle(number),
                 Event::Request(Request::RemoveNpc(npc)) => self.talk.remove_npc(npc),
+                Event::Request(Request::Talk { npc, context }) => self.talk_to(npc, context),
                 Event::Request(request) => {
                     status(&format!(
                         "trigger request not supported before J3: {request:?}"

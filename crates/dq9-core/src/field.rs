@@ -493,6 +493,14 @@ impl Field {
         warps.chain(doorways).collect()
     }
 
+    /// A point inside each area of the map and each area a trigger added (event 2 fires when the
+    /// leader gets into one). For an autopilot; the game has the hero walk in.
+    pub fn area_points(&self) -> Vec<Vec3> {
+        let map = self.areas.iter().map(|s| s.zone.volume.center);
+        let added = self.added.iter().map(|a| a.center);
+        map.chain(added).map(from_fx).collect()
+    }
+
     /// Whether any map change is among `events`.
     pub fn changes_map(events: &[Event]) -> bool {
         events.iter().any(|e| matches!(e, Event::MapChange(_)))

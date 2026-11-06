@@ -200,10 +200,9 @@ visible établi près (559, 560, 571, 815).
 | 21591, 21592, 21594, 21597 | `X01M05`, `M01`, `X01M04` | partiel | sprites 2D (21591), 575/574, 581/582, 809, lumière, attachements d'os (21592, 21597) |
 | 21593, 21595 | `M01` | partiel | sprites 2D, brouillard, teinte 238, bulles, 559, 581/582, 809, mouvement 1 d'un acteur |
 
-La chaîne 21520 → 21596 (quatre cartes) se joue d'un bout à l'autre par les natives 538 ; ce qui
-suit 21507 n'est pas enchaîné automatiquement : le trigger 11 de la carte rend une demande
-`Other(120)` (`0x78`, « tâche `+0x3718` », **[sens inconnu]**, `trigger.md`) et la scène 21520
-se lance par `--event 21520`.
+La chaîne du prologue se joue de bout en bout sans intervention : `21500 → 21507` (native 538),
+puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la victoire (trigger
+15) lance `21520 → 21521 → 21522 → 21596` (natives 538), voir « Nouvelle partie » ci-dessous.
 
 **Limites et hypothèses.** Voir aussi [`re/stb.md`](re/stb.md), § « Exécution » : liaison par défaut
 du membre déclaré `n` au créneau et à l'acteur `n`, taille par défaut des modèles chargés (0x10a
@@ -212,6 +211,80 @@ durées de la caméra. Les PNJ de la carte ne changent pas de mouvement ; seuls 
 direction (les sprites montrent le côté qui regarde la caméra) et leur visibilité suivent le
 script ; ils retrouvent leur place à la fin. Les modèles ne sont pas encore comparés
 à melonDS.
+
+## Nouvelle partie (`--new-game`) et parcours automatique
+
+```powershell
+# Dans la fenêtre : le prologue depuis le début (état d'une nouvelle partie, héros par défaut).
+cargo run -p dq9-app --release -- --new-game
+# Sans fenêtre : appuie sur l'action pour lire les messages, journalise cartes, scènes, combats
+# scriptés et avancées de l'histoire, et s'arrête au premier moment où le joueur a la main :
+cargo run -p dq9-app --release -- --new-game --headless --auto
+# Idem, avec un pilote qui, à chaque prise de contrôle, fait la conversation ou prend la sortie
+# qui fait avancer l'histoire (plafond `--headless-steps`, 200 000 pas par défaut) :
+cargo run -p dq9-app --release -- --new-game --headless --auto --pilot
+```
+
+Sur le Web : bouton « Nouvelle partie » de la page (ou `?newgame=1`), après avoir choisi la ROM.
+
+**Départ.** `GameState::new_game` donne la progression 1.1.1, le début du jour et l'horloge qui
+court ; le héros est celui de `HeroLook::new_game` (hypothèse, `re/characters.md`) et la première
+scène est `stage_opening(1, 1)` (`ev21500`, carte `M01M12`). Les cartes se construisent pour la
+progression courante des triggers (`current_story` : piste, drapeaux, quêtes), pas pour les
+options `--chapter/--step`.
+
+**Enchaînement.** Rien n'est codé « en dur » : ce sont les mécanismes du jeu.
+
+| Maillon | Mécanisme | Où |
+|---|---|---|
+| scène → scène voisine | native 538 | `Director` |
+| fin d'une scène | trigger 11 (mot 2 = événement) : suite, avancée de l'histoire (`0x84`), changement de carte (`0x79`, `0xe1`, `0x85`), combat (`0x78`) | `Field::event_ended` |
+| fin d'un combat scripté | trigger 15 / 16 (mot 6 = numéro) | `Field::battle_ended` |
+| fin d'une conversation | trigger 1 (PNJ, contexte, réponse oui/non) | `Field::talk_ended` |
+| arrivée dans une carte | triggers 20 puis 3 | `Field::enter` |
+| entrée dans une aire, porte, warp | triggers 2, 17, 6 | `Field::step` |
+| 0x76 hors conversation | fenêtre de dialogue de la réplique du trigger | `App::talk_to` |
+
+**Combats scriptés.** Il n'y a pas de combat avant J4 : `scenario::stand_in` les déclare gagnés
+aussitôt, ce que le journal écrit en toutes lettres (« stand-in, no battle system yet »). La
+victoire tire le trigger 15, comme le ferait `BattleTask_Update` (`re/trigger.md`, § Combats
+scriptés).
+
+**Résultat** (`--new-game --headless --auto`, ROM EU, textes anglais ; temps de jeu à 60 Hz) :
+
+| Temps | Carte | Scène / fait |
+|---:|---|---|
+| 0 s | `M01M12` | `21500` « stage_opening » (80 s), puis `21507` (43 s) par la native 538 |
+| 123 s | — | trigger 11 de `21507` → **combat scripté 26** (monstres 290, 292, 290 ; arène 30116), gagné par substitution → trigger 15 → `21520` |
+| 123 s | `F01M01`, `X01`, `X01M01`, `X01M05` | `21520 → 21521 → 21522 → 21596` (natives 538 et changements de carte demandés par les scripts) |
+| 210 s | `X01M05` | **première prise de contrôle** (Observatoire, histoire 1.1.1) |
+
+Le passage dans Angel Falls même vient après (`--pilot`) : les réponses oui du gardien, 21591
+(`X01M05` → `M01`), 21592, puis l'étape 1.2 se joue dans le village (`M01`, 335 s, histoire
+1.2.1).
+
+**Pilote** (`--pilot`, remplaçant d'un joueur, pas une fonction du jeu) : à chaque prise de
+contrôle il simule sur des copies (`Talk::simulate`, `Field::step`) chaque conversation que la
+carte offre (point d'appui et réponse « première » choisis par la recherche de partenaire du
+jeu) et chaque aire de la carte ; il joue celle qui fait le plus avancer l'histoire (progression,
+événement lancé, combat, changement de carte, drapeaux) et, à défaut, prend une sortie de la
+famille de cartes (`X01`, `M01`…) qu'il n'a pas prise, en revenant sur ses pas si besoin. Il ne
+marche pas : le héros est posé dans la zone ou la sortie, ce qui n'est pas de la marche, de la
+collision ni de la caméra. Sur le prologue il traverse les étapes 1.1 à 1.4 (30 scènes) et
+arrive au chapitre 2 (`2.1.1`, `M01M10`, 652 s de jeu, 59 scènes) où il s'arrête faute de
+conversation ou d'aire utile.
+
+**S'arrête où et pourquoi** (journal de fin de `--pilot`) : prise de contrôle sans rien qui fasse
+avancer l'histoire d'après la simulation (conversations qui ne changent plus ni progression ni
+drapeaux, aires déjà prises), ou plafond de pas atteint. Limites connues :
+
+- Les combats ne se jouent pas (substitut) ; l'expérience, l'équipe et les objets ne sont pas
+  modélisés, donc des triggers qui en dépendent (conditions `0x24`, `0x31`, `0x32`…) peuvent donner
+  d'autres branches que le jeu réel : seule la tenue d'ouverture du héros est posée dans l'état.
+- `Other(141)` (fin de `21510`, `21595`, `21593`) et les natives sans effet (`stb.md`) sont
+  journalisés mais ne font rien.
+- Le pilote rejoue parfois la même conversation (`2110`) tant que son déclencheur change un drapeau.
+- L'ordre et les durées ne sont pas comparés à melonDS.
 
 ## Lancer dans un navigateur
 
@@ -225,9 +298,10 @@ python -m http.server 8000 -d crates/dq9-app/web     # ou tout serveur de fichie
 ```
 
 Ouvrir `http://localhost:8000/` (paramètres `map`, `time` (nom ou 0 à 3), `clock`, `layout` (`stacked`, `side` ou `top`), `chapter`, `step`,
-`substep`, `night=1`, `mute=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
+`substep`, `night=1`, `mute=1`, `newgame=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
 page. Les deux fichiers sont lus localement dans le navigateur, jamais envoyés ni hébergés ;
-`map` explicite prévaut sur la carte de la sauvegarde.
+`map` explicite prévaut sur la carte de la sauvegarde. Le bouton « Nouvelle partie » (ou `?newgame=1`)
+lance le prologue (§ « Nouvelle partie »).
 WebGPU quand le navigateur le propose, sinon WebGL 2. `crates/dq9-app/web/pkg/` est généré
 (ignoré par git).
 

@@ -304,9 +304,22 @@ Avancement :
       chemin des conversations).
 - [ ] **Triggers branchés** : l'événement 0 « parler » (`Field::talk`) est branché sur la
       conversation ; les demandes `Request::Event` des triggers (actions `0x77`, `0x80`, `0x9b`)
-      démarrent l'événement dans l'application et la fin d'un événement tire l'événement 11
-      (`Field::event_ended`) ; restent « examiner », les zones d'autres types et la suite de
-      `ev21507` (trigger 11 → action `0x78`, sens inconnu).
+      démarrent l'événement dans l'application, la fin d'un événement tire l'événement 11
+      (`Field::event_ended`), la fin d'une conversation l'événement 1 (`Field::talk_ended`), la
+      fin d'un combat scripté 15/16 (`Field::battle_ended`) et `0x76` hors conversation ouvre la
+      fenêtre (`App::talk_to`) ; l'action `0x78` est le **combat scripté** (`Request::Battle`,
+      `trigger.md` § Combats scriptés) ; restent « examiner », les zones d'autres types, le
+      système de combat (substitut « gagné » : `scenario::stand_in`) et les demandes `Other`
+      (141…).
+- [x] **Nouvelle partie : le prologue s'enchaîne** (`dq9-app --new-game`, bouton « Nouvelle
+      partie » du Web, `dq9_core::scenario`, [`app.md`](app.md) § « Nouvelle partie »,
+      [`re/stb.md`](re/stb.md) § « Enchaînement du prologue ») : état de `GameState::new_game`,
+      héros par défaut, première scène `21500` ; `21507 → combat 26 → 21520 → … → 21596` par la
+      native 538, le trigger 11, l'action `0x78` et le trigger 15, puis le joueur a la main à
+      l'Observatoire (`--new-game --headless --auto`, 210 s de jeu) ; avec `--pilot`, le parcours
+      automatique traverse les étapes 1.1 à 1.4 jusqu'au chapitre 2 (`M01M10`, 652 s). **Reste** :
+      le combat 26 (J4), comparer l'ordre, les durées et les drapeaux à melonDS, un vrai
+      pilote (marche, collisions) ; le pilote est un outil de test, pas une fonction du jeu.
 - [ ] **Interpréteur `.stb`** : `dq9_core::script` traduit `Stb_Run` et ses auxiliaires
       (`ov_017::021d4980…021d6148`, marqueurs `port:`), joue les entrées 200, 100 et 300 d'un
       événement une mise à jour à la fois (`Script::step`) et rend des `Event` typés (fondus,

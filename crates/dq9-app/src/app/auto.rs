@@ -3,13 +3,15 @@
 //! and prints what the story did (`Journal`). With `--pilot`, a free control is not the end:
 //! the autopilot has the conversation, or takes the exit, that moves the story on.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use dq9_core::Hero;
 use dq9_core::field::{self, Event, Exit, Leader};
 use dq9_core::scenario::Step;
 use dq9_core::trigger::Request;
+use dq9_core::trigger::State;
+use glam::Vec3;
 
 use super::{App, status};
 use crate::talk::{Button, Partner};
@@ -40,6 +42,12 @@ struct Pilot {
     talked: BTreeSet<(u16, u16, u16, u64)>,
     /// Exits taken: `(room, destination, story digest)`.
     left: BTreeSet<(u16, u16, u64)>,
+    /// Areas walked into: `(room, area index, story digest)`.
+    entered: BTreeSet<(u16, usize, u64)>,
+    /// The story digest at which each room was last looked at for something to do.
+    evaluated: BTreeMap<u16, u64>,
+    /// The rooms each room leads to (seen so far).
+    graph: BTreeMap<u16, Vec<u16>>,
     /// The rooms the hero was in.
     visited: BTreeSet<u16>,
     /// The room and story digest the current map was built for.
@@ -111,6 +119,15 @@ impl App {
         };
         let room = entry.id;
         bot.visited.insert(room);
+        if let Some(field) = &self.field {
+            let exits = field.exits();
+            let towards = exits
+                .iter()
+                .filter_map(|e| e.destination)
+                .filter(|d| self.same_family(*d))
+                .collect::<BTreeSet<_>>();
+            bot.graph.insert(room, towards.into_iter().collect());
+        }
         let digest = self.story_digest();
         if bot.actions >= MAX_ACTIONS {
             return false;
@@ -134,7 +151,13 @@ impl App {
                 return true;
             }
         }
-        if let Some((partner, why)) = self.best_conversation(room, digest, bot) {
+        let conversation = self.best_conversation(room, digest, bot);
+        let area = self.best_area(room, digest, bot);
+        let conversation_score = conversation.as_ref().map_or(0, |c| c.0);
+        let area_score = area.as_ref().map_or(0, |a| a.0);
+        if let Some((_, partner, why)) = conversation
+            && conversation_score >= area_score
+        {
             bot.talked
                 .insert((room, partner.npc, partner.context, digest));
             bot.actions += 1;
@@ -147,16 +170,26 @@ impl App {
             self.converse(&partner);
             return true;
         }
+        if let Some((_, index, point, why)) = area {
+            bot.entered.insert((room, index, digest));
+            bot.actions += 1;
+            let what = format!("walks into area {index} of map {room}: {why}");
+            status(&what);
+            self.journal.record(self.tick, Step::Autopilot(what));
+            self.enter_area(point);
+            return true;
+        }
         let Some(field) = &self.field else {
             return false;
         };
+        bot.evaluated.insert(room, digest);
         let exits = field.exits();
         // Unvisited rooms first, in the order of the map's exits.
         let next = exits
             .iter()
             .filter(|exit| {
                 exit.destination
-                    .is_some_and(|d| !bot.left.contains(&(room, d, digest)))
+                    .is_some_and(|d| self.same_family(d) && !bot.left.contains(&(room, d, digest)))
             })
             .min_by_key(|exit| exit.destination.is_some_and(|d| bot.visited.contains(&d)));
         if let Some(exit) = next
@@ -173,15 +206,118 @@ impl App {
             }
             return true;
         }
-        false
+        // Nothing left here: head for the nearest room that has something left to try.
+        let Some(hop) = self.next_hop(bot, room, digest) else {
+            return false;
+        };
+        let Some(exit) = field
+            .exits()
+            .into_iter()
+            .find(|e| e.destination == Some(hop))
+        else {
+            return false;
+        };
+        bot.actions += 1;
+        let what = format!("goes back through map {room} to {hop}");
+        status(&what);
+        self.journal.record(self.tick, Step::Autopilot(what));
+        self.leave_by(&exit);
+        true
+    }
+
+    /// The first room on the shortest known way from `room` to a room the pilot has not looked
+    /// at in this state of the story, or that still has an exit to try.
+    fn next_hop(&self, bot: &Pilot, room: u16, digest: u64) -> Option<u16> {
+        let pending = |r: u16| {
+            bot.evaluated.get(&r) != Some(&digest)
+                || bot
+                    .graph
+                    .get(&r)
+                    .is_some_and(|exits| exits.iter().any(|d| !bot.left.contains(&(r, *d, digest))))
+        };
+        let mut parent = BTreeMap::new();
+        let mut queue = std::collections::VecDeque::from([room]);
+        while let Some(at) = queue.pop_front() {
+            for &next in bot.graph.get(&at).into_iter().flatten() {
+                if next == room || parent.contains_key(&next) {
+                    continue;
+                }
+                parent.insert(next, at);
+                if pending(next) {
+                    let mut hop = next;
+                    while parent[&hop] != room {
+                        hop = parent[&hop];
+                    }
+                    return Some(hop);
+                }
+                queue.push_back(next);
+            }
+        }
+        None
+    }
+
+    /// Whether map `id` is in the family of the current one (the first three letters of the
+    /// codes: `X01`, `M01`): the pilot stays in the place the story is told in.
+    fn same_family(&self, id: u16) -> bool {
+        let family = |id: u16| {
+            self.maps
+                .iter()
+                .find(|m| m.id == id)
+                .and_then(|m| m.code.get(..3).map(str::to_owned))
+        };
+        let here = self.current.as_ref().and_then(|(e, _)| family(e.id));
+        here.is_some() && here == family(id)
+    }
+
+    /// How much a conversation or a step into an area moves the story: what it does to the
+    /// progress, the events it starts, the map it changes and the flags it raises.
+    fn rate(&self, events: &[Event], after: &State) -> (u32, String) {
+        let track = &self.state.tracks[self.state.track];
+        let after_track = &after.tracks[after.track];
+        let mut score = 0;
+        let mut what = Vec::new();
+        if (track.chapter, track.step, track.substep)
+            != (after_track.chapter, after_track.step, after_track.substep)
+        {
+            score += 4;
+            what.push(format!(
+                "story {}.{}.{}",
+                after_track.chapter, after_track.step, after_track.substep
+            ));
+        }
+        for event in events {
+            match event {
+                Event::Request(Request::Event(id)) => {
+                    score += 3;
+                    what.push(format!("event {id}"));
+                }
+                Event::Request(Request::Battle(n)) => {
+                    score += 3;
+                    what.push(format!("battle {n}"));
+                }
+                Event::MapChange(change) if self.same_family(change.destination) => {
+                    score += 2;
+                    what.push(format!("map {}", change.destination));
+                }
+                _ => {}
+            }
+        }
+        if after.flags != self.state.flags || after_track.flags != track.flags {
+            score += 1;
+            what.push("flags".to_owned());
+        }
+        (score, what.join(", "))
     }
 
     /// The conversation of this map that moves the story most when had now (see
-    /// `Talk::simulate`), with what it does.
-    fn best_conversation(&self, room: u16, digest: u64, bot: &Pilot) -> Option<(Partner, String)> {
+    /// `Talk::simulate`), with its score and what it does.
+    fn best_conversation(
+        &self,
+        room: u16,
+        digest: u64,
+        bot: &Pilot,
+    ) -> Option<(u32, Partner, String)> {
         let field = self.field.as_ref()?;
-        let track = &self.state.tracks[self.state.track];
-        let progress = (track.chapter, track.step, track.substep);
         let mut best: Option<(u32, Partner, String)> = None;
         for partner in self.talk.partners() {
             if bot
@@ -191,42 +327,51 @@ impl App {
                 continue;
             }
             let (events, after) = self.talk.simulate(&partner, field, &self.state);
-            let after_track = &after.tracks[after.track];
-            let mut score = 0;
-            let mut what = Vec::new();
-            if (after_track.chapter, after_track.step, after_track.substep) != progress {
-                score += 4;
-                what.push(format!(
-                    "story {}.{}.{}",
-                    after_track.chapter, after_track.step, after_track.substep
-                ));
-            }
-            for event in &events {
-                match event {
-                    Event::Request(Request::Event(id)) => {
-                        score += 3;
-                        what.push(format!("event {id}"));
-                    }
-                    Event::Request(Request::Battle(n)) => {
-                        score += 3;
-                        what.push(format!("battle {n}"));
-                    }
-                    Event::MapChange(change) => {
-                        score += 2;
-                        what.push(format!("map {}", change.destination));
-                    }
-                    _ => {}
-                }
-            }
-            if after.flags != self.state.flags || after_track.flags != track.flags {
-                score += 1;
-                what.push("flags".to_owned());
-            }
+            let (score, what) = self.rate(&events, &after);
             if score > best.as_ref().map_or(0, |(s, _, _)| *s) {
-                best = Some((score, partner, what.join(", ")));
+                best = Some((score, partner, what));
             }
         }
-        best.map(|(_, partner, what)| (partner, what))
+        best
+    }
+
+    /// The area of this map (or added by a trigger) that moves the story most when the hero
+    /// gets into it now: index, a point inside, score and what it does.
+    fn best_area(&self, room: u16, digest: u64, bot: &Pilot) -> Option<(u32, usize, Vec3, String)> {
+        let field = self.field.as_ref()?;
+        let mut best: Option<(u32, usize, Vec3, String)> = None;
+        for (index, point) in field.area_points().into_iter().enumerate() {
+            if bot.entered.contains(&(room, index, digest)) {
+                continue;
+            }
+            let (mut field, mut state) = (field.clone(), self.state.clone());
+            let leader = Leader {
+                position: point,
+                yaw: 0.0,
+                input: Vec3::ZERO,
+            };
+            let events = field.step(&leader, &mut state);
+            let (score, what) = self.rate(&events, &state);
+            if score > best.as_ref().map_or(0, |(s, _, _, _)| *s) {
+                best = Some((score, index, point, what));
+            }
+        }
+        best
+    }
+
+    /// Puts the hero in an area, as the field task sees it.
+    fn enter_area(&mut self, point: Vec3) {
+        self.hero = Some(Hero::at(point, 0.0));
+        self.camera.target = point;
+        let leader = Leader {
+            position: point,
+            yaw: 0.0,
+            input: Vec3::ZERO,
+        };
+        if let Some(field) = &mut self.field {
+            let events = field.step(&leader, &mut self.state);
+            self.apply_events(events);
+        }
     }
 
     /// Stands the hero where the partner search finds the NPC and presses the action key.

@@ -11,6 +11,17 @@ use crate::event::EventPlayer;
 use crate::lighting;
 
 impl App {
+    /// Action 0x76 outside a conversation (an area, a doorway, the end of a scene): opens the
+    /// window on the line of `npc` for `context`.
+    pub(super) fn talk_to(&mut self, npc: u16, context: u16) {
+        let (Some(rom), Some((entry, _))) = (&self.rom, &self.current) else {
+            return;
+        };
+        if let Err(e) = self.talk.start(rom, &entry.code, &self.state, npc, context) {
+            status(&format!("talk: {e:#}"));
+        }
+    }
+
     /// The story point a map is built for: the options', or in a new game the scenario's
     /// current track, flags and quests (the cast placed by `place.bin` follows them).
     pub(super) fn current_story(&self) -> dq9_formats::cast::Story {

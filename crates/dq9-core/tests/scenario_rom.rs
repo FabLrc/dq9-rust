@@ -15,7 +15,7 @@ const BATTLE_WON_EVENT: i32 = 15;
 const BATTLE_CONDITION: u16 = 0xc;
 
 /// Every scripted battle a trigger starts (action 0x78) is a record of `eventbattle.bin`, and
-/// the map's triggers know how to go on once it is won (wiki: 65 of 66 records).
+/// the map's triggers know how to go on once it is won.
 #[test]
 fn every_scripted_battle_has_a_record_and_a_victory_trigger() {
     let Some(bytes) = testrom::load() else { return };
@@ -49,9 +49,9 @@ fn every_scripted_battle_has_a_record_and_a_victory_trigger() {
             }
         }
     }
-    assert!(started >= 60, "{started} battles started");
+    assert_eq!(started, 65);
     assert!(
-        without_victory.len() <= 1,
+        without_victory.is_empty(),
         "no victory trigger for {without_victory:?}"
     );
 }
