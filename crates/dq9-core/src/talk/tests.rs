@@ -201,6 +201,168 @@ fn a_prompt_without_branches_falls_through_with_its_answer() {
     assert_eq!(d.outcome().and_then(|o| o.answer), Some(1));
 }
 
+/// Opens `tag` at the start of a message and checks its opening sound was emitted once.
+fn open_prompt(tag: &[u8]) -> Dialogue {
+    let mut text = tag.to_vec();
+    text.extend_from_slice(b"<YES><END><NO><END>");
+    let mut d = Dialogue::new(script(&text, 100));
+    d.step(Input::default());
+    assert!(d.view().prompt.is_some(), "the prompt is on screen");
+    assert_eq!(d.take_sounds(), [Sound::Choice], "one opening sound");
+    d
+}
+
+/// One step on a prompt, returning the sounds it made.
+fn answer(d: &mut Dialogue, input: Input) -> Vec<Sound> {
+    d.step(input);
+    d.take_sounds()
+}
+
+fn choose_second() -> Input {
+    Input {
+        down: true,
+        confirm: true,
+        ..Input::default()
+    }
+}
+
+#[test]
+fn choice_answers_play_effect_one_except_notse_variants() {
+    // <YESNO>, <NOYES> and <UKEYAME> sound on both answers (0xFF04, 0xFF05, 0xFF08).
+    for tag in [&b"<YESNO>"[..], &b"<NOYES>"[..], &b"<UKEYAME>"[..]] {
+        let mut d = open_prompt(tag);
+        assert_eq!(answer(&mut d, press()), [Sound::ChoiceConfirm], "{tag:?}");
+        let mut d = open_prompt(tag);
+        assert_eq!(
+            answer(&mut d, choose_second()),
+            [Sound::ChoiceConfirm],
+            "{tag:?}"
+        );
+    }
+    // <YESNO_NOTSE> (0xFF06) never sounds.
+    for input in [press(), choose_second()] {
+        let mut d = open_prompt(b"<YESNO_NOTSE>");
+        assert!(answer(&mut d, input).is_empty());
+    }
+    // <YESNO_NOTSE_IIE> (0xFF07) sounds on the first answer only.
+    let mut d = open_prompt(b"<YESNO_NOTSE_IIE>");
+    assert_eq!(answer(&mut d, press()), [Sound::ChoiceConfirm]);
+    let mut d = open_prompt(b"<YESNO_NOTSE_IIE>");
+    assert!(answer(&mut d, choose_second()).is_empty());
+}
+
+#[test]
+fn the_confirmation_sound_is_emitted_once_per_answer() {
+    let mut d = open_prompt(b"<YESNO>");
+    assert_eq!(answer(&mut d, press()), [Sound::ChoiceConfirm]);
+    for _ in 0..3 {
+        d.step(Input::default());
+        assert!(d.take_sounds().is_empty(), "the answer is not repeated");
+    }
+}
+
+#[test]
+fn cancel_answers_the_second_choice_silently_and_wins_over_confirm() {
+    for tag in [&b"<YESNO>"[..], &b"<NOYES>"[..], &b"<UKEYAME>"[..]] {
+        let mut d = open_prompt(tag);
+        assert!(
+            answer(
+                &mut d,
+                Input {
+                    cancel: true,
+                    ..Input::default()
+                }
+            )
+            .is_empty()
+        );
+        play(&mut d, 1);
+        d.step(press());
+        assert_eq!(d.outcome().and_then(|o| o.answer), Some(1), "{tag:?}");
+
+        // A and B in the same step: B wins and the confirmation effect is not played.
+        let mut d = open_prompt(tag);
+        let both = Input {
+            cancel: true,
+            confirm: true,
+            ..Input::default()
+        };
+        assert!(answer(&mut d, both).is_empty(), "{tag:?}");
+        play(&mut d, 1);
+        d.step(press());
+        assert_eq!(d.outcome().and_then(|o| o.answer), Some(1), "{tag:?}");
+    }
+}
+
+#[test]
+fn the_choice_cursor_toggles_silently_between_its_two_positions() {
+    // <YESNO> starts on the first answer; down, up, up and down all toggle without sound.
+    let mut d = open_prompt(b"<YESNO>");
+    for (input, cursor) in [
+        (
+            Input {
+                down: true,
+                ..Input::default()
+            },
+            1,
+        ),
+        (
+            Input {
+                up: true,
+                ..Input::default()
+            },
+            0,
+        ),
+        (
+            Input {
+                up: true,
+                ..Input::default()
+            },
+            1,
+        ),
+        (
+            Input {
+                down: true,
+                ..Input::default()
+            },
+            0,
+        ),
+    ] {
+        assert!(answer(&mut d, input).is_empty(), "moving is silent");
+        assert_eq!(d.view().prompt.unwrap().cursor, cursor);
+    }
+    // <NOYES> starts on the second answer.
+    let mut d = open_prompt(b"<NOYES>");
+    assert_eq!(d.view().prompt.unwrap().cursor, 1);
+    assert!(
+        answer(
+            &mut d,
+            Input {
+                up: true,
+                ..Input::default()
+            }
+        )
+        .is_empty()
+    );
+    assert_eq!(d.view().prompt.unwrap().cursor, 0);
+    assert!(
+        answer(
+            &mut d,
+            Input {
+                down: true,
+                ..Input::default()
+            }
+        )
+        .is_empty()
+    );
+    assert_eq!(d.view().prompt.unwrap().cursor, 1);
+    // Nothing happens without a key.
+    for _ in 0..3 {
+        d.step(Input::default());
+        assert!(d.take_sounds().is_empty());
+    }
+    assert_eq!(d.view().prompt.unwrap().cursor, 1);
+}
+
 fn npc(id: u16, kind: u8, position: [i32; 3], zones: Vec<TalkZone>) -> Talkable {
     Talkable {
         id,

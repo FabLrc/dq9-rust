@@ -60,6 +60,10 @@ pub mod se {
     pub const QUESTION: u16 = 28;
     /// A choice (`<YESNO>`, `<UKEYAME>`...) opens: `0x020659a0`.
     pub const CHOICE_OPEN: u16 = 5;
+    /// An answer is chosen: `MsgWin_AnswerYesNo` (`0x020678cc`) and
+    /// `MsgWin_AnswerAcceptDecline` (`0x020679e4`) play base effect 1, except on the `NOTSE`
+    /// prompts (`dq9_core::talk::AnswerSound`).
+    pub const CHOICE_CONFIRM: u16 = 1;
 }
 
 /// What the stream callback mixes.
@@ -405,6 +409,7 @@ impl Audio {
             Sound::Exclamation => se::EXCLAMATION,
             Sound::Question => se::QUESTION,
             Sound::Choice => se::CHOICE_OPEN,
+            Sound::ChoiceConfirm => se::CHOICE_CONFIRM,
         };
         self.play_base_effect(rom, index);
     }

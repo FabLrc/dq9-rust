@@ -258,12 +258,25 @@ Trouvés en décompilant les appelants de `Se_PlayBase` (`0x0205eab0`, une centa
 | 10, 12, 11 | bip d'un caractère tapé, selon la voix (0, 1, 2) ; coupé quand `+0x19b2` vaut 0 (native 413, « texte muet » d'après le wiki) | `MsgWin_PlayTextBlip` `0x02045608`, appelée par `MsgWin_Update` quand le compteur `+0x912` dépasse 3 pendant la frappe : un bip tous les 4 pas **[hypothèse : un caractère par pas]** |
 | 6, 28 | `<EXC>` (`0xFF2E`) et `<QES>` (`0xFF2F`) ; le jeu fixe ensuite `+0x1959` à 60 (bulle, attente probable) : **attente non reproduite** | `MsgWin_Update` `0x020659a0` |
 | 5 | ouverture d'un choix (`<YESNO>`, `<UKEYAME>`…) | `MsgWin_Update` |
+| 1 | réponse à un choix : première et seconde réponses pour `0xFF04`/`0xFF05`/`0xFF08` ; aucune pour `<YESNO_NOTSE>` (`0xFF06`) ; première seulement pour `<YESNO_NOTSE_IIE>` (`0xFF07`) ; B (annulation, −2) est silencieux | `MsgWin_AnswerYesNo` `0x020678cc` (`0xFF04`..`0xFF07`) et `MsgWin_AnswerAcceptDecline` `0x020679e4` (`0xFF08`), appelés par la table `0x020f08b8` de `MsgWin_UpdatePrompt` `0x020676f0` |
 | 101 | `<ST=…>` (`0xFF1C`) avec un choix valide **[hypothèse]** | `MsgWin_Update`, non branché |
 | 14 | code `0xFF4B` (non nommé) | `MsgWin_Update`, non branché |
 | 200 à 204 | porte d'une région : `g_DoorSeTable[indicateurs & 0xF]` (`0x020e6e84`) | `Region_Fire` `0x02018310` **[hypothèse : le rôle de porte]** ; non branché (le passage de porte de l'application ne passe pas par cette fonction) |
 | 18, 19 (`0x12`, `0x13`) | ouverture et fermeture d'une porte animée (wiki, `func_02015554`) | non branché : la tâche de porte n'existe pas encore |
 | 50 (`0x32`) | nuage d'un PNJ qui disparaît | `0x020486a0`, non branché |
 | 96 (`0x60`) | changement d'état d'un objet du champ | `0x02034054`, non branché |
+
+**Choix d'un message** : `MsgWin_UpdatePrompt` (`0x020676f0`) rend 0 (A sur la première
+réponse), 1 (A sur la seconde) ou −2 (B), puis appelle le gestionnaire du type de choix par la
+table statique `0x020f08b8` (deux entrées : `0x020678cc` pour `<YESNO>`, `<NOYES>`,
+`<YESNO_NOTSE>` et `<YESNO_NOTSE_IIE>` ; `0x020679e4` pour `<UKEYAME>`). Le premier lit le
+code du prompt dans le flux (`0xFF04` à `0xFF07`) et joue l'effet 1 de l'archive de base :
+`0xFF06` ne joue pour aucune réponse ; `0xFF07` joue pour la première et reste silencieux pour
+la seconde ; `0xFF04` et `0xFF05` jouent pour les deux. Le second (`<UKEYAME>`) joue
+toujours. Les deux sautent le bloc sonore pour B (−2), qui répond « non » sans effet. La case
+1 de l'archive 100 est bien remplie (décalage `0x144` du flux, banque 100, volume 61). Le
+déplacement haut/bas (`0x0205cedc` → `0x0205c580` → `0x0205bb94`, ou `0x02045750` quand
+`+0x19bc` est posé) ne joue aucun effet : aucun appelant de `Se_PlayBase` dans ce chemin.
 
 **Pas** : `Object3D::AdvanceAnimations` (`0x02034ea0`) joue l'effet dont l'indice figure dans
 une liste liée de l'animation (`animation + 0x20`), sur l'archive `objet + 0x7a`, quand
@@ -311,8 +324,9 @@ limiteur) : 5 (0,645 s, 0,327), 6 (0,609 s, 0,452), 10 (0,056 s, 0,183), 12 (0,0
   `0x020e8ec4` : on joue au maximum), unité des durées des fondus (prises en images de 1/60 s),
   flux STRM, effets de combat (`se_btl.sdat`, archive de base 101).
 - Sons du champ non branchés : portes, bulles `<EXC>`/`<QES>` (attente de 60 images), pas et
-  gestes (listes de sons des animations), curseur et validation d'un choix (introuvables parmi
-  les appelants de `Se_PlayBase`, à chercher dans les classes de menu `0x0205cxxx`).
+  gestes (listes de sons des animations). La validation d'un choix est branchée (effet 1) ;
+  le déplacement du curseur est silencieux d'après l'absence d'appelant de `Se_PlayBase` dans
+  son chemin, sans écoute pour le confirmer.
 - Portamento et balayage : durées prises sur la longueur de la note quand la durée est 0 ; la
   formule exacte du SDK en pas de pilote n'est pas vérifiée **[hypothèse]**.
 - Les 25 maps de fente 80 donnent `BG_100` ; la fente 25 (sans fichier, 2 cartes) donne le

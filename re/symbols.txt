@@ -149,9 +149,12 @@
 0x02042ba8 MsgWin_SetRect           # (x, y, w, h): window rectangle on the 256x192 screen, text origin y + 8
 0x02044f4c MsgWin_AppendShow        # <ADD> path of MsgWin_Show: Msg_Prepare without clearing the window
 0x0204501c MsgWin_Show              # MessageShow: resets the window (3 lines, rect (2, 0x74, 0xfc, 0x4a)), runs Msg_Prepare and the layout
+0x02045750 MsgWin_MoveChoiceCursor  # wait state 6 with +0x19bc set: Up/Down move +0x954 among +0x9a4 choices with wrap, no sound
 0x02065930 MsgWin_StepAutoPage      # wait state 4: counts down +0x195f then restarts the page
 0x020659a0 MsgWin_Update            # message interpreter: types glyphs, runs the 0xFFxx codes, wait states +0x9a0
-0x020676f0 MsgWin_UpdatePrompt      # wait state 6: reads the keys, stores the answer at +0x954
+0x020676f0 MsgWin_UpdatePrompt      # wait state 6: reads the keys, stores 0/1 (A) or -2 (B) at +0x954, dispatches the answer handler
+0x020678cc MsgWin_AnswerYesNo       # <YESNO>/<NOYES>/<YESNO_NOTSE>/<YESNO_NOTSE_IIE>: answer +0x954, branch marker 0xFF14/0xFF15, base effect 1 except 0xFF06 (both answers) and 0xFF07 (second only); B silent
+0x020679e4 MsgWin_AnswerAcceptDecline # <UKEYAME>: answer +0x954, branch marker 0xFF16/0xFF17, base effect 1 on A; B silent
 0x0206a3d0 Msg_ConsumeLeadingTags   # <N_TURN> <EXC> <QES> <WIN> <CEN> <GYOU=> <MOJI=> <COLOR=> <RECT=> <SKIP> at the start of a message
 0x0206ad84 MsgWin_ParseSpeakerName  # //Name// at the start of a page: name plate width = advance + 26 - (advance & 7), height 22
 0x0206b984 MsgWin_WrapLines         # line breaking: at the last space or after '-' when the next glyph passes the width

@@ -301,7 +301,8 @@ pub struct Plate {
     pub advance: i32,
 }
 
-/// A sound of the message window (`docs/re/sdat.md`: base archive effects 10 to 12, 6, 28, 5).
+/// A sound of the message window (`docs/re/sdat.md`: base archive effects 10 to 12, 6, 28, 5,
+/// 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sound {
     /// A typed character (`0x02045608`); the voice is the application's.
@@ -312,6 +313,27 @@ pub enum Sound {
     Question,
     /// A choice opens (`<YESNO>`, `<UKEYAME>`...).
     Choice,
+    /// An answer is chosen (`MsgWin_AnswerYesNo` `0x020678cc`, `MsgWin_AnswerAcceptDecline`
+    /// `0x020679e4`): base effect 1, except on the `NOTSE` prompts (see [`AnswerSound`]).
+    ChoiceConfirm,
+}
+
+/// Which answers of a prompt play [`Sound::ChoiceConfirm`], as the answer handlers decide
+/// from the prompt code: `<YESNO>`, `<NOYES>` and `<UKEYAME>` always,
+/// `<YESNO_NOTSE>` (0xFF06) never, `<YESNO_NOTSE_IIE>` (0xFF07) only for the first answer.
+/// Cancel (B) is silent whatever the code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnswerSound {
+    Both,
+    First,
+    None,
+}
+
+impl AnswerSound {
+    /// Whether the answer `choice` (0 first, 1 second) plays the confirmation effect.
+    fn plays(self, choice: u8) -> bool {
+        matches!((self, choice), (Self::Both, _) | (Self::First, 0))
+    }
 }
 
 /// Characters typed between two blips: the game blips when its counter passes 3 and takes 4
@@ -340,7 +362,11 @@ pub enum Op {
     Pause(u32),
     /// `<EXC>`, `<QES>`: a sound, no wait (`0x020659a0`).
     Sound(Sound),
-    Prompt(PromptKind),
+    /// A choice: its labels and which answers play the confirmation effect.
+    Prompt {
+        kind: PromptKind,
+        sound: AnswerSound,
+    },
     /// Branch marker `<YES>` (0xFF14), `<NO>`, `<UKE>`, `<YAME>`.
     Marker(u16),
     /// `<LB_x>`: target of the jumps to the same letter (`0xFFD0 + n`).
@@ -453,9 +479,26 @@ pub fn layout(tokens: &[Token], tags: LeadingTags, font: &Font, max_width: i32) 
                     0xFF2F => Some(Op::Sound(Sound::Question)),
                     0xFF1F => Some(Op::Wait { cursor: false }),
                     0xFF1A => Some(Op::Pause(n())),
-                    0xFF04 | 0xFF06 | 0xFF07 => Some(Op::Prompt(PromptKind::YesNo)),
-                    0xFF05 => Some(Op::Prompt(PromptKind::NoYes)),
-                    0xFF08 => Some(Op::Prompt(PromptKind::AcceptDecline)),
+                    0xFF04 => Some(Op::Prompt {
+                        kind: PromptKind::YesNo,
+                        sound: AnswerSound::Both,
+                    }),
+                    0xFF05 => Some(Op::Prompt {
+                        kind: PromptKind::NoYes,
+                        sound: AnswerSound::Both,
+                    }),
+                    0xFF06 => Some(Op::Prompt {
+                        kind: PromptKind::YesNo,
+                        sound: AnswerSound::None,
+                    }),
+                    0xFF07 => Some(Op::Prompt {
+                        kind: PromptKind::YesNo,
+                        sound: AnswerSound::First,
+                    }),
+                    0xFF08 => Some(Op::Prompt {
+                        kind: PromptKind::AcceptDecline,
+                        sound: AnswerSound::Both,
+                    }),
                     0xFF14..=0xFF17 => Some(Op::Marker(*code)),
                     0xFFD1..=0xFFDF => Some(Op::Label(*code)),
                     0xFFE1..=0xFFEF => Some(Op::Jump(*code - 0x10)),
@@ -518,6 +561,7 @@ enum State {
     Prompt {
         kind: PromptKind,
         cursor: u8,
+        sound: AnswerSound,
     },
     WaitEnd,
     Closed(EndKind),
@@ -614,7 +658,7 @@ impl Dialogue {
             lines: &self.lines,
             arrow: waiting,
             prompt: match self.state {
-                State::Prompt { kind, cursor } => Some(PromptView { kind, cursor }),
+                State::Prompt { kind, cursor, .. } => Some(PromptView { kind, cursor }),
                 _ => None,
             },
             tags: &self.script.tags,
@@ -675,11 +719,12 @@ impl Dialogue {
                     self.state = State::Pause(*n);
                     return;
                 }
-                Op::Prompt(kind) => {
+                Op::Prompt { kind, sound } => {
                     let cursor = u8::from(*kind == PromptKind::NoYes);
                     self.state = State::Prompt {
                         kind: *kind,
                         cursor,
+                        sound: *sound,
                     };
                     self.sounds.push(Sound::Choice);
                     return;
@@ -749,7 +794,11 @@ impl Dialogue {
                     State::Typing
                 };
             }
-            State::Prompt { kind, cursor } => {
+            State::Prompt {
+                kind,
+                cursor,
+                sound,
+            } => {
                 let moved = if input.up || input.down {
                     1 - cursor
                 } else {
@@ -758,13 +807,20 @@ impl Dialogue {
                 self.state = State::Prompt {
                     kind,
                     cursor: moved,
+                    sound,
                 };
+                // B selects the second answer without a sound (`0x020678cc` receives -2);
+                // A confirms the cursor and plays effect 1 unless the prompt's `NOTSE` code
+                // suppresses it.
                 let choice = if input.cancel {
-                    Some(1)
+                    Some((1, false))
                 } else {
-                    input.confirm.then_some(moved)
+                    input.confirm.then_some((moved, true))
                 };
-                if let Some(choice) = choice {
+                if let Some((choice, confirmed)) = choice {
+                    if confirmed && sound.plays(choice) {
+                        self.sounds.push(Sound::ChoiceConfirm);
+                    }
                     self.answer = Some(choice);
                     let marker = kind.markers()[usize::from(choice)];
                     let found = self.script.ops[self.at..]

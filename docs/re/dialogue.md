@@ -272,6 +272,10 @@ fait remonter les lignes d'un coup (pas de défilement lissé).
 | `0xFF26`/`0xFF27`, `0xFF28`/`0xFF29` | `+0x19b1` (cadre) et `+0x19b8` (centrage) |
 | `0xFF2A`…`0xFF2F`, `0xFF0E`, `0xFF10`–`0xFF13`, `0xFF34`–`0xFF48`, `0xFF4B`… | tours du PNJ, ballons, secousse, quêtes, sons : **non modélisés** |
 
+Sons du choix (détail et preuves dans [`sdat.md`](sdat.md)) : ouverture, effet 5 ; réponse,
+effet 1, sauf `<YESNO_NOTSE>` (`0xFF06`, aucune réponse) et `<YESNO_NOTSE_IIE>` (`0xFF07`,
+seconde réponse) ; B est silencieux. Le déplacement haut/bas ne joue aucun effet.
+
 **Les repères `<YES>`/`<NO>` sont des cibles de saut [hypothèse étayée]** : l'interpréteur
 les ignore en lecture linéaire, et les textes en alternent les branches (`<YESNO><YES>A<END>
 <NO>B<END>`, `<YESNO><NO>B<END><YES>A`). Après la réponse, `dq9-core` reprend la lecture
