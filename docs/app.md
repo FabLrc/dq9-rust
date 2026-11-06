@@ -60,9 +60,10 @@ cargo run -p dq9-app --release -- --map M01 --frame 10 `
 touches du pavé que la direction demande, caméra au yaw 0, puis `Field::step`, portes et
 demandes du champ) : `+x`, `-x`, `+z`, `-z` (deux axes font une diagonale : `+x-z`) ou
 `idle`, deux points et une durée ; `--start x,z` pose le héros au sol de ce point (aussi avec
-`--screenshot`, face à +z). Chaque changement de carte, chaque arrivée et chaque tronçon sont
-écrits sur la sortie standard. Une porte interne s'ouvre donc comme en jeu, par exemple la
-double porte de la bibliothèque de `X01M07` :
+`--screenshot`, face à +z). Les positions et tronçons sont écrits sur la sortie standard ;
+les chargements de carte et ouvertures de porte sur la sortie d'erreur. Si la carte ne se
+charge pas, la commande échoue au lieu de réussir avec « no map ». Une porte interne
+s'ouvre comme en jeu, par exemple la double porte de la bibliothèque de `X01M07` :
 
 ```powershell
 cargo run -p dq9-app --release -- --map X01M07 --start -8.6,-6 --walk=-z:2 --mute

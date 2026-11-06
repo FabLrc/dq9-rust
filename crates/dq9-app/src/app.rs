@@ -1069,9 +1069,9 @@ impl App {
         let code = self
             .current
             .as_ref()
-            .map(|(entry, _)| entry.code.clone())
+            .map(|(entry, _)| entry.code.as_str())
             .unwrap_or_default();
-        let hero = crate::walk::start_hero(&self.collision, &code, (x, z))?;
+        let hero = crate::walk::start_hero(&self.collision, code, (x, z))?;
         self.hero = Some(hero);
         if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance) {
             let world = runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()));
@@ -1084,10 +1084,10 @@ impl App {
 
     /// The loaded map, its code and the hero's pose, for the `--walk` logs.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn walk_pose(&self) -> Option<(u16, String, Vec3, f32)> {
+    pub fn walk_pose(&self) -> Option<(u16, &str, Vec3, f32)> {
         let (entry, _) = self.current.as_ref()?;
         let hero = self.hero?;
-        Some((entry.id, entry.code.clone(), hero.position(), hero.yaw()))
+        Some((entry.id, entry.code.as_str(), hero.position(), hero.yaw()))
     }
 
     /// One fixed step of a recorded input trace (`--trace-inputs`, replayed): the pad keys and

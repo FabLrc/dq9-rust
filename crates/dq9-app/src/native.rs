@@ -341,6 +341,7 @@ pub fn main() -> Result<()> {
             new_game: false,
         };
         let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
+        app.walk_pose().context("cannot walk: no map loaded")?;
         if let Some((x, z)) = cli.start {
             app.place_hero(x, z)?;
         }
