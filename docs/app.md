@@ -324,6 +324,10 @@ Un ordinateur avec clavier et un navigateur récent WebGPU ou WebGL 2 sont recom
 Les limites de la preuve technique restent applicables : combats sautés, effets incomplets
 et écran inférieur provisoire.
 
+Les sélecteurs restent désactivés pendant le téléchargement et l'initialisation du moteur ;
+attendre qu'ils deviennent disponibles avant de choisir les fichiers. Si le chargement
+échoue, la page affiche une erreur au lieu d'accepter un fichier qu'elle ne pourrait pas lire.
+
 Le workflow `.github/workflows/pages.yml` compile la version wasm optimisée à chaque push
 sur `main` (ou lancement manuel), installe la version de `wasm-bindgen-cli` de `Cargo.lock`
 et déploie uniquement `index.html` et les bindings JavaScript/WebAssembly dans GitHub Pages.

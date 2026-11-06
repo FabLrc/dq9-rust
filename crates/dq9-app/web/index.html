@@ -30,24 +30,33 @@
         provisoire. Navigateur récent avec WebGPU ou WebGL 2 requis ; ordinateur et clavier
         recommandés. Aucune ROM n'est fournie.</p>
     </details>
-    <label>ROM (.nds) : <input type="file" id="rom" accept=".nds"></label>
-    <label>Sauvegarde (.sav, facultative) : <input type="file" id="save" accept=".sav"></label>
-    <label>Moment : <select id="time">
+    <label>ROM (.nds) : <input type="file" id="rom" accept=".nds" disabled></label>
+    <label>Sauvegarde (.sav, facultative) : <input type="file" id="save" accept=".sav" disabled></label>
+    <label>Moment : <select id="time" disabled>
       <option value="0">nuit</option><option value="1">matin</option>
       <option value="2">jour</option><option value="3">soir</option>
     </select></label>
-    <label>Écrans : <select id="layout">
+    <label>Écrans : <select id="layout" disabled>
       <option value="stacked">superposés</option><option value="side">côte à côte</option>
       <option value="top">haut seul</option>
     </select></label>
-    <button id="newgame" type="button">Nouvelle partie</button>
-    <span id="status">chargement…</span>
+    <button id="newgame" type="button" disabled>Nouvelle partie</button>
+    <span id="status" role="status">chargement du moteur…</span>
   </header>
   <main><canvas id="dq9" tabindex="0"></canvas></main>
   <script type="module">
     // Built by `wasm-bindgen --target web --out-dir crates/dq9-app/web/pkg` (docs/app.md).
-    import init from "./pkg/dq9-app.js";
-    init();
+    try {
+      const { default: init } = await import("./pkg/dq9-app.js");
+      await init();
+      for (const control of document.querySelectorAll("header input, header select, header button")) {
+        control.disabled = false;
+      }
+    } catch (error) {
+      document.querySelector("#status").textContent =
+        "Impossible de charger le moteur. Vérifiez votre connexion et rechargez la page.";
+      console.error(error);
+    }
   </script>
 </body>
 </html>
