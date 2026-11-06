@@ -285,7 +285,7 @@ synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
 | 0x6d | retire l'objet de carte | 179 |
 | 0x6e | moment de la journée (`+0x3dc`) = `arg` (< 4) | 47 |
 | 0x6f–0x71, 0x98, 0x9a, 0xa3, ≥ 0xea | aucun cas : **arrête** la liste | — |
-| 0x72 / 0x74 † | donne l'objet `arg` (1 / `haut` exemplaires, avec message) | 378 / 4 |
+| 0x72 / 0x74 † | donne l'objet `arg` (1 / `haut` exemplaires, avec message) et pose son drapeau `0xc76 + compendium` au premier exemplaire (`func_0207cc18`, [`item.md`](item.md)) | 378 / 4 |
 | 0x73 / 0x75 † | retire l'objet `arg` (1 / `haut`), sac d'abord puis équipement | 163 / 26 |
 | 0x76 † | conversation avec le PNJ `arg`, contexte `haut` | 3 378 |
 | 0x77, 0x80 † | lance l'événement `arg` : les 524 valeurs de 0x77 sont des `data/event/evNNNNN.gp2`, `data/evspt_lv5/evNNNNN.gp2` ou des entrées de `eventlist6.bin` / `evl_quest.bin` (`stb.md`) | 622 / 0 |
@@ -348,8 +348,9 @@ appliqués à l'état, le reste est rendu sous forme de demandes (`Request::Talk
 
 ## Drapeaux globaux posés à l'ouverture
 
-Deux mécanismes distincts écrivent des drapeaux globaux (`g_QuestManager+0x8c`) pendant le
-prologue ; ils ne passent ni par les triggers ni par les natives des scripts.
+Plusieurs mécanismes distincts écrivent des drapeaux globaux (`g_QuestManager+0x8c`) pendant
+le prologue : la scène, la carte visitée, l'acquisition d'un objet et la touche tenue, ainsi
+que deux actions de trigger (objet donné et hôte de session).
 
 ### Drapeau de scène (`EventTask_Update`, `ov_017::021bc77c`)
 
@@ -402,34 +403,75 @@ gestionnaire de quêtes :
   (`2729`). La branche `0x02012f24` des cartes hors `99..=9999` et `20000..=29999` reste
   **[inconnue]**.
 - Contrôlé : **2774** = 2710 + 64 est déjà posé en `pro1`, ce qui correspond au groupe de
-  cartes 6400 (`S14`, Starflight Express) ; [hypothèse] une carte `S14` est chargée avant le
-  prologue (scène d'ouverture), ce que le runtime ne rejoue pas.
+  cartes 6400 (`S14`, Starflight Express). Le harnais libretro donne le chaînon : après la
+  création du personnage, l'image 3762 a pour carte **6405** (`S14M05`, « For Events ») et
+  area 6401, l'image 3764 porte 2774, et l'image 3864 est sur `M01M12` (1112). La carte du
+  train est donc bien chargée avant le prologue ; la scène qui s'y joue n'est pas modélisée.
 - **Réimplémentation** (`dq9-core`) : `state::map_visit_flag` reproduit la branche
   `99 < id <= 9999` et rend `None` pour les autres (non établies). Branchement : à l'entrée
-  de carte, avant les triggers (`dq9-app::change_map`), pas dans `GameState::new_game`.
+  de carte, avant les triggers (`dq9-app::change_map`), pas dans `GameState::new_game` ;
+  `dq9-app::start_new_game` charge `S14M05` (6405) avant de lancer la première scène, comme
+  la course originale.
+
+### Drapeau d'objet obtenu (`func_0207cc18`, `0x0207cc28`)
+
+**Trouvé** en décompilant `func_0207cc18`, appelée par `Items_Give`, l'ajout au sac
+(`func_0207cf30`) et l'équipement (`func_0207ccf0`) : au **premier** exemplaire d'un objet,
+le jeu lit l'**indice de compendium** de son enregistrement
+(`(record[0xc] & 0x7fffff) >> 0xc`, table `data/prm/itemdt_<catégorie>.gp2`) et pose
+`Flags_Set(g_QuestManager, +0x8c, 0xc76 + indice, 1)`. Indice 0 : aucun drapeau.
+Détail du format et table des objets : [`item.md`](item.md).
+
+- **Équipement initial** : les quatre drapeaux posés ensemble à l'image 3740 de la course
+  originale sont l'épée de cuivre (20004 → indice 1 → **3191**), le costume céleste (13007 →
+  585 → **3775**), les bas célestes (16215 → 765 → **3955**) et les souliers célestes (17120 →
+  856 → **4046**). L'épée vient de la table de création `ov_009` `0x0218636c` ; les trois
+  pièces de tenue, de `HeroLook::new_game`.
+- **Butin d'événement** : le trigger `triggerX01.bin`, room 4105, événement 11 de `21596`
+  (`0x68(set_track_flag) 0x64(set_flag 337) 0x72(give_item 22159) 0x6b(0)`) donne la
+  benevolessence (22159 → 1093 → **4283**), observée à l'image 21142 ; le même trigger pose
+  337 et, par `0x6b`, **4410** (ci-dessous).
+- **Réimplémentation** : `dq9-formats::item::ItemTable` lit les neuf tables ; `dq9-app` la
+  remplit depuis la ROM ; `dq9-core::trigger::State::obtain` applique `0xc76 + compendium` au
+  premier exemplaire (actions `0x72`/`0x74`, `0x9c`/`0x9d`), et `start_new_game` donne
+  l'équipement de départ par la même règle. Aucune constante de drapeau n'est copiée : la
+  table d'objets fournit l'indice.
+
+### Drapeau de touche tenue (`KeyManager::RefreshKeys`, `0x020122ac`)
+
+**Trouvé** dans `KeyManager::RefreshKeys` (décompilation USA `src/Input/Input.cpp`, adresse EU
+`0x020122ac`) : à chaque image, si l'entrée est active, l'écran ouvert et la luminosité
+suffisante, il lit les douze boutons ; si `currentKeys != 0`, il pose
+`Flags_Set(g_QuestManager, +0x8c, 0x113e, 1)` — le drapeau **4414**. La course originale le
+montre à l'image 1501, une image après le premier appui.
+
+**Réimplémentation** : `dq9-app::run_steps` pose `state::KEY_REFRESH_FLAG` (0x113e) dès qu'une
+touche est tenue (d-pad, touche d'action, pilotage `--auto` ou rejeu). Les conditions
+d'écran/luminosité n'ont pas d'équivalent et passent toujours.
+
+### Action `0x6b` : hôte de session (`Trig_RunAction`, cas 7)
+
+**Trouvé** dans `Trig_RunAction` (`0x02061c14`, cas 7 = code `0x6b`) : si le prédicat de
+session (`func_0202c508`, `0x0202c518`) est vrai, `Flags_Set(g_QuestManager, +0x8c,
+*(u32*)0x02063008)` ; le mot lu en RAM vaut **0x113a**. En solo le runtime est hôte : le
+prédicat est considéré vrai. Le trigger de fin de `21596` l'exécute avec l'argument 0, ce qui
+donne **4410** à l'image 21137, en même temps que 337 et 1461.
 
 ### Reste inconnu
 
 **Mesure après branchement** (`--new-game --headless --auto`, comparateur strict sur
-`bat6.ml1`) : le runtime pose 337, **1450 à 1454**, **1461**, **2721** et **2751**. Écart
-restant : **2774** et **3191, 3775, 3955, 4046, 4212, 4283, 4410, 4414**.
+`bat6.ml1` et sur l'image RAM `f000090.bin` du premier contrôle) : le runtime pose les
+**17** drapeaux `337, 1450–1454, 1461, 2721, 2751, 2774, 3191, 3775, 3955, 4046, 4283, 4410,
+4414` ; carte, piste, progression et `step_flags {1}` identiques. Écart : **4135** seul face à
+`f000090.bin` (course féminine), **4212** seul face à `bat6` — jamais les deux.
 
-- **2774** est expliqué par la règle de carte visitée (`2710 + 64`, groupe `S14`) : la carte
-  du train n'est pas chargée avant le prologue par le runtime, qui ne rejoue pas cette
-  scène. Ce n'est pas un écrivain inconnu mais un chaînon de parcours manquant.
-- Les huit autres n'ont **aucun écrivain trouvé** : ni dans les 41 appelants de `Flags_Set`
-  décompilés, ni dans les 76 `trigger*.bin`, ni dans les `.bmbl`/`.bmdj`/`.npc`/`place.bin`
-  (tous les `*.npc` du dépôt parcourus), ni dans les tables `eventlist*.bin`/`evl_quest.bin`.
-  Contrôles négatifs supplémentaires : aucun bloc de 0x234 octets prérempli avec les
-  drapeaux de `pro1`/`bat6` dans l'ARM9 ni les overlays (pas de modèle recopié) ; les bases
-  d'objets/placement 0x212/0x33e/0x79e/0x776 ne donnent ces valeurs pour aucun
-  enregistrement de `place.bin` (les correspondances trouvées sont des identifiants de PNJ) ;
-  la base « objet obtenu » 0xc76 ne donne que 3192–3194 pour l'équipement de départ ; aucun
-  enregistrement de scène ne porte l'indice négatif ou la grande valeur qu'il faudrait.
-  Ne pas coder ces constantes : leur provenance n'est pas établie. Piste suivante :
-  instrumentation de melonDS (GPL, outil seulement) pour journaliser l'appelant et l'indice
-  de `Flags_Set` entre le boot et `pro1` ; le stub GDB de melonDS 1.1 coupe la connexion,
-  aucune trace PC n'existe encore.
+- **4135** (objet 22000, herbe médicinale) et **4212** (objet 22087, slimedrop) sont du
+  **butin de combat aléatoire** : trois courses réelles aux entrées identiques sauf le sexe
+  donnent l'herbe, ou aucun des deux ; `bat6` donne le slimedrop. Le runtime substitue le
+  combat 26 et ne tire pas de butin (`melonds-state.md`, § « Oracle différentiel ») : aucun
+  drapeau n'est forcé pour le faire coïncider.
+- La provenance des autres drapeaux est établie ci-dessus (équipement, carte, touche,
+  trigger) ; il n'y a plus de constante copiée d'un checkpoint.
 
 ## Combats scriptés (action `0x78`)
 

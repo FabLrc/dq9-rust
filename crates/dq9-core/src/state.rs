@@ -192,6 +192,38 @@ pub fn map_visit_flag(map: u16) -> Option<u16> {
     (99 < map && map <= 9999).then(|| MAP_VISIT_FLAG_BASE + map / 100)
 }
 
+/// Base of the "item obtained" flags (`func_0207cc18`, `0x0207cc28`, called by `Items_Give`
+/// and the equip paths): when the first copy of an item enters the party, the game sets
+/// `0xc76 + compendium index` in `g_QuestManager+0x8c`. The index is a field of the item's
+/// record (`itemdt_<category>.gp2`, bits 12..22 of `+0xc`, [`dq9_formats::item::ItemTable`]);
+/// index 0 has no compendium entry and sets no flag.
+const ITEM_OBTAINED_FLAG_BASE: u16 = 0xc76;
+
+/// Flag of the item whose compendium index is `compendium` (`func_0207cc18`): `None` for
+/// index 0, which the original skips.
+pub fn item_obtained_flag(compendium: u16) -> Option<u16> {
+    (compendium != 0)
+        .then(|| ITEM_OBTAINED_FLAG_BASE.checked_add(compendium))
+        .flatten()
+}
+
+/// Flag action `0x6b` sets when the session predicate holds (`Trig_RunAction` case 7,
+/// `0x02061c14`: `Flags_Set(manager, manager+0x8c, *(u32*)0x02063008)`, and that word is
+/// `0x113a`). The runtime has no wireless session: it is the host of a solo game.
+pub const SESSION_HOST_FLAG: u16 = 0x113a;
+
+/// Flag `KeyManager::RefreshKeys` sets on the first frame a button is held
+/// (`0x020122ac`): `Flags_Set(flag manager, +0x8c, 0x113e, 1)` when `currentKeys != 0`. The
+/// runtime has no brightness/lid gate, which would always pass here.
+pub const KEY_REFRESH_FLAG: u16 = 0x113e;
+
+/// First weapon of a new game: the **copper sword**, item 20004. Character creation writes
+/// it with the opening outfit from the table at `ov_009` `0x0218636c` (overlay file offset
+/// `0x20cc`, u32 ids 20004, 20500, 20403, 20600, 20100; the u16 list at `0x0218ab78` repeats
+/// 20004 with the outfit items). The item's compendium index is 1 (`itemdt_w`), which is the
+/// `3191` flag of the original states.
+pub const NEW_GAME_WEAPON: u16 = 20004;
+
 /// Where the party is put when the map is entered (`ov_017::0219c598`, no explicit position).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Placement {
@@ -436,5 +468,17 @@ mod tests {
         assert_eq!(map_visit_flag(99), None);
         assert_eq!(map_visit_flag(10000), None);
         assert_eq!(map_visit_flag(20101), None);
+    }
+
+    #[test]
+    fn item_flags_follow_the_compendium_index() {
+        // Compendium indexes of the original's first-control flags (`itemdt_*`, 2026-11-06).
+        assert_eq!(item_obtained_flag(1), Some(3191));
+        assert_eq!(item_obtained_flag(585), Some(3775));
+        assert_eq!(item_obtained_flag(1093), Some(4283));
+        assert_eq!(item_obtained_flag(945), Some(4135));
+        // Index 0 has no compendium entry: `func_0207cc18` skips it.
+        assert_eq!(item_obtained_flag(0), None);
+        assert_eq!(item_obtained_flag(u16::MAX), None);
     }
 }

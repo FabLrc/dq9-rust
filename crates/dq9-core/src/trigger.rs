@@ -211,6 +211,10 @@ pub struct State {
     pub session: Session,
     pub event: [u32; 12],
     pub items: BTreeMap<i32, i32>,
+    /// Item id → compendium index, read from the ROM's item tables by the application
+    /// ([`dq9_formats::item::ItemTable`]). The "item obtained" flag of
+    /// [`State::obtain`] needs it; empty when no table was loaded.
+    pub compendium: dq9_formats::item::ItemTable,
     pub gold: u32,
     pub party: Vec<Member>,
     pub characters: BTreeMap<usize, Member>,
@@ -775,9 +779,23 @@ impl State {
         true
     }
 
-    fn give(&mut self, item: i32, count: i32) {
-        if count > 0 {
-            *self.items.entry(item).or_default() += count;
+    /// Adds `count` copies of `item` and, on the first acquisition, sets its "item obtained"
+    /// flag (`func_0207cc18`, `0x0207cc28`): `0xc76 + compendium index`, index 0 skipped.
+    /// Equipped copies are modelled as one count, as condition 0x12/0x30 read them.
+    pub fn obtain(&mut self, item: i32, count: i32) {
+        if count <= 0 {
+            return;
+        }
+        *self.items.entry(item).or_default() += count;
+        let Ok(id) = u16::try_from(item) else {
+            return;
+        };
+        if let Some(flag) = self
+            .compendium
+            .compendium(id)
+            .and_then(crate::state::item_obtained_flag)
+        {
+            self.flags.insert(i32::from(flag));
         }
     }
 
@@ -802,6 +820,15 @@ pub fn run_action<'a>(op: &Op<'a>, state: &mut State) -> Flow<'a> {
         0x66..=0x69 => {
             let flags = &mut state.tracks[track].flags[usize::from(op.code >= 0x68)];
             set(flags, arg, op.code.is_multiple_of(2));
+        }
+        // 0x6b: the host of a session raises the session flag (`Trig_RunAction` case 7:
+        // `Flags_Set(manager, manager+0x8c, *(u32*)0x02063008)`, that word being `0x113a`,
+        // when the session predicate holds). The runtime has no wireless session: it is the
+        // host of a solo game, so the predicate holds.
+        0x6b => {
+            state
+                .flags
+                .insert(i32::from(crate::state::SESSION_HOST_FLAG));
         }
         0x6e => {
             if op.arg < 4 {
@@ -1043,9 +1070,9 @@ pub fn run_deferred(deferred: &[Op], state: &mut State) -> Vec<Request> {
     for op in deferred {
         let arg = i32::from(op.arg);
         match op.code {
-            0x72 => state.give(arg, 1),
+            0x72 => state.obtain(arg, 1),
             0x73 => state.take(arg, 1),
-            0x74 => state.give(arg, i32::from(high(op, 0) as i8)),
+            0x74 => state.obtain(arg, i32::from(high(op, 0) as i8)),
             0x75 => state.take(arg, i32::from(high(op, 0))),
             0x76 => requests.push(Request::Talk {
                 npc: op.arg,
@@ -1071,9 +1098,9 @@ pub fn run_deferred(deferred: &[Op], state: &mut State) -> Vec<Request> {
             }
             0x9c => {
                 state.take(i32::from(high(op, 0) as i16), 1);
-                state.give(i32::from(low(op, 0) as i16), 1);
+                state.obtain(i32::from(low(op, 0) as i16), 1);
             }
-            0x9d => state.give(i32::from(low(op, 0) as i16), 1),
+            0x9d => state.obtain(i32::from(low(op, 0) as i16), 1),
             code => requests.push(Request::Other(code)),
         }
     }
@@ -1220,6 +1247,50 @@ mod tests {
         let triggers = parse(&table).unwrap();
         assert_eq!(first_match(&triggers, 0, &w(0, 4)), Ok(None));
         assert_eq!(first_match(&triggers, 0, &w(0, 5)), Err(Unsupported(0x45)));
+    }
+
+    /// 0x72 raises the item's compendium flag (`func_0207cc18`) and 0x6b the session flag.
+    #[test]
+    fn item_and_session_actions_set_their_flags() {
+        // One category member with item 22159 (benevolessence) → compendium 1093.
+        let mut member = vec![0u8; 12 + 32];
+        member[..2].copy_from_slice(&1u16.to_le_bytes());
+        member[12 + 0x18..12 + 0x1a].copy_from_slice(&22159u16.to_le_bytes());
+        let compendium_word = 1093u32 << 12;
+        member[12 + 0xc..12 + 0x10].copy_from_slice(&compendium_word.to_le_bytes());
+        let table = dq9_formats::item::ItemTable::from_members(&[&member]).unwrap();
+
+        let data = one(&[word(0x6b, 0), word(0x72, 22159)]);
+        let triggers = parse(&Table::parse(&data).unwrap()).unwrap();
+        let mut s = w(0, 3);
+        s.compendium = table;
+        let fired = fire(&triggers, 0, &mut s).unwrap().unwrap();
+        assert!(
+            s.flags
+                .contains(&i32::from(crate::state::SESSION_HOST_FLAG))
+        );
+        assert!(!s.flags.contains(&4283), "the give is deferred");
+        assert_eq!(run_deferred(&fired.deferred, &mut s), []);
+        assert_eq!(s.items.get(&22159), Some(&1));
+        assert!(s.flags.contains(&4283), "0xc76 + compendium 1093");
+        // An item absent from the table is still held, without a flag.
+        let data = one(&[word(0x72, 22158)]);
+        let triggers = parse(&Table::parse(&data).unwrap()).unwrap();
+        let fired = fire(&triggers, 0, &mut s).unwrap().unwrap();
+        assert_eq!(run_deferred(&fired.deferred, &mut s), []);
+        assert_eq!(s.items.get(&22158), Some(&1));
+        assert!(!s.flags.contains(&4282));
+    }
+
+    /// 0x6b is not 0x6c: it must not mark a doorway or stop the list.
+    #[test]
+    fn session_action_does_not_stop_the_list() {
+        let data = one(&[word(0x6b, 0), word(0x64, 9)]);
+        let triggers = parse(&Table::parse(&data).unwrap()).unwrap();
+        let mut s = w(0, 3);
+        let fired = fire(&triggers, 0, &mut s).unwrap().unwrap();
+        assert!(fired.completed);
+        assert!(s.flags.contains(&9));
     }
 
     /// 0x32: node 1 (arg, op0, op1 high) remembers the members it accepts in a mask that

@@ -227,6 +227,7 @@ Il affiche l'adresse et le nom européens, l'adresse USA, le chemin source et un
 | `docs/re/gpc2.md`, `table.md` | archives et compression Level-5, tables d'enregistrements |
 | `docs/re/text.md`, `font.md` | textes, balises, pipeline des messages, polices |
 | `docs/re/dialogue.md`, `trigger.md`, `stb.md` | répliques et fenêtre de message, triggers de scénario, scripts d'événements et leur exécution |
+| [`docs/re/item.md`](docs/re/item.md) | objets : tables `itemdt_*`, indices de compendium, drapeaux « objet obtenu » |
 | `docs/re/stb-natives.md` | inventaire des 228 natives employées : arguments, effets établis, adresses et inconnus |
 | `docs/re/maplist.md`, `map-archive.md`, `g3d.md` | liste des cartes, assemblage des cartes, portes et zones, modèles et animations G3D |
 | `docs/re/characters.md` | PNJ, distribution par étape, sprites, modèles, héros |

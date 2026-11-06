@@ -405,6 +405,12 @@ de la nouvelle partie, les scènes 21500–21596 et la victoire du combat 26 (su
 runtime). Signalé aux workers flags et parcours avec l'état et le comparateur ; accepté comme
 ground truth, non corrigé ici.
 
+**Depuis (6 novembre 2026), les causes sont branchées** : équipement initial (item
+`0xc76 + compendium`), chargement de `S14M05` avant le prologue, `0x72(22159)`/`0x6b` du
+trigger de fin de `21596`, touche tenue. Le runtime pose 17 drapeaux ; seul le butin aléatoire
+du combat 26 (`4135` herbe médicinale, ou `4212` slimedrop selon la course) reste absent
+([`trigger.md`](trigger.md), [`item.md`](item.md)).
+
 Pendant l'ouverture (`M01M12`, 1.1.1) les mêmes 7 drapeaux de base sont déjà posés au premier
 état (vblank 5217) et `1450`, puis `1451`, apparaissent pendant la scène : ce sont des
 candidats « initialisation/scripts », pas des drapeaux de piste.
@@ -508,8 +514,11 @@ points ne sont pas le même instant.
   donc le critère J2 « même nombre d'images » devient atteignable en traduisant une trace
   `dq9-app --trace-inputs` en JSONL d'entrées. melonDS 1.1 autonome, lui, n'avance que ~0,5
   image par pression sous messages postés (`pause`/`frame:N`).
-- Établir la provenance de `4212` (posé tôt dans la course autonome, absent des courses du
-  cœur) et de `4135` (course avec un héros féminin) : causes et conditions, pas une liste
-  recopiée des checkpoints.
+- `4212` et `4135` : **provenance établie** (6 novembre 2026). Ce sont des drapeaux d'objet
+  obtenu (`func_0207cc18`, `0xc76 + indice de compendium`) : l'herbe médicinale 22000
+  (indice 945 → 4135) dans la course féminine, le slimedrop 22087 (indice 1022 → 4212) dans
+  `bat6`. Le butin du combat 26 est **aléatoire** : trois courses aux entrées identiques sauf
+  le sexe donnent l'herbe ou aucun des deux. Le runtime substitue le combat et ne tire pas de
+  butin ([`item.md`](item.md), [`trigger.md`](trigger.md)).
 - L'état contient aussi l'ARM7 et le son (`SPU.`) : hors périmètre tant que l'audio n'est pas
   porté.
