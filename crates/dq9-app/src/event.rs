@@ -244,6 +244,16 @@ struct Bindings {
     tinted: HashMap<Target, Option<TexelOp>>,
 }
 
+/// The character a native 552 camera drags: its last position and facing (game angle,
+/// radians, 0 faces +z), and the updates since the last turn.
+#[derive(Debug, Clone, Copy)]
+struct ThreeBoneDrag {
+    target: Target,
+    position: Vec3,
+    facing: f32,
+    updates: u32,
+}
+
 /// The event task and what it did to the scene.
 #[derive(Debug)]
 pub struct EventPlayer {
@@ -262,6 +272,8 @@ pub struct EventPlayer {
     started: Vec<u16>,
     /// The event whose scene [`EventPlayer::prepare`] built and that has not started yet.
     prepared: Option<u16>,
+    /// The character a native 552 camera drags to its source's `foot` bone.
+    three_bone: Option<ThreeBoneDrag>,
     /// The scene lighting the renderer's environment was last built from.
     applied_light: SceneLight,
 }
@@ -288,6 +300,13 @@ fn world_of(pose: &Pose, visible: bool) -> Mat4 {
         * Mat4::from_scale(pose.scale)
 }
 
+/// Wraps an angle to (−π, π], as the game's 16-bit angle does after the halfway turn.
+fn wrap_angle(angle: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let angle = angle.rem_euclid(TAU);
+    if angle > PI { angle - TAU } else { angle }
+}
+
 impl EventPlayer {
     pub fn new() -> Self {
         Self {
@@ -302,6 +321,7 @@ impl EventPlayer {
             running: None,
             started: Vec::new(),
             prepared: None,
+            three_bone: None,
             applied_light: SceneLight::default(),
         }
     }
@@ -375,6 +395,13 @@ impl EventPlayer {
         std::mem::take(&mut self.dirty)
     }
 
+    /// The doors the scripts opened, with the angle both the render and the collision must
+    /// apply (a rotation added to the placement's home transform, 0 to +π/2).
+    #[allow(dead_code)] // the collision side (field worker) reads the same state
+    pub fn doors(&self) -> &[dq9_core::cutscene::Door] {
+        self.cutscene.doors()
+    }
+
     /// What the events asked that is not executed (`--events-report`).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn coverage(&self) -> &Coverage {
@@ -410,6 +437,7 @@ impl EventPlayer {
         self.bindings.played.clear();
         self.restore_npcs(stage);
         self.cutscene.restart();
+        self.three_bone = None;
         self.prepared = Some(event);
         let scanned = scan(rom, event, stage.world);
         if let Some(reason) = &scanned.failure {
@@ -609,6 +637,14 @@ impl EventPlayer {
         for signal in signals {
             self.director.signal(signal);
         }
+        // Natives 409/411/413 (02066d00, 0206b6c8, 02045608): the caption's alpha envelope
+        // and its layout flags, until the next 400 resets them.
+        let caption = self.cutscene.caption();
+        stage
+            .talk
+            .set_event_caption_alpha(self.cutscene.caption_alpha());
+        stage.talk.set_event_centered(caption.centered);
+        stage.talk.set_event_silent(caption.silent);
         if stage.talk.take_closed() {
             self.director.signal(Signal::MessageClosed);
         }
@@ -661,6 +697,12 @@ impl EventPlayer {
                 outcomes.push(Outcome::Ended(*event));
             }
             Event::Sound(sound) => outcomes.push(Outcome::Sound(sound.clone())),
+            Event::OpenDoor { sound: true, .. } => {
+                // `02018310` plays `g_DoorSeTable[record+0x2e & 0xf]` (200 to 204) on the base
+                // archive; the record's low quartet and the base effect index are not read
+                // here, so the sound is reported rather than guessed.
+                self.coverage.miss("door sound");
+            }
             _ => {}
         }
         for output in self.cutscene.apply(&event) {
@@ -685,6 +727,7 @@ impl EventPlayer {
     /// The last event ended: the field takes the scene back.
     fn finish(&mut self, stage: &mut Stage) {
         self.running = None;
+        self.three_bone = None;
         self.cutscene.clear_fades();
         stage.talk.set_fade(None);
         stage.talk.close_event();
@@ -934,12 +977,87 @@ impl EventPlayer {
         {
             (eye, target) = (e, t);
         }
+        let mut foot = None;
+        if let Some(bones) = &view.three_bone
+            && let Some((e, t, f)) = self.three_bone_camera(stage.scene, bones)
+        {
+            (eye, target, foot) = (e, t, Some(f));
+        }
         if (target - eye).length() > 1e-3 {
             stage.camera.look_at(eye, target);
         }
         stage.camera.fovy = (2.0 * view.half_fov).to_radians();
         stage.camera.far = stage.camera.far.max(stage.camera.distance * 4.0);
         stage.camera.roll = view.roll.to_radians();
+        self.drag_three_bone(stage, view.three_bone.as_ref(), foot);
+    }
+
+    /// Eye, target and the point the `foot` bone gives, for a camera installed by native 552.
+    fn three_bone_camera(
+        &self,
+        scene: &AnimatedScene,
+        bones: &dq9_core::cutscene::ThreeBoneCamera,
+    ) -> Option<(Vec3, Vec3, Vec3)> {
+        let target = self.cutscene.target_of_character(bones.source);
+        let node = self.cutscene.node(target)?;
+        let actor = *self.bindings.actors.get(&(target, node.model.clone()?))?;
+        // The camera rig usually has no polygon, hence no instance: its world is its pose.
+        let world = world_of(&node.pose, true);
+        let at = |name: &str| -> Option<Vec3> {
+            let bone = scene.actor_bone(actor, name).ok()??;
+            Some(world.transform_point3(bone.w_axis.truncate()))
+        };
+        Some((at(&bones.eye)?, at(&bones.lookat)?, at(&bones.foot)?))
+    }
+
+    /// Native 552's per-update side effect: the `target` character stands on the source's
+    /// `foot` bone, and every third update its facing moves halfway to the direction it moved
+    /// (`0204a170`: `(rot + atan2(dx, dz) + 1) >> 1`). One game update is two ticks.
+    fn drag_three_bone(
+        &mut self,
+        stage: &mut Stage,
+        bones: Option<&dq9_core::cutscene::ThreeBoneCamera>,
+        foot: Option<Vec3>,
+    ) {
+        let Some(bones) = bones else {
+            self.three_bone = None;
+            return;
+        };
+        if !self.ticks.is_multiple_of(2) {
+            return;
+        }
+        let Some(foot) = foot else { return };
+        let target = self.cutscene.target_of_character(bones.target);
+        let current = self.three_bone.filter(|drag| drag.target == target);
+        let mut facing = current.map_or_else(
+            || {
+                self.cutscene
+                    .node(target)
+                    .map_or(0.0, |node| node.pose.rotation.y)
+            },
+            |drag| drag.facing,
+        );
+        let mut updates = current.map_or(0, |drag| drag.updates) + 1;
+        if let Some(previous) = current {
+            let (dx, dz) = (foot.x - previous.position.x, foot.z - previous.position.z);
+            if updates >= 3 {
+                if dx.hypot(dz) > 1e-5 {
+                    let heading = dx.atan2(dz);
+                    facing = wrap_angle((facing + heading) * 0.5);
+                }
+                updates = 0;
+            }
+        }
+        self.cutscene.place_target(target, foot, facing);
+        if target == Target::Hero {
+            *stage.hero = Hero::at(foot, yaw_of_angle(facing));
+        }
+        self.three_bone = Some(ThreeBoneDrag {
+            target,
+            position: foot,
+            facing,
+            updates,
+        });
     }
 
     /// Eye and target of a camera driven by two bones of the model bound to a slot.
@@ -1074,8 +1192,15 @@ impl EventPlayer {
     }
 
     /// Natives 574 and 575: the placements of the map the scripts hide, show or move. The game
-    /// keeps these changes until the zone is loaded again.
+    /// keeps these changes until the zone is loaded again. Native 584 turns a door placement
+    /// around its own origin while its animation runs.
     fn apply_placements(&mut self, stage: &mut Stage) {
+        let doors: Vec<(i32, i32, f32)> = self
+            .cutscene
+            .doors()
+            .iter()
+            .map(|door| (door.block, door.placement, door.angle))
+            .collect();
         for change in self.cutscene.take_placement_changes() {
             let (group, id) = match change {
                 PlacementChange::Hidden { group, id, .. }
@@ -1124,6 +1249,33 @@ impl EventPlayer {
                         state.position = Some(Vec3::from_array(position));
                     }
                 }
+                let world = state.world();
+                self.set_world(stage.scene, instance, world);
+            }
+        }
+        for (block, placement, angle) in doors {
+            let instances: Vec<usize> = stage
+                .scene
+                .scene
+                .placements
+                .iter()
+                .filter(|&&(entry, id, _)| {
+                    i64::from(entry) == i64::from(block) && i32::from(id) == placement
+                })
+                .map(|&(_, _, instance)| instance)
+                .collect();
+            if instances.is_empty() {
+                self.coverage
+                    .miss(format!("door ({block}, {placement}) not in the map"));
+                continue;
+            }
+            for instance in instances {
+                let state = self
+                    .bindings
+                    .placements
+                    .entry(instance)
+                    .or_insert_with(|| Placement::of(&stage.scene.scene.instances[instance]));
+                state.angle = Some(angle);
                 let world = state.world();
                 self.set_world(stage.scene, instance, world);
             }
@@ -1180,6 +1332,8 @@ struct Placement {
     home: Mat4,
     hidden: bool,
     position: Option<Vec3>,
+    /// Rotation around the placement's own origin, radians (native 584).
+    angle: Option<f32>,
 }
 
 impl Placement {
@@ -1190,6 +1344,7 @@ impl Placement {
             home: instance.home,
             hidden: !instance.drawn(),
             position: None,
+            angle: None,
         }
     }
 
@@ -1201,6 +1356,11 @@ impl Placement {
             return Mat4::from_scale(Vec3::ZERO);
         }
         let mut world = self.home;
+        if let Some(angle) = self.angle {
+            // The door turns around the placement's own origin; the home translation and
+            // scale stay (native 584 sets the record's angle, `02018310` `+0x34`).
+            world *= Mat4::from_rotation_y(angle);
+        }
         if let Some(position) = self.position {
             world.w_axis = position.extend(1.0);
         }

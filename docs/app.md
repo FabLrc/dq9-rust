@@ -177,14 +177,19 @@ mouvements des PNJ (`play_npc`), les feuilles `.spr` de script (`add_sprite`) et
   paquets ajoutés (`LoadModelArchive`), un mouvement sans fichier propre jouant une tranche du
   fichier du paquet de type 0. Le héros joue les mouvements des paquets `evNNNNNp000.chr`.
 - **Caméra.** Œil, cible, orbite, champ de vision (demi-angle, 15° par défaut), roulis, secousses,
-  suivi d'un acteur et caméra portée par deux os d'un modèle (native 572, utilisée par
-  l'ouverture) sont celles du script ; la caméra de terrain reprend à la fin, recentrée sur la
+  suivi d'un acteur, caméra portée par deux os d'un modèle (native 572) et caméra à trois os
+  (native 552 : `eye`/`lookat` de la source, `foot` qui porte la cible) sont celles du script ;
+  la caméra de terrain reprend à la fin, recentrée sur la
   pose finale du héros sans garder le gros plan, le roulis ou le champ de la scène. Si la chaîne
   a changé de carte, elle reprend l'orbite de la destination ; le vol libre retrouve sa vue
   indépendante. Une scène est cadrée en 4:3 sur l'écran haut (`screens.rs`).
 - **Messages.** La fenêtre de conversation (`talk.rs`) affiche le texte de la table de la scène ;
   sans balise de fin elle attend l'action (`Dialogue::for_event`) ; la native 401 la ferme, la
-  native 410 en retire le cadre. Le joueur est verrouillé (pas de marche, pas de conversation).
+  native 410 en retire le cadre. Les natives 409, 411 et 413 en font une **légende** : alpha
+  temporisé (`W+0x9a8`, fondu d'une seconde, maintien, fondu), texte centré verticalement sous
+  `(192 − (lignes−1)×20 − 8)/2 − 16` quand le cadre est retiré, et bip de frappe coupé. L'arrêt
+  du compteur de message pendant l'alpha n'est pas modélisé **[hypothèse]**. Le joueur est
+  verrouillé (pas de marche, pas de conversation).
 - **Fondus.** Un rectangle noir ou blanc sur tout l'écran 3D, de niveau −16 à +16 ; un moteur
   verrouillé (`112`, `114`, `116`) ignore les fondus simples. L'écran « principal » est pris pour
   l'écran 3D **[hypothèse]** ; le fondu de l'autre moteur et l'échange des écrans sont ignorés.
@@ -192,20 +197,21 @@ mouvements des PNJ (`play_npc`), les feuilles `.spr` de script (`add_sprite`) et
 **Résultat sur le prologue** (`--events-report 1.1-3`, ROM EU, textes anglais ; les 30 scripts
 vont à leur terme, aucune scène « non jouée » ; le son est joué par `audio.rs` et rapporté nulle
 part). « Complet » : tout ce que le script demande est exécuté, aux natives sans effet rendu
-près (559, 560, 571, 815 ; 581, 582, 809 dont les objets ne sont pas dessinés ; placements de
-collision ; mouvements dont le modèle n'a pas le nom, sans effet dans le jeu non plus :
-[`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)). Avant le chantier
-J3-effets : **22 scènes partielles sur 30** (18 lignes du rapport) ; après : **2 scènes
-partielles** (1 ligne).
+près (559, 560, 571, 815 ; 581, 582, 809 dont les objets ne sont pas dessinés ; mouvements dont
+le modèle n'a pas le nom :
+[`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)). Les **placements de
+collision** (574/575) ne sont plus exclus : le rapport les compte depuis le lot « scènes
+restantes ». Avant le chantier J3-effets : **22 scènes partielles sur 30** (18 lignes du
+rapport) ; après : **2 scènes partielles** (1 ligne).
 
-| Scène(s) | Cartes | Résultat | Ce qui manque (visible) |
+| Scène(s) | Cartes | Résultat | Ce qui manque |
 |---|---|---|---|
 | 1130, 1140, 1150, 1160, 1170, 1310, 1320, 1340, 1350, 1360, 1370, 1380, 1390, 1410, 1600, 1610 | `X01M05`, `X01M07`, `X01M01`, `M01`, `M01M04` | complet | — |
 | 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | complet | — |
 | 21591, 21592, 21593, 21594, 21595, 21597 | `X01M05`, `M01`, `X01M04` | complet | — |
 | 1330 | `M01M06` | complet | — |
 | 21510 | `X01M04` | complet | — |
-| 21500 + 21507 | `M01M12` | partiel | 409/411/413 (effets du texte des légendes), 547 (transition de combat), 552 (caméra à trois os), 584 (ouverture d'une porte) |
+| 21500 + 21507 | `M01M12` | partiel | collision placement ×7 (murs/sol non modifiés), door sound ×1 (index non lu), motion absent ×1, 547 (transition de combat, J4), 571 (sans lecteur), screen swap |
 
 La chaîne du prologue se joue de bout en bout sans intervention : `21500 → 21507` (native 538),
 puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la victoire (trigger
@@ -226,6 +232,15 @@ puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la
   supplémentaire et paquets d'événement) ; `walk`/`stand` des sprites ; bulles « ! » (541/561/542) ;
   feuilles `.spr` créées par script (521/522) ; placements cachés, montrés ou déplacés (574/575) ;
   palette des personnages (238) ; retour de la caméra au héros (328).
+- **Légendes (409/411/413).** La fenêtre de message devient une légende : alpha temporisé (fondu
+  de 60 ticks, maintien `W+0x9a8`, fondu de 60), texte centré verticalement lorsque 410 a retiré
+  le cadre, bip de frappe filtré. Captures : `21500` image 420 (alpha partiel, texte pâle) et 600
+  (plein, sans cadre, centré).
+- **Caméra à trois os (552).** `eye`/`lookat` d'un modèle-caméra donnent l'œil et la visée, son os
+  `foot` porte le personnage cible ; capture `21507` image 1820 (point de vue haut dans le ciel),
+  contre 1780 avant l'installation.
+- **Porte (584).** Le placement `(entrée de bloc, identifiant)` tourne de 90° en 16 updates ;
+  captures `21500` images 2900/2960, où le panneau change d'orientation. Le son reste rapporté.
 
 `--eye`/`--target` avec `--event` et `--screenshot` regardent la scène que le script a laissée
 (ils remplacent la caméra du script) : utile pour inspecter un acteur.
@@ -236,7 +251,9 @@ avec le sélecteur 0, 1 avec le sélecteur 1), canaux des acteurs, sens du rouli
 durées de la caméra et de la lumière, pose de la caméra du terrain pour 328, bulle posée dans le
 monde. Le héros du jeu a des ailes et un halo (forme ailée) que le rendu ne dessine pas ; hors
 événement, les PNJ gardent leur mouvement initial ; les ombres des PNJ ne sont pas dessinées. Les
-modèles ne sont pas encore comparés à melonDS.
+modèles ne sont pas encore comparés à melonDS. Pour les légendes, l'arrêt du compteur de message
+pendant le fondu n'est pas reproduit ; pour 584, le son et les branches coulissante/inverse ne
+sont pas lus ; pour 552, le byte `+0x265` de 839 n'est pas piloté.
 
 ## Nouvelle partie (`--new-game`) et parcours automatique
 

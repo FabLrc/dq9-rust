@@ -435,6 +435,13 @@ impl Ctx<'_> {
                 eye: text(a, 1),
                 target: text(a, 2),
             }),
+            552 => self.camera(Camera::ThreeBoneCamera {
+                source: a.int(0),
+                eye: text(a, 1),
+                lookat: text(a, 2),
+                foot: text(a, 3),
+                target: a.int(4),
+            }),
             580 => self.camera(Camera::MoveFov {
                 degrees: a.float(0),
                 duration: a.int(1),
@@ -465,7 +472,10 @@ impl Ctx<'_> {
                 self.events.push(Event::CloseMessage);
             }
             405 => out.int(a, 0, i32::from(self.rt.message_open)),
+            409 => self.events.push(Event::CaptionTime { ticks: a.int(0) }),
             410 => self.events.push(Event::HideMessageFrame),
+            411 => self.events.push(Event::CaptionCentered),
+            413 => self.events.push(Event::CaptionSilent),
             558 => out.int(a, 0, self.rt.answer),
             // `0215cf98`: a 5-bit colour, and the mode when a fifth argument is given.
             238 => self.events.push(Event::Tint {
@@ -490,7 +500,13 @@ impl Ctx<'_> {
             574 => self.events.push(Event::Placement {
                 group: a.int(0),
                 id: a.int(1),
-                hidden: a.int(2) == 0,
+                hidden: a.int_or(2, 0) == 0,
+            }),
+            584 => self.events.push(Event::OpenDoor {
+                block: a.int(0),
+                placement: a.int(1),
+                sound: a.int_or(2, 1) != 0,
+                option: a.int_or(3, 1) != 0,
             }),
             575 => self.events.push(Event::PlacementMove {
                 group: a.int(0),

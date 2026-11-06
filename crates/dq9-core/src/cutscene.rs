@@ -37,7 +37,7 @@ mod props;
 use props::Props;
 
 pub use light::{ClockCommand, SceneLight, SceneTime};
-pub use props::{Balloon, PlacementChange, TexelOp};
+pub use props::{Balloon, Caption, Door, PlacementChange, TexelOp};
 
 /// Ticks per script update: durations of timed commands count updates (`stb-natives.md`).
 const TICKS_PER_UNIT: f32 = 2.0;
@@ -214,6 +214,18 @@ pub struct BoneCamera {
     pub target: String,
 }
 
+/// A camera whose eye and target follow the `eye` and `lookat` bones of the `source`
+/// character, and whose `foot` bone drags the `target` character (native 552,
+/// `ov_001::02160768`, `0204a170`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThreeBoneCamera {
+    pub source: i32,
+    pub target: i32,
+    pub eye: String,
+    pub lookat: String,
+    pub foot: String,
+}
+
 /// What the camera looks like now.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CameraView {
@@ -226,6 +238,9 @@ pub struct CameraView {
     /// Set while the camera is driven by bones: the application resolves them and replaces
     /// `eye` and `target`.
     pub bones: Option<BoneCamera>,
+    /// Set while a native 552 camera is installed: the application resolves its three bones,
+    /// replaces `eye` and `target`, and drags the target character to the foot bone.
+    pub three_bone: Option<ThreeBoneCamera>,
 }
 
 /// Brightness fade target of one command.
@@ -463,6 +478,7 @@ struct Cam {
     roll: f32,
     follow: Option<(i32, Vec3)>,
     bones: Option<BoneCamera>,
+    three_bone: Option<ThreeBoneCamera>,
     /// Queues: cartesian moves, orbital moves, field of view, shake.
     lanes: [CamLane; 4],
     shake: Vec3,
@@ -481,6 +497,7 @@ impl Default for Cam {
             roll: 0.0,
             follow: None,
             bones: None,
+            three_bone: None,
             lanes: Default::default(),
             shake: Vec3::ZERO,
             shake_target_only: false,
@@ -613,6 +630,30 @@ impl Cutscene {
         node.placed = true;
     }
 
+    /// Moves a target the way a camera object does (native 552 drags its second character to
+    /// the `foot` bone): position, and facing around Y in radians.
+    pub fn place_target(&mut self, target: Target, position: Vec3, facing: f32) {
+        let node = self.node_mut(target);
+        node.pose.position = position;
+        node.pose.rotation.y = facing;
+        node.placed = true;
+    }
+
+    /// The doors the script opened (native 584), with their current angle.
+    pub fn doors(&self) -> &[Door] {
+        &self.props.doors
+    }
+
+    /// The caption fields of the current message (natives 409, 411, 413).
+    pub fn caption(&self) -> Caption {
+        self.props.caption
+    }
+
+    /// Alpha of the timed caption at the current tick (1 when native 409 was not used).
+    pub fn caption_alpha(&self) -> f32 {
+        self.props.caption.alpha(self.ticks)
+    }
+
     pub fn node(&self, target: Target) -> Option<&Node> {
         self.nodes.get(&target)
     }
@@ -683,6 +724,7 @@ impl Cutscene {
             half_fov: cam.half_fov,
             roll: cam.roll,
             bones: cam.bones.clone(),
+            three_bone: cam.three_bone.clone(),
         }
     }
 
@@ -697,7 +739,7 @@ impl Cutscene {
 
     /// The target a character id designates for the visibility natives (201): negative ids
     /// are the models the script loaded, positive ones map NPCs, 0 the hero.
-    fn target_of_character(&self, character: i32) -> Target {
+    pub fn target_of_character(&self, character: i32) -> Target {
         match character {
             0 => Target::Hero,
             c if c < 0 => Target::Model(c),
@@ -716,12 +758,49 @@ impl Cutscene {
                 ticks,
                 lock,
             } => self.fade(*screen, *level, *ticks, *lock),
-            Event::Message { text, flags } => out.push(Output::Message {
-                text: text.clone(),
-                flags: *flags,
-            }),
+            Event::Message { text, flags } => {
+                // 0204501c resets the caption fields: flags 0, 0x9b0 = 0, 0x19b2 = 1.
+                self.props.caption = Caption::default();
+                out.push(Output::Message {
+                    text: text.clone(),
+                    flags: *flags,
+                });
+            }
             Event::CloseMessage => out.push(Output::CloseMessage),
             Event::HideMessageFrame => out.push(Output::HideMessageFrame),
+            Event::CaptionTime { ticks } => {
+                self.props.caption.time = Some(*ticks);
+                self.props.caption.started = self.ticks;
+            }
+            Event::CaptionCentered => self.props.caption.centered = true,
+            Event::CaptionSilent => self.props.caption.silent = true,
+            Event::OpenDoor {
+                block,
+                placement,
+                sound,
+                ..
+            } => {
+                // 0215fb44: the doorway's own flags select the swing (bit 0x20 clear) and its
+                // direction; the prologue's doorway has flags 0x40, so the placement turns by
+                // +90°. Other maps' branches (sliding, reverse) are not modelled.
+                let door = Door {
+                    block: *block,
+                    placement: *placement,
+                    angle: 0.0,
+                    target: Door::QUARTER_TURN,
+                    speed: Door::SPEED,
+                    sound: *sound,
+                };
+                match self
+                    .props
+                    .doors
+                    .iter_mut()
+                    .find(|d| d.block == door.block && d.placement == door.placement)
+                {
+                    Some(existing) => *existing = door,
+                    None => self.props.doors.push(door),
+                }
+            }
             Event::LoadModel {
                 path,
                 character,
@@ -1067,6 +1146,7 @@ impl Cutscene {
                 cam.follow = None;
                 cam.shake = Vec3::ZERO;
                 cam.bones = None;
+                cam.three_bone = None;
                 // The native raises the busy flag: the idle report follows.
                 return;
             }
@@ -1127,10 +1207,30 @@ impl Cutscene {
             C::BoneCamera { slot, eye, target } => {
                 // 572 saves the running camera first; 531 gives it back.
                 self.saved_cam = Some(Box::new(self.cam.clone()));
+                self.cam.three_bone = None;
                 self.cam.bones = Some(BoneCamera {
                     slot: *slot,
                     eye: eye.clone(),
                     target: target.clone(),
+                });
+                return;
+            }
+            C::ThreeBoneCamera {
+                source,
+                target,
+                eye,
+                lookat,
+                foot,
+            } => {
+                // 552 writes the same stash word as 572 (`ctx+4`, `020100cc`); 531 restores it.
+                self.saved_cam = Some(Box::new(self.cam.clone()));
+                self.cam.bones = None;
+                self.cam.three_bone = Some(ThreeBoneCamera {
+                    source: *source,
+                    target: *target,
+                    eye: eye.clone(),
+                    lookat: lookat.clone(),
+                    foot: foot.clone(),
                 });
                 return;
             }
@@ -1145,6 +1245,9 @@ impl Cutscene {
         self.fades.main.tick(1);
         self.fades.sub.tick(1);
         self.light.tick();
+        for door in &mut self.props.doors {
+            door.tick();
+        }
         let mut signals = Vec::new();
         for index in 0..self.actors.len() {
             self.tick_actor(index, ground);
@@ -1812,7 +1915,8 @@ fn step_camera_lane(cam: &mut Cam, lane: usize) -> bool {
         | C::Roll(_)
         | C::RestoreSaved
         | C::SetFov(_)
-        | C::BoneCamera { .. } => {}
+        | C::BoneCamera { .. }
+        | C::ThreeBoneCamera { .. } => {}
     }
     true
 }
