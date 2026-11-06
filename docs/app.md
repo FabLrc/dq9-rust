@@ -297,16 +297,17 @@ cargo run -p dq9-app --release -- --new-game --headless `
 `--checkpoints` écrit un objet JSON par prise de contrôle, changement de carte ou d'histoire,
 début/fin de scène et combat : `tick`, `seconds`, `kind`, `vblank` (= `tick`), `map`, `area`
 (code d'aire numérique), `track`, `daytime`, `tracks` (5 × chapitre/étape/sous-étape et les deux
-jeux de drapeaux), `flags` globaux, `quests` (nibble par quête), `event` (nul pour l'instant) et
+jeux de drapeaux), `flags` globaux, `quests` (nibble par quête), `event` (identifiant de la scène en cours, nul entre deux) et
 `hero` (position et cap). Le premier point de contrôle de `--new-game --headless --auto` est
-identique à l'état melonDS au même moment (`X01M05`, 210,42 s, 1.1.1, drapeaux globaux `{337}`,
-drapeaux d'étape `{1}`, héros `(0,660, -0,250, -3,610)`), à l'écart des 17 drapeaux globaux près
-(voir `docs/re/trigger.md`).
+identique à l'état melonDS au même moment (`X01M05`, 210,42 s, 1.1.1, drapeaux globaux
+`{337, 1450, 1451, 1452, 1453, 1454, 1461, 2721, 2751}`, drapeaux d'étape `{1}`, héros
+`(0,660, -0,250, -3,610)`) : les six drapeaux de scène et les deux de carte concordent ; neuf
+drapeaux globaux restent inconnus (voir `docs/re/trigger.md`).
 
 `--trace-inputs` écrit le pavé et la touche action de chaque pas fixe (`frame`, `pad`
 `up/down/left/right`, `a`). `--replay` relit ce fichier sans pilote : chaque ligne alimente le
-pavé et la touche action d'un pas fixe. La trace du parcours ci-dessus (20 570 pas) rejouée
-donne **les mêmes 45 checkpoints, octet pour octet** (dont l'arrivée à 1.1.2 et les 1170
+pavé et la touche action d'un pas fixe. La trace du parcours ci-dessus (22 670 pas) rejouée
+donne **les mêmes 49 checkpoints, octet pour octet** (dont l'arrivée à 1.1.2 et les 1170
 scènes), ce qui est la preuve d'entrées reproductibles. Le pilote donne des directions du monde
 avec la caméra à l'angle 0 et `--replay` force le même cap : la trace prouve la preuve du
 pilote headless dans notre moteur, pas un rejeu avec une caméra manuelle arbitraire ni une
@@ -373,20 +374,24 @@ Parcours vérifié sur la ROM européenne, à 60 Hz (`--new-game --headless --au
 | Temps | Carte | Fait |
 |---:|---|---|
 | 210 s | `X01M05` | première main ; conversations 1140 et 1130 en marchant |
-| 244–276 s | `X01M05`/`X01M06`/`X01M07` | sorties et warp 9 réels |
-| 295–299 s | `X01M07` | porte de bibliothèque (deux vantaux 2 et 3) poussée, ouverte, traversée |
-| 299 s | `X01M07` | aire 2 (ajoutée par l'événement 20) atteinte à pied → `1150` |
-| 314 s | `X01M07` | NPC 130, `1600` |
-| 335 s | `X01M01` | NPC 127, `1170` → histoire **1.1.2** |
-| 344 s | `X01M01` | arrêt : le warp vers `X01M03` (y 15,5) n'est pas joignable à pied |
+| 295–312 s | `X01M05`/`X01M06`/`X01M07` | sorties et warp 9 réels |
+| 331–334 s | `X01M07` | porte de bibliothèque (deux vantaux 2 et 3) poussée, ouverte, traversée |
+| 334 s | `X01M07` | aire 2 (ajoutée par l'événement 20) atteinte à pied → `1150` |
+| 356 s | `X01M01` | retour par la porte de la bibliothèque |
+| 370 s | `X01M01` | NPC 127, `1170` → histoire **1.1.2** |
+| 378 s | `X01M01` | arrêt : le warp vers `X01M03` (y 15,5) n'est pas joignable à pied |
 
-Limite précise : sur `X01M01` (tour de l'Observatoire), la terrasse haute n'est pas reliée par
-la collision de marche (le graphe atteint y 11,2 au plus, le warp de `X01M03` est à y 15,5).
-Les zones `0x73` de **type 1** (43 sur la ROM, trois sur `X01M01`, aux positions
-`(-33,5, 4, -21)`, `(-18,25, 11, 9)` et `(26, 8, -4,5)`) sont lues par le champ
-(`Field_CheckRegions`, tâche 8) mais **non modélisées** : elles sont la cause probable du
-passage manquant. Le pilote s'arrête donc à 1.1.2 ; le chapitre 2 n'est plus atteint en
-téléportant.
+Limite précise : sur `X01M01` (tour de l'Observatoire), la terrasse haute n'est pas reliée à
+la pose d'histoire par la collision de marche. Une exploration **3D** (arêtes validées par
+`Hero::step` avec la hauteur atteinte, montée ≤ 1,0, chute ≤ 10) depuis la pose d'histoire
+comme depuis le départ de la carte plafonne à **y 11,25** ; le warp `X01M03` est à y 15,5. Le
+mur fin `X01A01S1` (bloc 0, placement 12, normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`,
+`y 9..14`) sépare la terrasse du pied de la rampe. Les zones `0x73` de **type 1** (43 sur la
+ROM, trois sur `X01M01`) sont **inertes** : aucune routine de `Field_CheckRegions` ne lit leur
+liste, ce n'est ni un monte-charge ni une tâche 8. La connexion manquante (placement de
+collision déplacé, plateforme animée ou changement de carte scénarisé) est **[inconnue]**, à
+établir sur melonDS. Le pilote s'arrête donc à 1.1.2 ; le chapitre 2 n'est pas atteint et
+aucun téléport n'entre dans la preuve.
 
 **S'arrête où et pourquoi** (journal de fin de `--pilot`) : prise de contrôle sans rien qui fasse
 avancer l'histoire d'après la simulation (conversations qui ne changent plus ni progression ni
@@ -398,7 +403,8 @@ drapeaux, aires déjà prises), ou plafond de pas atteint. Limites connues :
 - `Other(141)` (fin de `21510`, `21595`, `21593`) et les natives sans effet (`stb.md`) sont
   journalisés mais ne font rien.
 - Le pilote rejoue parfois la même conversation (`2110`) tant que son déclencheur change un drapeau.
-- Les zones de type 1 de l'Observatoire ne sont pas jouées (voir la limite ci-dessus).
+- Les zones de type 1 de l'Observatoire sont inertes ; la connexion de hauteur manquante
+  reste à établir (voir la limite ci-dessus).
 - L'ordre et les durées ne sont pas comparés à melonDS.
 
 ## Lancer dans un navigateur

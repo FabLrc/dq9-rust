@@ -224,6 +224,44 @@ sur un franchissement extérieur → intérieur.
    quittée). Le prédicat que le type 1 teste sur le meneur (`0x02039820`) et la tâche de porte
    (animation, marche automatique, fondu) ne sont pas lus.
 
+#### Zones de type 1 et passage de hauteur de l'Observatoire
+
+Les zones `0x73` de **type 1** (43 sur la ROM, trois sur `X01M01`) ne sont lues par aucune
+routine de `Field_CheckRegions` : `ov_017::0219755c` appelle `0x02197e2c`, `021975e4` (type 9),
+`02197a64` (portes de type 2), `Area_CheckLeader` (type 3), puis `021982ac` (type 4),
+`021983e0` (type 5), `021984f4` (type 8), `02198618` (type 10), `021986fc` et `02198aa0`
+(grotte). Aucun de ces appels ne prend la liste de type 1 (`func_0201e838(zone3d+0x6c, 1)`).
+`MapRegion_RecAction` (`0x0201d648`) traite bien la valeur 0 d'une action `0x74` après une zone
+de type 1 (`0x0201d6ec`) : elle écrit la classe 1 dans le quartet bas de `+0x2c` et un
+demi-mot dans `+0x2d`, mais rien ne relit ces champs à l'image. **Les zones de type 1 sont donc
+inertes à l'exécution** ; elles ne sont ni un monte-charge ni la transition de hauteur
+supposée (la tâche 8 du champ vient du **type de warp** `0x72`, valeur 7 = 1, et non d'une
+zone). `X01M01` ne contient d'ailleurs aucun warp de type 1.
+
+Le passage vers `X01M03` est le warp `0x72` **n° 9** de `X01M01` : boîte 4 × 4 × 3 centrée en
+`(-8,226 ; 15,5 ; 16,379)`, angle `5,759587`, **type 0**, destination `X01M03`, arrivée
+`(-9,75 ; 4,2 ; 17,62)` angle `-2,303835`. L'arrivée est le point de départ de `X01M03`
+(`-10,810 ; 4,0 ; 16,910`, `X01M03` a sa propre origine en y) : c'est un atterrissage normal,
+pas une destination incohérente.
+
+La terrasse haute est un **composant séparé** de la collision. Depuis la pose d'histoire 1.1.2
+(`(2,77 ; 11,25 ; 18,19)`) comme depuis le point de départ de la carte
+(`(0 ; 8,25 ; 30)`), une marche exhaustive avec `Hero::step` (arêtes validées en 3D, montée
+≤ 1,0, chute ≤ 10) plafonne à **y 11,25** : le mur fin `X01A01S1` (bloc 0, placement 12 ; deux
+triangles en `x 0,018..0,105`, `z 15,42..18,99`, `y 9..14`, normale `+x`) ferme le passage
+vers la rampe, et la rampe elle-même forme un composant dont le pied (`(-1,25 ; 11,66 ;
+17,5)`) est de l'autre côté. Un chemin trouvé par une arête qui ne compare que `x`/`z` est
+**faux** (l'arête `(-4,5 ; 11,25 ; 18) → (-4 ; 12,42 ; 18)` passe en ignorant y) : le test de
+`edge_pass` de `dq9-app` compare `flat(hero.position() - b)` et accepte ces arêtes.
+
+Le warp n'est donc **pas joignable à pied** depuis le point de départ ni depuis 1.1.2 avec la
+collision telle qu'elle est chargée : il manque une connexion (ou un déplacement de
+collision) que le port ne modélise pas. Les zones de type 1 ne le fournissent pas (aucun
+lecteur, ci-dessus) et le warp est de type 0 (pas de tâche 8). **[inconnu]** : la mécanique
+qui amène le groupe sur la terrasse (candidats : mouvement d'un placement de collision par
+une native `575`, plateforme animée, ou changement de carte par scénario). À trancher sur le
+jeu original (melonDS), pas par supposition.
+
 #### Arrivée
 
 La carte de destination se charge, le héros est posé à la position d'arrivée et tourné de

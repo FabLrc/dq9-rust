@@ -68,44 +68,85 @@ pub struct EventScript {
     pub entries: Entries,
     /// Message number → text (`evNNNNN_<lg>.bin`); empty when the language has no table.
     pub texts: BTreeMap<i32, String>,
+    /// Global flag the game sets when this scene starts (`scene_flag`, from the same record
+    /// rank); `None` when the event is not in a list.
+    pub scene_flag: Option<u16>,
 }
 
-/// Script name and entries of `event` from the event lists.
-fn from_lists(files: &dyn Files, event: u16) -> Option<(String, Entries)> {
+/// The record of `event`, with its rank among the kind-102 records of the list that holds it.
+fn event_record(files: &dyn Files, event: u16) -> Option<(String, Entries, u16)> {
     LISTS.iter().find_map(|list| {
         let table = Table::parse(files.file(list)?).ok()?;
-        table
-            .records
-            .iter()
-            .filter(|r| r.kind == 102)
-            .find_map(|r| {
-                let v = r.values.get(..12)?;
-                let (Value::Int(id), Value::Str(Some(script))) = (v[5], v[8]) else {
-                    return None;
-                };
-                let entry = |i: usize| match v[i] {
-                    Value::Int(n) => Some(n as i32),
-                    _ => None,
-                };
-                if id != u32::from(event) {
-                    return None;
-                }
-                let name = String::from_utf8_lossy(script);
-                let stem = name.strip_suffix(".stb").unwrap_or(&name).to_owned();
-                let entries = Entries {
-                    main: entry(9)?,
-                    prepare: entry(10)?,
-                    finish: entry(11)?,
-                };
-                Some((stem, entries))
-            })
+        let mut rank = 0u16;
+        for record in table.records.iter().filter(|r| r.kind == 102) {
+            let before = rank;
+            rank = rank.saturating_add(1);
+            let Some(v) = record.values.get(..12) else {
+                continue;
+            };
+            let (Value::Int(id), Value::Str(Some(script))) = (v[5], v[8]) else {
+                continue;
+            };
+            if id != u32::from(event) {
+                continue;
+            }
+            let entry = |i: usize| match v[i] {
+                Value::Int(n) => Some(n as i32),
+                _ => None,
+            };
+            let name = String::from_utf8_lossy(script);
+            let stem = name.strip_suffix(".stb").unwrap_or(&name).to_owned();
+            let entries = Entries {
+                main: entry(9)?,
+                prepare: entry(10)?,
+                finish: entry(11)?,
+            };
+            return Some((stem, entries, before));
+        }
+        None
     })
+}
+
+/// First scene-flag base, set at boot by `Flags_SetStoryBases` (`0x02071698`, called from
+/// `main`) for event ids in [`SCENE_FLAG_IDS`].
+pub const SCENE_FLAG_BASE: u16 = 0x21c;
+/// Second scene-flag base, for event ids outside [`SCENE_FLAG_IDS`] (`0x02071698`).
+pub const SCENE_FLAG_BASE_HIGH: u16 = 0x302;
+/// Added by `EventTask_Update` (`ov_017::021bc77c`) when it turns the context's scene index
+/// (`ctx+0x52`) into a global flag.
+pub const SCENE_FLAG_OFFSET: u16 = 0x38e;
+/// Event ids whose scene flag uses [`SCENE_FLAG_BASE`] (`0x02071584`).
+const SCENE_FLAG_IDS: std::ops::Range<u32> = 0x5208..0x9c40;
+
+/// Global flag the game sets when the scene of `event` starts running
+/// (`EventTask_Update`, `ov_017::021bc77c`): `base + rank`, where the rank is the number of
+/// kind-102 records before the event's record in its list. The task writes the rank in
+/// `ctx+0x46` from the `Tbl_Run` counter (`EventRecord_Build`, `0x02071218`) and
+/// `EventRecord_Parse` (`0x02071498`) adds the base; the same value is read back from
+/// `ctx+0x52` on real melonDS states (21500 → 540 → flag 1450, …, 21596 → 551 → 1461;
+/// `docs/re/trigger.md`, § « Drapeaux globaux posés à l'ouverture »).
+pub fn scene_flag(files: &dyn Files, event: u16) -> Option<u16> {
+    let (_, _, rank) = event_record(files, event)?;
+    scene_flag_of(event, rank)
+}
+
+/// [`scene_flag`] from the rank already read by [`event_record`].
+fn scene_flag_of(event: u16, rank: u16) -> Option<u16> {
+    let base = if SCENE_FLAG_IDS.contains(&u32::from(event)) {
+        SCENE_FLAG_BASE
+    } else {
+        SCENE_FLAG_BASE_HIGH
+    };
+    base.checked_add(rank)?.checked_add(SCENE_FLAG_OFFSET)
 }
 
 /// Loads the script of `event` with the texts of language `lang` (`en`, `fr`, …).
 pub fn load(files: &dyn Files, event: u16, lang: &str) -> Result<EventScript, LoadError> {
-    let (name, entries) =
-        from_lists(files, event).unwrap_or_else(|| (format!("ev{event:05}"), Entries::default()));
+    let record = event_record(files, event);
+    let (name, entries, scene_flag) = match record {
+        Some((name, entries, rank)) => (name, entries, scene_flag_of(event, rank)),
+        None => (format!("ev{event:05}"), Entries::default(), None),
+    };
     let path = DIRECTORIES
         .iter()
         .map(|dir| format!("{dir}/{name}.gp2"))
@@ -140,6 +181,7 @@ pub fn load(files: &dyn Files, event: u16, lang: &str) -> Result<EventScript, Lo
         stb,
         entries,
         texts,
+        scene_flag,
     })
 }
 
@@ -246,4 +288,85 @@ pub fn stage_opening(files: &dyn Files, major: u32, minor: u32) -> Option<u16> {
             }
             _ => None,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// One `eventlist_lv5.bin` with the given event ids in file order: kind 102 records with
+    /// `[stage major, stage minor, 0, 0, 0, event, 0, 0, "evNNNNN.stb", 100, 200, 300]`.
+    fn list(events: &[(u16, u32)]) -> Vec<u8> {
+        let mut pool = Vec::new();
+        let mut records = Vec::new();
+        for &(event, major) in events {
+            let script = format!("ev{event:05}.stb");
+            let at = pool.len() as u32;
+            pool.extend_from_slice(script.as_bytes());
+            pool.push(0);
+            let values = [major, 1, 0, 0, 0, u32::from(event), 0, 0, at, 100, 200, 300];
+            records.push((kind_header(), values));
+        }
+        build(&records, &pool)
+    }
+
+    fn kind_header() -> Vec<u8> {
+        // 12 fields: 0x55, 0x55, 0x54 (string at index 8), then two 0xFF padding bytes.
+        vec![102, 0, 12, 0x55, 0x55, 0x54, 0xFF, 0xFF]
+    }
+
+    fn build(records: &[(Vec<u8>, [u32; 12])], pool: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(records.len() as u32).to_le_bytes());
+        out.extend_from_slice(&[0; 12]); // pool offset and size, string count: patched below
+        for (header, values) in records {
+            out.extend_from_slice(header);
+            for value in values {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        let pool_offset = out.len() as u32;
+        out.extend_from_slice(pool);
+        out[4..8].copy_from_slice(&pool_offset.to_le_bytes());
+        out[8..12].copy_from_slice(&(pool.len() as u32).to_le_bytes());
+        out[12..16].copy_from_slice(&(records.len() as u32).to_le_bytes());
+        out
+    }
+
+    struct Map(HashMap<String, Vec<u8>>);
+
+    impl Files for Map {
+        fn file(&self, path: &str) -> Option<&[u8]> {
+            self.0.get(path).map(Vec::as_slice)
+        }
+    }
+
+    fn files(events: &[(u16, u32)]) -> Map {
+        Map(HashMap::from([(LISTS[2].to_owned(), list(events))]))
+    }
+
+    #[test]
+    fn scene_flags_follow_the_event_list_rank() {
+        let files = files(&[(21500, 1), (21507, 1), (21520, 1), (21596, 1)]);
+        assert_eq!(scene_flag(&files, 21500), Some(1450));
+        assert_eq!(scene_flag(&files, 21507), Some(1451));
+        assert_eq!(scene_flag(&files, 21520), Some(1452));
+        // Rank 3 among the kind-102 records, not the event number.
+        assert_eq!(scene_flag(&files, 21596), Some(1453));
+        assert_eq!(scene_flag(&files, 1), None);
+    }
+
+    #[test]
+    fn scene_flag_uses_the_other_base_below_the_rom_range() {
+        let files = files(&[(1160, 1), (1600, 1)]);
+        assert_eq!(
+            scene_flag(&files, 1160),
+            Some(SCENE_FLAG_BASE_HIGH + SCENE_FLAG_OFFSET)
+        );
+        assert_eq!(
+            scene_flag(&files, 1600),
+            Some(SCENE_FLAG_BASE_HIGH + SCENE_FLAG_OFFSET + 1)
+        );
+    }
 }

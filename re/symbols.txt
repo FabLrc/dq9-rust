@@ -231,6 +231,15 @@ ov_017::021d8438 g_TalkSelect       # selection state (flags, step, context, cou
 0x02096144 QuestLog_Find            # entry of a quest, or null
 0x020f05bc g_TrigRecordHandlers     # {100, nop}, {101, nop}, {1, Trig_LoadRecord}, {0}
 
+# --- Global flags set at a new game / scene entry (docs/re/trigger.md) ---
+0x0201ba78 Flags_SetMapVisited      # map load: flag 0xa96 + map/100 for 99 < map <= 9999 (2710 base)
+0x0206dff8 Flags_ClearRange         # clears the flag bits in [start, end] of g_QuestManager+0x8c
+0x02071218 EventRecord_Build        # eventlist kind 0x66 handler: fills the event context from one record
+0x02071498 EventRecord_Parse        # parses the event record of an id and adds the scene-flag base
+0x02071584 EventRecord_Find         # picks eventlist6 / evl_quest / eventlist_lv5 by id range
+0x02071698 Flags_SetStoryBases      # boot (main): story flag bases 0x21c and 0x302 in g_FlagBases
+0x020716b4 EventRecord_StoryProgress # eventlist kind 0x66 handler: chapter/step/substep + a flag list
+
 # --- Trigger actions, events and scenario tracks (docs/re/trigger.md) ---
 0x0200fd1c Save_Warp                # save +0x3f8: destination room (+0), entry (+0x20), position, direction
 0x0200fd80 Chara_Get                # character table entry 0..0xe8 (0 = hero), no flag check
@@ -685,8 +694,13 @@ ov_017::0219e384 Field_EnterMap     # map-entry state machine of the field; stat
 0x02032158 Region_InCylinder        # y in [cy, cy + h], ground distance² <= w²
 0x020321f0 Region_InRotatedBox      # angle != 0: refuse beyond radius², turn the point by -angle about the center (RotationMatrixY, MTX_MultVec43), then Region_InBox
 0x02094bac Zone_Holds               # zone test: off bit 8; depth < 1 cylinder else rotated box; once-only bits 1/2/4
-ov_017::0219755c Field_CheckRegions    # per frame: doorways, areas, region types 4/5/8/10..., trigger areas
+ov_017::0219755c Field_CheckRegions    # per frame: doorways, areas, region types 4/5/8/10..., trigger areas; no type 1 list
+ov_017::021975e4 Field_CheckType9Zones # type 9 zones: inside, link to the zone named by +0x2e (MapRegion_RecZone +0x24) and build event 1
 ov_017::02197a64 Field_CheckDoorways   # type 2 zones: inside, walking or looking against the facing; 3 frames, then Field_TouchDoorways
+ov_017::021982ac Field_CheckType4Zones # type 4 zones: sky/atmosphere state for the leader
+ov_017::021983e0 Field_CheckType5Zones # type 5 zones: event 7 with the zone facing
+ov_017::021984f4 Field_CheckType8Zones # type 8 zones: event 6 choosing the nearest facing
+ov_017::02198618 Field_CheckType10Zones # type 10 zones: event 11 when the zone and area numbers match the game state
 ov_017::02198e30 Field_CheckAddedAreas # areas added by action 0x8f: events 5 (left) and 2 (entered)
 ov_017::02198f84 Field_TouchDoorways   # event 17 (class, number, facing) for the queued doorways, then the door task with the destination
 ov_017::0219b33c Field_QueueTask       # field task queue (+0x36b4 type, +0x36b8 count, +0x36bc objects)

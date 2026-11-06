@@ -209,6 +209,8 @@ pub struct Director {
     queue: VecDeque<u16>,
     current: Option<(u16, Script)>,
     texts: BTreeMap<i32, String>,
+    /// Scene flag of the last event loaded (from its `EventScript`), for the application.
+    scene_flag: Option<u16>,
     unimplemented: BTreeMap<i32, u32>,
 }
 
@@ -220,6 +222,7 @@ impl Director {
             queue: VecDeque::new(),
             current: None,
             texts: BTreeMap::new(),
+            scene_flag: None,
             unimplemented: BTreeMap::new(),
         }
     }
@@ -232,6 +235,12 @@ impl Director {
     /// Message table of the running event ([`Text::Id`] keys).
     pub fn texts(&self) -> &BTreeMap<i32, String> {
         &self.texts
+    }
+
+    /// Scene flag of the last event loaded (`EventScript::scene_flag`), before its first
+    /// update.
+    pub fn scene_flag(&self) -> Option<u16> {
+        self.scene_flag
     }
 
     /// Queues the events the requests start (actions 0x77, 0x80, 0x9b) and returns the others.
@@ -302,6 +311,7 @@ impl Director {
                 let mut script = Script::new(loaded.stb, loaded.entries)?;
                 script.runtime.messages = Some(loaded.texts.keys().copied().collect());
                 self.texts = loaded.texts;
+                self.scene_flag = loaded.scene_flag;
                 Ok(script)
             });
             match started {

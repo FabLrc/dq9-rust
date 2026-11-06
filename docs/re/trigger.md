@@ -346,6 +346,91 @@ appliqués à l'état, le reste est rendu sous forme de demandes (`Request::Talk
 `Warp`, `RemoveNpc`). Une progression qui change recharge les triggers de la carte
 (`Request::ReloadTriggers`).
 
+## Drapeaux globaux posés à l'ouverture
+
+Deux mécanismes distincts écrivent des drapeaux globaux (`g_QuestManager+0x8c`) pendant le
+prologue ; ils ne passent ni par les triggers ni par les natives des scripts.
+
+### Drapeau de scène (`EventTask_Update`, `ov_017::021bc77c`)
+
+**Trouvé** en décompilant `EventTask_Update` (Ghidra, adresses EU), puis contrôlé sur les
+états melonDS du premier contrôle (`build/orca/oracle/`, `build/orca/oracle-session-1711efc/`) :
+
+- Au premier passage qui n'est pas bloqué par le chargement des fichiers de la scène (retour
+  immédiat tant que `BackgroundLoader::GetNumQueuedTasks() > 0`, `0x020303a0`), la tâche pose
+  deux drapeaux facultatifs sur son contexte `ctx` (pointeur `GameResources+0x3734`,
+  `ov_017::0218b5b0`) :
+  - `Flags_Set(manager, manager+0x8c, s16(ctx+0x52) + 0x38e, 1)` si `s16(ctx+0x52) >= 0` ;
+  - `Flags_Set(manager, manager+0x8c, s8(ctx+0xa0) + 0xbea, 1)` si `s8(ctx+0xa0) >= 0` et
+    `ctx+0x9c != 0`.
+  Les deux champs valent `-1` à l'initialisation (`func_ov017_021bba08`, `ov_017::021bbae4`).
+- L'index de scène vient du **rang de l'enregistrement dans `eventlist_lv5.bin`** : le lecteur
+  de tables (`EventRecord_Parse`, `0x02071498`) ajoute à `ctx+0x52` la base 0x21c (540) pour
+  les événements 21000..39999, ou 0x302 (770) au-delà ; ces deux bases sont posées au
+  démarrage par `Flags_SetStoryBases` (`0x02071698`, appelée par `main`). Le rang (0, 1, 2…)
+  vient du compteur de `Tbl_Run` incrémenté par l'enregistrement précédent
+  (`EventRecord_Build`, `0x02071218`, `+4`), que `EventRecord_Parse` recopie en `ctx+0x46`
+  lorsque l'enregistrement le demande, puis auquel il ajoute la base.
+- Contrôlé en RAM sur les états réels : `ctx+0x52` vaut 540, 541, 542, 543, 544 et 551 pour
+  `ev21500`, `ev21507`, `ev21520`, `ev21521`, `ev21522` et `ev21596`, soit les drapeaux
+  **1450 à 1454 et 1461** ; ce sont les six drapeaux de scène du premier contrôle
+  (`bat6.ml1`). L'état `pro1.ml1` montre déjà 540 dans `ctx+0x52` mais **pas** 1450 : la tâche
+  était encore bloquée sur ses chargements, ce qui confirme que le drapeau n'est posé qu'au
+  premier passage utile et non à la création du contexte.
+- **Réimplémentation** (`dq9-core`) : `script::load::scene_flag` lit le rang dans
+  `eventlist_lv5.bin` et ajoute la base puis `0x38e` — test `scene_flags_match_the_oracle_checkpoints`
+  sur la ROM (`21500`→1450 … `21596`→1461, sans liste de constantes d'événements). Le drapeau
+  voyage sur `EventScript` (même lecture de la liste que le script, pas de parse séparé) ; le
+  branchement est fait dans `dq9-app::begin_event`, après `EventPlayer::prepare` et avant la
+  première mise à jour du script (jamais dans `GameState::new_game`) : c'est un effet de
+  l'exécution des scènes.
+
+### Drapeau de carte visitée (`Flags_SetMapVisited`, `0x0201ba78`)
+
+**Trouvé** en décompilant le code appelé au chargement d'une carte (`0x02015448+200`) :
+`Flags_SetMapVisited(Zone3D*)` lit l'identifiant de carte en `*Zone3D` et pose, dans le
+gestionnaire de quêtes :
+
+- `99 < id <= 9999` : drapeau `0xa96 + id / 100` (base 2710). Contrôlé sur les états : carte
+  1112 (`M01M12`) → 11 → **2721**, présent dès `pro1` ; carte 4100 (`X01`) → 41 → **2751**,
+  absente avant le combat 26 et présente après le chargement de `X01`.
+- `20000 <= id <= 29999` : drapeau `0xa5a + f(id - 20000)` (`0x02012f78`, remappage 0x3c..0x3f,
+  `-1` au-delà de 0x3b → aucun drapeau). La valeur exacte de `f` pour les cartes de champ du
+  prologue n'est pas contrôlée.
+- `func_0201b588()` (condition **[inconnue]**) pose le drapeau **1949** (`0x0201bb84`) : ce
+  n'est pas un identifiant de carte, et `map_visit_flag(1949)` suit donc la branche générale
+  (`2729`). La branche `0x02012f24` des cartes hors `99..=9999` et `20000..=29999` reste
+  **[inconnue]**.
+- Contrôlé : **2774** = 2710 + 64 est déjà posé en `pro1`, ce qui correspond au groupe de
+  cartes 6400 (`S14`, Starflight Express) ; [hypothèse] une carte `S14` est chargée avant le
+  prologue (scène d'ouverture), ce que le runtime ne rejoue pas.
+- **Réimplémentation** (`dq9-core`) : `state::map_visit_flag` reproduit la branche
+  `99 < id <= 9999` et rend `None` pour les autres (non établies). Branchement : à l'entrée
+  de carte, avant les triggers (`dq9-app::change_map`), pas dans `GameState::new_game`.
+
+### Reste inconnu
+
+**Mesure après branchement** (`--new-game --headless --auto`, comparateur strict sur
+`bat6.ml1`) : le runtime pose 337, **1450 à 1454**, **1461**, **2721** et **2751**. Écart
+restant : **2774** et **3191, 3775, 3955, 4046, 4212, 4283, 4410, 4414**.
+
+- **2774** est expliqué par la règle de carte visitée (`2710 + 64`, groupe `S14`) : la carte
+  du train n'est pas chargée avant le prologue par le runtime, qui ne rejoue pas cette
+  scène. Ce n'est pas un écrivain inconnu mais un chaînon de parcours manquant.
+- Les huit autres n'ont **aucun écrivain trouvé** : ni dans les 41 appelants de `Flags_Set`
+  décompilés, ni dans les 76 `trigger*.bin`, ni dans les `.bmbl`/`.bmdj`/`.npc`/`place.bin`
+  (tous les `*.npc` du dépôt parcourus), ni dans les tables `eventlist*.bin`/`evl_quest.bin`.
+  Contrôles négatifs supplémentaires : aucun bloc de 0x234 octets prérempli avec les
+  drapeaux de `pro1`/`bat6` dans l'ARM9 ni les overlays (pas de modèle recopié) ; les bases
+  d'objets/placement 0x212/0x33e/0x79e/0x776 ne donnent ces valeurs pour aucun
+  enregistrement de `place.bin` (les correspondances trouvées sont des identifiants de PNJ) ;
+  la base « objet obtenu » 0xc76 ne donne que 3192–3194 pour l'équipement de départ ; aucun
+  enregistrement de scène ne porte l'indice négatif ou la grande valeur qu'il faudrait.
+  Ne pas coder ces constantes : leur provenance n'est pas établie. Piste suivante :
+  instrumentation de melonDS (GPL, outil seulement) pour journaliser l'appelant et l'indice
+  de `Flags_Set` entre le boot et `pro1` ; le stub GDB de melonDS 1.1 coupe la connexion,
+  aucune trace PC n'existe encore.
+
 ## Combats scriptés (action `0x78`)
 
 **Trouvé** en lisant `Trig_RunDeferred` (`0x0206f82c`), cas `0x78` (Ghidra, adresses EU). Le
@@ -402,8 +487,9 @@ Preuves sur la ROM :
   Le test `x01m07_inner_door_opens_the_way` : fermée, le héros s'arrête à `z = -6.45` ; après
   `set_door_angle(0, 2, +0x1922)` **et** `set_door_angle(0, 3, +0x1922)`, il traverse
   (`z < -8`). Un seul vantail ne suffit pas : les deux zones sont touchées ensemble.
-- X01M01, X01M07, X01M05 : les zones `0x73` de type 1 (43 sur la ROM) sont lues par le champ
-  (tâche 8) mais **restent non modélisées** ; voir la limite du parcours dans `app.md`.
+- X01M01, X01M07, X01M05 : les zones `0x73` de type 1 (43 sur la ROM) sont **inertes** à
+  l'exécution — aucune routine de `Field_CheckRegions` ne lit leur liste — ; ce ne sont ni un
+  monte-charge ni une tâche 8. Voir la limite du parcours dans `app.md`.
 
 ## Fin de conversation (événement 1)
 
@@ -412,7 +498,11 @@ conversation se ferme : mot 0 = PNJ, mot 5 = contexte qui a choisi la réplique 
 d'événement 0, `0x76(pnj, contexte)`, sinon la zone), `+0x954` = réponse au dernier `<YESNO>`
 (0 = oui ; 0 sans question, car la fenêtre le met à 0 à l'ouverture). C'est la suite des répliques :
 `0x6(101) 0xb(193) 0x10(0)` → `0x77(21591)` (descendre vers Angel Falls après avoir répondu oui au
-gardien de l'Observatoire). Branché dans `dq9-app` (`Talk::take_ended`).
+gardien de l'Observatoire). Branché dans `dq9-app` (`Talk::take_ended`). Ce trigger est rangé
+sous **1.2..1.2** (`dq9re triggers X01 --with 21591`) : il n'est pas chargé à la sous-étape
+1.1.2. La suite d'origine passe par `4101 → 4103 → 4109 → 4103 → 4104`, l'événement `21510`
+(1.2.1) puis `21591` ; une route directe `21591` après 1.1.2 est exclue par les conditions
+d'origine.
 
 ## Exemples
 

@@ -218,22 +218,31 @@ cargo run -p dq9-app --release -- --new-game --headless `
   --replay build/inputs.jsonl --checkpoints build/replay.jsonl
 ```
 
-- **20 570 pas fixes** dans `inputs.jsonl` (pavé et touche action par image) ; le rejeu sans
-  pilote donne **45 checkpoints identiques octet pour octet** (sha256
-  `7878d1600e27482500beff041a3baf19a77ae7d85fb91fb21f785baf22c9b36b`) jusqu'à l'histoire 1.1.2.
-- **Premier contrôle** à 210,42 s : `X01M05`, aire 4100, 1.1.1, drapeaux globaux `{337}`,
-  drapeaux d'étape `{1}`, héros `(0,660, -0,250, -3,610)` — identique à l'état melonDS
-  `build/orca/oracle/bat6.ml1`, à l'écart des 17 drapeaux globaux près (voir `trigger.md`).
-- Étapes marchées : conversations 1140 et 1130 à `X01M05` (210–245 s), warp 9 vers `X01M07`
-  (276 s), double porte de bibliothèque poussée puis ouverte (deux vantaux, 295–299 s), aire 2
+- **22 670 pas fixes** dans `inputs.jsonl` (pavé et touche action par image) ; le rejeu sans
+  pilote donne **les mêmes checkpoints octet pour octet** (sha256
+  `3da80263943fe45ab8bde29c4b23657bc2b82102fea2de09d2fb4db59f57e2a8`) jusqu'à l'histoire 1.1.2.
+- **Premier contrôle** à 210,42 s : `X01M05`, aire 4100, 1.1.1, drapeaux globaux
+  `{337, 1450, 1451, 1452, 1453, 1454, 1461, 2721, 2751}`, drapeaux d'étape `{1}`, héros
+  `(0,660, -0,250, -3,610)` — les six drapeaux de scène et les deux de carte concordent avec
+  l'état melonDS `build/orca/oracle/bat6.ml1` ; neuf drapeaux globaux restent inconnus
+  (`trigger.md`, § « Reste inconnu »).
+- Étapes marchées : conversations 1140 et 1130 à `X01M05` (210–295 s), warp 9 vers `X01M07`
+  (312 s), double porte de bibliothèque poussée puis ouverte (deux vantaux, 331–334 s), aire 2
   ajoutée par l'événement 20 (événement 1150), NPC 130 (1600), retour par la porte vers
-  `X01M01`, NPC 127 (1170) à 334,47 s → **histoire 1.1.2**.
-- Le pilote s'arrête à 342,8 s : la terrasse haute de `X01M01` (warp `X01M03` à y 15,5) n'est
-  pas reliée par la collision de marche (sondes dans les huit directions depuis y 8,25 et
-  y 11,25 : plafond à y 11,25). Les trois zones `0x73` de **type 1** de la carte
-  (`(-33,5, 4, -21)`, `(-18,25, 11, 9)`, `(26, 8, -4,5)`, action `0x74` type 1 sans
-  destination) restent non modélisées : ce sont les candidates du monte-charge/tâche 8. Le
-  warp final est un `0x72` normal une fois le héros à y 15,5.
+  `X01M01` (356 s), NPC 127 (1170) à 369,8 s → **histoire 1.1.2**.
+- Le pilote s'arrête à 377,8 s sur `X01M01` : ses **sondes dans les huit directions** depuis
+  y 8,25 et y 11,25 plafonnent à y 11,25. Ce n'est pas seulement la sonde : une marche
+  exhaustive depuis la pose d'histoire (`(2,77 ; 11,25 ; 18,19)`) **et** depuis le point de
+  départ de la carte (`(0 ; 8,25 ; 30)`), avec des arêtes validées en 3D (`Hero::step`, montée
+  ≤ 1,0, chute ≤ 10), plafonne aussi à y 11,25. Le mur fin `X01A01S1` (bloc 0, placement 12,
+  normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`, `y 9..14`) sépare la terrasse du pied de la
+  rampe menant au warp `0x72` **type 0** (n° 9) vers `X01M03`. Les zones `0x73` de **type 1**
+  sont **inertes** (aucun lecteur dans `Field_CheckRegions`, voir `map-archive.md`) : ce n'est
+  ni un monte-charge ni une tâche 8. **[inconnu]** : la connexion manquante (placement de
+  collision déplacé, plateforme animée ou changement de carte scénarisé), à établir sur
+  melonDS. `NavGrid` collecte désormais tous les sols d'une colonne
+  (`CollisionWorld::floors`) et valide chaque arête en 3D (`Hero::step`, distance 3D au
+  voisin) : une arête qui ne fait que glisser sous une terrasse est rejetée.
 - Limite de la trace : le pilote donne les directions avec la caméra du jeu à l'angle 0 et le
   rejeu force ce même cap ; elle prouve le parcours headless dans notre moteur, pas un rejeu à
   la manette melonDS avec caméra manuelle.

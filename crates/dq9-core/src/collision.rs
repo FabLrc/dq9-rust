@@ -338,6 +338,51 @@ impl CollisionWorld {
         found
     }
 
+    /// Every floor height of the vertical column `(x, z)` between `low` and `high`, in world
+    /// units: the per-piece ground rays, so a ramp above a terrace is not hidden by the
+    /// "last piece wins" rule of [`CollisionWorld::ground`] (the movement resolve takes the
+    /// highest floor, and the grid must see it).
+    pub fn floors(&self, x: f32, z: f32, low: f32, high: f32) -> Vec<f32> {
+        let to_fx = |v: f32| (v * 4096.0) as i32;
+        let (x_fx, z_fx) = (to_fx(x), to_fx(z));
+        let hi_world = [x_fx, to_fx(high + 1.0), z_fx];
+        let lo_world = [x_fx, to_fx(low - 1.0), z_fx];
+        let box_hi = [x_fx + 0x800, to_fx(high + 1.0), z_fx + 0x800];
+        let box_lo = [x_fx - 0x800, to_fx(low - 1.0), z_fx - 0x800];
+        let mut out: Vec<f32> = Vec::new();
+        for piece in &self.pieces {
+            let tris = self.triangles(piece, box_hi, box_lo);
+            if tris.is_empty() {
+                continue;
+            }
+            let turn = rotation_y(piece.angle);
+            let a = turn_vector(fx::sub(hi_world, piece.position), &turn);
+            let b = turn_vector(fx::sub(lo_world, piece.position), &turn);
+            for t in &tris {
+                if t.normal[1] <= FLOOR_NORMAL_Y {
+                    continue;
+                }
+                let Ray::Hit { weights, .. } = ray_triangle(a, b, t) else {
+                    continue;
+                };
+                let height = fx::mul(t.vertices[1][1], weights[1])
+                    .wrapping_add(fx::mul(t.vertices[0][1], weights[0]))
+                    .wrapping_add(fx::mul(t.vertices[2][1], weights[2]))
+                    .wrapping_add(STAND_HEIGHT)
+                    .wrapping_add(piece.position[1]);
+                let world = height as f32 / 4096.0;
+                if world >= low - 0.5
+                    && world <= high + 0.5
+                    && !out.iter().any(|seen| (*seen - world).abs() < 0.02)
+                {
+                    out.push(world);
+                }
+            }
+        }
+        out.sort_by(|a, b| a.total_cmp(b));
+        out
+    }
+
     /// [`CollisionWorld::ground`] in world units.
     pub fn ground_height(&self, x: f32, z: f32, y: f32) -> Option<f32> {
         let to_fx = |v: f32| (v * 4096.0) as i32;
