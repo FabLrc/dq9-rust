@@ -380,13 +380,17 @@ Parcours vérifié sur la ROM européenne, à 60 Hz (`--new-game --headless --au
 | 335 s | `X01M01` | NPC 127, `1170` → histoire **1.1.2** |
 | 344 s | `X01M01` | arrêt : le warp vers `X01M03` (y 15,5) n'est pas joignable à pied |
 
-Limite précise : sur `X01M01` (tour de l'Observatoire), la terrasse haute n'est pas reliée par
-la collision de marche (le graphe atteint y 11,2 au plus, le warp de `X01M03` est à y 15,5).
-Les zones `0x73` de **type 1** (43 sur la ROM, trois sur `X01M01`, aux positions
-`(-33,5, 4, -21)`, `(-18,25, 11, 9)` et `(26, 8, -4,5)`) sont lues par le champ
-(`Field_CheckRegions`, tâche 8) mais **non modélisées** : elles sont la cause probable du
-passage manquant. Le pilote s'arrête donc à 1.1.2 ; le chapitre 2 n'est plus atteint en
-téléportant.
+Limite précise : sur `X01M01` (tour de l'Observatoire), la terrasse haute n'est pas reliée à
+la pose d'histoire par la collision de marche. Une exploration **3D** (arêtes validées par
+`Hero::step` avec la hauteur atteinte, montée ≤ 1,0, chute ≤ 10) depuis la pose d'histoire
+comme depuis le départ de la carte plafonne à **y 11,25** ; le warp `X01M03` est à y 15,5. Le
+mur fin `X01A01S1` (bloc 0, placement 12, normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`,
+`y 9..14`) sépare la terrasse du pied de la rampe. Les zones `0x73` de **type 1** (43 sur la
+ROM, trois sur `X01M01`) sont **inertes** : aucune routine de `Field_CheckRegions` ne lit leur
+liste, ce n'est ni un monte-charge ni une tâche 8. La connexion manquante (placement de
+collision déplacé, plateforme animée ou changement de carte scénarisé) est **[inconnue]**, à
+établir sur melonDS. Le pilote s'arrête donc à 1.1.2 ; le chapitre 2 n'est pas atteint et
+aucun téléport n'entre dans la preuve.
 
 **S'arrête où et pourquoi** (journal de fin de `--pilot`) : prise de contrôle sans rien qui fasse
 avancer l'histoire d'après la simulation (conversations qui ne changent plus ni progression ni
@@ -398,7 +402,8 @@ drapeaux, aires déjà prises), ou plafond de pas atteint. Limites connues :
 - `Other(141)` (fin de `21510`, `21595`, `21593`) et les natives sans effet (`stb.md`) sont
   journalisés mais ne font rien.
 - Le pilote rejoue parfois la même conversation (`2110`) tant que son déclencheur change un drapeau.
-- Les zones de type 1 de l'Observatoire ne sont pas jouées (voir la limite ci-dessus).
+- Les zones de type 1 de l'Observatoire sont inertes ; la connexion de hauteur manquante
+  reste à établir (voir la limite ci-dessus).
 - L'ordre et les durées ne sont pas comparés à melonDS.
 
 ## Lancer dans un navigateur

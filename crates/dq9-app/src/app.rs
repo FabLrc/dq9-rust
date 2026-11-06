@@ -107,6 +107,14 @@ fn write_flag_list(out: &mut String, flags: &std::collections::BTreeSet<i32>) {
     }
 }
 
+/// The d-pad bits of an [`Input`] (bit 0 up, 1 down, 2 left, 3 right).
+fn input_bits(input: Input) -> u8 {
+    u8::from(input.up)
+        | u8::from(input.down) << 1
+        | u8::from(input.left) << 2
+        | u8::from(input.right) << 3
+}
+
 /// The d-pad keys of a replay frame (bit 0 up, 1 down, 2 left, 3 right).
 fn pad_input(bits: u8) -> Input {
     Input {
@@ -917,7 +925,11 @@ impl App {
             };
             let move_direction = match (replay, piloted) {
                 (Some(bits), _) => pad_direction(bits),
-                (None, Some(direction)) => Vec3::new(direction.x, 0.0, direction.z),
+                // The d-pad the hero actually presses defines the field's walk direction too
+                // (a door compares it): the raw steering vector would make a replay diverge.
+                (None, Some(direction)) => {
+                    pad_direction(input_bits(Input::from_direction(direction)))
+                }
                 (None, None) if steering => {
                     let (sin, cos) = self.camera.yaw.sin_cos();
                     let forward = Vec3::new(sin, 0.0, -cos);

@@ -340,10 +340,13 @@ Avancement :
       [`re/stb.md`](re/stb.md) § « Enchaînement du prologue ») : état de `GameState::new_game`,
       héros par défaut, première scène `21500` ; `21507 → combat 26 → 21520 → … → 21596` par la
       native 538, le trigger 11, l'action `0x78` et le trigger 15, puis le joueur a la main à
-      l'Observatoire (`--new-game --headless --auto`, 210 s de jeu) ; avec `--pilot`, le parcours
-      automatique traverse les étapes 1.1 à 1.4 jusqu'au chapitre 2 (`M01M10`, 652 s). **Reste** :
-      le combat 26 (J4), comparer l'ordre, les durées et les drapeaux à melonDS, un vrai
-      pilote (marche, collisions) ; le pilote est un outil de test, pas une fonction du jeu.
+      l'Observatoire (`--new-game --headless --auto`, 210 s de jeu). Le pilote **marche** :
+      direction au pavé, `Hero::step`, collisions, portes (la double porte de `X01M07` est
+      poussée puis ouverte par la native 584), et atteint l'histoire **1.1.2** à `X01M01`
+      (NPC 127, événement 1170) sans téléport ; il s'y arrête, l'accès à la terrasse du warp
+      `X01M03` restant inconnu. **Reste** : le combat 26 (J4), la connexion de hauteur de
+      l'Observatoire, comparer l'ordre, les durées et les drapeaux à melonDS ; le pilote est
+      un outil de test, pas une fonction du jeu.
 - [ ] **Interpréteur `.stb`** : `dq9_core::script` traduit `Stb_Run` et ses auxiliaires
       (`ov_017::021d4980…021d6148`, marqueurs `port:`), joue les entrées 200, 100 et 300 d'un
       événement une mise à jour à la fois (`Script::step`) et rend des `Event` typés (fondus,
@@ -378,8 +381,11 @@ de son apparence à la création du personnage), prologue d'Angel Falls jouable 
 dialogues, quêtes du village), sans combats. Critère : toute la suite d'événements du
 prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points. **État** : le
 parcours à pied atteint 1.1.2 (`X01M01`) ; le passage vers le chapitre 2 reste bloqué par
-l'accès à la terrasse haute de l'Observatoire. Les zones de type 1 non modélisées sont une
-**[hypothèse]** de cause, pas une transition de hauteur établie (voir J2).
+l'accès à la terrasse haute de l'Observatoire. Une marche 3D exhaustive depuis la pose
+d'histoire et depuis le départ de la carte plafonne à y 11,25 ; le warp `X01M03` est à y 15,5.
+Les zones de type 1 sont **inertes** (aucun lecteur dans le champ) : la connexion manquante
+(placement de collision déplacé, plateforme ou changement de carte scénarisé) est **[inconnue]**
+et à établir sur melonDS (voir J2).
 
 ## J4 — Combattre : **v0.2**
 

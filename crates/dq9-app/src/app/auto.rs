@@ -16,9 +16,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use dq9_core::collision::{Body, Mode};
 use dq9_core::field::{Event, Exit, Leader, exit_contains};
-use dq9_core::movement::{HEIGHT, RADIUS};
 use dq9_core::scenario::Step;
 use dq9_core::talk::Target;
 use dq9_core::trigger::Request;
@@ -157,27 +155,8 @@ struct NavGrid {
     low: f32,
 }
 
-/// Whether the hero's sphere fits at a known floor (the map pushes it by less than five
-/// centimetres).
-fn fits(world: &dq9_core::CollisionWorld, x: f32, z: f32, ground: f32) -> bool {
-    let to_fx = |v: f32| (v * 4096.0) as i32;
-    let start = [to_fx(x), to_fx(ground), to_fx(z)];
-    let mut body = Body {
-        position: start,
-        fall: 0,
-        radius: RADIUS,
-        height: HEIGHT,
-        wall: None,
-    };
-    let outcome = world.resolve(&mut body, start, Mode::Whole);
-    if !outcome.grounded {
-        return false;
-    }
-    let dx = (body.position[0] - start[0]) as f32 / 4096.0;
-    let dz = (body.position[2] - start[2]) as f32 / 4096.0;
-    dx * dx + dz * dz < 0.0025
-}
-
+/// The floors of one column: the game's ground ray from `high`, then below the floor it found,
+/// until the map's lowest ground or [`MAX_FLOORS`].
 /// Whether the hero may move from `a` to `b`, as the game would move it: a short walk from
 /// `a` in that direction must make progress (turn, acceleration, wall slide and floor snap of
 /// [`Hero::step`]). A thin wall between two free cell centres, and a ledge crossable one way
@@ -190,19 +169,18 @@ fn edge_pass(world: &dq9_core::CollisionWorld, a: Vec3, b: Vec3) -> bool {
     let yaw = direction.x.atan2(-direction.z);
     let mut hero = Hero::at(a, yaw);
     let pad = Input::from_direction(direction);
-    // Walk until the neighbour cell is reached: a wedged move slides along the wall and
-    // never arrives, however far it travels.
+    // Walk until the neighbour cell is reached in **3D**: a flat move that merely slides
+    // under a higher terrace must not count, and the hero's height must actually reach the
+    // neighbour's floor.
     for _ in 0..24 {
-        if flat(hero.position() - b).length() < 0.12 {
+        if (hero.position() - b).length() < 0.2 {
             return true;
         }
         hero.step(world, pad, 0, 1);
     }
-    flat(hero.position() - b).length() < 0.25
+    (hero.position() - b).length() < 0.3
 }
 
-/// The floors of one column: the game's ground ray from `high`, then below the floor it found,
-/// until the map's lowest ground or [`MAX_FLOORS`].
 fn column_floors(
     world: &dq9_core::CollisionWorld,
     x: f32,
@@ -210,27 +188,15 @@ fn column_floors(
     high: f32,
     low: f32,
 ) -> Vec<f32> {
-    let mut floors: Vec<f32> = Vec::new();
-    let mut base = high;
-    // The ground ray reaches ten units below its base: when nothing is in reach, lower the
-    // base instead of giving up (a cell high on a tower must still see the floors below it).
-    // Steps are close together, so probe just below each floor found rather than jumping.
-    while base > low - 1.0 && floors.len() < MAX_FLOORS {
-        match world.ground_height(x, z, base) {
-            Some(ground) if ground >= low - 1.0 => {
-                let lower = floors.last().is_none_or(|last| ground < last - 0.05);
-                if lower {
-                    floors.push(ground);
-                    base = ground - 1.2;
-                } else {
-                    base -= 2.0;
-                }
-            }
-            _ => base -= 8.0,
-        }
-    }
-    floors.sort_by(|a, b| a.total_cmp(b));
-    floors
+    // Every floor the collision has in this column, not only the piece the game's single
+    // ground query keeps: a ramp above a terrace must be visible to the grid. Standing is
+    // decided by the directional edge probes (the hero's own walk), not by a static sphere
+    // fit: on a ramp edge the sphere is pushed even though the hero climbs it.
+    world
+        .floors(x, z, low, high)
+        .into_iter()
+        .take(MAX_FLOORS)
+        .collect()
 }
 
 /// Direction of the eight d-pad headings on the grid.
@@ -313,7 +279,7 @@ impl NavGrid {
                 let found = column_floors(world, x, z, high_y, low_y);
                 let mut kept = 0usize;
                 for ground in found {
-                    if kept < MAX_FLOORS && fits(world, x, z, ground) {
+                    if kept < MAX_FLOORS {
                         floor[(iz * width + ix) * MAX_FLOORS + kept] = ground;
                         kept += 1;
                     }
