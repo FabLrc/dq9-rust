@@ -15,6 +15,7 @@ mod script;
 mod sdat;
 mod sseq;
 mod state;
+mod states;
 mod stb;
 mod talk;
 mod text;
@@ -252,7 +253,13 @@ enum Command {
     /// with the ROM when one is found, or `--peek ADDR[:LEN]` (hex) bytes of main RAM / TCM.
     /// `--json` prints the checkpoint a differential run compares (event block, map, frame).
     State {
-        path: PathBuf,
+        /// Savestate to read (`.ml1`).
+        #[arg(conflicts_with = "ram", required_unless_present = "ram")]
+        path: Option<PathBuf>,
+        /// Raw main-RAM image instead (4 MiB from `0x02000000`, as `--dump-ram` writes):
+        /// the same story readers apply, without the TCMs or the ROM comparison.
+        #[arg(long)]
+        ram: Option<PathBuf>,
         #[arg(long, num_args = 1..)]
         peek: Vec<String>,
         /// Compare the RAM with the `.sav` the game was loaded from (`SAVE_COPIES`).
@@ -261,6 +268,36 @@ enum Command {
         /// Print the story checkpoint as JSON (no ROM or save comparison).
         #[arg(long)]
         json: bool,
+    },
+    /// Catalogue of oracle states (`.ml1` and raw main-RAM images), to find which file holds
+    /// a story point without loading each one.
+    States {
+        #[command(subcommand)]
+        action: StatesAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum StatesAction {
+    /// Scan a directory and write the catalogue as JSON (default: standard output).
+    Index {
+        /// Directory of `.ml1` states and 4 MiB RAM images.
+        dir: PathBuf,
+        /// Where to write the JSON catalogue.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Filter a catalogue by story point and map.
+    Find {
+        /// Story point, `CHAPTER.STEP.SUBSTEP` (`1.1.2`).
+        #[arg(long)]
+        story: Option<String>,
+        /// Only entries of this map (`maplist9.bin` id, `4101`).
+        #[arg(long)]
+        map: Option<u16>,
+        /// Catalogue to read.
+        #[arg(long, default_value = "build/oracle/index.json")]
+        index: PathBuf,
     },
 }
 
@@ -278,11 +315,27 @@ fn main() -> Result<()> {
         Command::Save { path, verbose } => return save::run(path, *verbose, cli.rom.as_deref()),
         Command::State {
             path,
+            ram,
             peek,
             save,
             json,
         } => {
-            return state::run(path, peek, save.as_deref(), cli.rom.as_deref(), *json);
+            return state::run(
+                path.as_deref(),
+                ram.as_deref(),
+                peek,
+                save.as_deref(),
+                cli.rom.as_deref(),
+                *json,
+            );
+        }
+        Command::States { action } => {
+            return match action {
+                StatesAction::Index { dir, out } => states::run_index(dir, out.as_deref()),
+                StatesAction::Find { story, map, index } => {
+                    states::run_find(index, story.as_deref(), *map)
+                }
+            };
         }
         _ => {}
     }
@@ -371,7 +424,8 @@ fn main() -> Result<()> {
         Command::Functions { .. }
         | Command::Coverage { .. }
         | Command::Save { .. }
-        | Command::State { .. } => Ok(()),
+        | Command::State { .. }
+        | Command::States { .. } => Ok(()),
     }
 }
 

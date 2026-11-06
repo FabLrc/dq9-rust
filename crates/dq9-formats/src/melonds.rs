@@ -327,6 +327,17 @@ pub struct Section {
     pub len: usize,
 }
 
+/// The ARM9-visible memories of a running game, whatever holds them: a melonDS savestate
+/// ([`State`]) or a raw main-RAM image ([`Memory::from_main_ram`], as `--dump-ram` writes).
+/// Every address reader lives here once, so a `.ml1` and a 4 MiB dump are read by the same
+/// code (`docs/re/melonds-state.md`, § « État neutre »).
+#[derive(Debug, Clone, Copy)]
+pub struct Memory<'a> {
+    main: &'a [u8],
+    itcm: Option<&'a [u8]>,
+    dtcm: Option<&'a [u8]>,
+}
+
 /// A parsed savestate, borrowing its bytes.
 #[derive(Debug, Clone)]
 pub struct State<'a> {
@@ -334,6 +345,7 @@ pub struct State<'a> {
     sections: Vec<Section>,
     ndsg: Section,
     cp15: Section,
+    memory: Memory<'a>,
 }
 
 fn u32_at(b: &[u8], at: usize) -> Option<u32> {
@@ -394,6 +406,15 @@ impl<'a> State<'a> {
             sections,
             ndsg,
             cp15,
+            memory: {
+                let main_at = ndsg.offset + NDSG_MAIN;
+                let tcm_at = cp15.offset + CP15_TCM;
+                Memory {
+                    main: &data[main_at..main_at + MAIN_RAM_SIZE],
+                    itcm: Some(&data[tcm_at..tcm_at + ITCM_SIZE]),
+                    dtcm: Some(&data[tcm_at + ITCM_SIZE..tcm_at + ITCM_SIZE + DTCM_SIZE]),
+                }
+            },
         })
     }
 
@@ -401,10 +422,14 @@ impl<'a> State<'a> {
         &self.sections
     }
 
+    /// The shared address readers over these memories.
+    pub fn memory(&self) -> Memory<'a> {
+        self.memory
+    }
+
     /// Main RAM (4 MiB), from [`MAIN_RAM_BASE`].
     pub fn main_ram(&self) -> &'a [u8] {
-        let at = self.ndsg.offset + NDSG_MAIN;
-        &self.data[at..at + MAIN_RAM_SIZE]
+        self.memory.main_ram()
     }
 
     /// Shared WRAM (32 KiB) when the section holds it, else `None`.
@@ -432,6 +457,45 @@ impl<'a> State<'a> {
         let at = self.cp15.offset + CP15_TCM + ITCM_SIZE;
         &self.data[at..at + DTCM_SIZE]
     }
+}
+
+/// A savestate is a container: the story readers are those of its memories.
+impl<'a> core::ops::Deref for State<'a> {
+    type Target = Memory<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.memory
+    }
+}
+
+impl<'a> Memory<'a> {
+    /// A raw main-RAM image: `main` is the whole 4 MiB from [`MAIN_RAM_BASE`], and no TCM
+    /// is available (reads into the ITCM or DTCM fail).
+    pub fn from_main_ram(main: &'a [u8]) -> Result<Self> {
+        if main.len() != MAIN_RAM_SIZE {
+            return Err(Error::Malformed("main RAM image is not 4 MiB"));
+        }
+        Ok(Self {
+            main,
+            itcm: None,
+            dtcm: None,
+        })
+    }
+
+    /// Main RAM (4 MiB), from [`MAIN_RAM_BASE`].
+    pub fn main_ram(&self) -> &'a [u8] {
+        self.main
+    }
+
+    /// ITCM when the container holds it.
+    pub fn itcm(&self) -> Option<&'a [u8]> {
+        self.itcm
+    }
+
+    /// DTCM when the container holds it.
+    pub fn dtcm(&self) -> Option<&'a [u8]> {
+        self.dtcm
+    }
 
     /// `len` bytes at an ARM9 address: main RAM (`0x02000000..0x03000000`, mirrored every
     /// 4 MiB), the DTCM at [`DTCM_BASE`] (checked first) or the ITCM (`< 0x02000000`,
@@ -444,11 +508,11 @@ impl<'a> State<'a> {
         };
         let (mem, offset): (&[u8], usize) =
             if (DTCM_BASE..DTCM_BASE + DTCM_SIZE as u32).contains(&addr) {
-                (self.dtcm(), (addr - DTCM_BASE) as usize)
+                (self.dtcm.unwrap_or(&[]), (addr - DTCM_BASE) as usize)
             } else if (MAIN_RAM_BASE..0x0300_0000).contains(&addr) {
-                (self.main_ram(), (addr & 0x3f_ffff) as usize)
+                (self.main, (addr & 0x3f_ffff) as usize)
             } else if addr < MAIN_RAM_BASE {
-                (self.itcm(), (addr & 0x7fff) as usize)
+                (self.itcm.unwrap_or(&[]), (addr & 0x7fff) as usize)
             } else {
                 return Err(out_of_bounds(0));
             };
@@ -1095,5 +1159,61 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(4, 3), (5, 1)]
         );
+    }
+
+    /// The same main RAM as the savestate above, without the container: every story reader
+    /// must give the same answer (`--dump-ram` + `dq9re state --ram`).
+    #[test]
+    fn main_ram_image_reads_like_a_savestate() {
+        let object = 0x0220_0000u32;
+        let data = synthetic_with(|m| {
+            let mut put = |addr: u32, bytes: &[u8]| {
+                let o = (addr & 0x3f_ffff) as usize;
+                m[o..o + bytes.len()].copy_from_slice(bytes);
+            };
+            put(ZONE_3D, &4105u16.to_le_bytes());
+            put(ZONE_3D + 4, &4100u16.to_le_bytes());
+            put(QUEST_MANAGER + 0x8c + 0x27, &[0x80]);
+            put(QUEST_MANAGER, &[1, 1, 1]);
+            put(GAME_STATE + 0x3ac, &0u32.to_le_bytes());
+            put(GAME_STATE + 8, &object.to_le_bytes());
+            put(
+                object + 0x44,
+                &[0x8f, 0x0a, 0, 0, 0, 0, 0, 0, 0x1e, 0xbf, 0xff, 0xff],
+            );
+            put(object + 0x54, &0x3400u32.to_le_bytes());
+        });
+        let state = State::parse(&data).unwrap();
+        let ram = state.main_ram().to_vec();
+        let image = Memory::from_main_ram(&ram).unwrap();
+        assert_eq!(image.checkpoint().unwrap(), state.checkpoint().unwrap());
+        assert_eq!(image.story().unwrap(), state.story().unwrap());
+        assert_eq!(image.current_map().unwrap(), (4105, 4100));
+        assert_eq!(image.protagonist_index().unwrap(), 0);
+        let at = image.object(0).unwrap().unwrap();
+        assert_eq!(at, object);
+        assert_eq!(image.object_position(at).unwrap(), [2703, -1024, -14786]);
+        assert_eq!(image.object_heading(at).unwrap(), 0x3400);
+        let c = image.checkpoint().unwrap();
+        assert_eq!((c.map, c.area, c.vblank), (4105, 4100, 1234));
+        assert_eq!(c.scenario(), Some((1, 1, 1)));
+        assert_eq!(c.flags, [0x13f]);
+        assert!(c.tracks[0].step_flags.is_empty());
+        // Main RAM mirrors every 4 MiB; the TCMs are not part of a raw image.
+        assert_eq!(
+            image.u32(VBLANK_COUNT).unwrap(),
+            image.u32(VBLANK_COUNT - 0x40_0000).unwrap()
+        );
+        assert!(image.read(DTCM_BASE, 1).is_err());
+        assert!(image.read(0x10, 1).is_err());
+        assert!(image.read(0x0200_0000 + 0x3f_fffe, 4).is_err());
+    }
+
+    #[test]
+    fn main_ram_image_needs_the_full_four_mebibytes() {
+        assert!(Memory::from_main_ram(&[]).is_err());
+        assert!(Memory::from_main_ram(&vec![0u8; MAIN_RAM_SIZE - 1]).is_err());
+        assert!(Memory::from_main_ram(&vec![0u8; MAIN_RAM_SIZE + 1]).is_err());
+        assert!(Memory::from_main_ram(&vec![0u8; MAIN_RAM_SIZE]).is_ok());
     }
 }
