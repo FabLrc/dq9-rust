@@ -304,7 +304,7 @@ pub struct Plate {
 /// A sound of the message window (`docs/re/sdat.md`: base archive effects 10 to 12, 6, 28, 5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sound {
-    /// A typed character (`0x020455f8`); the voice is the application's.
+    /// A typed character (`0x02045608`); the voice is the application's.
     Blip,
     /// `<EXC>` (`0xFF2E`).
     Exclamation,
@@ -315,7 +315,7 @@ pub enum Sound {
 }
 
 /// Characters typed between two blips: the game blips when its counter passes 3 and takes 4
-/// off (`0x02065990`) **[hypothèse : one character per count]**.
+/// off (`0x020659a0`) **[hypothèse : one character per count]**.
 pub const BLIP_EVERY: u32 = 4;
 
 /// One step of a prepared message.
@@ -338,7 +338,7 @@ pub enum Op {
     },
     /// `<TIME=n>`: pause for `n` steps.
     Pause(u32),
-    /// `<EXC>`, `<QES>`: a sound, no wait (`0x02065990`).
+    /// `<EXC>`, `<QES>`: a sound, no wait (`0x020659a0`).
     Sound(Sound),
     Prompt(PromptKind),
     /// Branch marker `<YES>` (0xFF14), `<NO>`, `<UKE>`, `<YAME>`.

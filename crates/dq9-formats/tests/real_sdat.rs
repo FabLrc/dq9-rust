@@ -91,3 +91,51 @@ fn every_map_music_has_a_sequence() {
         Some(6)
     );
 }
+
+/// The effect archives: every sequence archive parses, its entries start inside its stream and
+/// name a bank that exists and a player of the archive, and the group of an archive loads that
+/// archive.
+#[test]
+fn effect_archives_are_consistent() {
+    use dq9_formats::sdat::{KIND_PLAYER, KIND_SEQUENCE_ARCHIVE};
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    for (path, expected) in [
+        ("data/sound/se_norm.sdat", 279),
+        ("data/sound/se_btl.sdat", 481),
+    ] {
+        let sdat = Sdat::parse(rom.file_by_path(path).unwrap()).unwrap();
+        let mut archives = 0;
+        for index in 0..sdat.sequence_archive_count() {
+            let Ok((_, ssar)) = sdat.sequence_archive(index) else {
+                assert!(
+                    sdat.record(KIND_SEQUENCE_ARCHIVE, index).is_none(),
+                    "{path} {index}"
+                );
+                continue;
+            };
+            archives += 1;
+            for entry in &ssar.entries {
+                let Some(offset) = entry.offset else { continue };
+                assert!((offset as usize) < ssar.stream.len(), "{path} {index}");
+                assert!(
+                    sdat.bank_info(usize::from(entry.bank)).is_ok(),
+                    "{path} {index}"
+                );
+                assert!(
+                    sdat.player(usize::from(entry.player)).is_some(),
+                    "{path} {index}"
+                );
+            }
+            let group = sdat.group(index).expect("a group per archive");
+            assert!(
+                group
+                    .iter()
+                    .any(|e| e.kind == 3 && e.index as usize == index),
+                "{path}: group {index} does not load its archive"
+            );
+        }
+        assert_eq!(archives, expected, "{path}");
+        assert!((0..sdat.list_len(KIND_PLAYER)).any(|i| sdat.player(i).is_some()));
+    }
+}

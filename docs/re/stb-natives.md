@@ -130,7 +130,7 @@ handler et de ses callees directs, source USA, wiki `Engine-Functions`/`Event-Sc
 | 328 (1) | enfile le type 3 vers une pose calculée par `020a2b48` | destination non lue |
 | 809 (9) | montre/cache un des objets `GameResources+0x4334/+0x4338` (`MakeVisible`/`MakeHidden`) selon le masque | identité des objets |
 | 815 (2) | écrit 1 puis 0 si trois sondes de l'overlay 29 renvoient les constantes attendues (wiki : contrôle d'intégrité) | overlay 29 obscurci |
-| 712 (48) | sans sortie : archive de base `+0xb4` ; avec sortie : archive `+0xc4`, handle écrit | deux comportements, pas de nom unique |
+| 712 (48) | sans sortie : archive de base `+0xb4` ; avec sortie : archive `+0xc4`, handle écrit | deux comportements, pas de nom unique ; joué par `audio.rs` depuis le chantier J3 son (`re/sdat.md`, § Gestionnaire de son) |
 | 724 (1) | stub : `return 1`, sans effet | n'a pas de rôle |
 
 Le wiki décompte 570 par millions d'appels à l'exécution ; le handler ne renvoie rien par

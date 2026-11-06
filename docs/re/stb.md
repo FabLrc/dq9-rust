@@ -296,10 +296,10 @@ Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/
   les fondus simples (100, 101, 105, 106, 107) jusqu'à un fondu qui le déverrouille
   (117 à 122) ; l'état revient à la normale quand la dernière scène finit.
 
-**Non exécuté** (rapporté par `--events-report`) : son, échange d'écrans, lumière et heure
+**Non exécuté** (rapporté par `--events-report`) : échange d'écrans, lumière et heure
 (578, 579, 588, 589, 808), brouillard (804), sprites 2D (521), attachements d'os (235, 236),
 mouvements des PNJ de la carte et des modèles absents, natives 238, 328, 409, 411, 413, 541,
-542, 545, 546, 547, 552, 561, 574, 575, 581, 582, 584, 809 ; 554, 559, 560, 571, 712 et 815
+542, 545, 546, 547, 552, 561, 574, 575, 581, 582, 584, 809 ; 559, 560, 571 et 815
 sont sans effet visible établi. **[inconnu]** : ce qui enchaîne `ev21507` à `ev21520` (le
 trigger 11 rend `Other(120)`, action `0x78`).
 

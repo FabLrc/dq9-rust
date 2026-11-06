@@ -115,12 +115,16 @@ la carte, ensemble ils la ramènent. `Tab` passe en vol libre, où les touches d
 déplacent la caméra et `Q`/`E` la cible vers le bas/haut ; `Maj` accélère la caméra. `F` recadre, `R` change la disposition des écrans (`stacked`, `side`, `top`),
 `T` moment suivant (liste « Moment » sur le Web), `M` coupe/rétablit la musique, `PageHaut`/`PageBas` carte précédente/suivante, `Entrée`/`Espace` parler, `Échap` quitter.
 
-**Musique** : à chaque chargement de carte, `dq9-app` joue la séquence de `bgm.sdat` que le jeu
+**Son** : à chaque chargement de carte, `dq9-app` joue la séquence de `bgm.sdat` que le jeu
 choisit pour elle (`re/sdat.md` : fente musique de `maplist9.bin`, variante de nuit, surcharges de
 `mapbgm.bin`), par `cpal` en natif et par WebAudio sur le Web (le navigateur n'autorise le son
-qu'après un geste : la musique démarre au premier clic ou à la première touche). `--mute`
-(`?mute=1` sur le Web) n'ouvre aucun périphérique audio ; `dq9re sseq <n> --wav f.wav` rend une
-séquence sans fenêtre.
+qu'après un geste : la musique démarre au premier clic ou à la première touche). Les scripts
+d'événement jouent leurs effets (natives 712 à 738), jingles (`ME_`, la musique baisse puis
+reprend) et changements de musique ; la fenêtre de message joue le bip de frappe, `<EXC>`,
+`<QES>` et l'ouverture des choix. `--mute` (`?mute=1` sur le Web) n'ouvre aucun périphérique
+audio ; `dq9re sseq <n> --wav f.wav` rend une séquence, `dq9re se <n> --wav f.wav` un effet
+sans fenêtre ; `--event N --headless-steps S --sound-wav f.wav` écrit le son mixé d'un événement
+(le journal liste les effets demandés par les scripts).
 
 ## Événements (scènes `.stb`)
 
@@ -180,9 +184,9 @@ fournit les acteurs (`add_actor`, `play_actor`, `actor_bone`, `play_hero`, `set_
   l'écran 3D **[hypothèse]** ; le fondu de l'autre moteur et l'échange des écrans sont ignorés.
 
 **Résultat sur le prologue** (`--events-report 1.1-3`, ROM EU, textes anglais ; les 30 scripts
-vont à leur terme, aucune scène « non jouée » ; le son appartient à un autre chantier et n'est
-compté nulle part). « Complet » : tout ce que le script demande est exécuté, aux natives sans effet
-visible établi près (554, 559, 560, 571, 712, 815).
+vont à leur terme, aucune scène « non jouée » ; le son est joué par `audio.rs` et rapporté nulle
+part). « Complet » : tout ce que le script demande est exécuté, aux natives sans effet
+visible établi près (559, 560, 571, 815).
 
 | Scène(s) | Cartes | Résultat | Ce qui manque (visible) |
 |---|---|---|---|
@@ -190,7 +194,7 @@ visible établi près (554, 559, 560, 571, 712, 815).
 | 1150, 1160, 1600, 1610 | `X01M07` | partiel | mouvements `stand`/`walk`/`talk_loop` des PNJ de la carte (sprites ou modèles) et héros de référence (cast mode 4, personnage 99/139/130 de la table des personnages, non dessinés) ; bulles 541/542/561 |
 | 1170, 1320 | `X01M01`, `M01` | partiel | natives 545/546 (`run`/`stand` d'un personnage), 328 (caméra) |
 | 1330, 1340, 1380 | `M01M06`, `M01M04`, `M01` | partiel | mouvement 1 d'un acteur déclaré, bulles 541/542/561, `574` (bit des placements de carte) |
-| 21500 + 21507 | `M01M12` | partiel | pas de son ni de lumière/heure (588, 589…), sprites 2D (521), 8 attachements d'os (tête, torse : halo, ailes), natives 238 (teinte), 409/411/413 (effets de fenêtre), 541/542/561, 547, 552 (caméra à trois os), 574, 584, mouvement `nozoki_loop` absent des données |
+| 21500 + 21507 | `M01M12` | partiel | pas de lumière/heure (588, 589…), sprites 2D (521), 8 attachements d'os (tête, torse : halo, ailes), natives 238 (teinte), 409/411/413 (effets de fenêtre), 541/542/561, 547, 552 (caméra à trois os), 574, 584, mouvement `nozoki_loop` absent des données |
 | 21510 | `X01M04` | partiel | 574, attachement d'os |
 | 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | partiel | brouillard (804), lumière/heure, teinte 238, 574, 809, 6 attachements d'os |
 | 21591, 21592, 21594, 21597 | `X01M05`, `M01`, `X01M04` | partiel | sprites 2D (21591), 575/574, 581/582, 809, lumière, attachements d'os (21592, 21597) |

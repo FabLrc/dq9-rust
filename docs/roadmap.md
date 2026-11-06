@@ -285,7 +285,7 @@ suivi), comparaison position par position à nombre d'images égal.
 | interpréteur `.stb` dans `dq9-core` (attente par image, appels de fonctions) — **fait** (`dq9_core::script`, voir Avancement) | `stb.rs` (fait) ; wiki Event-Scripts |
 | natives : personnages (200), caméra (300), messages (400), scène et fondus (500, 100–122) — **jouées à l'écran** pour le prologue (voir Avancement) | wiki Engine-Functions ; `ov_001` |
 | deux écrans DS : écran haut (carte) et bas, disposition configurable | — |
-| son minimal : musique SDAT (séquenceur SSEQ + mixage SWAV) — **fait pour la musique de champ** : `dq9-audio` (séquenceur, enveloppes DS, ondes ADPCM, PSG, bruit), musique de la carte lue dans `maplist9.bin` + `mapbgm.bin`, sortie cpal/WebAudio (`--mute`, touche `M`), `dq9re sseq` ; reste : effets sonores, jingles `ME_`, fondus du gestionnaire, comparaison à l'oreille/melonDS ([`re/sdat.md`](re/sdat.md)) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
+| son : musique SDAT, effets et jingles — **fait** (sans comparaison à l'oreille ni à melonDS) : `dq9-audio` (séquenceur, enveloppes DS, ondes ADPCM, PSG, bruit, archives de séquences SSAR, mixeur multi-séquences avec limites et priorités des joueurs du SDAT), musique de la carte lue dans `maplist9.bin` + `mapbgm.bin`, natives 554 et 712 à 738 des scripts (effets des groupes chargés, effets de base, jingles `ME_` avec fondu et reprise de la musique, volume, arrêt, verrou), sons du message (bip de frappe, `<EXC>`, `<QES>`, ouverture de choix), sortie cpal/WebAudio (`--mute`, touche `M`), `dq9re sseq|sdat|se`, `dq9-app --sound-wav` ; reste : sons de portes, de pas et de gestes, curseur de choix, effets de combat, flux STRM, réglage de volume du joueur ([`re/sdat.md`](re/sdat.md)) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
 
 Avancement :
 
@@ -321,7 +321,7 @@ Avancement :
       conversation, acteurs qui bougent, tournent et jouent leurs mouvements, caméra du script
       dont celle portée par les os d'un modèle, déplacements au pas du jeu) ; les 30 scripts du
       prologue vont à leur terme (`--events-report 1.1-3` : 8 sans manque visible, 22 partielles,
-      aucune « non jouée »). Restent : le son, la lumière/heure, le brouillard, les sprites 2D,
+      aucune « non jouée »). Restent : la lumière/heure, le brouillard, les sprites 2D,
       les attachements d'os, les mouvements des PNJ de la carte, ~20 natives d'effets (liste dans
       `app.md`), comparer l'ordre, les durées et les poses à melonDS, l'appelant de l'entrée 200
       et les natives sans rôle (`re/stb.md`, § Interpréteur).

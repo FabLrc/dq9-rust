@@ -804,10 +804,33 @@ ov_017::021a2c14 Cast_LoadMap               # data/scenario/<area>.npc: place.bi
 0x020f33bc g_DayThresholds                                 # floats 420, 390, 210, 180: end of the day, evening, day and morning starts
 0x02107930 g_LightingManager                               # LightingManager singleton, +0x90 override, +0x94 day timer, +0x98 phase, 0x9c bytes
 
-# --- Sound: which music plays (docs/re/sdat.md) ---
+# --- Sound: music, jingles and effects (docs/re/sdat.md) ---
+0x02018310 Region_Fire                 # (zone, record, play, ...): runs trigger codes 0x11 and 3 of a region, plays the door sound g_DoorSeTable[record flags & 0xf] in the base archive when `play` [hypothese: role as doors]
+0x02045608 MsgWin_PlayTextBlip         # one blip of the message window: base-archive effect 10, 12 or 11 by the voice +0x99c (native 554), skipped when +0x19b2 is 0 (native 413) [hypothese: roles of the two fields]
+0x02045698 MsgWin_StopTextBlip         # Se_StopBase of the blip
+0x0205ea30 Se_MountBaseArchive         # (mgr, id 100 or 101): loads the base sequence archive of the field / battle (+0xb4)
+0x0205eab0 Se_PlayBase                 # (mgr, index, handle*): plays effect index of the base archive +0xb4
+0x0205eacc Se_StopBase                 # stops the effect handle of Se_PlayBase
+0x0205eae0 Se_LoadSecondaryGroup       # (mgr, group, archive): heap level +0xb8, archive +0xbc (native 730)
+0x0205eb18 Se_RestoreSecondary         # native 731
+0x0205eb34 Se_PlaySecondary            # plays index of the archive +0xbc (native 732)
+0x0205eb64 Se_LoadGroup                # (mgr, group, archive): heap level +0xc0, archive +0xc4 (native 726)
+0x0205eba0 Se_PlayLoaded               # plays index of the archive +0xc4 (natives 728, 712 with an output)
+0x0209c21c Bgm_Reset                   # stops the music and the jingle, heap and ids back to the start, volume 127 (native 738)
+0x0209c2f0 Bgm_SetVolume               # (mgr, volume 0..127, frames): music and players 5 to 7 volume, scaled by the player's volume setting (native 715)
 0x0209c3c4 Bgm_Select                  # (mgr, sequence): same sequence returns, else stops the old and loads the new into the BGM slot (+0xb4)
+0x0209c5f8 Bgm_Restart                 # the selected sequence from its start (native 714)
+0x0209c688 Bgm_Stop                    # (mgr, frames): stops the music handle, blocked when +0xc8 bit 2 (natives 721, 713)
+0x0209c6e8 Bgm_PlaySequence            # stops the music, starts a sequence on the jingle handle +0xc4, id in +0xce (native 737)
+0x0209c840 Bgm_RequestJingle           # id into +0xce, state +0xc9 = 1 (native 720)
+0x0209c850 Bgm_UpdateJingle            # jingle state machine 1..3: fade the music, 800 ms, pause it and start the jingle, wait its end + 500 ms, resume the music
+0x0209ca3c Bgm_JingleActive            # +0xce >= 0 and (request pending or the sequence still plays) (native 725)
 0x0209cb00 Bgm_SlotToSequence          # music slot (0..46) -> sequence through g_BgmSlotTable; night turns 3 into 4 and 5 into 6
 0x0209cc4c Bgm_FindOverride            # mapbgm.bin: first entry of the map whose story flag is set (and night-only bit); sequence in bits 16-21
 0x0209cd60 Bgm_SequenceForMap          # (map id): map list slot 6 through Bgm_SlotToSequence, then Bgm_FindOverride; 5900s remap via the zone's fields
+0x020e6e84 g_DoorSeTable               # 5 x u32: base-archive effects 200 to 204 of the doors
 0x020e8ee8 g_BgmSlotTable              # 47 x s8: slot -> sequence of bgm.sdat, -1 none; identity but 0, 9, 25, 39, 42
+ov_001::02163564 StbNat_PlaySeBase     arm # native 712: one argument plays on the base archive, two behave as 728
+ov_001::02163744 StbNat_RequestJingle  arm # native 720
+ov_001::0216376c StbNat_JingleActive   arm # native 725
 ov_001::02163aec StbNat_SelectZoneBgm arm # native 736: Bgm_SequenceForMap of the current zone, then Bgm_Select

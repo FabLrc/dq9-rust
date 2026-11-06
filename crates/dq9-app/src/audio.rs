@@ -53,12 +53,12 @@ pub const RECORD_RATE: u32 = 32_728;
 /// 100). Where each is found is in `docs/re/sdat.md`.
 pub mod se {
     /// A typed character of the message window, by the voice a script selects (native 554):
-    /// `0x020455f8`.
+    /// `0x02045608`.
     pub const TEXT_BLIP: [u16; 3] = [10, 12, 11];
-    /// `<EXC>` (`0xFF2E`) and `<QES>` (`0xFF2F`) of a message: `0x02065990`.
+    /// `<EXC>` (`0xFF2E`) and `<QES>` (`0xFF2F`) of a message: `0x020659a0`.
     pub const EXCLAMATION: u16 = 6;
     pub const QUESTION: u16 = 28;
-    /// A choice (`<YESNO>`, `<UKEYAME>`...) opens: `0x02065990`.
+    /// A choice (`<YESNO>`, `<UKEYAME>`...) opens: `0x020659a0`.
     pub const CHOICE_OPEN: u16 = 5;
 }
 
@@ -216,6 +216,7 @@ impl Audio {
     }
 
     /// What was recorded since [`Audio::record`], as interleaved stereo at [`RECORD_RATE`].
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn take_recording(&mut self) -> Option<Vec<f32>> {
         self.recording.take()
     }
