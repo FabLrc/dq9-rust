@@ -230,6 +230,48 @@ Limite : le diff voit les octets qui changent et les champs qu'ils composent ; i
 pas **qui** les a écrits. Un drapeau posé directement hors de `Flags_Set` est donc vu, son
 auteur ne l'est pas (voir `state watch` ci-dessous pour la provenance image par image).
 
+### Traçage image par image (`--watch` + `dq9re state watch`)
+
+Le harnais libretro (`scripts/melondsds_host.py`, § « Harnais libretro ») peut surveiller des
+octets de la RAM principale et n'écrire que leurs changements :
+
+```powershell
+python scripts/melondsds_host.py --rom <ROM> --frames 12000 `
+    --input build/oracle/inputs/prologue.jsonl `
+    --watch 0x02108844:0x334 --watch-out build/oracle/watch.jsonl
+cargo dq9re state watch --file build/oracle/watch.jsonl
+cargo dq9re state watch --file build/oracle/watch.jsonl --json
+```
+
+`--watch ADDR:LEN` est répétable, en hexadécimal, et les zones qui se chevauchent sont
+fusionnées. Chaque octet modifié produit une ligne
+`{"frame":N,"addr":"0x...","old":0,"new":1}` ; `frame` compte les images exécutées depuis le
+début, la première photo étant prise avant l'image 1. Seules les zones surveillées sont
+copiées à chaque image (quelques Kio), pas les 4 Mio.
+
+`dq9re state watch` nomme chaque changement quand l'adresse tombe dans le bloc
+d'événements (`g_QuestManager`, `0x02108844`) : bit de drapeau global, bit d'un des deux
+jeux d'une piste, chapitre/étape/sous-étape, quartet de quête, piste courante. Les autres
+adresses restent des octets de RAM nommés par leur adresse. Le texte donne une ligne par
+changement et un total ; `--json` renvoie un tableau d'objets typés (`kind` :
+`global_flag`, `track_flags`, `track_progress`, `quest`, `current_track`, `ram`). Une ligne
+invalide fait échouer la commande (code 2) sans rien inventer.
+
+Exemple de sortie sur le bloc d'événements :
+
+```text
+frame 1450: global flag 1450: 0 -> 1
+frame 7401: global flag 1451: 0 -> 1
+frame 9000: track 0 step_flags flag 1: 0 -> 1
+frame 9001: current track: 0 -> 1
+```
+
+Limites : le log voit le **changement**, pas l'instruction qui l'a écrit ; pour le `LR` de
+l'écriture, `DQIX_WATCH` de DQIX Enhanced est la piste documentée dans
+[`outils.md`](outils.md). Un octet qui change plusieurs fois entre deux images ne garde que
+la dernière valeur ; `--checkpoint-every` et `--dump-ram` donnent l'état complet aux images
+choisies.
+
 ### Côté runtime
 
 `dq9-app --new-game --headless --auto` s'arrête à la première prise de contrôle et imprime le

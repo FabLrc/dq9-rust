@@ -17,6 +17,7 @@ mod sseq;
 mod state;
 mod statediff;
 mod states;
+mod statewatch;
 mod stb;
 mod talk;
 mod text;
@@ -296,6 +297,16 @@ enum StateAction {
         #[arg(long)]
         json: bool,
     },
+    /// Name the changes of a host watch log (`scripts/melondsds_host.py --watch-out`):
+    /// global flags, track flags and progress, quests, current track, other RAM bytes.
+    Watch {
+        /// JSONL written by the host's `--watch-out`.
+        #[arg(long)]
+        file: PathBuf,
+        /// Print the named changes as a JSON array.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -346,6 +357,15 @@ fn main() -> Result<()> {
                 return match statediff::run(a, b, *json) {
                     Ok(true) => Ok(()),
                     Ok(false) => std::process::exit(1),
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        std::process::exit(2);
+                    }
+                };
+            }
+            if let Some(StateAction::Watch { file, json }) = action {
+                return match statewatch::run(file, *json) {
+                    Ok(()) => Ok(()),
                     Err(error) => {
                         eprintln!("{error:#}");
                         std::process::exit(2);

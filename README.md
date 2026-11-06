@@ -135,6 +135,9 @@ powershell -ExecutionPolicy Bypass -File scripts/prune-build.ps1
 # Compare deux runs par point d'histoire, pas par tick
 powershell -ExecutionPolicy Bypass -File scripts/compare-runs.ps1 `
     -Original build/oracle/original.jsonl -Runtime build/oracle/runtime.jsonl
+# Compare deux états (delta nommé) et nomme les changements d'un watch image par image
+cargo dq9re state diff bat6.ml1 bat4.ml1
+cargo dq9re state watch --file build/oracle/watch.jsonl
 ```
 
 `prune-build.ps1` ne touche ni aux `.sav`, ni aux `.nds`, ni aux JSON ou images, et refuse la
