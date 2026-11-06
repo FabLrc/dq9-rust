@@ -218,7 +218,8 @@ mesuré** : 17 drapeaux globaux présents dans melonDS et absents du runtime —
 `337` est commun. `GameState::new_game` laisse le bloc d'événements vide
 (`state.rs`, « the game's initial tracks are not read ») : l'écart couvre donc l'initialisation
 de la nouvelle partie, les scènes 21500–21596 et la victoire du combat 26 (substituée côté
-runtime). Signalé au worker du parcours avec l'état et le comparateur ; non corrigé ici.
+runtime). Signalé aux workers flags et parcours avec l'état et le comparateur ; accepté comme
+ground truth, non corrigé ici.
 
 Pendant l'ouverture (`M01M12`, 1.1.1) les mêmes 7 drapeaux de base sont déjà posés au premier
 état (vblank 5217) et `1450`, puis `1451`, apparaissent pendant la scène : ce sont des
