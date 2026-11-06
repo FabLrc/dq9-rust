@@ -5,6 +5,92 @@ jouable le plus tôt possible**, en s'appuyant au maximum sur le travail public 
 (`ressources-externes.md`). Chaque étape se termine par une doc dans `docs/re/`, une
 implémentation testée et un commit.
 
+## Point de reprise — pause demandée le 6 novembre 2026
+
+**Travail suspendu à la demande de l'utilisateur ; la v0.1 n'est pas validée.** Les agents
+OMP (`opencode-go/deepseek-v4.1-flash`) sont arrêtés, leurs branches poussées et leurs
+worktrees fermés après conservation des preuves locales. Ne pas confondre les lots livrés
+avec un prologue intégralement jouable.
+
+### Intégré et publié
+
+- Dernier commit de code sur `main` : **`e51a0bd`**. CI Linux
+  [42238441418](https://github.com/FabLrc/dq9-rust/actions/runs/42238441418) et déploiement
+  [Pages 42238441285](https://github.com/FabLrc/dq9-rust/actions/runs/42238441285) réussis.
+- Ouverture, dialogues, légendes temporisées, caméra de scène et échange des écrans intégrés.
+  Les deux vantaux de la bibliothèque de `X01M07` s'ouvrent et le héros les franchit :
+  vérification native **et sur la page publiée**, par entrées clavier, sans téléportation.
+- `--walk` utilise désormais le vrai pas fixe de l'application, plus un simulateur parallèle.
+  Une carte invalide fait échouer la commande au lieu d'afficher « no map » avec succès.
+- `e51a0bd` annule ensemble tâche, dialogue et état des portes lors d'un remplacement de
+  session. Le test Windows avec ROM et sauvegarde réelles couvre un prologue en attente,
+  puis actif avec légende ouverte, et 120 pas après chargement de `C01M09`. Clippy et wasm
+  passent. La contre-vérification **visuelle complète sur Pages** de cette dernière correction
+  reste à terminer : le défaut précédent, légende du prologue sur l'église, a été capturé.
+
+### Branches poussées, non intégrées à `main`
+
+| Branche | Dernier commit conservé | Contenu et portée |
+|---|---|---|
+| `FabLrc/v01-field` | `4534a0c` | Drapeaux de scène transmis par `EventScript` sans seconde lecture du catalogue, carte visitée avant les triggers, grille de navigation avec hauteur, trace/rejeu des entrées. Inclut le lot initial `04e417f` ; ne pas le réappliquer séparément. |
+| `FabLrc/v01-init-flags` | `06f074d` | Provenance et traces des drapeaux d'ouverture, symboles et notes supplémentaires. Les nouvelles provenances ne sont pas encore réimplémentées. |
+| `FabLrc/v01-height` | `45ad216` | RE et correction de conclusions erronées (`584535f`), plus `scripts/melondsds_host.py`, hôte libretro fonctionnel jusqu'aux menus et à la saisie du nom ; pas encore jusqu'au premier contrôle. |
+
+Sur `4534a0c`, le parcours **réel à pied** atteint 1.1.2 à 369,8 s, puis s'arrête à 377,8 s
+sur `X01M01`. Les 22 670 pas enregistrés rejouent les mêmes **49 checkpoints**, octet pour
+octet. Ce n'est ni un parcours complet ni une preuve de parité avec melonDS.
+
+### Blocages et ordre de reprise
+
+1. **Intégrer les lots après revue**, en conservant ce point de reprise et les limites
+   documentées ; vérifier les contrats/tests/docs concernés, puis refaire une seule passe
+   de contrôles et un smoke du parcours changé.
+2. **Obtenir une référence originale pilotable.** Le melonDS autonome ne peut pas être
+   focalisé dans cette session ; les touches postées restent bloquées après le dialogue
+   1140 et le stub GDB se déconnecte. `PauseLostFocus` est déjà faux. Le nouveau
+   [cœur melonDS DS libretro](https://docs.libretro.com/library/melonds_ds/) (outil GPL
+   extérieur au runtime Rust) exécute réellement la ROM via callbacks, sans focus :
+   version rapportée 1.4.0, rendu logiciel 256×384, sérialisation et RAM accessibles.
+   L'ancien `bat6.ml1` n'est pas compatible avec `retro_unserialize` ; poursuivre une
+   **nouvelle partie réelle**, finir la saisie du nom, puis comparer le premier contrôle.
+   Ne pas fabriquer un état ou modifier les coordonnées/drapeaux pour contourner le blocage.
+3. **Résoudre l'accès à la tour `X01M01` → `X01M03`.** La grille 3D plafonne à y = 11,25 ;
+   le passage haut n'est pas atteint. Une route vérifiée seulement en X/Z était fausse.
+   La proposition de contourner la tour via 21591 est également rejetée : ce trigger n'est
+   chargé qu'en **1.2**, pas en 1.1.2 (`dq9re triggers X01 --with 21591`). Le baseline
+   applicatif passe par `4103 → 4109 → 4103 → 4104`, puis 21510 avant 1.2.1.
+   Comparer au vrai parcours original ; ne pas abaisser les murs ou les limites de marche.
+   L'égalité de quelques constantes et placements ne prouve pas que tout le port est correct.
+4. **Finir les drapeaux.** Le premier contrôle de la branche field contient
+   `{337,1450..1454,1461,2721,2751}`, contre 18 drapeaux dans la référence `bat6`.
+   Neuf restent absents. Les dernières traces attribuent `3191/3775/3955/4046` à
+   l'acquisition de l'équipement initial (`0xc76 + index 1/585/765/856`), `2774` à la carte
+   S14 6405 et `4414` à `KeyManager::RefreshKeys` : reprendre les **causes et conditions**,
+   pas une liste de constantes copiée du checkpoint. L'origine de `4212`, `4283` et `4410`
+   reste à établir ; ces deux derniers apparaissent pendant 21596 sans passer par `Flags_Set`.
+5. **Valider toute la v0.1** : prologue, quêtes du village, checkpoints strictement identiques
+   à l'original aux mêmes points, déplacement à nombre d'images contrôlé, puis parcours
+   sur la version GitHub Pages publiée. Aucun de ces critères finaux n'est déclaré acquis.
+
+### Preuves locales conservées, jamais à committer
+
+- `build/orca/pause-2026-11-06/manifest.json` donne les SHA et l'archive des anciens
+  worktrees : `field-scratch/`, `flags-scratch/`, `height-build/`. Les copies de projets
+  Ghidra et les liens redondants vers la ROM originale ont été exclus ; les preuves ont été
+  conservées par liens physiques avant suppression des worktrees.
+- `build/orca/walk/` contient la trace, les checkpoints, le rejeu et leurs empreintes.
+  Les variantes les plus récentes sont aussi dans l'archive `field-scratch/*_clean.*`.
+- Référence non instrumentée : `build/orca/oracle/bat6.ml1` ; session initiale conservée
+  dans `build/orca/oracle-session-1711efc/`. Captures de portes et du défaut de légende :
+  `build/orca/pages-door-crossing-17bef8c.png`, `build/orca/pages-stale-caption-17bef8c.png`.
+- Les journaux instrumentés, états et scripts de patch sont dans l'archive `flags-scratch/`
+  (`melonds-trace/`, `melonds-log4/`, `melonds-log9/`, `melonds-log11..13/`, `tmp/`).
+  Ils servent à la RE, **pas** de références de parité non modifiées. Une copie instrumentée
+  de ROM peut s'y trouver : ne jamais la committer ni la redistribuer.
+- Le cœur téléchargé reste sous `tools/build/melondsds_libretro.dll` ; les nouveaux états
+  libretro et PNG sont dans l'archive `height-build/melondsds/`. La ROM du joueur n'a pas
+  été déplacée ni modifiée.
+
 ## Principes
 
 1. **Tranche verticale d'abord.** On construit le chemin minimal « nouvelle partie → se
