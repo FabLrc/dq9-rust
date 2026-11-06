@@ -17,6 +17,8 @@ env:
 
 jobs:
   build:
+    # Only the default branch may publish the site; a manual run on a branch must not deploy.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,12 +39,32 @@ jobs:
           cp crates/dq9-app/web/index.html _site/index.html
           wasm-bindgen --target web --no-typescript \
             --out-dir _site/pkg target/wasm32-unknown-unknown/release/dq9-app.wasm
+      - name: Verify the artifact is only the page and its wasm-bindgen output
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Whitelist: index.html and the JavaScript/WebAssembly bindings. A ROM, save, capture
+          # or any other file in _site fails the job instead of being published.
+          unexpected=$(find _site -type f \
+            ! -name index.html \
+            ! -path '_site/pkg/*.js' \
+            ! -path '_site/pkg/*.wasm')
+          if [ -n "$unexpected" ]; then
+            echo "unexpected files in the Pages artifact:"
+            echo "$unexpected"
+            exit 1
+          fi
+          test -s _site/index.html
+          test -s _site/pkg/dq9-app.js
+          test -s _site/pkg/dq9-app_bg.wasm
+          find _site -type f -printf '%p %s bytes\n' | sort
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write

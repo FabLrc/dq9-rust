@@ -194,6 +194,15 @@ pub enum Camera {
         eye: String,
         target: String,
     },
+    /// 552: a camera driven by the `eye` and `lookat` bones of the `source` character; its
+    /// `foot` bone drags the `target` character (`ov_001::02160768`, `0204a170`).
+    ThreeBoneCamera {
+        source: i32,
+        target: i32,
+        eye: String,
+        lookat: String,
+        foot: String,
+    },
 }
 
 /// The sound natives (713 to 738).
@@ -282,6 +291,25 @@ pub enum Event {
     CloseMessage,
     /// 410: no frame around the text.
     HideMessageFrame,
+    /// 409: the caption is timed: one second of alpha in, `ticks` frames of hold, one second
+    /// out (`W+0x9a8`, flag 4; `02066d00`, step `0x8444` at `0x020658b8`). A message resets it.
+    CaptionTime {
+        ticks: i32,
+    },
+    /// 411: the caption is centred vertically in the screen instead of the message box
+    /// (`W+0x195b` flag 0x40, `0206b6c8`).
+    CaptionCentered,
+    /// 413: the caption types in silence (`W+0x19b2 = 0`, `02045608`).
+    CaptionSilent,
+    /// 584: opens the map door `(block entry, placement id)` (`ov_001::0215fb44`,
+    /// `02018310`): its placement turns by a quarter turn over 409 update steps, and the
+    /// door sound plays unless `sound` is 0. `option` is native 584's fourth argument.
+    OpenDoor {
+        block: i32,
+        placement: i32,
+        sound: bool,
+        option: bool,
+    },
     /// 200: loads a model (`.chr`) as character `character` (negative ids are the event's).
     LoadModel {
         path: String,

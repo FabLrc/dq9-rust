@@ -1043,6 +1043,10 @@ impl App {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let (w, h) = (gpu.config.width, gpu.config.height);
         let screens = screens::screens(self.options.layout, w, h);
+        // 109/110 (`POWCNT1` bit 15): the field and the message window move to the other DS
+        // screen; the panel fills the one they leave.
+        let swapped = self.events.screen_swapped();
+        let field = screens.field(swapped);
         let panel = self
             .panel
             .get_or_insert_with(|| Panel::new(&gpu.device, gpu.config.format));
@@ -1056,11 +1060,11 @@ impl App {
             &gpu.queue,
             &mut encoder,
             (&view, (w, h)),
-            screens.top,
+            field,
             &self.camera,
         );
-        if let Some(bottom) = screens.bottom {
-            panel.draw(&mut encoder, &view, bottom);
+        if let Some(overlay) = screens.overlay(swapped) {
+            panel.draw(&mut encoder, &view, overlay);
         }
         self.talk.draw(
             &gpu.device,
@@ -1068,7 +1072,7 @@ impl App {
             gpu.config.format,
             &mut encoder,
             &view,
-            screens.top,
+            field,
         );
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(frame);

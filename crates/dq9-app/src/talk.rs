@@ -197,6 +197,15 @@ pub struct Talk {
     closed: bool,
     /// Native 410 hid the frame of the current event message.
     frameless: bool,
+    /// Native 409's timed caption alpha (`None`: 1, no timed caption; `02066d00`).
+    caption_alpha: Option<f32>,
+    /// Native 411: the caption's text block is centred vertically.
+    centered_caption: bool,
+    /// Native 413: no blip while the caption types.
+    silent_caption: bool,
+    /// Native 409's message-tick freeze: the action key is not processed while the timed
+    /// caption runs, so 405 cannot close the message before the alpha envelope ends.
+    caption_frozen: bool,
     /// The NPC and context of the open conversation (not an event message).
     conversation: Option<(u16, u16)>,
     /// A conversation the player closed, until [`Talk::take_ended`].
@@ -287,12 +296,29 @@ impl Talk {
     /// One fixed step of the open dialogue.
     pub fn step(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
-        let input = std::mem::take(&mut self.pending);
+        // Native 409 (`020657c8`): while the timed caption runs, the message tick is suspended:
+        // the action key cannot advance or close it before the alpha envelope ends.
+        let input = if self.event_message && self.caption_frozen {
+            self.pending = Input::default();
+            Input::default()
+        } else {
+            std::mem::take(&mut self.pending)
+        };
         let Some(dialogue) = &mut self.active else {
             return;
         };
         dialogue.step(input);
-        self.sounds.extend(dialogue.take_sounds());
+        let sounds = dialogue.take_sounds();
+        // Native 413: `W+0x19b2 = 0` stops `MsgWin_PlayTextBlip` (`02045608`).
+        if self.silent_caption {
+            self.sounds.extend(
+                sounds
+                    .into_iter()
+                    .filter(|s| !matches!(s, talk::Sound::Blip)),
+            );
+        } else {
+            self.sounds.extend(sounds);
+        }
         if let Some(outcome) = dialogue.outcome() {
             if self.event_message {
                 // The script of the event polls the message (native 405).
@@ -331,6 +357,10 @@ impl Talk {
         self.active = Some(Dialogue::for_event(script));
         self.event_message = true;
         self.frameless = false;
+        self.caption_alpha = None;
+        self.centered_caption = false;
+        self.silent_caption = false;
+        self.caption_frozen = false;
         self.closed = false;
         Ok(())
     }
@@ -340,11 +370,38 @@ impl Talk {
         self.frameless = true;
     }
 
+    /// Native 409: alpha of the caption at this tick (one second in, `n` frames held, one
+    /// second out; the game writes it to the caption layer's blend registers, `02066d00`).
+    pub fn set_event_caption_alpha(&mut self, alpha: f32) {
+        self.caption_alpha = Some(alpha.clamp(0.0, 1.0));
+    }
+
+    /// Native 411: centre the event text block vertically instead of using the box's own
+    /// origin (`0206b6c8`).
+    pub fn set_event_centered(&mut self, centered: bool) {
+        self.centered_caption = centered;
+    }
+
+    /// Native 413: the event text types without its blip sound (`W+0x19b2 = 0`).
+    pub fn set_event_silent(&mut self, silent: bool) {
+        self.silent_caption = silent;
+    }
+
+    /// Native 409: suspend the message tick (no input, no close) while the timed caption runs
+    /// (`020657c8` returns 1 until the flag is cleared by 400/401).
+    pub fn set_event_frozen(&mut self, frozen: bool) {
+        self.caption_frozen = frozen;
+    }
+
     /// Native 401: closes the event message without reporting it as read.
     pub fn close_event(&mut self) {
         if self.event_message {
             self.active = None;
             self.event_message = false;
+            self.caption_alpha = None;
+            self.centered_caption = false;
+            self.silent_caption = false;
+            self.caption_frozen = false;
         }
     }
 
@@ -461,6 +518,10 @@ impl Talk {
         self.counts.record(npc);
         self.conversation = Some((npc, context));
         self.active = Some(Dialogue::new(script));
+        self.caption_alpha = None;
+        self.centered_caption = false;
+        self.silent_caption = false;
+        self.caption_frozen = false;
         Ok(())
     }
 
@@ -509,7 +570,17 @@ impl Talk {
             if tags.centered {
                 x = window[0] + (window[2] - atlas.line_width(line)) / 2;
             }
-            let y = window[1] + TEXT_MARGIN[1] + i as i32 * LINE_HEIGHT;
+            // Native 411 with 410 (`0206b6c8`): the window is moved to
+            // `(192 − (lines − 1) × 20 − 8) / 2 − 16` and its text starts at the usual margin.
+            // Without 410 the per-frame box geometry reset would overwrite it (`020439b0`).
+            let y = if self.event_message && self.frameless && self.centered_caption {
+                let lines = view.lines.len() as i32;
+                (192 - (lines - 1) * LINE_HEIGHT - 8) / 2 - 16
+                    + TEXT_MARGIN[1]
+                    + i as i32 * LINE_HEIGHT
+            } else {
+                window[1] + TEXT_MARGIN[1] + i as i32 * LINE_HEIGHT
+            };
             atlas.text(line, x, y, color, &mut out);
         }
         if view.arrow {
@@ -540,6 +611,15 @@ impl Talk {
                     );
                 }
                 atlas.text(&label.glyphs, rect[0] + 12, y + 2, [1.0; 4], &mut out);
+            }
+        }
+        // Native 409: the caption layer's alpha (`02066d00` writes the blend registers from
+        // `W+0x9b0 >> 16`, 0 to 31); fade the text and its window with it.
+        if self.event_message
+            && let Some(alpha) = self.caption_alpha
+        {
+            for quad in &mut out {
+                quad.color[3] *= alpha;
             }
         }
         out

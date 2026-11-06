@@ -177,35 +177,45 @@ mouvements des PNJ (`play_npc`), les feuilles `.spr` de script (`add_sprite`) et
   paquets ajoutés (`LoadModelArchive`), un mouvement sans fichier propre jouant une tranche du
   fichier du paquet de type 0. Le héros joue les mouvements des paquets `evNNNNNp000.chr`.
 - **Caméra.** Œil, cible, orbite, champ de vision (demi-angle, 15° par défaut), roulis, secousses,
-  suivi d'un acteur et caméra portée par deux os d'un modèle (native 572, utilisée par
-  l'ouverture) sont celles du script ; la caméra de terrain reprend à la fin, recentrée sur la
+  suivi d'un acteur, caméra portée par deux os d'un modèle (native 572) et caméra à trois os
+  (native 552 : `eye`/`lookat` de la source, `foot` qui porte la cible) sont celles du script ;
+  la caméra de terrain reprend à la fin, recentrée sur la
   pose finale du héros sans garder le gros plan, le roulis ou le champ de la scène. Si la chaîne
   a changé de carte, elle reprend l'orbite de la destination ; le vol libre retrouve sa vue
   indépendante. Une scène est cadrée en 4:3 sur l'écran haut (`screens.rs`).
 - **Messages.** La fenêtre de conversation (`talk.rs`) affiche le texte de la table de la scène ;
   sans balise de fin elle attend l'action (`Dialogue::for_event`) ; la native 401 la ferme, la
-  native 410 en retire le cadre. Le joueur est verrouillé (pas de marche, pas de conversation).
+  native 410 en retire le cadre. Les natives 409, 411 et 413 en font une **légende** : alpha
+  temporisé (`W+0x9a8`, fondu d'une seconde, maintien, fondu), texte centré verticalement sous
+  `(192 − (lignes−1)×20 − 8)/2 − 16` quand le cadre est retiré, et bip de frappe coupé. Pendant
+  la légende, le compteur de message est gelé (`020657c8`) : l'action ne peut ni avancer ni
+  fermer la fenêtre avant 401, donc 405 ne tombe pas avant la fin du fondu. Le joueur est
+  verrouillé (pas de marche, pas de conversation).
 - **Fondus.** Un rectangle noir ou blanc sur tout l'écran 3D, de niveau −16 à +16 ; un moteur
   verrouillé (`112`, `114`, `116`) ignore les fondus simples. L'écran « principal » est pris pour
-  l'écran 3D **[hypothèse]** ; le fondu de l'autre moteur et l'échange des écrans sont ignorés.
+  l'écran 3D **[hypothèse]** ; le fondu de l'autre moteur est ignoré. L'échange d'écrans
+  (109/110) conserve `POWCNT1` bit 15 dans `Cutscene` ; `app.rs` et le chemin capture utilisent
+  `screens::field/overlay` pour placer le champ et la fenêtre sur l'autre écran, le panneau
+  remplissant l'écran libéré (Top : pas de panneau).
 
 **Résultat sur le prologue** (`--events-report 1.1-3`, ROM EU, textes anglais ; les 30 scripts
 vont à leur terme, aucune scène « non jouée » ; le son est joué par `audio.rs` et rapporté nulle
 part). « Complet » : tout ce que le script demande est exécuté, aux natives sans effet rendu
-près (559, 560, 571, 815 ; 581, 582, 809 dont les objets ne sont pas dessinés ; placements de
-collision ; mouvements dont le modèle n'a pas le nom, sans effet dans le jeu non plus :
-[`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)). Avant le chantier
-J3-effets : **22 scènes partielles sur 30** (18 lignes du rapport) ; après : **2 scènes
-partielles** (1 ligne).
+près (559, 560, 571, 815 ; 581, 582, 809 dont les objets ne sont pas dessinés ; mouvements dont
+le modèle n'a pas le nom :
+[`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)). Les **placements de
+collision** (574/575) ne sont plus exclus : le rapport les compte depuis le lot « scènes
+restantes ». Avant le chantier J3-effets : **22 scènes partielles sur 30** (18 lignes du
+rapport) ; après : **2 scènes partielles** (1 ligne).
 
-| Scène(s) | Cartes | Résultat | Ce qui manque (visible) |
+| Scène(s) | Cartes | Résultat | Ce qui manque |
 |---|---|---|---|
 | 1130, 1140, 1150, 1160, 1170, 1310, 1320, 1340, 1350, 1360, 1370, 1380, 1390, 1410, 1600, 1610 | `X01M05`, `X01M07`, `X01M01`, `M01`, `M01M04` | complet | — |
 | 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | complet | — |
 | 21591, 21592, 21593, 21594, 21595, 21597 | `X01M05`, `M01`, `X01M04` | complet | — |
 | 1330 | `M01M06` | complet | — |
 | 21510 | `X01M04` | complet | — |
-| 21500 + 21507 | `M01M12` | partiel | 409/411/413 (effets du texte des légendes), 547 (transition de combat), 552 (caméra à trois os), 584 (ouverture d'une porte) |
+| 21500 + 21507 | `M01M12` | partiel | collision placement ×7 (murs/sol non modifiés), door sound ×1 (index non lu), motion absent ×1, 547 (transition de combat, J4), 571 (sans lecteur) |
 
 La chaîne du prologue se joue de bout en bout sans intervention : `21500 → 21507` (native 538),
 puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la victoire (trigger
@@ -226,6 +236,19 @@ puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la
   supplémentaire et paquets d'événement) ; `walk`/`stand` des sprites ; bulles « ! » (541/561/542) ;
   feuilles `.spr` créées par script (521/522) ; placements cachés, montrés ou déplacés (574/575) ;
   palette des personnages (238) ; retour de la caméra au héros (328).
+- **Légendes (409/411/413).** La fenêtre de message devient une légende : alpha temporisé (fondu
+  de 60 ticks, maintien `W+0x9a8`, fondu de 60), texte centré verticalement lorsque 410 a retiré
+  le cadre, bip de frappe filtré. Captures : `21500` image 420 (alpha partiel, texte pâle) et 600
+  (plein, sans cadre, centré).
+- **Caméra à trois os (552).** `eye`/`lookat` d'un modèle-caméra donnent l'œil et la visée, son os
+  `foot` porte le personnage cible ; capture `21507` image 1820 (point de vue haut dans le ciel),
+  contre 1780 avant l'installation.
+- **Porte (584).** Le placement `(entrée de bloc, identifiant)` tourne de 90° en 16 updates ;
+  captures `21500` images 2900/2960, où le panneau change d'orientation. Le son reste rapporté
+  tant que l'index (`g_DoorSeTable[quartet bas]`, 200–204) n'est pas branché.
+- **Échange d'écrans (109/110).** L'état `POWCNT1` bit 15 est partagé avec le layout ; six
+  échanges dans l'ouverture font passer le champ et la fenêtre d'un écran à l'autre. Captures
+  `stacked`/`side`/`top` avant/après le premier 109 (images 100 et 5000 de 21500).
 
 `--eye`/`--target` avec `--event` et `--screenshot` regardent la scène que le script a laissée
 (ils remplacent la caméra du script) : utile pour inspecter un acteur.
@@ -236,7 +259,11 @@ avec le sélecteur 0, 1 avec le sélecteur 1), canaux des acteurs, sens du rouli
 durées de la caméra et de la lumière, pose de la caméra du terrain pour 328, bulle posée dans le
 monde. Le héros du jeu a des ailes et un halo (forme ailée) que le rendu ne dessine pas ; hors
 événement, les PNJ gardent leur mouvement initial ; les ombres des PNJ ne sont pas dessinées. Les
-modèles ne sont pas encore comparés à melonDS.
+modèles ne sont pas encore comparés à melonDS. Pour 584, le son et les branches
+coulissante/inverse ne sont pas lus (le quartet bas de la zone est la seule source de l'index) ;
+pour 552, le byte `+0x265` de 839 n'est pas piloté, 839 n'apparaissant pas dans les scènes du
+prologue (seulement `ev28920`). 571 reste non identifiée : bit `0x10` sans lecteur, sans effet
+visible établi.
 
 ## Nouvelle partie (`--new-game`) et parcours automatique
 
@@ -343,24 +370,41 @@ drapeaux, aires déjà prises), ou plafond de pas atteint. Limites connues :
 
 ### Démo hébergée (GitHub Pages)
 
-Ouvrir **https://fablrc.github.io/dq9-rust/?newgame=1**, choisir sa ROM européenne `YDQP01`
-et cliquer dans le jeu pour utiliser le clavier. Flèches : marcher ; Entrée/Espace : parler
-et avancer les messages ; Q/E : caméra ; M : son. Une sauvegarde DS est facultative.
+Ouvrir **https://fablrc.github.io/dq9-rust/?newgame=1**, choisir sa ROM européenne `YDQP01` :
+le bouton « Nouvelle partie » s'active dès que la ROM est lue, et le clavier est rendu au jeu
+sans clic supplémentaire. Flèches : marcher ; Entrée/Espace : parler et avancer les messages ;
+Q/E : caméra ; M : son. Une sauvegarde DS est facultative.
 Les fichiers sont lus localement : aucune ROM ni sauvegarde n'est envoyée à GitHub.
 Un ordinateur avec clavier et un navigateur récent WebGPU ou WebGL 2 sont recommandés.
 Les limites de la preuve technique restent applicables : combats sautés, effets incomplets
 et écran inférieur provisoire.
 
-Les sélecteurs restent désactivés pendant le téléchargement et l'initialisation du moteur ;
-attendre qu'ils deviennent disponibles avant de choisir les fichiers. Si le chargement
-échoue, la page affiche une erreur au lieu d'accepter un fichier qu'elle ne pourrait pas lire.
+Les champs ROM/sauvegarde et les sélecteurs restent désactivés pendant le téléchargement et
+l'initialisation du moteur. « Nouvelle partie » reste désactivé jusqu'à ce que les octets de
+la ROM soient mis en file pour la boucle du jeu : l'ordre ROM puis nouvelle partie est donc
+garanti, et le champ ROM est désactivé pendant sa lecture (pas de lectures concurrentes). Si
+le chargement échoue, la page affiche une erreur au lieu d'accepter un fichier qu'elle ne
+pourrait pas lire.
+
+Le clavier revient au canevas après le choix d'un fichier, un clic sur « Nouvelle partie »,
+un changement de moment ou de disposition ; cliquer dans l'image le reprend aussi. Les
+touches du jeu ne sortent pas du canevas : hors des champs, sélecteurs et boutons de la page,
+les flèches, Espace, Page haut/bas et Début/Fin ne font pas défiler la page. Une perte de
+focus de la fenêtre (changement d'onglet, boîte de dialogue de fichier) relâche les touches
+tenues : `web.rs` retire le focus du canevas, winit émet `Focused(false)` et `App` vide son
+ensemble de touches, donc le héros ne continue pas à marcher. Les erreurs (fichier illisible,
+ROM qui n'est pas `YDQP01`, moteur graphique absent) s'affichent en rouge dans `#status` ;
+une ROM refusée désactive de nouveau « Nouvelle partie ».
 
 Le workflow `.github/workflows/pages.yml` compile la version wasm optimisée à chaque push
 sur `main` (ou lancement manuel), installe la version de `wasm-bindgen-cli` de `Cargo.lock`
 et déploie uniquement `index.html` et les bindings JavaScript/WebAssembly dans GitHub Pages.
-Le dépôt reste privé ; le site et le programme compilé sont publics. Le chemin relatif
-`./pkg/dq9-app.js` permet de servir la page sous `/dq9-rust/` sans nom de domaine personnalisé.
-Aucune donnée du jeu n'entre dans l'artefact Pages.
+Une liste blanche vérifie l'artefact avant l'envoi (seuls `index.html` et
+`pkg/*.js`/`pkg/*.wasm`) : toute ROM, sauvegarde, capture ou autre fichier fait échouer le
+job. Le déploiement est conditionné à `refs/heads/main`, donc un lancement manuel sur une
+branche ne publie rien. Le dépôt reste privé ; le site et le programme compilé sont publics.
+Le chemin relatif `./pkg/dq9-app.js` permet de servir la page sous `/dq9-rust/` sans nom de
+domaine personnalisé. Aucune donnée du jeu n'entre dans l'artefact Pages.
 
 ### Compilation et serveur local
 
@@ -377,7 +421,9 @@ Ouvrir `http://localhost:8000/` (paramètres `map`, `time` (nom ou 0 à 3), `clo
 `substep`, `night=1`, `mute=1`, `newgame=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
 page. Les deux fichiers sont lus localement dans le navigateur, jamais envoyés ni hébergés ;
 `map` explicite prévaut sur la carte de la sauvegarde. Le bouton « Nouvelle partie » (ou `?newgame=1`)
-lance le prologue (§ « Nouvelle partie »).
+lance le prologue (§ « Nouvelle partie ») ; il reste désactivé jusqu'à la lecture de la ROM et
+le clavier revient au canevas ensuite. La page signale les erreurs en rouge et nomme le
+fichier refusé.
 WebGPU quand le navigateur le propose, sinon WebGL 2. `crates/dq9-app/web/pkg/` est généré
 (ignoré par git).
 
@@ -483,6 +529,38 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
 
 ## Vérification
 
+- Lot navigateur et chaîne de livraison (6 novembre 2026) : page wasm locale servie par
+  `python -m http.server` (`?newgame=1&mute=1`, Chromium 150, 1929 × 921, DPR 1, WebGPU et
+  WebGL 2 disponibles), ROM européenne locale de 256 Mio lue par `<input type=file>`. Le
+  journal du serveur ne montre que `/`, `pkg/dq9-app.js` et `pkg/dq9-app_bg.wasm` : aucune
+  requête POST, donc aucune ROM ni sauvegarde envoyée. Après la lecture,
+  `document.activeElement` est le canevas, « Nouvelle partie » est actif et `?newgame=1`
+  lance `21500` ; Entrée fait avancer la scène. Une flèche maintenue déplace le héros
+  (captures) ; une perte de focus simulée (`window.blur`) rend le focus au document et arrête
+  le déplacement (deux captures à 1,5 s d'intervalle, même position), car `Focused(false)` vide
+  les touches tenues. Changer la disposition rend le focus au canevas ; une flèche pressée
+  hors du canevas laisse `scrollY` à 0. Un fichier non-ROM affiche « Ce fichier n'est pas une
+  ROM Dragon Quest IX européenne (YDQP01). » en rouge et désactive de nouveau le bouton ;
+  l'erreur reste affichée malgré les lignes de progression du moteur (effets sonores), puis
+  une ROM valide réactive le jeu. La liste blanche de `pages.yml` accepte `index.html` et
+  `pkg/*.js|*.wasm` et rejette un `leak.nds` ajouté à `_site` (essai local des commandes).
+  La CI Linux échouait sur `alsa-sys` faute de `alsa.pc` (run 42212225607) ; les jobs `lint`
+  et `test` installent désormais `libasound2-dev` avant la compilation.
+- Intégration publiée sur GitHub Pages (6 novembre 2026) : le lot Web `aab6daa` a passé
+  les jobs Linux `lint`, `test`, `wasm` et `coverage` (run 42216397722), puis le déploiement
+  Pages 42216397713. Sur le site public, la ROM locale donne immédiatement le focus à
+  `dq9`, active « Nouvelle partie » et lance l'ouverture ; Entrée avance le message.
+  Le parcours clavier de la version précédente atteint `X01M05`, permet de parler aux PNJ
+  108 et 101, de jouer 1130 avec le PNJ 105, puis de monter les escaliers latéraux au sud
+  et le pont central jusqu'au warp `X01M05 → X01M07`. Aucun placement direct du héros
+  n'est utilisé dans ce parcours navigateur.
+- Lot scènes intégré `e6b885b` : CI 42219786799 et déploiement Pages 42219786761 réussis.
+  La capture native de `21500` à l'image 420 montre la légende en cours de fondu.
+  Sur la page publique `?event=21507&time=2&mute=1`, la ROM locale lance la scène,
+  les entrées clavier avancent les messages et `21507` termine après 42,5 s observées ;
+  `21520` démarre ensuite. Le rapport ne liste plus 552 parmi les effets absents ;
+  la vue de la scène est capturée, sans comparaison à melonDS.
+  Ce smoke de scène ne valide pas le parcours manuel complet ni les drapeaux du prologue.
 - Lot J3 (6 novembre 2026) : capture native d'Ivor avec la branche féminine de la sauvegarde
   de démonstration ; scène 1330 rendue et placements initialement masqués contrôlés par un
   test réel ; capture `M01` identique pixel pour pixel avant/après ce changement. Événement

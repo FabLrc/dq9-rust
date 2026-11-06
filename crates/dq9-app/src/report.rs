@@ -88,9 +88,10 @@ pub fn play(
 /// dans le rendu »): 559 and 815 (a flag nothing reads, an integrity probe), 560 (a subsystem
 /// test), 571 (a bit of `Object3D::flags_` nothing reads); 581 and 582 (which NPCs the shadows
 /// are drawn for) and 809 (shows two objects of the hero's angel form), whose targets the
-/// renderer does not draw **[hypothèse]**; the changes of a map's collision meshes (574, 575)
-/// and the motions a model has no name for (a no-op in the game).
-const NO_VISIBLE_EFFECT: [&str; 9] = [
+/// renderer does not draw **[hypothèse]**; and the motions a model has no name for (a no-op in
+/// the game). A script that changes a collision placement (574, 575) **is** counted: the walls
+/// and the floor change even though no image shows them.
+const NO_VISIBLE_EFFECT: [&str; 8] = [
     "native 559",
     "native 560",
     "native 571",
@@ -98,7 +99,6 @@ const NO_VISIBLE_EFFECT: [&str; 9] = [
     "native 582",
     "native 809",
     "native 815",
-    crate::event::COLLISION_PLACEMENT,
     crate::event::ABSENT_MOTION,
 ];
 
@@ -110,10 +110,11 @@ fn verdict(played: &Played, started: &[u16], missing: &[(String, u32)]) -> &'sta
     if !played.finished {
         return "stopped";
     }
-    // The screen swap has no meaning with one screen.
+    // The screen swap is a real layout effect: the field and the message window change screen
+    // (`POWCNT1` bit 15). It stays reported until the layout applies it.
     let partial = missing
         .iter()
-        .any(|(k, _)| !(k == "screen swap" || NO_VISIBLE_EFFECT.contains(&k.as_str())));
+        .any(|(k, _)| !NO_VISIBLE_EFFECT.contains(&k.as_str()));
     if partial { "partial" } else { "complete" }
 }
 

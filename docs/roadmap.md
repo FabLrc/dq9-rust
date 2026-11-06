@@ -135,8 +135,10 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       du prologue d'Angel Falls (étapes 1.1 à 1.3, `cargo dq9re stb-natives --stage 1.1-3`)
       sont identifiées ou listées comme inconnues avec ce qui a été tenté ; unités de temps
       tranchées (fondu en ticks de 60 Hz, mouvements en 30 Hz nominal, `GetTickCount`
-      mesuré à 2) ; 570 est `OBJECT3D_FLAG_HIDDEN`. Restent le bit `0x10` de 571, les bits
-      de 409/411/413, 574/575, 541/542/561, 238, 554, 560 et les natives hors prologue.
+      mesuré à 2) ; 570 est `OBJECT3D_FLAG_HIDDEN`. Les légendes 409/411/413, la caméra à trois
+      os 552 et la porte 584 sont établies et exécutées (lot « scènes restantes »). Restent le
+      bit `0x10` de 571, la transition 547 (J4), l'index du son de porte, 554, 560 et les
+      natives hors prologue.
 - [x] **Sauvegarde DS** (`dq9-formats::save`, [`re/save.md`](re/save.md)) : conteneur
       (2 emplacements, 3 CRC-32, relecture/réécriture octet pour octet sur une sauvegarde
       réelle), champs typés (groupe, personnages et leurs noms, or, temps de jeu, équipement,
@@ -336,7 +338,7 @@ Avancement :
       `Signal` (message fermé, acteur au repos, caméra au repos…). Le `Director` démarre l'événement
       d'une requête `Request::Event` des triggers et enchaîne la native 538. Les 30 scripts du
       prologue (étapes 1.1 à 1.3) vont à leur terme sans erreur (`cargo dq9re script 1.1-3`, test
-      réel `prologue_scripts_run_to_completion`) ; 13 natives de rôle inconnu ou sans effet
+      réel `prologue_scripts_run_to_completion`) ; 8 natives de rôle inconnu ou sans effet
       rendu sont rapportées une fois et ignorées. **Exécution à l'écran** (`dq9_core::cutscene`, `dq9-app/src/event.rs`,
       [`app.md`](app.md) § « Événements », [`re/stb.md`](re/stb.md) § « Exécution à l'écran ») :
       `--stage 1.1` / `--event N` jouent les scènes (fondus, messages dans la fenêtre de
@@ -349,8 +351,9 @@ Avancement :
       construits et les natives 574/575 peuvent les montrer et les déplacer : les scènes
       1330 et 21510 sont désormais complètes ; capture native de 1330 et test réel du
       placement affiché, image de référence `M01` inchangée pixel pour pixel.
-      Restent : les effets du texte des légendes (409/411/413), 547, 552, 584, comparer l'ordre,
-      les durées et les poses à melonDS, l'appelant de l'entrée 200 et les natives sans rôle
+      Restent : 547 (transition de combat, J4), le son de la porte 584, les placements de
+      collision (574/575 sur les murs/sol), comparer l'ordre, les durées et les poses à
+      melonDS, l'appelant de l'entrée 200 et les natives sans rôle
       (`re/stb.md`, § Interpréteur).
 - **Deux écrans DS** (`dq9-app/src/screens.rs`, `dq9_render::Panel`) : écran haut = champ 3D avec
   la caméra du jeu (`0x0202df78`) ; écran bas = fond uni, contenu tactile non identifié

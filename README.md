@@ -6,8 +6,9 @@ ligne. Le jeu est rétro-analysé et ses ressources sont lues depuis **votre pro
 donnée du jeu n'est incluse dans ce dépôt.
 
 **[Tester DQ9 Rust dans le navigateur](https://fablrc.github.io/dq9-rust/?newgame=1)** —
-sélectionnez votre propre ROM européenne (`YDQP01`), puis cliquez dans le jeu pour utiliser
-le clavier. Les fichiers ROM et sauvegarde restent locaux : aucun envoi au serveur.
+sélectionnez votre propre ROM européenne (`YDQP01`) : le bouton « Nouvelle partie » s'active
+une fois la ROM lue et le jeu prend le clavier automatiquement. Les fichiers ROM et
+sauvegarde restent locaux : aucun envoi au serveur.
 La démo est publique, expérimentale et nécessite un navigateur récent avec WebGPU ou WebGL 2.
 
 **État** : une première preuve technique se joue, en natif comme dans un navigateur.
@@ -33,14 +34,14 @@ Manquent encore :
 Plan : `docs/roadmap.md` ; lancement et commandes : `docs/app.md`.
 
 <!-- coverage:start -->
-**Avancement : 2,0 %** des fonctions de jeu traduites (251 / 12 056), 2,5 % du code (65 Ko / 2 505 Ko).
+**Avancement : 2,1 %** des fonctions de jeu traduites (262 / 12 056), 2,7 % du code (70 Ko / 2 505 Ko).
 Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (définition dans `docs/roadmap.md`).
 
 <details><summary>Détail par module</summary>
 
 | Module | Fonctions traduites | Code traduit |
 |---|---:|---:|
-| ARM9 | 222 / 5 464 (4,0 %) | 56 Ko / 826 Ko (6,7 %) |
+| ARM9 | 233 / 5 464 (4,2 %) | 61 Ko / 826 Ko (7,2 %) |
 | ITCM | 0 / 34 (0,0 %) | 0 Ko / 6 Ko (0,0 %) |
 | ov_000 | 0 / 826 (0,0 %) | 0 Ko / 190 Ko (0,0 %) |
 | ov_001 | 0 / 515 (0,0 %) | 0 Ko / 70 Ko (0,0 %) |

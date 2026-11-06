@@ -368,6 +368,7 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     )?;
     let script = cli.walk.as_deref().map(walk::parse_script).transpose()?;
     let mut hidden = false;
+    let mut swapped = false;
     let mut event_environment = None;
     let mut hero = loaded.hero;
     if let Some(at) = cli.start {
@@ -462,6 +463,7 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
             player.unimplemented()
         );
         hidden = player.hero_hidden();
+        swapped = player.screen_swapped();
         for command in player.take_clock_commands() {
             match command {
                 dq9_core::cutscene::ClockCommand::Running(running) => clock.set_running(running),
@@ -520,21 +522,15 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     }
     let (w, h) = cli.size;
     let shown = screens::screens(cli.layout, w, h);
+    let field = shown.field(swapped);
     let panel = Panel::new(&device, format);
     let rgba = renderer
-        .render_to_rgba_with(
-            &device,
-            &queue,
-            (w, h),
-            shown.top,
-            &camera,
-            |encoder, view| {
-                if let Some(bottom) = shown.bottom {
-                    panel.draw(encoder, view, bottom);
-                }
-                talk.draw(&device, &queue, format, encoder, view, shown.top);
-            },
-        )
+        .render_to_rgba_with(&device, &queue, (w, h), field, &camera, |encoder, view| {
+            if let Some(overlay) = shown.overlay(swapped) {
+                panel.draw(encoder, view, overlay);
+            }
+            talk.draw(&device, &queue, format, encoder, view, field);
+        })
         .context("reading the frame back")?;
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir)?;

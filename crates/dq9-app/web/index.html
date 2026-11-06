@@ -12,6 +12,7 @@
     .intro summary { cursor: pointer; }
     .intro p { margin: 6px 0; max-width: 85ch; }
     #status { opacity: 0.8; overflow-wrap: anywhere; }
+    #status[data-kind="error"] { color: #ff8a80; opacity: 1; }
     main { flex: 1; min-height: 0; position: relative; }
     canvas#dq9 { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; outline: none; }
   </style>
@@ -23,9 +24,10 @@
       <p>Sélectionnez votre propre ROM européenne de Dragon Quest IX (YDQP01), puis cliquez
         sur « Nouvelle partie ». Une sauvegarde DS peut aussi être chargée. Ces fichiers
         restent dans votre navigateur : ils ne sont jamais envoyés au serveur.</p>
-      <p>Cliquez dans le jeu pour utiliser le clavier : flèches pour marcher, Entrée ou
+      <p>Le clavier est actif dès que la ROM est lue : flèches pour marcher, Entrée ou
         Espace pour parler et avancer les messages, Q/E pour tourner la caméra.
-        M coupe le son ; le navigateur ne l'autorise qu'après une interaction.</p>
+        M coupe le son ; le navigateur ne l'autorise qu'après une interaction. Cliquer dans
+        l'image reprend le clavier à tout moment, et changer un réglage le rend au jeu.</p>
       <p>Version expérimentale : combats sautés, effets encore incomplets et écran inférieur
         provisoire. Navigateur récent avec WebGPU ou WebGL 2 requis ; ordinateur et clavier
         recommandés. Aucune ROM n'est fournie.</p>
@@ -41,20 +43,44 @@
       <option value="top">haut seul</option>
     </select></label>
     <button id="newgame" type="button" disabled>Nouvelle partie</button>
-    <span id="status" role="status">chargement du moteur…</span>
+    <span id="status" role="status" aria-live="polite" data-kind="info">chargement du moteur…</span>
   </header>
   <main><canvas id="dq9" tabindex="0"></canvas></main>
   <script type="module">
     // Built by `wasm-bindgen --target web --out-dir crates/dq9-app/web/pkg` (docs/app.md).
+    const status = document.querySelector("#status");
+    const fail = (message) => {
+      status.textContent = message;
+      status.dataset.kind = "error";
+    };
+    // Game keys must not scroll the page when no page control owns them; winit also prevents
+    // them while the canvas has the focus. Controls keep their own arrow/space behaviour.
+    const gameKeys = new Set([
+      "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Spacebar",
+      "PageUp", "PageDown", "Home", "End",
+    ]);
+    document.addEventListener("keydown", (event) => {
+      const target = event.target;
+      if (target instanceof Element &&
+          target.closest("input, select, button, textarea, summary")) {
+        return;
+      }
+      if (gameKeys.has(event.key)) {
+        event.preventDefault();
+      }
+    }, { capture: true });
     try {
       const { default: init } = await import("./pkg/dq9-app.js");
       await init();
-      for (const control of document.querySelectorAll("header input, header select, header button")) {
-        control.disabled = false;
+      if (status.dataset.kind !== "error") {
+        // "Nouvelle partie" stays disabled until the ROM bytes are queued (web.rs).
+        for (const control of document.querySelectorAll("header input, header select")) {
+          control.disabled = false;
+        }
+        status.dataset.kind = "info";
       }
     } catch (error) {
-      document.querySelector("#status").textContent =
-        "Impossible de charger le moteur. Vérifiez votre connexion et rechargez la page.";
+      fail("Impossible de charger le moteur. Vérifiez votre connexion et rechargez la page.");
       console.error(error);
     }
   </script>

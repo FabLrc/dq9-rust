@@ -15,6 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
+      # cpal's alsa-sys needs alsa.pc; the runner image does not ship it.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets
@@ -24,6 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
+      # cpal's alsa-sys needs alsa.pc; the runner image does not ship it.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - uses: Swatinem/rust-cache@v2
       # The ROM is never available in CI; real-ROM tests skip themselves.
       - run: cargo test --workspace
