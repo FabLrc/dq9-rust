@@ -226,6 +226,21 @@ Pendant l'ouverture (`M01M12`, 1.1.1) les mêmes 7 drapeaux de base sont déjà 
 état (vblank 5217) et `1450`, puis `1451`, apparaissent pendant la scène : ce sont des
 candidats « initialisation/scripts », pas des drapeaux de piste.
 
+Le runtime a livré ses checkpoints (`--checkpoints`, JSONL, mêmes noms de champs).
+Repères pendant l'ouverture : **les états originaux ci-dessous ne sont pas alignés sur les
+fins d'événements du runtime**. La même progression 1.1.1 ne suffit pas à établir qu'ils
+décrivent le même instant de la scène ; ce tableau ne valide pas la parité des checkpoints.
+
+| point | runtime | melonDS |
+|---|---|---|
+| fin de `21500` (tick 4837, `M01M12`, 1.1.1) | `[]` | `pro1` : `2721,2774,3191,3775,3955,4046,4414` |
+| fin de `21507` (tick 7401, même carte) | `[]` | `pro7` : les 7 + `1450,1451` |
+| premier contrôle (tick 12625, `X01M05`) | `[337]` | `bat6` : 18 drapeaux |
+
+Une partie de l'écart existe donc dès l'ouverture, avant le combat 26 ; l'origine des autres
+drapeaux reste à établir. Le runtime efface ensuite `337` à `X01M07` (tick 18482) ; aucun état
+melonDS à cet endroit pour trancher.
+
 **Franchissement du premier contrôle (relevé réel, reproductible).** Depuis
 (0,660 ; −0,250 ; −3,610) : `Up` 8 s (escaliers), `Left` 4 s → (−16,45 ; 2,25 ; −17,47),
 `Down` 4 s (balcon) → (−16,45 ; 2,25 ; 5,75), `Right` 1,1 s + `Down` 0,3 s →
