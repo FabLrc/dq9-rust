@@ -68,7 +68,8 @@ $runtimeTrack = $null
 if ($RuntimeJson) {
     $rt = Get-Content -Raw $RuntimeJson | ConvertFrom-Json
     $runtimeMap = [int]$rt.map
-    $runtimeTrack = [int]$rt.track
+    # A missing `track` must not become 0 (a false OK); the text path rejects it the same way.
+    $runtimeTrack = if ($null -eq $rt.track) { $null } else { [int]$rt.track }
     $global = Set-FromArray $rt.flags
     $runtimeQuests = Quest-Map $rt.quests
     if ($null -ne $rt.daytime) { $runtimeDaytime = [bool]$rt.daytime }
@@ -131,6 +132,9 @@ if ($null -eq $runtimeTrack) {
     Same 'current track' $ds.track $runtimeTrack
 }
 if ($null -ne $runtimeDaytime) { Same 'daytime' $ds.daytime $runtimeDaytime }
+if ($tracks.Count -ne $ds.tracks.Count) {
+    Fail "track count: melonDS $($ds.tracks.Count), runtime $($tracks.Count)"
+}
 
 for ($i = 0; $i -lt $ds.tracks.Count; $i++) {
     $d = $ds.tracks[$i]

@@ -168,12 +168,13 @@ powershell -ExecutionPolicy Bypass -File scripts/oracle-compare.ps1 `
 ```
 
 Il exécute `dq9re state --json` sur l'état, puis compare **strictement** la carte, l'indice de
-la piste courante, la progression et les deux jeux de drapeaux de chaque piste, les drapeaux
-globaux, `daytime` et — quand `-RuntimeJson` les fournit — les quêtes. Une piste courante
-absente du rapport texte est un écart (code non nul), jamais un `OK` : c'est `-TrackIndex` ou
-`-RuntimeJson` qui la donne. Des quêtes non nulles côté melonDS sans quêtes côté runtime sont
-aussi un écart. Code de sortie non nul et une ligne `DIFF` par écart ; les ensembles vides
-sont valides (pas de test de véracité sur un ensemble).
+la piste courante, le nombre de pistes, la progression et les deux jeux de drapeaux de chaque
+piste, les drapeaux globaux, et — seulement quand `-RuntimeJson` les fournit — `daytime` et
+les quêtes (le rapport texte ne les contient pas). Une piste courante absente du rapport
+texte **ou de l'objet JSON** est un écart (code non nul), jamais un `OK` : c'est `-TrackIndex`
+ou `-RuntimeJson` qui la donne. Des quêtes non nulles côté melonDS sans quêtes côté runtime
+sont aussi un écart. Code de sortie non nul et une ligne `DIFF` par écart ; les ensembles
+vides sont valides (pas de test de véracité sur un ensemble).
 
 ### Piloter melonDS (`scripts/melonds-play.ps1`)
 
