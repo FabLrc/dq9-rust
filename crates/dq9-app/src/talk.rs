@@ -135,6 +135,39 @@ fn tint(color: u16) -> [f32; 4] {
     [c(0), c(5), c(10), 1.0]
 }
 
+/// The protagonist as a save stores him: the name as glyph indices of the message font
+/// (`Character::name_raw`, `+0x140` / 320) and the sex bit (`Character::gender`, `+0x174` /
+/// 372, bit 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeroIdentity {
+    /// Name as stored: indices of message-font glyphs, zero-terminated.
+    pub name: [u8; dq9_formats::save::NAME_LEN],
+    /// `+0x174` bit 0 is clear: man (1 is a woman, `docs/re/characters.md`).
+    pub male: bool,
+}
+
+impl HeroIdentity {
+    /// The names the message pipeline substitutes: every saved glyph index becomes the
+    /// text the font knows it by (the convention of [`dq9_formats::save::Character::name`]),
+    /// so a name such as é keeps its glyph. An empty name keeps the documented identity.
+    fn names(self, font: &Font<'_>) -> Names {
+        let mut hero = Vec::new();
+        for &index in self.name.iter().take_while(|&&b| b != 0) {
+            match font.glyphs.get(usize::from(index)) {
+                Some(glyph) => hero.extend_from_slice(glyph.text),
+                None => hero.push(b'?'),
+            }
+        }
+        if hero.is_empty() {
+            return Names::default();
+        }
+        Names {
+            hero,
+            hero_male: self.male,
+        }
+    }
+}
+
 /// A closed conversation, as trigger event 1 sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ended {
@@ -152,6 +185,8 @@ pub struct Talk {
     npcs: Vec<Talkable>,
     counts: TalkCounts,
     names: Names,
+    /// The saved protagonist, once known; `None` keeps the documented default identity.
+    identity: Option<HeroIdentity>,
     active: Option<Dialogue>,
     /// Buttons pressed since the last step.
     pending: Input,
@@ -174,9 +209,38 @@ impl Talk {
     /// Loads the font and the window pieces of the ROM.
     pub fn set_rom(&mut self, rom: &[u8]) {
         match Assets::load(rom) {
-            Ok(assets) => self.assets = Some(assets),
-            Err(e) => status(&format!("message window unavailable: {e:#}")),
+            Ok(assets) => {
+                self.assets = Some(assets);
+                self.refresh_names();
+            }
+            Err(e) => {
+                status(&format!("message window unavailable: {e:#}"));
+                self.names = Names::default();
+            }
         }
+    }
+
+    /// The protagonist the message window substitutes (`<HERO>`, `<LEADER>`, `<ADDRESSEE>`)
+    /// and whose sex the conditions read. `None` keeps the documented default identity ("Hero",
+    /// a man), used without a save and by a new game.
+    pub fn set_identity(&mut self, identity: Option<HeroIdentity>) {
+        self.identity = identity;
+        self.refresh_names();
+    }
+
+    /// Rebuilds the message names from the font and [`Talk::identity`]: the default until the
+    /// ROM's font is loaded, and when the save carries no name.
+    fn refresh_names(&mut self) {
+        let Some(identity) = self.identity else {
+            self.names = Names::default();
+            return;
+        };
+        let names = self
+            .assets
+            .as_ref()
+            .and_then(|assets| assets.font().ok())
+            .map_or_else(Names::default, |font| identity.names(&font));
+        self.names = names;
     }
 
     /// A map is loaded: its NPCs, and the map counters cleared.
@@ -718,9 +782,75 @@ mod script {
 
 #[cfg(test)]
 mod saved_dialogue_tests {
-    use super::archive_path;
+    use super::{HeroIdentity, Names, archive_path};
     use dq9_core::{state::GameState, trigger::track_of_room};
     use dq9_formats::save::{FILE_SIZE, MAGIC, Save};
+    use dq9_formats::{Font, FontId};
+
+    /// Font with the glyphs "A" (index 0) and "B" (index 1), for the name and condition test.
+    fn identity_font() -> (Vec<u8>, Vec<u8>) {
+        // Four magic bytes, then five words (the last one unused by the parser), then the
+        // glyph table at 0x18 and the glyph strings after it.
+        let strings = 0x18u32 + 2 * 8;
+        let mut info = b"1.1\0".to_vec();
+        for v in [2u32, 0, 0x18, 0x18, strings] {
+            info.extend(v.to_le_bytes());
+        }
+        info.extend(strings.to_le_bytes());
+        info.extend([2, 0x41, 0, 0]); // "A": width 2, glyph string length 1 | vowel
+        info.extend((strings + 1).to_le_bytes());
+        info.extend([2, 0x41, 2, 0]); // "B": width 2 at x 2, length 1
+        info.extend(b"AB");
+        let mut data = b"1.0\0".to_vec();
+        data.extend(8u16.to_le_bytes());
+        data.extend(2u16.to_le_bytes());
+        data.extend(2u32.to_le_bytes());
+        data.extend(16u32.to_le_bytes());
+        data.extend([0b1100_0000, 0]);
+        (info, data)
+    }
+
+    #[test]
+    fn saved_name_and_sex_feed_substitution_and_conditions() {
+        let (info, data) = identity_font();
+        let font = Font::parse(&info, &data, FontId::Message).unwrap();
+        let mut identity = HeroIdentity {
+            name: [0; dq9_formats::save::NAME_LEN],
+            male: true,
+        };
+        identity.name[0] = 1; // "B"
+        let names = identity.names(&font);
+        assert_eq!(names.hero.as_slice(), b"B".as_slice());
+        let rendered = |names: &Names| -> Vec<u8> {
+            let text = b"<HERO><IF_HERO_MALE>A<ELSE_HERO_NOT_MALE>B<ENDIF_HERO_MALE>";
+            let (_, tokens) = dq9_core::talk::compile_message(&font, text, names);
+            tokens
+                .into_iter()
+                .filter_map(|token| match token {
+                    dq9_formats::message::Token::Text(bytes) => Some(bytes),
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        };
+        assert_eq!(rendered(&names).as_slice(), b"BA".as_slice());
+        let female = HeroIdentity {
+            male: false,
+            ..identity
+        };
+        assert_eq!(rendered(&female.names(&font)).as_slice(), b"BB".as_slice());
+    }
+
+    #[test]
+    fn a_save_without_a_name_keeps_the_default_identity() {
+        let (info, data) = identity_font();
+        let font = Font::parse(&info, &data, FontId::Message).unwrap();
+        let identity = HeroIdentity {
+            name: [0; dq9_formats::save::NAME_LEN],
+            male: false,
+        };
+        assert_eq!(identity.names(&font), Names::default());
+    }
 
     #[test]
     fn saved_map_track_selects_the_dialogue_archive() {

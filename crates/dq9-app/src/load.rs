@@ -1,6 +1,7 @@
 //! Map loading from the ROM bytes (the ROM was read by the platform layer): map list, map
 //! assembly (`dq9_formats::map`), then the render scene.
 
+use crate::talk::HeroIdentity;
 use anyhow::{Context as _, Result};
 use dq9_core::field::{self, Field};
 use dq9_core::state::GameState;
@@ -26,40 +27,62 @@ pub struct Start {
     pub state: Option<GameState>,
     /// The protagonist's look: the save's hero when there is a save, else a new game's.
     pub look: HeroLook,
+    /// The saved protagonist's name and sex, for the message window; `None` without a save
+    /// (the documented default identity).
+    pub identity: Option<HeroIdentity>,
 }
 
-/// The hero of the current slot of `save` (the first character of the party), if it reads.
-fn save_look(bytes: &[u8]) -> Option<HeroLook> {
-    let save = Save::parse(bytes).ok()?;
+/// The appearance and message identity of the hero in the current slot of `save`: the first
+/// character of the party (`standby_count`). The name is glyph indices at `+0x140` (320) and
+/// `+0x174` (372) bit 0 says the sex (0 man, 1 woman, `docs/re/characters.md`; the demo save
+/// decodes to "Adenine").
+fn saved_hero(save: &Save) -> Option<(HeroLook, HeroIdentity)> {
     let slot = save.slot(save.current_slot()?)?;
     let hero = slot.character(usize::from(slot.standby_count()))?;
-    Some(HeroLook::from_character(&hero))
+    let identity = HeroIdentity {
+        name: hero.name_raw().try_into().ok()?,
+        male: hero.gender() == 0,
+    };
+    Some((HeroLook::from_character(&hero), identity))
 }
 
 /// Chooses an explicit map (the save is then ignored: its position belongs to its own map),
 /// otherwise the first valid normal slot of the save, then the prologue map.
 pub fn start(map: Option<&str>, save: Option<&[u8]>) -> Result<Start> {
-    let look = save.and_then(save_look).unwrap_or_else(HeroLook::new_game);
     if let Some(map) = map {
+        // An explicit map is permissive: a save it cannot read leaves the default hero.
+        let (look, identity) = save
+            .and_then(|bytes| Save::parse(bytes).ok())
+            .and_then(|save| saved_hero(&save))
+            .map_or((HeroLook::new_game(), None), |(look, identity)| {
+                (look, Some(identity))
+            });
         return Ok(Start {
             map: map.to_owned(),
             state: None,
             look,
+            identity,
         });
     }
     let Some(bytes) = save else {
         return Ok(Start {
             map: "M01".into(),
             state: None,
-            look,
+            look: HeroLook::new_game(),
+            identity: None,
         });
     };
     let save = Save::parse(bytes).context("parsing the save")?;
+    let (look, identity) = saved_hero(&save)
+        .map_or((HeroLook::new_game(), None), |(look, identity)| {
+            (look, Some(identity))
+        });
     let state = GameState::from_save(&save).context("restoring the save")?;
     Ok(Start {
         map: state.map.to_string(),
         state: Some(state),
         look,
+        identity,
     })
 }
 
@@ -111,16 +134,40 @@ pub fn story_from_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dq9_formats::save::{FILE_SIZE, MAGIC};
+    use dq9_formats::save::{FILE_SIZE, MAGIC, SLOT_SIZE};
+
+    /// Offsets of the layout the identity test writes (private to `save.rs`): characters
+    /// start at `+136` and are 572 bytes, the standby count is at `+7572`, and a character's
+    /// name glyphs and sex byte are at `+320` and `+372`.
+    const CHARACTER: usize = 136;
+    const CHARACTER_SIZE: usize = 572;
+    const STANDBY_COUNT: usize = 7572;
+
+    fn seal(bytes: Vec<u8>) -> Vec<u8> {
+        let mut save = Save::parse(&bytes).unwrap();
+        for slot in 0..2 {
+            save.slot_mut(slot).unwrap().seal();
+        }
+        save.as_bytes().to_vec()
+    }
+
+    /// Sets the header of `slot` as a normal save whose hero is the `standby`-th character,
+    /// with name glyph indices and the `+372` sex byte.
+    fn put_hero(bytes: &mut [u8], slot: usize, standby: u8, name: &[u8], gender: u8) {
+        let base = slot * SLOT_SIZE;
+        bytes[base + 21] = 1;
+        bytes[base + STANDBY_COUNT] = standby;
+        let at = base + CHARACTER + usize::from(standby) * CHARACTER_SIZE;
+        bytes[at + 320..at + 320 + name.len()].copy_from_slice(name);
+        bytes[at + 372] = gender;
+    }
 
     fn save_with_area(area: u16) -> Vec<u8> {
         let mut bytes = vec![0; FILE_SIZE];
         bytes[..MAGIC.len()].copy_from_slice(MAGIC);
         bytes[21] = 1;
         bytes[11476..11478].copy_from_slice(&area.to_le_bytes());
-        let mut save = Save::parse(&bytes).unwrap();
-        save.slot_mut(0).unwrap().seal();
-        save.as_bytes().to_vec()
+        seal(bytes)
     }
 
     #[test]
@@ -143,6 +190,25 @@ mod tests {
         let start = start(None, None).unwrap();
         assert_eq!(start.map, "M01");
         assert!(start.state.is_none());
+    }
+
+    #[test]
+    fn identity_follows_the_current_slot_and_the_first_party_member() {
+        let mut bytes = vec![0; FILE_SIZE];
+        bytes[..MAGIC.len()].copy_from_slice(MAGIC);
+        // Slot 0 is the normal load; slot 1 is another save that must not win.
+        put_hero(&mut bytes, 0, 2, &[3], 1);
+        put_hero(&mut bytes, 1, 1, &[5], 0);
+        let save = Save::parse(&seal(bytes.clone())).unwrap();
+        let (_, identity) = saved_hero(&save).unwrap();
+        assert_eq!(identity.name[0], 3);
+        assert!(!identity.male);
+        // An empty first slot is skipped (`Save::current_slot`).
+        bytes[21] = 0;
+        let save = Save::parse(&seal(bytes)).unwrap();
+        let (_, identity) = saved_hero(&save).unwrap();
+        assert_eq!(identity.name[0], 5);
+        assert!(identity.male);
     }
 }
 

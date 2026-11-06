@@ -237,6 +237,9 @@ impl App {
                 return;
             }
         }
+        // A previous save's hero must not survive a ROM or save replacement: the identity is
+        // set again below once the new save is read.
+        self.talk.set_identity(None);
         self.talk.set_rom(&rom);
         self.rom = Some(rom);
         self.state = field::initial_state(&self.options.story);
@@ -251,6 +254,7 @@ impl App {
                 return;
             }
         };
+        self.talk.set_identity(start.identity);
         self.state = load::trigger_state(
             start.state.as_ref(),
             &self.options.story,
@@ -1012,6 +1016,7 @@ impl ApplicationHandler<UserEvent> for App {
             #[cfg(target_arch = "wasm32")]
             UserEvent::NewGame => {
                 self.options.new_game = true;
+                self.talk.set_identity(None);
                 self.start_new_game();
             }
         }
