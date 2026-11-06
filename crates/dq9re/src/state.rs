@@ -1,12 +1,13 @@
-//! `dq9re state`: inspect a melonDS savestate (`docs/re/melonds-state.md`). When the ROM is
-//! found, also compares resident code with it: checks the section offsets, lists overlays.
-//! With `--save`, compares the RAM with the save the game was loaded from.
+//! `dq9re state`: inspect a melonDS savestate (`.ml1`) or a raw main-RAM image, with the
+//! same readers (`docs/re/melonds-state.md`). When the ROM is found and the input is a
+//! savestate, also compares resident code with it: checks the section offsets, lists
+//! overlays. With `--save`, compares the RAM with the save the game was loaded from.
 
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use dq9_formats::melonds::State;
+use dq9_formats::melonds::{MAIN_RAM_BASE, MAIN_RAM_SIZE, Memory, State};
 use dq9_formats::save::Save;
 use nds_rom::Rom;
 
@@ -15,29 +16,55 @@ use nds_rom::Rom;
 const LOADED: f64 = 0.9;
 
 pub fn run(
-    path: &Path,
+    path: Option<&Path>,
+    ram: Option<&Path>,
     peek: &[String],
     save: Option<&Path>,
     rom: Option<&Path>,
     json: bool,
 ) -> Result<()> {
-    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    let state = State::parse(&bytes).context("parsing savestate")?;
+    let file = match (path, ram) {
+        (Some(path), None) => path,
+        (None, Some(ram)) => ram,
+        (Some(_), Some(_)) => bail!("pass a savestate or --ram, not both"),
+        (None, None) => bail!("pass a savestate path or --ram FICHIER"),
+    };
+    let bytes = fs::read(file).with_context(|| format!("reading {}", file.display()))?;
+    // A positional path may be either container; `--ram` insists on the raw image.
+    let is_ram = ram.is_some() || (!bytes.starts_with(b"MELN") && bytes.len() == MAIN_RAM_SIZE);
+    let (memory, state) = if is_ram {
+        let memory = Memory::from_main_ram(&bytes).context("reading a main-RAM image")?;
+        (memory, None)
+    } else {
+        let state = State::parse(&bytes).context("parsing savestate")?;
+        (state.memory(), Some(state))
+    };
     if json {
-        println!("{}", checkpoint_json(&state)?);
+        println!("{}", checkpoint_json(&memory)?);
         return Ok(());
     }
     if peek.is_empty() {
-        for s in state.sections() {
-            println!(
-                "{:<4} at {:08x}, {:08x} bytes",
-                String::from_utf8_lossy(&s.name),
-                s.offset,
-                s.len
-            );
+        match &state {
+            Some(state) => {
+                for s in state.sections() {
+                    println!(
+                        "{:<4} at {:08x}, {:08x} bytes",
+                        String::from_utf8_lossy(&s.name),
+                        s.offset,
+                        s.len
+                    );
+                }
+            }
+            None => println!(
+                "main RAM image at {:#010x}, {} bytes (no ITCM/DTCM, no overlays)",
+                MAIN_RAM_BASE,
+                memory.main_ram().len()
+            ),
         }
-        println!("SDK VBlank count: {}", state.vblank_count()?);
-        let checkpoint = state.checkpoint().context("reading the story checkpoint")?;
+        println!("SDK VBlank count: {}", memory.vblank_count()?);
+        let checkpoint = memory
+            .checkpoint()
+            .context("reading the story checkpoint")?;
         let (chapter, step, substep) = checkpoint
             .scenario()
             .context("current scenario track out of range")?;
@@ -60,10 +87,10 @@ pub fn run(
         }
         println!("global flags: {:?}", checkpoint.flags);
         println!("quests: {:?}", checkpoint.quests);
-        let hero = state.protagonist_index()?;
+        let hero = memory.protagonist_index()?;
         for index in 0..4 {
-            if let Some(at) = state.object(index)? {
-                let p = state.object_position(at)?.map(|v| f64::from(v) / 4096.0);
+            if let Some(at) = memory.object(index)? {
+                let p = memory.object_position(at)?.map(|v| f64::from(v) / 4096.0);
                 let who = if index == hero { " (protagonist)" } else { "" };
                 println!(
                     "object {index} at {at:#010x}: position ({:.3}, {:.3}, {:.3}){who}",
@@ -71,19 +98,24 @@ pub fn run(
                 );
             }
         }
-        let rom_path = rom
-            .map(Path::to_path_buf)
-            .or_else(|| crate::find_rom().ok());
-        match rom_path {
-            Some(rom_path) => {
-                let rom_bytes = fs::read(&rom_path)
-                    .with_context(|| format!("reading {}", rom_path.display()))?;
-                compare_with_rom(&state, &Rom::parse(&rom_bytes).context("parsing ROM")?)?;
+        match &state {
+            Some(state) => {
+                let rom_path = rom
+                    .map(Path::to_path_buf)
+                    .or_else(|| crate::find_rom().ok());
+                match rom_path {
+                    Some(rom_path) => {
+                        let rom_bytes = fs::read(&rom_path)
+                            .with_context(|| format!("reading {}", rom_path.display()))?;
+                        compare_with_rom(state, &Rom::parse(&rom_bytes).context("parsing ROM")?)?;
+                    }
+                    None => println!("no ROM found: resident code not compared"),
+                }
             }
-            None => println!("no ROM found: resident code not compared"),
+            None => println!("no savestate: resident code, overlays and TCM not compared"),
         }
         if let Some(save) = save {
-            compare_with_save(&state, save)?;
+            compare_with_save(&memory, save)?;
         }
         return Ok(());
     }
@@ -96,15 +128,15 @@ pub fn run(
         if len > 0x1_0000 {
             bail!("refusing to print more than 0x10000 bytes at once");
         }
-        let bytes = state.read(addr, len)?;
+        let bytes = memory.read(addr, len)?;
         let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         println!("{addr:08x}  {hex}");
     }
     Ok(())
 }
 
-fn checkpoint_json(state: &State) -> Result<String> {
-    let c = state.checkpoint()?;
+fn checkpoint_json(memory: &Memory) -> Result<String> {
+    let c = memory.checkpoint()?;
     let tracks: Vec<serde_json::Value> = c
         .tracks
         .iter()
@@ -132,18 +164,40 @@ fn checkpoint_json(state: &State) -> Result<String> {
         "tracks": tracks,
         "flags": c.flags,
         "quests": quests,
+        "hero": hero_json(memory)?,
     });
     Ok(serde_json::to_string(&value)?)
 }
 
-fn compare_with_save(state: &State, path: &Path) -> Result<()> {
+/// `dq9-app --checkpoints` reads the hero in world units and prints three decimals; the
+/// oracle stores fx32, so convert the same way (`1 / 4096`, yaw included).
+fn hero_json(memory: &Memory) -> Result<serde_json::Value> {
+    let index = memory.protagonist_index()?;
+    let Some(at) = memory.object(index)? else {
+        return Ok(serde_json::Value::Null);
+    };
+    let p = memory.object_position(at)?;
+    let yaw = memory.object_heading(at)?;
+    Ok(serde_json::json!({
+        "x": round3(f64::from(p[0]) / 4096.0),
+        "y": round3(f64::from(p[1]) / 4096.0),
+        "z": round3(f64::from(p[2]) / 4096.0),
+        "yaw": round3(f64::from(yaw) / 4096.0),
+    }))
+}
+
+fn round3(v: f64) -> f64 {
+    (v * 1000.0).round() / 1000.0
+}
+
+fn compare_with_save(memory: &Memory, path: &Path) -> Result<()> {
     let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let save = Save::parse(&bytes).context("parsing save")?;
     let index = save.current_slot().context("no valid slot in the save")?;
     let slot = save.slot(index).context("slot")?;
     println!("save slot {index} copied into RAM by a normal load:");
     let mut unexpected = 0;
-    for (c, diffs) in state.compare_save(&slot)? {
+    for (c, diffs) in memory.compare_save(&slot)? {
         let verdict = match diffs.first() {
             None => "identical".to_owned(),
             Some(first) => {
@@ -166,7 +220,7 @@ fn compare_with_save(state: &State, path: &Path) -> Result<()> {
         );
     }
     println!("party members (character record -> member object):");
-    for m in state.compare_party(&slot)? {
+    for m in memory.compare_party(&slot)? {
         let verdict = match (m.member, m.differing.is_empty()) {
             (None, _) => "no member object has its id".to_owned(),
             (Some(_), true) => "all compared fields identical".to_owned(),
@@ -186,8 +240,8 @@ fn compare_with_save(state: &State, path: &Path) -> Result<()> {
 }
 
 /// Share of bytes of `expected` found at `addr` in the state; `None` if the range is unmapped.
-fn match_ratio(state: &State, addr: u32, expected: &[u8]) -> Option<f64> {
-    let actual = state.read(addr, expected.len()).ok()?;
+fn match_ratio(memory: &Memory, addr: u32, expected: &[u8]) -> Option<f64> {
+    let actual = memory.read(addr, expected.len()).ok()?;
     let same = actual.iter().zip(expected).filter(|(a, b)| a == b).count();
     Some(same as f64 / expected.len().max(1) as f64)
 }
