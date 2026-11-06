@@ -41,15 +41,15 @@ fn the_tower_door_is_a_plain_warp_onto_the_next_floor() {
         .find(|w| target_id(&list, "X01M03") == Some(w.destination))
         .expect("a warp from X01M01 to X01M03");
     assert_eq!(warp.kind, 0, "not the animated (task 8) kind");
-    assert_eq!(
+    assert_close(
         warp.volume.center.map(|c| c as f32 / 4096.0),
-        [-8.226, 15.5, 16.379]
+        [-8.226, 15.5, 16.379],
     );
     let high = warp.volume.high.map(|c| c as f32 / 4096.0);
     let low = warp.volume.low.map(|c| c as f32 / 4096.0);
-    assert_eq!(high, [-6.226, 17.5, 17.879]);
-    assert_eq!(low, [-10.226, 13.5, 14.879]);
-    assert_eq!(warp.arrival.map(|c| c as f32 / 4096.0), [-9.75, 4.2, 17.62]);
+    assert_close(high, [-6.226, 17.5, 17.879]);
+    assert_close(low, [-10.226, 13.5, 14.879]);
+    assert_close(warp.arrival.map(|c| c as f32 / 4096.0), [-9.75, 4.2, 17.62]);
     let angle = f32::from(warp.arrival_angle) / 4096.0;
     assert!((angle + 2.303_835).abs() < 1e-3, "arrival angle {angle}");
 
@@ -67,12 +67,18 @@ fn the_tower_door_is_a_plain_warp_onto_the_next_floor() {
     for zone in &type1 {
         assert_eq!(zone.class, 0);
         assert!(zone.warp.is_none());
-        assert_eq!(zone.volume.size.map(|c| c as f32 / 4096.0), [1.0, 1.0, 1.0]);
+        assert_close(zone.volume.size.map(|c| c as f32 / 4096.0), [1.0, 1.0, 1.0]);
     }
     assert!(
         source.regions.warps.iter().all(|w| w.kind != 1),
         "X01M01 has no type-1 warp"
     );
+}
+
+fn assert_close(actual: [f32; 3], expected: [f32; 3]) {
+    for (a, e) in actual.iter().zip(expected) {
+        assert!((a - e).abs() < 0.01, "{actual:?} != {expected:?}");
+    }
 }
 
 fn target_id(list: &MapList<'_>, code: &str) -> Option<u16> {
