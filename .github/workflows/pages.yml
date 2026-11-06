@@ -1,8 +1,17 @@
 name: GitHub Pages
 
 on:
+  # Only paths that can change the browser binary (and this workflow) redeploy the site;
+  # documentation commits no longer rebuild and publish it. `workflow_dispatch` stays
+  # available for an explicit deployment.
   push:
     branches: [main]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain*'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
