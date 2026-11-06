@@ -336,7 +336,7 @@ impl App {
         }
     }
 
-    #[cfg(any(target_arch = "wasm32", test))]
+    #[cfg(any(target_arch = "wasm32", all(test, windows)))]
     fn set_save(&mut self, save: Vec<u8>) {
         // Picking a save replaces whatever the page started with (a new game from
         // `?newgame=1`, a map preview): the save selects the map, the position and the
@@ -1485,7 +1485,7 @@ impl App {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use dq9_core::state::GameState;
@@ -1494,7 +1494,6 @@ mod tests {
     /// The web bug: after "Nouvelle partie", picking a save must load that save, not start
     /// the prologue again. Exercises the same `set_save` path with a real save and ROM. The
     /// test event loop needs Windows' any-thread builder (cargo tests are threads).
-    #[cfg(windows)]
     #[test]
     fn a_save_selected_after_a_new_game_loads_that_save() {
         let (Some(rom), Some(save_path)) = (testrom::load(), std::env::var_os("DQ9_SAVE")) else {

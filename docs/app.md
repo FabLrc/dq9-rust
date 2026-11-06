@@ -564,6 +564,10 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
 
 ## Vérification
 
+- Chargement d'une sauvegarde après « Nouvelle partie » : scénario natif Windows exercé
+  avec la ROM EU et une sauvegarde locale (`a_save_selected_after_a_new_game_loads_that_save`).
+  `new_game` devient faux et `C01M09` (carte 109) remplace le prologue. Le test et ses imports
+  sont compilés uniquement sous Windows ; le chemin navigateur reste compilé en wasm.
 - Lot navigateur et chaîne de livraison (6 novembre 2026) : page wasm locale servie par
   `python -m http.server` (`?newgame=1&mute=1`, Chromium 150, 1929 × 921, DPR 1, WebGPU et
   WebGL 2 disponibles), ROM européenne locale de 256 Mio lue par `<input type=file>`. Le
