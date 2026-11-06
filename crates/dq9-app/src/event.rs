@@ -402,6 +402,13 @@ impl EventPlayer {
         self.cutscene.doors()
     }
 
+    /// Whether the DS display engines are swapped (natives 109/110): the field and the message
+    /// window must be drawn on the other screen of the layout.
+    #[allow(dead_code)] // app.rs wiring is the field worker's side
+    pub fn screen_swapped(&self) -> bool {
+        self.cutscene.screen_swapped()
+    }
+
     /// What the events asked that is not executed (`--events-report`).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn coverage(&self) -> &Coverage {
@@ -645,6 +652,7 @@ impl EventPlayer {
             .set_event_caption_alpha(self.cutscene.caption_alpha());
         stage.talk.set_event_centered(caption.centered);
         stage.talk.set_event_silent(caption.silent);
+        stage.talk.set_event_frozen(caption.time.is_some());
         if stage.talk.take_closed() {
             self.director.signal(Signal::MessageClosed);
         }
@@ -703,6 +711,9 @@ impl EventPlayer {
                 // here, so the sound is reported rather than guessed.
                 self.coverage.miss("door sound");
             }
+            // The cutscene keeps the `POWCNT1` bit, but `app.rs` (field worker) has not wired
+            // the layout yet: report it until the field and the window move screens.
+            Event::SwapScreens(_) => self.coverage.miss("screen swap"),
             _ => {}
         }
         for output in self.cutscene.apply(&event) {
@@ -992,6 +1003,16 @@ impl EventPlayer {
         self.drag_three_bone(stage, view.three_bone.as_ref(), foot);
     }
 
+    /// The render actor of a model target, looked up by borrowed name (no per-frame clone of
+    /// the model path).
+    fn actor_of(&self, target: Target, model: Option<&str>) -> Option<usize> {
+        let model = model?;
+        self.bindings
+            .actors
+            .iter()
+            .find_map(|((t, path), actor)| (*t == target && path == model).then_some(*actor))
+    }
+
     /// Eye, target and the point the `foot` bone gives, for a camera installed by native 552.
     fn three_bone_camera(
         &self,
@@ -1000,7 +1021,7 @@ impl EventPlayer {
     ) -> Option<(Vec3, Vec3, Vec3)> {
         let target = self.cutscene.target_of_character(bones.source);
         let node = self.cutscene.node(target)?;
-        let actor = *self.bindings.actors.get(&(target, node.model.clone()?))?;
+        let actor = self.actor_of(target, node.model.as_deref())?;
         // The camera rig usually has no polygon, hence no instance: its world is its pose.
         let world = world_of(&node.pose, true);
         let at = |name: &str| -> Option<Vec3> {
@@ -1068,7 +1089,7 @@ impl EventPlayer {
     ) -> Option<(Vec3, Vec3)> {
         let target = self.cutscene.slot_target(bones.slot)?;
         let node = self.cutscene.node(target)?;
-        let actor = *self.bindings.actors.get(&(target, node.model.clone()?))?;
+        let actor = self.actor_of(target, node.model.as_deref())?;
         // The model may have no polygon, hence no instance: its world is its pose.
         let world = world_of(&node.pose, true);
         let at = |name: &str| -> Option<Vec3> {
@@ -1116,9 +1137,9 @@ impl EventPlayer {
         let bone = match parent {
             Target::Hero => scene.hero_bone(bone),
             Target::Model(_) | Target::Cast(_) => {
-                let model = self.cutscene.node(*parent)?.model.clone()?;
-                match self.bindings.actors.get(&(*parent, model)) {
-                    Some(actor) => scene.actor_bone(*actor, bone),
+                let model = self.cutscene.node(*parent)?;
+                match self.actor_of(*parent, model.model.as_deref()) {
+                    Some(actor) => scene.actor_bone(actor, bone),
                     None => Ok(None),
                 }
             }

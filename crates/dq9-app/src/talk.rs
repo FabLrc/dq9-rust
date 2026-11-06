@@ -203,6 +203,9 @@ pub struct Talk {
     centered_caption: bool,
     /// Native 413: no blip while the caption types.
     silent_caption: bool,
+    /// Native 409's message-tick freeze: the action key is not processed while the timed
+    /// caption runs, so 405 cannot close the message before the alpha envelope ends.
+    caption_frozen: bool,
     /// The NPC and context of the open conversation (not an event message).
     conversation: Option<(u16, u16)>,
     /// A conversation the player closed, until [`Talk::take_ended`].
@@ -293,7 +296,14 @@ impl Talk {
     /// One fixed step of the open dialogue.
     pub fn step(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
-        let input = std::mem::take(&mut self.pending);
+        // Native 409 (`020657c8`): while the timed caption runs, the message tick is suspended:
+        // the action key cannot advance or close it before the alpha envelope ends.
+        let input = if self.event_message && self.caption_frozen {
+            self.pending = Input::default();
+            Input::default()
+        } else {
+            std::mem::take(&mut self.pending)
+        };
         let Some(dialogue) = &mut self.active else {
             return;
         };
@@ -350,6 +360,7 @@ impl Talk {
         self.caption_alpha = None;
         self.centered_caption = false;
         self.silent_caption = false;
+        self.caption_frozen = false;
         self.closed = false;
         Ok(())
     }
@@ -376,6 +387,12 @@ impl Talk {
         self.silent_caption = silent;
     }
 
+    /// Native 409: suspend the message tick (no input, no close) while the timed caption runs
+    /// (`020657c8` returns 1 until the flag is cleared by 400/401).
+    pub fn set_event_frozen(&mut self, frozen: bool) {
+        self.caption_frozen = frozen;
+    }
+
     /// Native 401: closes the event message without reporting it as read.
     pub fn close_event(&mut self) {
         if self.event_message {
@@ -384,6 +401,7 @@ impl Talk {
             self.caption_alpha = None;
             self.centered_caption = false;
             self.silent_caption = false;
+            self.caption_frozen = false;
         }
     }
 
@@ -503,6 +521,7 @@ impl Talk {
         self.caption_alpha = None;
         self.centered_caption = false;
         self.silent_caption = false;
+        self.caption_frozen = false;
         Ok(())
     }
 
