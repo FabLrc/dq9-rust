@@ -224,6 +224,41 @@ sur un franchissement extérieur → intérieur.
    quittée). Le prédicat que le type 1 teste sur le meneur (`0x02039820`) et la tâche de porte
    (animation, marche automatique, fondu) ne sont pas lus.
 
+#### Zones de type 1 et passage de hauteur de l'Observatoire
+
+Les zones `0x73` de **type 1** (43 sur la ROM, trois sur `X01M01`) ne sont lues par aucune
+routine de `Field_CheckRegions` : `ov_017::0219755c` appelle `0x02197e2c`, `021975e4` (type 9),
+`02197a64` (portes de type 2), `Area_CheckLeader` (type 3), puis `021982ac` (type 4),
+`021983e0` (type 5), `021984f4` (type 8), `02198618` (type 10), `021986fc` et `02198aa0`
+(grotte). Aucun de ces appels ne prend la liste de type 1 (`func_0201e838(zone3d+0x6c, 1)`).
+`MapRegion_RecAction` (`0x0201d648`) traite bien la valeur 0 d'une action `0x74` après une zone
+de type 1 (`0x0201d6ec`) : elle écrit la classe 1 dans le quartet bas de `+0x2c` et un
+demi-mot dans `+0x2d`, mais rien ne relit ces champs à l'image. **Les zones de type 1 sont donc
+inertes à l'exécution** ; elles ne sont ni un monte-charge ni la transition de hauteur
+supposée (la tâche 8 du champ vient du **type de warp** `0x72`, valeur 7 = 1, et non d'une
+zone). `X01M01` ne contient d'ailleurs aucun warp de type 1.
+
+Le passage vers `X01M03` est le warp `0x72` **n° 9** de `X01M01` : boîte 4 × 4 × 3 centrée en
+`(-8,226 ; 15,5 ; 16,379)`, angle `5,759587`, **type 0**, destination `X01M03`, arrivée
+`(-9,75 ; 4,2 ; 17,62)` angle `-2,303835`. L'arrivée est le point de départ de `X01M03`
+(`-10,810 ; 4,0 ; 16,910`, `X01M03` a sa propre origine en y) : c'est un atterrissage normal,
+pas une destination incohérente.
+
+La terrasse haute est reliée au reste de `X01M01` par la **rampe en spirale** de la collision
+`X01A0100`. Depuis la pose d'histoire 1.1.2 (`(2,77 ; 11,25 ; 18,19)`), le seul obstacle direct
+est le mur fin `X01A01S1` (bloc 0, placement 12 ; deux triangles en `x 0,018..0,105`,
+`z 15,42..18,99`, `y 9..14`, normale `+x`), qui ferme le passage ouest à cette hauteur. Le
+chemin praticable contourne son extrémité nord (`z ≈ 20`) puis rejoint le pied de la rampe
+vers `(-5,5 ; 11,25 ; 22,0)`, monte par les paliers `(-5,5 ; 19)`, `(-4 ; 12,4 ; 18)`,
+`(-6 ; 13,2 ; 16,5)` et atteint `(-8,5 ; 14,13 ; 16)` **dans la boîte du warp**. Chaque arête
+de ce trajet a été validée par une marche de 24 images du héros avec `Hero::step` et la
+collision de la carte (l'`edge_pass` de la grille du pilote).
+
+Le pilote s'arrêtait pourtant à y 11,25 : ses **sondes dans les huit directions** depuis
+y 8,25 et y 11,25 ne relient pas la terrasse à la rampe, et il ne demandait pas le warp
+comme but. C'est une limite de la grille du pilote (et de son choix de but), pas une
+collision manquante ni une mécanique de jeu absente.
+
 #### Arrivée
 
 La carte de destination se charge, le héros est posé à la position d'arrivée et tourné de

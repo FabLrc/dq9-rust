@@ -223,12 +223,18 @@ cargo run -p dq9-app --release -- --new-game --headless `
   (276 s), double porte de bibliothèque poussée puis ouverte (deux vantaux, 295–299 s), aire 2
   ajoutée par l'événement 20 (événement 1150), NPC 130 (1600), retour par la porte vers
   `X01M01`, NPC 127 (1170) à 334,47 s → **histoire 1.1.2**.
-- Le pilote s'arrête à 342,8 s : la terrasse haute de `X01M01` (warp `X01M03` à y 15,5) n'est
-  pas reliée par la collision de marche (sondes dans les huit directions depuis y 8,25 et
-  y 11,25 : plafond à y 11,25). Les trois zones `0x73` de **type 1** de la carte
-  (`(-33,5, 4, -21)`, `(-18,25, 11, 9)`, `(26, 8, -4,5)`, action `0x74` type 1 sans
-  destination) restent non modélisées : ce sont les candidates du monte-charge/tâche 8. Le
-  warp final est un `0x72` normal une fois le héros à y 15,5.
+- Le pilote s'arrête à 342,8 s sur `X01M01` : ses **sondes dans les huit directions** depuis
+  y 8,25 et y 11,25 plafonnent à y 11,25 et il ne demande pas le warp `X01M03` comme but.
+  La collision, elle, relie bien la terrasse à la rampe : le mur fin `X01A01S1` (bloc 0,
+  placement 12, normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`, `y 9..14`) se contourne par
+  son extrémité nord (`z ≈ 20`), puis la rampe monte jusqu'à la boîte du warp. Trajet validé
+  arête par arête avec `Hero::step` (24 images par arête) : `(2,77 ; 11,25 ; 18,19)` →
+  `(3 ; 18)` → `(-5,5 ; 11,25 ; 22)` → `(-5,5 ; 19)` → `(-4 ; 12,4 ; 18)` →
+  `(-6 ; 13,2 ; 16,5)` → `(-8,5 ; 14,13 ; 16)`, dans la boîte du warp `0x72` **type 0**
+  (n° 9) vers `X01M03`. Les zones `0x73` de **type 1** de la carte sont **inertes** : aucune
+  routine de `Field_CheckRegions` ne lit leur liste (voir `map-archive.md`) ; ce n'est donc
+  pas un monte-charge ni une tâche 8. Reste à faire côté pilote : ajouter le warp au choix de
+  but et suivre la rampe (aucun placement direct du héros).
 - Limite de la trace : le pilote donne les directions avec la caméra du jeu à l'angle 0 et le
   rejeu force ce même cap ; elle prouve le parcours headless dans notre moteur, pas un rejeu à
   la manette melonDS avec caméra manuelle.
