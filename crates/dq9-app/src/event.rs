@@ -1092,51 +1092,39 @@ impl EventPlayer {
                 .map(|&(_, _, instance)| instance)
                 .collect();
             if instances.is_empty() {
-                let undrawn =
+                let collision =
                     stage
                         .scene
                         .scene
                         .undrawn_placements
                         .iter()
-                        .find(|&&(entry, placement, _)| {
+                        .any(|&(entry, placement)| {
                             i64::from(entry) == i64::from(group) && i32::from(placement) == id
                         });
-                match (undrawn, change) {
+                if collision {
                     // A collision mesh: only the walls and floor change, nothing to draw.
-                    (Some(&(_, _, true)), _) => self.coverage.miss(COLLISION_PLACEMENT),
-                    // Hidden at this time of day and not built: hiding it changes nothing.
-                    (Some(_), PlacementChange::Hidden { hidden: true, .. }) => {}
-                    (Some(_), _) => self.coverage.miss("hidden placement shown or moved"),
-                    (None, _) => self
-                        .coverage
-                        .miss(format!("placement ({group}, {id}) not in the map")),
+                    self.coverage.miss(COLLISION_PLACEMENT);
+                } else {
+                    self.coverage
+                        .miss(format!("placement ({group}, {id}) not in the map"));
                 }
                 continue;
             }
             for instance in instances {
-                let current = stage.scene.scene.instances[instance].world;
+                // The placement at the map's own transform, even when the chosen time of day
+                // hid it: native 574 shows it again where the map put it.
                 let state = self
                     .bindings
                     .placements
                     .entry(instance)
-                    .or_insert(Placement {
-                        home: current,
-                        hidden: false,
-                        position: None,
-                    });
+                    .or_insert_with(|| Placement::of(&stage.scene.scene.instances[instance]));
                 match change {
                     PlacementChange::Hidden { hidden, .. } => state.hidden = hidden,
                     PlacementChange::Moved { position, .. } => {
                         state.position = Some(Vec3::from_array(position));
                     }
                 }
-                let mut world = state.home;
-                if let Some(position) = state.position {
-                    world.w_axis = position.extend(1.0);
-                }
-                if state.hidden {
-                    world = Mat4::from_scale(Vec3::ZERO);
-                }
+                let world = state.world();
                 self.set_world(stage.scene, instance, world);
             }
         }
@@ -1188,9 +1176,36 @@ fn monster_archive(files: &LazyRom, path: &str) -> Option<Vec<u8>> {
 /// now.
 #[derive(Debug, Clone, Copy)]
 struct Placement {
+    /// Home world matrix of the placement, as built from the map (`0x02013168`).
     home: Mat4,
     hidden: bool,
     position: Option<Vec3>,
+}
+
+impl Placement {
+    /// The state of a placement before a script changes it: its home transform and whether
+    /// the chosen time of day hides it (a null world scale).
+    fn of(instance: &dq9_render::SceneInstance) -> Self {
+        Self {
+            home: instance.home,
+            hidden: !instance.drawn(),
+            position: None,
+        }
+    }
+
+    /// The world matrix the scene draws: the home transform with the translation native 575
+    /// last wrote, and a null scale while native 574 hides it. Hiding, showing and moving are
+    /// independent, so their order does not change the result.
+    fn world(&self) -> Mat4 {
+        if self.hidden {
+            return Mat4::from_scale(Vec3::ZERO);
+        }
+        let mut world = self.home;
+        if let Some(position) = self.position {
+            world.w_axis = position.extend(1.0);
+        }
+        world
+    }
 }
 
 /// The sheet of a sprite the field draws by itself (`fieldSpriteFiles`, `docs/re/stb-natives.md`).
@@ -1228,3 +1243,56 @@ pub const COLLISION_PLACEMENT: &str = "collision placement";
 /// and nothing changes (`ov_001::02164578` → `Object3D::MaybeSetRegularAnimation`, `02036e44`).
 /// Not counted against an event by the report.
 pub const ABSENT_MOTION: &str = "motion absent from the model";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Home transform of a placement as `world_matrix` builds it (`0x02013168`): translation,
+    /// a `y` rotation and a non-uniform scale, so that a show that lost either would fail.
+    fn home() -> Mat4 {
+        Mat4::from_translation(Vec3::new(10.0, 2.0, -3.0))
+            * Mat4::from_rotation_y(0.5)
+            * Mat4::from_scale(Vec3::new(2.0, 3.0, 4.0))
+    }
+
+    fn scene_instance(world: Mat4) -> dq9_render::SceneInstance {
+        dq9_render::SceneInstance {
+            model: 0,
+            world,
+            home: home(),
+            block: 3,
+            instance: 7,
+        }
+    }
+
+    fn placement() -> Placement {
+        Placement::of(&scene_instance(home()))
+    }
+
+    #[test]
+    fn a_move_alone_does_not_show_a_placement_hidden_at_the_chosen_time() {
+        let mut placement = Placement::of(&scene_instance(Mat4::from_scale(Vec3::ZERO)));
+        let position = Vec3::new(1.0, 2.0, 3.0);
+        placement.position = Some(position);
+        assert_eq!(placement.world(), Mat4::from_scale(Vec3::ZERO));
+        placement.hidden = false;
+        assert_eq!(placement.world().w_axis.truncate(), position);
+    }
+
+    #[test]
+    fn placed_placement_keeps_rotation_and_scale_when_hidden_then_shown() {
+        let mut placement = placement();
+        let position = Vec3::new(-7.0, 0.5, 12.0);
+        placement.position = Some(position);
+        placement.hidden = true;
+        assert_eq!(placement.world(), Mat4::from_scale(Vec3::ZERO));
+        placement.hidden = false;
+        let world = placement.world();
+        assert_eq!(world.w_axis.truncate(), position);
+        let home = home();
+        assert_eq!(world.x_axis.truncate(), home.x_axis.truncate());
+        assert_eq!(world.y_axis.truncate(), home.y_axis.truncate());
+        assert_eq!(world.z_axis.truncate(), home.z_axis.truncate());
+    }
+}

@@ -195,16 +195,16 @@ part). « Complet » : tout ce que le script demande est exécuté, aux natives 
 près (559, 560, 571, 815 ; 581, 582, 809 dont les objets ne sont pas dessinés ; placements de
 collision ; mouvements dont le modèle n'a pas le nom, sans effet dans le jeu non plus :
 [`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)). Avant le chantier
-J3-effets : **22 scènes partielles sur 30** (18 lignes du rapport) ; après : **4 scènes
-partielles** (3 lignes).
+J3-effets : **22 scènes partielles sur 30** (18 lignes du rapport) ; après : **2 scènes
+partielles** (1 ligne).
 
 | Scène(s) | Cartes | Résultat | Ce qui manque (visible) |
 |---|---|---|---|
 | 1130, 1140, 1150, 1160, 1170, 1310, 1320, 1340, 1350, 1360, 1370, 1380, 1390, 1410, 1600, 1610 | `X01M05`, `X01M07`, `X01M01`, `M01`, `M01M04` | complet | — |
 | 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | complet | — |
 | 21591, 21592, 21593, 21594, 21595, 21597 | `X01M05`, `M01`, `X01M04` | complet | — |
-| 1330 | `M01M06` | partiel | un placement de carte masqué à l'heure choisie que 574 montre (`Scene::build` laisse les instances masquées de côté) |
-| 21510 | `X01M04` | partiel | idem (placement 3) |
+| 1330 | `M01M06` | complet | — |
+| 21510 | `X01M04` | complet | — |
 | 21500 + 21507 | `M01M12` | partiel | 409/411/413 (effets du texte des légendes), 547 (transition de combat), 552 (caméra à trois os), 584 (ouverture d'une porte) |
 
 La chaîne du prologue se joue de bout en bout sans intervention : `21500 → 21507` (native 538),
@@ -360,9 +360,11 @@ Ce que fait `dq9-render`, et ce qui s'écarte du moteur 3D de la DS.
 
 Fidèle à ce que lit le jeu :
 
-- **Instances** : une par placement visible au moment choisi (`Instance::hidden`), des parties
-  modèle et objet (`.nsbmd`) ; matrice monde = translation, rotation `y`, échelle de
-  `Instance::world` (`0x02013168`). `dq9-core` décompresse les `.col2`, transforme les faces
+- **Instances** : une par placement modèle et objet (`.nsbmd`), y compris ceux que l'heure
+  choisie cache (`Instance::hidden`) : l'instance cachée a une échelle nulle et garde sa
+  matrice d'origine (`SceneInstance::home`), pour que les natives 574 et 575 la montrent ou la
+  déplacent ; matrice monde = translation, rotation `y`, échelle de `Instance::world`
+  (`0x02013168`). `dq9-core` décompresse les `.col2`, transforme les faces
   visibles et les utilise pour le sol et les murs (voir `re/movement.md`).
 - **Textures** : toutes les `.nsbtx` de l'`.ambl` (`Zone3D+0x418`), liées aux matériaux par
   nom de texture et de palette. Quand plusieurs fichiers ont le même nom, le premier de la

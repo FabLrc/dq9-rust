@@ -3,10 +3,11 @@
 use std::collections::{BTreeMap, HashSet};
 
 use dq9_formats::Table;
-use dq9_formats::map::{self, Context, Map};
+use dq9_formats::map::{self, Context, Map, PartKind};
 use dq9_formats::maplist::{self, MapList, MapRecord};
 use dq9_render::Scene;
-use dq9_render::scene::PolygonMode;
+use dq9_render::scene::{PolygonMode, world_matrix};
+use glam::{Mat4, Vec3};
 use nds_rom::Rom;
 
 const IDENTITY: [[f32; 3]; 2] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
@@ -43,10 +44,57 @@ fn sample_maps() {
         );
         assert!(s.warnings.is_empty(), "{code}: {:?}", s.warnings);
         assert!(!s.instances.is_empty() && textured && s.bounds().is_some());
-        // Every placement shown at this time is a model instance.
+        // A placement hidden at the chosen time of day is built too, with a null scale and
+        // the transform the map gives it; a visible one draws that transform (natives 574,
+        // 575 show or move the hidden ones).
         for inst in &s.instances {
-            assert!(!m.blocks[inst.block].instances[inst.instance].hidden);
+            let placement = &m.blocks[inst.block].instances[inst.instance];
+            assert_eq!(inst.home, world_matrix(&placement.world));
+            assert_eq!(inst.drawn(), !placement.hidden);
+            if placement.hidden {
+                assert_eq!(inst.world, Mat4::from_scale(Vec3::ZERO));
+            } else {
+                assert_eq!(inst.world, inst.home);
+            }
         }
+    }
+}
+
+/// `Scene::build` keeps the placements the chosen time of day hides: each has an instance with
+/// a null scale and its home transform, listed in `placements` so that natives 574 and 575 can
+/// show or move it; only collision parts stay undrawn.
+#[test]
+fn hidden_placements_are_built_for_scripts() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+    let list = MapList::parse(&table).unwrap();
+    let record = list.records.iter().find(|r| r.code == b"M01M06").unwrap();
+    let m = assemble(&rom, &table, &list, record);
+    let s = Scene::build(&m, |p| map::rom_file(&rom, p));
+    assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    assert_eq!(s.placements.len(), s.instances.len());
+    let mut hidden = 0;
+    for &(entry, id, instance) in &s.placements {
+        let block = m.blocks.iter().find(|b| b.entry == entry).unwrap();
+        let placement = block.instances.iter().find(|i| i.id == id).unwrap();
+        let inst = &s.instances[instance];
+        assert_eq!(inst.home, world_matrix(&placement.world));
+        if placement.hidden {
+            hidden += 1;
+            assert!(!inst.drawn());
+            assert_eq!(inst.world, Mat4::from_scale(Vec3::ZERO));
+        } else {
+            assert_eq!(inst.world, inst.home);
+            assert!(inst.drawn());
+        }
+    }
+    assert!(hidden > 0, "M01M06 at time 0 builds no hidden placement");
+    for &(entry, id) in &s.undrawn_placements {
+        let block = m.blocks.iter().find(|b| b.entry == entry).unwrap();
+        let placement = block.instances.iter().find(|i| i.id == id).unwrap();
+        let part = placement.part.map(|p| block.parts[p].kind);
+        assert_eq!(part, Some(PartKind::Collision));
     }
 }
 

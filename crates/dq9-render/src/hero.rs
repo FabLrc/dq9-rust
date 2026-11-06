@@ -324,6 +324,7 @@ impl HeroRig {
         scene.instances.push(SceneInstance {
             model,
             world: Mat4::IDENTITY,
+            home: Mat4::IDENTITY,
             block: usize::MAX,
             instance: usize::MAX,
         });

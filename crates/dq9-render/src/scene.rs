@@ -1,8 +1,9 @@
 //! CPU side of the renderer: everything the GPU needs for one assembled map, without touching
 //! the GPU. [`Scene::build`] decodes each shown part's `.nsbmd` (`nds_rom::g3d`), binds its
 //! materials to the textures of the map's `.nsbtx` files, runs the display lists into indexed
-//! triangles (`Geometry::build`, rest pose) and places one instance per visible placement with
-//! its world transform.
+//! triangles (`Geometry::build`, rest pose) and places one instance per placement with its
+//! world transform. A placement hidden at the chosen time of day is built too, with a null
+//! scale, because natives 574 and 575 can show or move it.
 //!
 //! Approximations of the DS 3D engine are listed in `docs/app.md`.
 
@@ -239,10 +240,43 @@ pub struct SceneModel {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneInstance {
     pub model: usize,
+    /// Drawn world matrix; a null scale hides the instance (natives 570, 574).
     pub world: Mat4,
+    /// Home world matrix of a map placement (`0x02013168`), kept while a null [`world`]
+    /// hides it so that native 574 can show it again at the transform of the map. Generated
+    /// instances (hero, actors, sprites) keep the world they were created with.
+    pub home: Mat4,
     /// Block (index in [`Map::blocks`]) and instance in it.
     pub block: usize,
     pub instance: usize,
+}
+
+impl SceneInstance {
+    /// A map placement: hidden at the chosen time of day it is still built, with a null scale,
+    /// so that natives 574 and 575 can show or move it (`02019518` finds the record,
+    /// `02163dec` and `02163e50` change it).
+    fn placed(model: usize, home: Mat4, hidden: bool, block: usize, instance: usize) -> Self {
+        Self {
+            model,
+            world: if hidden {
+                Mat4::from_scale(Vec3::ZERO)
+            } else {
+                home
+            },
+            home,
+            block,
+            instance,
+        }
+    }
+
+    /// Whether an image can show it: the null world scale is how the application hides an
+    /// instance (`EventPlayer`, [`SceneInstance::world`]).
+    pub fn drawn(&self) -> bool {
+        self.world.x_axis.truncate().length_squared()
+            + self.world.y_axis.truncate().length_squared()
+            + self.world.z_axis.truncate().length_squared()
+            > 0.0
+    }
 }
 
 /// Everything to draw for one map.
@@ -256,12 +290,12 @@ pub struct Scene {
     /// library left unbound]**.
     pub unbound_textures: Vec<String>,
     /// The scene instances of each map placement: `(block entry, placement id, instance)`,
-    /// which is how scripts name them (natives 574, 575). Placements hidden at the chosen time
-    /// of day have no instance.
+    /// which is how scripts name them (natives 574, 575). A placement hidden at the chosen
+    /// time of day has an instance too, drawn with a null scale.
     pub placements: Vec<(u32, u16, usize)>,
-    /// The placements of the map with no instance in the scene: `(block entry, placement id,
-    /// collision part)`. A collision part has no model to show, a hidden one is not built.
-    pub undrawn_placements: Vec<(u32, u16, bool)>,
+    /// The placements of the map with no instance in the scene: `(block entry, placement id)`
+    /// of a collision part, which has no model to show.
+    pub undrawn_placements: Vec<(u32, u16)>,
     /// Files that could not be read or decoded, skipped.
     pub warnings: Vec<String>,
 }
@@ -542,7 +576,8 @@ pub(crate) fn fixed_light(m: &Material, normal: [f32; 3]) -> [f32; 3] {
 impl Scene {
     /// Builds the scene of `map`; `file` returns a ROM file by path (compared without case,
     /// [`dq9_formats::map::rom_file`]). Unreadable files are skipped into
-    /// [`warnings`](Self::warnings). Hidden instances and collision parts are left out.
+    /// [`warnings`](Self::warnings). Collision parts are left out; a placement hidden at the
+    /// chosen time of day gets an instance with a null scale and its home matrix.
     pub fn build<'r>(map: &Map, file: impl Fn(&str) -> Option<&'r [u8]>) -> Scene {
         let mut warnings = Vec::new();
         // Zone3D_StepAmbl (0x02014118): every .nsbtx of the .ambl, newest first.
@@ -604,12 +639,13 @@ impl Scene {
                 let Some(part) = inst.part.and_then(|p| block.parts.get(p)) else {
                     continue;
                 };
-                if inst.hidden || !matches!(part.kind, PartKind::Model | PartKind::Object) {
-                    b.scene.undrawn_placements.push((
-                        block.entry,
-                        inst.id,
-                        part.kind == PartKind::Collision,
-                    ));
+                // A collision part changes the floor and the walls, not the image; a model or
+                // an object hidden at this time of day is still built, because natives 574
+                // and 575 can show or move it (`02019518`, `02163dec`, `02163e50`).
+                if !matches!(part.kind, PartKind::Model | PartKind::Object) {
+                    if part.kind == PartKind::Collision {
+                        b.scene.undrawn_placements.push((block.entry, inst.id));
+                    }
                     continue;
                 }
                 let Some(name) = &part.file else { continue };
@@ -637,27 +673,27 @@ impl Scene {
                         }
                         ids
                     });
-                let world = world_matrix(&inst.world);
+                let home = world_matrix(&inst.world);
                 for &model in models.iter() {
-                    b.scene
-                        .placements
-                        .push((block.entry, inst.id, b.scene.instances.len()));
-                    b.scene.instances.push(SceneInstance {
+                    let instance = b.scene.instances.len();
+                    b.scene.placements.push((block.entry, inst.id, instance));
+                    b.scene.instances.push(SceneInstance::placed(
                         model,
-                        world,
-                        block: block_idx,
-                        instance: inst_idx,
-                    });
+                        home,
+                        inst.hidden,
+                        block_idx,
+                        inst_idx,
+                    ));
                 }
             }
         }
         b.scene
     }
 
-    /// World-space bounding box of every instance.
+    /// World-space bounding box of every instance drawn (hidden ones have a null scale).
     pub fn bounds(&self) -> Option<[Vec3; 2]> {
         let mut out: Option<[Vec3; 2]> = None;
-        for inst in &self.instances {
+        for inst in self.instances.iter().filter(|i| i.drawn()) {
             let Some([lo, hi]) = self.models[inst.model].bounds else {
                 continue;
             };
@@ -678,6 +714,7 @@ impl Scene {
     pub fn triangle_count(&self) -> usize {
         self.instances
             .iter()
+            .filter(|i| i.drawn())
             .map(|i| self.models[i.model].indices.len() / 3)
             .sum()
     }
@@ -731,6 +768,41 @@ mod tests {
         let data = [0x10, 4, 0, 0, 0x00, b'B', b'M', b'D', b'0'];
         assert_eq!(&*unpack(&data).unwrap(), b"BMD0");
         assert!(unpack(&[0x10]).is_err());
+    }
+
+    #[test]
+    fn bounds_and_triangle_count_ignore_hidden_instances() {
+        let mut scene = Scene::default();
+        scene.models.push(SceneModel {
+            archive: String::new(),
+            member: String::new(),
+            name: String::new(),
+            vertices: Vec::new(),
+            indices: vec![0, 1, 2],
+            materials: Vec::new(),
+            draws: Vec::new(),
+            bounds: Some([Vec3::splat(-1.0), Vec3::splat(1.0)]),
+            lit: false,
+            tinted: false,
+        });
+        scene.instances.push(SceneInstance {
+            model: 0,
+            world: Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)),
+            home: Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)),
+            block: 0,
+            instance: 0,
+        });
+        scene.instances.push(SceneInstance {
+            model: 0,
+            world: Mat4::from_scale(Vec3::ZERO),
+            home: Mat4::from_translation(Vec3::new(-100.0, 0.0, 0.0)),
+            block: 0,
+            instance: 1,
+        });
+        let [lo, hi] = scene.bounds().unwrap();
+        assert_eq!(lo, Vec3::new(9.0, -1.0, -1.0));
+        assert_eq!(hi, Vec3::new(11.0, 1.0, 1.0));
+        assert_eq!(scene.triangle_count(), 1);
     }
 
     #[test]
