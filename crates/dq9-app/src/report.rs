@@ -6,13 +6,14 @@ use std::ops::RangeInclusive;
 
 use anyhow::{Context as _, Result};
 use dq9_core::Hero;
+use dq9_core::script::Sound;
 use dq9_core::script::load::stage_events;
 use dq9_core::trigger::State;
 use dq9_formats::cast::Story;
 use dq9_render::Camera;
 use nds_rom::Rom;
 
-use crate::event::{EventPlayer, Stage};
+use crate::event::{EventPlayer, Outcome, Stage};
 use crate::load::{self, LoadedMap};
 use crate::talk::{Button, Talk};
 
@@ -66,7 +67,12 @@ pub fn play(
             }
             player.prepare(rom, next, &mut stage);
         }
-        player.step(&mut stage);
+        for outcome in player.step(&mut stage) {
+            // Nothing is heard here: a jingle is over as soon as it is asked for.
+            if matches!(outcome, Outcome::Sound(Sound::Jingle(_))) {
+                player.jingle_ended();
+            }
+        }
         talk.step();
         loaded.runtime.step(camera)?;
         played.steps = frame + 1;
@@ -78,18 +84,10 @@ pub fn play(
     Ok(played)
 }
 
-/// Natives with no visible effect established (`docs/re/stb-natives.md`): 554 (voice sound
-/// selection), 559 and 815 (a flag nothing reads, an integrity probe), 560 (a subsystem
-/// test), 571 (a bit of `Object3D::flags_` nothing reads) and 712 (resource archives). Not
-/// executing them is not counted against an event.
-const NO_VISIBLE_EFFECT: [&str; 6] = [
-    "native 554",
-    "native 559",
-    "native 560",
-    "native 571",
-    "native 712",
-    "native 815",
-];
+/// Natives with no visible effect established (`docs/re/stb-natives.md`): 559 and 815 (a flag
+/// nothing reads, an integrity probe), 560 (a subsystem test) and 571 (a bit of
+/// `Object3D::flags_` nothing reads). Not executing them is not counted against an event.
+const NO_VISIBLE_EFFECT: [&str; 4] = ["native 559", "native 560", "native 571", "native 815"];
 
 /// How much of an event is played, from what the player could not execute.
 fn verdict(played: &Played, started: &[u16], missing: &[(String, u32)]) -> &'static str {
@@ -99,10 +97,10 @@ fn verdict(played: &Played, started: &[u16], missing: &[(String, u32)]) -> &'sta
     if !played.finished {
         return "stopped";
     }
-    // Sounds are the music worker's, the screen swap has no meaning with one screen.
-    let partial = missing.iter().any(|(k, _)| {
-        !(k == "sound" || k == "screen swap" || NO_VISIBLE_EFFECT.contains(&k.as_str()))
-    });
+    // The screen swap has no meaning with one screen.
+    let partial = missing
+        .iter()
+        .any(|(k, _)| !(k == "screen swap" || NO_VISIBLE_EFFECT.contains(&k.as_str())));
     if partial { "partial" } else { "complete" }
 }
 

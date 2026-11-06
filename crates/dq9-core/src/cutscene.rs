@@ -791,7 +791,7 @@ impl Cutscene {
             }
             Event::Started { .. } | Event::Phase { .. } | Event::Ended { .. } => {}
             Event::Unimplemented { id } => self.ignore(format!("native {id}")),
-            Event::Sound(_) => self.ignore("sound"),
+            Event::Sound(_) => {}
             Event::SwapScreens(_) => self.ignore("screen swap"),
             Event::Preload(_) | Event::ReleasePreloaded => {}
             Event::CreateSprite { .. } | Event::DestroySprite { .. } => self.ignore("2D sprites"),

@@ -215,17 +215,34 @@ pub enum Sound {
     PlaySequence(i32),
     /// 738.
     ResetBgm,
-    /// 726, 730: loads a sound-effect group (`secondary` for 730).
+    /// 726, 730: loads a sound-effect group (`secondary` for 730): its bank and waves, and
+    /// the sequence archive `archive` (the group's own number unless 726 gives another) the
+    /// next 728/732 play from.
     LoadEffects {
         group: i32,
+        archive: i32,
         secondary: bool,
     },
+    /// 712 with one argument: plays effect `index` of the base archive (the field's
+    /// `se_norm.sdat` archive 100, a battle's `se_btl.sdat` 101) without a handle.
+    PlayBaseEffect {
+        index: i32,
+    },
+    /// 720: asks for the jingle `sequence`: the music pauses, the jingle plays out, the
+    /// music resumes. The application ends the wait of native 725 with `Signal::JingleEnded`.
+    Jingle(i32),
+    /// 736: the music of the current place, as on a map change.
+    ZoneBgm,
+    /// 735: `false` locks the music (selecting, restarting and stopping do nothing).
+    BgmEnabled(bool),
+    /// 554: the voice of the message window's text blip (0, 1 or 2).
+    TextVoice(i32),
     /// 727, 731: restores the heap from before the matching load.
     RestoreEffects {
         secondary: bool,
     },
     /// 728, 732: plays effect `index` of the loaded group; `handle` (0 to 15) is what the
-    /// script keeps to stop it.
+    /// script keeps to stop it, -1 when it passes no address to receive it.
     PlayEffect {
         index: i32,
         handle: i32,
@@ -410,6 +427,7 @@ impl Event {
             Self::Actor { actor, .. } => Signal::ActorIdle(*actor),
             Self::Camera(_) => Signal::CameraIdle,
             Self::Preload(_) => Signal::Preloaded,
+            Self::Sound(Sound::Jingle(_)) => Signal::JingleEnded,
             _ => return None,
         })
     }

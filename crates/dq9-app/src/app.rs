@@ -73,6 +73,8 @@ pub struct Options {
     pub layout: Layout,
     /// No music, and no sound device opened until `M` unmutes.
     pub mute: bool,
+    /// Mix the sound offline (no device) so that `App::take_recording` can write it.
+    pub record_sound: bool,
     /// An event to start as soon as the map is loaded (`--event`).
     pub event: Option<u16>,
     pub story: dq9_formats::cast::Story,
@@ -152,7 +154,10 @@ impl std::fmt::Debug for App {
 impl App {
     pub fn new(proxy: EventLoopProxy<UserEvent>, options: Options, rom: Option<Vec<u8>>) -> Self {
         let state = field::initial_state(&options.story);
-        let audio = Audio::new(options.mute);
+        let mut audio = Audio::new(options.mute);
+        if options.record_sound {
+            audio.record();
+        }
         let mut app = Self {
             proxy,
             options,
@@ -559,12 +564,20 @@ impl App {
         };
         self.talk.step();
         for outcome in outcomes {
-            // The game fires trigger event 11 when an event ends (`EventTask_Update`).
-            if let Outcome::Ended(id) = outcome
-                && let Some(field) = &mut self.field
-            {
-                let events = field.event_ended(id, &mut self.state);
-                self.apply_events(events);
+            match outcome {
+                // The game fires trigger event 11 when an event ends (`EventTask_Update`).
+                Outcome::Ended(id) => {
+                    if let Some(field) = &mut self.field {
+                        let events = field.event_ended(id, &mut self.state);
+                        self.apply_events(events);
+                    }
+                }
+                Outcome::Sound(sound) => {
+                    if let Some(rom) = self.rom.as_deref() {
+                        self.audio.script_sound(rom, &sound);
+                    }
+                }
+                Outcome::Finished => {}
             }
         }
         if let Some(runtime) = &mut self.runtime
@@ -576,6 +589,20 @@ impl App {
             return false;
         }
         true
+    }
+
+    /// One fixed step of the sound: the waits of a jingle, which a script may be polling.
+    fn step_sound(&mut self) {
+        let Some(rom) = self.rom.as_deref() else {
+            return;
+        };
+        self.audio.step(rom);
+        if self.audio.take_jingle_ended() {
+            self.events.jingle_ended();
+        }
+        for sound in self.talk.take_sounds() {
+            self.audio.talk_sound(rom, sound);
+        }
     }
 
     fn axis(&self, plus: &[KeyCode], minus: &[KeyCode]) -> f32 {
@@ -620,6 +647,7 @@ impl App {
     /// Runs `due` fixed steps of the game logic.
     fn run_steps(&mut self, due: u32) {
         for _ in 0..due {
+            self.step_sound();
             if self.events.pending_start().is_some() || self.events.is_active() {
                 if !self.step_event() {
                     return;
@@ -957,5 +985,13 @@ impl App {
             }
         }
         status(&format!("stopped after {steps} steps"));
+    }
+
+    /// What the sound mixed during the steps so far, with its sample rate, when the
+    /// application records it (`Options::record_sound`).
+    pub fn take_recording(&mut self) -> Option<(u32, Vec<f32>)> {
+        self.audio
+            .take_recording()
+            .map(|samples| (crate::audio::RECORD_RATE, samples))
     }
 }

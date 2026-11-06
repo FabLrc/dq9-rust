@@ -12,7 +12,9 @@ mod mixer;
 mod player;
 mod song;
 mod tables;
+mod wav;
 
 pub use mixer::{Handle, Mixer};
 pub use player::Player;
 pub use song::Song;
+pub use wav::wav;

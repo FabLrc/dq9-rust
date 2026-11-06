@@ -145,6 +145,7 @@ pub struct Talk {
     /// Native 410 hid the frame of the current event message.
     frameless: bool,
     fade: Option<[f32; 4]>,
+    sounds: Vec<talk::Sound>,
 }
 
 impl Talk {
@@ -187,6 +188,11 @@ impl Talk {
         self.pending = Input::default();
     }
 
+    /// The sounds the message window made since the last call (`talk::Sound`).
+    pub fn take_sounds(&mut self) -> Vec<talk::Sound> {
+        std::mem::take(&mut self.sounds)
+    }
+
     /// One fixed step of the open dialogue.
     pub fn step(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
@@ -195,6 +201,7 @@ impl Talk {
             return;
         };
         dialogue.step(input);
+        self.sounds.extend(dialogue.take_sounds());
         if let Some(outcome) = dialogue.outcome() {
             if self.event_message {
                 // The script of the event polls the message (native 405).

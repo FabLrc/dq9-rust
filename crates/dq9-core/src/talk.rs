@@ -301,6 +301,23 @@ pub struct Plate {
     pub advance: i32,
 }
 
+/// A sound of the message window (`docs/re/sdat.md`: base archive effects 10 to 12, 6, 28, 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sound {
+    /// A typed character (`0x020455f8`); the voice is the application's.
+    Blip,
+    /// `<EXC>` (`0xFF2E`).
+    Exclamation,
+    /// `<QES>` (`0xFF2F`).
+    Question,
+    /// A choice opens (`<YESNO>`, `<UKEYAME>`...).
+    Choice,
+}
+
+/// Characters typed between two blips: the game blips when its counter passes 3 and takes 4
+/// off (`0x02065990`) **[hypothèse : one character per count]**.
+pub const BLIP_EVERY: u32 = 4;
+
 /// One step of a prepared message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
@@ -321,6 +338,8 @@ pub enum Op {
     },
     /// `<TIME=n>`: pause for `n` steps.
     Pause(u32),
+    /// `<EXC>`, `<QES>`: a sound, no wait (`0x02065990`).
+    Sound(Sound),
     Prompt(PromptKind),
     /// Branch marker `<YES>` (0xFF14), `<NO>`, `<UKE>`, `<YAME>`.
     Marker(u16),
@@ -430,6 +449,8 @@ pub fn layout(tokens: &[Token], tags: LeadingTags, font: &Font, max_width: i32) 
                     0xFF0A => Some(Op::End(EndKind::Add)),
                     0xFF0C | 0xFF0D => Some(Op::Page),
                     0xFF1D | 0xFF1E => Some(Op::Wait { cursor: true }),
+                    0xFF2E => Some(Op::Sound(Sound::Exclamation)),
+                    0xFF2F => Some(Op::Sound(Sound::Question)),
                     0xFF1F => Some(Op::Wait { cursor: false }),
                     0xFF1A => Some(Op::Pause(n())),
                     0xFF04 | 0xFF06 | 0xFF07 => Some(Op::Prompt(PromptKind::YesNo)),
@@ -540,6 +561,11 @@ pub struct Dialogue {
     lines: Vec<Vec<(u8, i32)>>,
     answer: Option<u8>,
     hold_at_end: bool,
+    /// Sounds made and not yet taken ([`Dialogue::take_sounds`]).
+    sounds: Vec<Sound>,
+    /// Characters typed, for the blip.
+    typed: u32,
+    blip: bool,
 }
 
 impl Dialogue {
@@ -552,6 +578,9 @@ impl Dialogue {
             lines: vec![Vec::new()],
             answer: None,
             hold_at_end: false,
+            sounds: Vec::new(),
+            typed: 0,
+            blip: false,
         }
     }
 
@@ -592,6 +621,11 @@ impl Dialogue {
         }
     }
 
+    /// The sounds the window made since the last call, for the application to play.
+    pub fn take_sounds(&mut self) -> Vec<Sound> {
+        std::mem::take(&mut self.sounds)
+    }
+
     fn clear_box(&mut self) {
         self.lines = vec![Vec::new()];
         self.name = None;
@@ -615,6 +649,8 @@ impl Dialogue {
                         line.push((*glyph, *x));
                     }
                     budget -= 1;
+                    self.typed += 1;
+                    self.blip |= self.typed.is_multiple_of(BLIP_EVERY);
                 }
                 Op::Line => {
                     if self.lines.len() >= self.script.max_lines {
@@ -645,8 +681,10 @@ impl Dialogue {
                         kind: *kind,
                         cursor,
                     };
+                    self.sounds.push(Sound::Choice);
                     return;
                 }
+                Op::Sound(sound) => self.sounds.push(*sound),
                 Op::Marker(_) | Op::Label(_) => {}
                 Op::Jump(label) => {
                     let target = self
@@ -672,6 +710,14 @@ impl Dialogue {
 
     /// One 60 Hz step: one glyph is typed (the action key types up to the next wait).
     pub fn step(&mut self, input: Input) {
+        self.step_state(input);
+        // One blip a step at most, however many characters the action key typed.
+        if std::mem::take(&mut self.blip) {
+            self.sounds.push(Sound::Blip);
+        }
+    }
+
+    fn step_state(&mut self, input: Input) {
         match self.state {
             State::Closed(_) => {}
             State::Typing => self.run(if input.confirm { usize::MAX } else { 1 }),

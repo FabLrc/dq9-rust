@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use dq9_core::cutscene::{Cutscene, Output, Pose, Target};
 use dq9_core::field::{angle_of_yaw, yaw_of_angle};
-use dq9_core::script::{Director, Event, Files, Frame, Signal, Text};
+use dq9_core::script::{Director, Event, Files, Frame, Signal, Sound, Text};
 use dq9_core::trigger::{Request, State};
 use dq9_core::{CollisionWorld, Hero};
 use dq9_render::{AnimatedScene, Camera};
@@ -160,12 +160,14 @@ fn note(cutscene: &Cutscene, out: &mut Scan) {
 }
 
 /// What a step of the player asks the application to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     /// An event ended: the application fires trigger event 11 (`Field::event_ended`).
     Ended(u16),
     /// The last event ended: the scene is back to the field.
     Finished,
+    /// A sound native (712 to 738): the application's sound executes it (`audio::Audio`).
+    Sound(Sound),
 }
 
 /// What a step works on.
@@ -492,6 +494,11 @@ impl EventPlayer {
         outcomes
     }
 
+    /// The jingle a script asked for played out (native 725 reads 0 from now on).
+    pub fn jingle_ended(&mut self) {
+        self.director.signal(Signal::JingleEnded);
+    }
+
     fn handle(&mut self, event: Event, stage: &mut Stage, outcomes: &mut Vec<Outcome>) {
         self.coverage.events += 1;
         // The files are in memory already (the models were added before the script ran).
@@ -520,6 +527,7 @@ impl EventPlayer {
                 status(&format!("event {event} ended"));
                 outcomes.push(Outcome::Ended(*event));
             }
+            Event::Sound(sound) => outcomes.push(Outcome::Sound(sound.clone())),
             _ => {}
         }
         for output in self.cutscene.apply(&event) {

@@ -214,7 +214,7 @@ pub fn run_se(rom: &Rom, args: &SeArgs) -> Result<()> {
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, crate::sseq::wav(&samples, args.rate))
+        std::fs::write(path, dq9_audio::wav(&samples, args.rate))
             .with_context(|| format!("writing {}", path.display()))?;
         println!("wrote {}", path.display());
     }

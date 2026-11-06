@@ -108,6 +108,10 @@ struct Cli {
     /// and logs it.
     #[arg(long)]
     headless_steps: Option<u32>,
+    /// With `--headless-steps`: mixes the sound offline (no device) and writes it to this WAV
+    /// file: the music, the jingles and the effects the game logic asked for.
+    #[arg(long)]
+    sound_wav: Option<PathBuf>,
     /// Plays every scene of the story stages `MAJOR.MINOR-MINOR` (`1.1-3`) without a window
     /// and prints which events play fully, partially or not at all.
     #[arg(long, value_parser = parse_stage_range)]
@@ -268,6 +272,7 @@ pub fn main() -> Result<()> {
     let event = cli.event_id(&rom)?;
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let options = Options {
+        record_sound: cli.sound_wav.is_some() && cli.headless_steps.is_some(),
         map: cli.map.clone(),
         save,
         time: cli.time,
@@ -280,6 +285,9 @@ pub fn main() -> Result<()> {
     let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
     if let Some(steps) = cli.headless_steps {
         app.play_headless(steps, cli.press_every);
+        if let (Some(path), Some((rate, samples))) = (&cli.sound_wav, app.take_recording()) {
+            write_sound(path, rate, &samples)?;
+        }
         return Ok(());
     }
     if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
@@ -488,5 +496,21 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         camera.target.z
     );
     println!("wrote {}", out.display());
+    Ok(())
+}
+
+/// Writes the recorded sound as a WAV file and reports its length and level.
+fn write_sound(path: &Path, rate: u32, samples: &[f32]) -> Result<()> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(path, dq9_audio::wav(samples, rate))
+        .with_context(|| format!("writing {}", path.display()))?;
+    let peak = samples.iter().fold(0f32, |m, s| m.max(s.abs()));
+    println!(
+        "sound: {:.2} s at {rate} Hz, peak {peak:.3}, written to {}",
+        samples.len() as f64 / 2.0 / f64::from(rate),
+        path.display()
+    );
     Ok(())
 }

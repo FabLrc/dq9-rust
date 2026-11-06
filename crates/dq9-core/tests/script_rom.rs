@@ -8,9 +8,9 @@ use nds_rom::Rom;
 
 /// Natives the prologue calls that are not implemented (`docs/re/stb-natives.md`: roles
 /// unknown). A native moving in or out of this list means the notes need an update.
-const UNIMPLEMENTED: [i32; 24] = [
-    238, 328, 409, 411, 413, 541, 542, 545, 546, 547, 552, 554, 559, 560, 561, 571, 574, 575, 581,
-    582, 584, 712, 809, 815,
+const UNIMPLEMENTED: [i32; 22] = [
+    238, 328, 409, 411, 413, 541, 542, 545, 546, 547, 552, 559, 560, 561, 571, 574, 575, 581, 582,
+    584, 809, 815,
 ];
 
 /// Runs `event` to its end with an application that completes every request at once.

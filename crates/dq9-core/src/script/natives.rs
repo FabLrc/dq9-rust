@@ -53,6 +53,8 @@ pub struct Runtime {
     /// Cast members declared so far, `(attach id, category)` (natives 566, 596).
     cast: Vec<(i32, i32)>,
     next_handle: i32,
+    /// Native 725: a jingle asked by 720 has not played out yet.
+    pub jingle_playing: bool,
     next_sprite: i32,
     /// Native id → calls, for natives reported as unimplemented.
     pub(super) unimplemented: BTreeMap<i32, u32>,
@@ -74,6 +76,7 @@ impl Default for Runtime {
             cast_count: 0,
             cast: Vec::new(),
             next_handle: 0,
+            jingle_playing: false,
             next_sprite: 0,
             unimplemented: BTreeMap::new(),
         }
@@ -545,28 +548,35 @@ impl Ctx<'_> {
             }),
             726 | 730 => self.sound(Sound::LoadEffects {
                 group: a.int(0),
+                archive: a.int_or(1, a.int(0)),
                 secondary: id == 730,
             }),
             727 | 731 => self.sound(Sound::RestoreEffects {
                 secondary: id == 731,
             }),
-            728 | 732 => {
-                let handle = self.rt.next_handle;
-                self.rt.next_handle = (handle + 1) % HANDLES;
-                // The handle is written only when the script passes an address.
-                out.int(a, 1, handle);
-                self.sound(Sound::PlayEffect {
-                    index: a.int(0),
-                    handle,
-                    secondary: id == 732,
-                });
-            }
+            728 | 732 => self.play_effect(a, out, id == 732),
             737 => self.sound(Sound::PlaySequence(a.int(0))),
+            712 if a.len() < 2 => self.sound(Sound::PlayBaseEffect { index: a.int(0) }),
+            // With an output (`ov_001::02163564`) it is native 728 on the loaded archive.
+            712 => self.play_effect(a, out, false),
+            720 => {
+                self.rt.jingle_playing = true;
+                self.sound(Sound::Jingle(a.int(0)));
+            }
+            725 => out.int(a, 0, i32::from(self.rt.jingle_playing)),
+            // Stops the handle at once (`ov_001::02163a18`).
+            733 => self.sound(Sound::StopEffect {
+                handle: a.int(0),
+                duration: 0,
+            }),
+            735 => self.sound(Sound::BgmEnabled(a.int(0) != 0)),
+            736 => self.sound(Sound::ZoneBgm),
+            554 => self.sound(Sound::TextVoice(a.int(0))),
             738 => self.sound(Sound::ResetBgm),
             // Established, but DS memory or hardware management with no counterpart: the
-            // texture arenas (502, 503), resource flags (512), the allocator (587) and the
-            // natives that return at once (706 to 709, 724).
-            502 | 503 | 512 | 587 | 706..=709 | 724 => {}
+            // texture arenas (502, 503), resource flags (512), the allocator (587), the
+            // natives that return at once (706 to 709, 724) and the audio heap mode (734).
+            502 | 503 | 512 | 587 | 706..=709 | 724 | 734 => {}
             _ => return false,
         }
         true
@@ -574,6 +584,25 @@ impl Ctx<'_> {
 
     fn sound(&mut self, sound: Sound) {
         self.events.push(Event::Sound(sound));
+    }
+
+    /// Natives 728, 732 (and 712 with an output): effect `index` on a handle of 0 to 15.
+    fn play_effect(&mut self, a: &Args, out: &mut Outs, secondary: bool) {
+        // Without an address the game plays on the manager's own handle (`handle` -1), which
+        // no script can stop; with one it takes a free slot of 16 and writes its number.
+        let handle = if a.len() < 2 {
+            -1
+        } else {
+            let handle = self.rt.next_handle;
+            self.rt.next_handle = (handle + 1) % HANDLES;
+            out.int(a, 1, handle);
+            handle
+        };
+        self.sound(Sound::PlayEffect {
+            index: a.int(0),
+            handle,
+            secondary,
+        });
     }
 
     /// Native 566 (`ov_001::02160da8`): `mode` is the low nibble of the first argument. The

@@ -43,6 +43,7 @@ fn options() -> Options {
         time: None,
         clock: None,
         mute: false,
+        record_sound: false,
         event: None,
         layout: Layout::default(),
         story: dq9_formats::cast::Story {

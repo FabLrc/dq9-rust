@@ -71,6 +71,8 @@ pub enum Signal {
     CameraIdle,
     /// The preloaded files are in (native 507).
     Preloaded,
+    /// The jingle asked by native 720 played out (native 725 reads 0 from now on).
+    JingleEnded,
 }
 
 /// One script, run entry by entry.
@@ -163,6 +165,7 @@ impl Script {
             }
             Signal::CameraIdle => rt.camera_busy = false,
             Signal::Preloaded => rt.preload_pending = false,
+            Signal::JingleEnded => rt.jingle_playing = false,
         }
     }
 
