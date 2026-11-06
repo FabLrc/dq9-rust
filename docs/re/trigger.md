@@ -483,8 +483,9 @@ Preuves sur la ROM :
   Le test `x01m07_inner_door_opens_the_way` : fermée, le héros s'arrête à `z = -6.45` ; après
   `set_door_angle(0, 2, +0x1922)` **et** `set_door_angle(0, 3, +0x1922)`, il traverse
   (`z < -8`). Un seul vantail ne suffit pas : les deux zones sont touchées ensemble.
-- X01M01, X01M07, X01M05 : les zones `0x73` de type 1 (43 sur la ROM) sont lues par le champ
-  (tâche 8) mais **restent non modélisées** ; voir la limite du parcours dans `app.md`.
+- X01M01, X01M07, X01M05 : les zones `0x73` de type 1 (43 sur la ROM) sont **inertes** à
+  l'exécution — aucune routine de `Field_CheckRegions` ne lit leur liste — ; ce ne sont ni un
+  monte-charge ni une tâche 8. Voir la limite du parcours dans `app.md`.
 
 ## Fin de conversation (événement 1)
 
@@ -493,7 +494,11 @@ conversation se ferme : mot 0 = PNJ, mot 5 = contexte qui a choisi la réplique 
 d'événement 0, `0x76(pnj, contexte)`, sinon la zone), `+0x954` = réponse au dernier `<YESNO>`
 (0 = oui ; 0 sans question, car la fenêtre le met à 0 à l'ouverture). C'est la suite des répliques :
 `0x6(101) 0xb(193) 0x10(0)` → `0x77(21591)` (descendre vers Angel Falls après avoir répondu oui au
-gardien de l'Observatoire). Branché dans `dq9-app` (`Talk::take_ended`).
+gardien de l'Observatoire). Branché dans `dq9-app` (`Talk::take_ended`). Ce trigger est rangé
+sous **1.2..1.2** (`dq9re triggers X01 --with 21591`) : il n'est pas chargé à la sous-étape
+1.1.2. La suite d'origine passe par `4101 → 4103 → 4109 → 4103 → 4104`, l'événement `21510`
+(1.2.1) puis `21591` ; une route directe `21591` après 1.1.2 est exclue par les conditions
+d'origine.
 
 ## Exemples
 
