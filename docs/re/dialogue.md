@@ -295,8 +295,19 @@ la prochaine attente (hypothèse d'après `+0x19c5`, qui force 16 caractères pa
 - `dq9_formats::message::leading_tags` : balises de tête (`Msg_ConsumeLeadingTags`).
 - `dq9_core::talk` : `nearest`, `TalkCounts` (compteurs `NpcTalkCount`, remis à zéro de
   la carte à l'entrée d'une carte), `compile_message`/`layout`/`prepare` (les six passes avec
-  le nom du héros « Hero » et les conditions sexe/solo, puis mise en page), `Dialogue::step`
-  (une touche par pas fixe de 60 Hz) et `Dialogue::view`.
+  l'identité du héros — son nom et son sexe tirés de la sauvegarde, sinon « Hero » homme —
+  et les conditions sexe/solo, puis mise en page), `Dialogue::step` (une touche par pas fixe
+  de 60 Hz) et `Dialogue::view`.
+- Identité du héros : `dq9-app` la lit dans le slot courant de la sauvegarde
+  (`Save::current_slot`) et chez le premier personnage du groupe (indice `standby_count`),
+  comme le modèle du héros : nom `+0x140` en indices de glyphes de la police de message,
+  sexe `+0x174` bit 0 (0 homme, 1 femme, `characters.md`). `Talk::set_identity` reconstruit
+  les `Names` en reprenant le texte des glyphes, donc `<HERO>`, `<LEADER>` et `<ADDRESSEE>`
+  portent le nom du joueur et `<IF_HERO_MALE>`/`<IF_MALE>` suivent son sexe. Sans sauvegarde,
+  pour une nouvelle partie ou après une sauvegarde remplacée (rechargement Web), l'identité
+  par défaut « Hero » homme revient. Contrôlé sur les octets de la sauvegarde de démonstration
+  (`save.md`) : fiche `standby_count` 0, les indices de `+0x140` se décodent en « Adenine »
+  dans `fi_me.bin` et `+0x174` bit 0 vaut 1.
 - `dq9_render::ui` : atlas (police en alpha, morceaux de cadre, flèche), quads en pixels DS,
   pipeline wgpu dessinant sur l'image 3D finie, dans le plus grand 4:3 de la cible.
 - `dq9-app/src/talk.rs` : choix de la réplique (`<carte><lettre>0.gp2`, `NNN_en.bin`,
@@ -312,8 +323,9 @@ la prochaine attente (hypothèse d'après `+0x19c5`, qui force 16 caractères pa
 - Services (`<INN=n>`, `<SHOP=n>`…), quêtes (`<QUEST=n>`), sons, secousse, `<AUTO>`,
   `<PAGE_T>` (attend la touche ici), `<ALL_RECOVER>`.
 - Les constantes de mise en page ci-dessus à confirmer sur une capture melonDS ; la langue
-  est l'anglais (`NNN_en.bin`), le nom du héros « Hero » (le nom de la sauvegarde n'est pas
-  lu) ; les conditions `<IF_…>` autres que sexe/solo prennent leur première branche.
+  est l'anglais (`NNN_en.bin`), le nom du héros vient du slot courant de la sauvegarde
+  (défaut « Hero » sans sauvegarde) ; les conditions `<IF_…>` autres que sexe/solo prennent
+  leur première branche.
 - `<TC#>`, `<PLTT=#>`, `<W=#>`, `<CURSOR=#>`, `<TRI-L/R>`, `<LG>` : comptées dans les textes
   anglais (`dq9re text --lang en`), `<TC…>` et `<TRI…>` n'y apparaissent jamais, `<PLTT=>`
   4 fois, `<CURSOR=>` et `<LG>` 1 fois, `<W=>` 5 fois, toutes dans des chaînes de menus

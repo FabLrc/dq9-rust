@@ -374,6 +374,7 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         hero = walk::start_hero(&loaded.collision, &start.map, at)?;
     }
     let mut talk = Talk::default();
+    talk.set_identity(start.identity);
     if let Some(input) = &cli.input {
         // The inputs start where `--start` puts the hero and leave it where they end.
         loaded.hero = hero;
