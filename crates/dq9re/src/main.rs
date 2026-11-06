@@ -15,6 +15,7 @@ mod script;
 mod sdat;
 mod sseq;
 mod state;
+mod statediff;
 mod states;
 mod stb;
 mod talk;
@@ -252,6 +253,8 @@ enum Command {
     /// Inspect a melonDS savestate (`.ml1`): sections, frame, scenario, resident code compared
     /// with the ROM when one is found, or `--peek ADDR[:LEN]` (hex) bytes of main RAM / TCM.
     /// `--json` prints the checkpoint a differential run compares (event block, map, frame).
+    /// `state diff` compares two states; `state watch` reads a harness watch log.
+    #[command(subcommand_negates_reqs = true, subcommand_precedence_over_arg = true)]
     State {
         /// Savestate to read (`.ml1`).
         #[arg(conflicts_with = "ram", required_unless_present = "ram")]
@@ -268,12 +271,30 @@ enum Command {
         /// Print the story checkpoint as JSON (no ROM or save comparison).
         #[arg(long)]
         json: bool,
+        #[command(subcommand)]
+        action: Option<StateAction>,
     },
     /// Catalogue of oracle states (`.ml1` and raw main-RAM images), to find which file holds
     /// a story point without loading each one.
     States {
         #[command(subcommand)]
         action: StatesAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum StateAction {
+    /// Compare two states (`.ml1` or 4 MiB main-RAM images): map, area, story, hero pose,
+    /// tracks, global flags and quests, then the other changed main-RAM ranges.
+    /// Exit status: 0 identical, 1 differences, 2 unreadable input.
+    Diff {
+        /// First state.
+        a: PathBuf,
+        /// Second state.
+        b: PathBuf,
+        /// Print the whole comparison as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -319,7 +340,18 @@ fn main() -> Result<()> {
             peek,
             save,
             json,
+            action,
         } => {
+            if let Some(StateAction::Diff { a, b, json }) = action {
+                return match statediff::run(a, b, *json) {
+                    Ok(true) => Ok(()),
+                    Ok(false) => std::process::exit(1),
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        std::process::exit(2);
+                    }
+                };
+            }
             return state::run(
                 path.as_deref(),
                 ram.as_deref(),
