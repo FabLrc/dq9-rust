@@ -12,6 +12,7 @@ mod model;
 mod msg;
 mod save;
 mod script;
+mod sdat;
 mod sseq;
 mod state;
 mod stb;
@@ -185,6 +186,9 @@ enum Command {
     /// Renders a music sequence of `bgm.sdat` (or a map's music) to a WAV file and reports its
     /// tempo, duration and levels; without an id, lists the sequences.
     Sseq(sseq::SseqArgs),
+    /// The record lists, players, groups and sequence archives of a sound archive
+    /// (`bgm`, `se_norm`, `se_btl`).
+    Sdat(sdat::SdatArgs),
     /// Export the textures (PNG) and models (OBJ + MTL, model space) of G3D files: a
     /// `.nsbmd`/`.nsbtx` file or the members of a NARC such as `data/map/M01.amdj`. With
     /// `--anim`, models are posed (joints), retextured (texture SRT) and recoloured (material)
@@ -321,6 +325,7 @@ fn main() -> Result<()> {
         Command::Cast(args) => cast::run_cast(&rom, &args),
         Command::Hero(args) => hero::run(&rom, &args),
         Command::Sseq(args) => sseq::run(&rom, &args),
+        Command::Sdat(args) => sdat::run(&rom, &args),
         Command::Model {
             path,
             member,

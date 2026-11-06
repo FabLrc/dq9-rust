@@ -61,10 +61,11 @@ pub struct SequenceInfo {
     pub bank: u16,
     /// Sequence volume, 0 to 127.
     pub volume: u8,
-    pub channel_pressure: u8,
-    pub polyphonic_pressure: u8,
+    /// Priority of the sequence's notes for the hardware channels (`+0x07`).
+    pub channel_priority: u8,
+    /// Priority of the sequence among those of its player (`+0x08`).
     pub player_priority: u8,
-    /// Player index (`+0x0A`) **[hypothesis, not described by the wiki page]**.
+    /// Index in the PLAYER list (`+0x09`).
     pub player: u8,
 }
 
@@ -82,8 +83,79 @@ pub struct WaveArchiveInfo {
     pub file: u16,
 }
 
-/// A parsed archive: the file table and the sequence, bank and wave-archive records, with
-/// their names when the archive has a SYMB block.
+/// Positions of the eight record lists, in SYMB and INFO alike.
+pub const KIND_SEQUENCE: usize = 0;
+pub const KIND_SEQUENCE_ARCHIVE: usize = 1;
+pub const KIND_BANK: usize = 2;
+pub const KIND_WAVE_ARCHIVE: usize = 3;
+pub const KIND_PLAYER: usize = 4;
+pub const KIND_GROUP: usize = 5;
+pub const KIND_STREAM_PLAYER: usize = 6;
+pub const KIND_STREAM: usize = 7;
+const KINDS: usize = 8;
+
+/// One SSAR record of INFO.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SequenceArchiveInfo {
+    /// FAT index of the SSAR file.
+    pub file: u16,
+}
+
+/// One PLAYER record of INFO: how many sequences a player runs at once, and which hardware
+/// channels its notes may take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayerInfo {
+    /// Sequences that may play at the same time on this player.
+    pub max_sequences: u16,
+    /// Hardware channels the player may take, one bit each.
+    pub channels: u16,
+    /// Bytes of heap the player reserves for its tracks.
+    pub heap: u32,
+}
+
+impl PlayerInfo {
+    fn parse(record: &[u8]) -> Result<Self> {
+        Ok(Self {
+            max_sequences: u16_at(record, 0)?,
+            channels: u16_at(record, 2)?,
+            heap: u32_at(record, 4)?,
+        })
+    }
+}
+
+/// What a group entry loads: `+0x00` type (0 sequence, 1 bank, 2 wave archive, 3 sequence
+/// archive), `+0x01` load flags, `+0x04` index in the list of that type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupEntry {
+    pub kind: u8,
+    /// Bit 0: the sequence file itself; bit 1: its bank; bit 2: its wave archives.
+    pub flags: u8,
+    pub index: u32,
+}
+
+/// The entries of a GROUP record: a count, then 8-byte entries.
+fn group_entries(record: &[u8]) -> Result<Vec<GroupEntry>> {
+    let count = u32_at(record, 0)? as usize;
+    let raw = slice(
+        record,
+        4,
+        count.checked_mul(8).ok_or(Error::Malformed("count"))?,
+    )?;
+    Ok(raw
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|e| GroupEntry {
+            kind: e[0],
+            flags: e[1],
+            index: u32::from_le_bytes([e[4], e[5], e[6], e[7]]),
+        })
+        .collect())
+}
+
+/// A parsed archive: the file table, the typed sequence, bank, wave-archive, sequence-archive,
+/// player and group records, and the raw lists with their names when the archive has a SYMB
+/// block.
 #[derive(Debug, Clone)]
 pub struct Sdat<'a> {
     data: &'a [u8],
@@ -92,7 +164,13 @@ pub struct Sdat<'a> {
     sequences: Vec<Option<SequenceInfo>>,
     banks: Vec<Option<BankInfo>>,
     wave_archives: Vec<Option<WaveArchiveInfo>>,
-    sequence_names: Vec<Option<&'a str>>,
+    sequence_archives: Vec<Option<SequenceArchiveInfo>>,
+    players: Vec<Option<PlayerInfo>>,
+    groups: Vec<Option<Vec<GroupEntry>>>,
+    /// The INFO record of every list entry.
+    lists: Vec<Vec<Option<&'a [u8]>>>,
+    /// The SYMB name of every list entry.
+    names: Vec<Vec<Option<&'a str>>>,
 }
 
 /// NUL-terminated string at `offset` of `block`, when it is UTF-8.
@@ -156,38 +234,39 @@ impl<'a> Sdat<'a> {
             })
             .collect();
 
-        let records = |index: usize| -> Result<Vec<Option<&'a [u8]>>> {
-            list(info, index)?
-                .into_iter()
-                .map(|o| match o {
-                    0 => Ok(None),
-                    o => Ok(Some(info.get(o as usize..).ok_or(Error::OutOfBounds {
-                        offset: o as usize,
-                        len: 1,
-                        size: info.len(),
-                    })?)),
-                })
-                .collect()
-        };
-        let sequences = records(0)?
-            .into_iter()
+        let lists = (0..KINDS)
+            .map(|kind| -> Result<Vec<Option<&'a [u8]>>> {
+                list(info, kind)?
+                    .into_iter()
+                    .map(|o| match o {
+                        0 => Ok(None),
+                        o => Ok(Some(info.get(o as usize..).ok_or(Error::OutOfBounds {
+                            offset: o as usize,
+                            len: 1,
+                            size: info.len(),
+                        })?)),
+                    })
+                    .collect()
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let sequences = lists[KIND_SEQUENCE]
+            .iter()
             .map(|r| {
                 r.map(|r| {
                     Ok(SequenceInfo {
                         file: u16_at(r, 0)?,
                         bank: u16_at(r, 4)?,
                         volume: u8_at(r, 6)?,
-                        channel_pressure: u8_at(r, 7)?,
-                        polyphonic_pressure: u8_at(r, 8)?,
-                        player_priority: u8_at(r, 9)?,
-                        player: u8_at(r, 10)?,
+                        channel_priority: u8_at(r, 7)?,
+                        player_priority: u8_at(r, 8)?,
+                        player: u8_at(r, 9)?,
                     })
                 })
                 .transpose()
             })
             .collect::<Result<Vec<_>>>()?;
-        let banks = records(2)?
-            .into_iter()
+        let banks = lists[KIND_BANK]
+            .iter()
             .map(|r| {
                 r.map(|r| {
                     let mut wave_archives = [NO_WAVE_ARCHIVE; 4];
@@ -202,8 +281,8 @@ impl<'a> Sdat<'a> {
                 .transpose()
             })
             .collect::<Result<Vec<_>>>()?;
-        let wave_archives = records(3)?
-            .into_iter()
+        let wave_archives = lists[KIND_WAVE_ARCHIVE]
+            .iter()
             .map(|r| {
                 r.map(|r| {
                     Ok(WaveArchiveInfo {
@@ -213,15 +292,48 @@ impl<'a> Sdat<'a> {
                 .transpose()
             })
             .collect::<Result<Vec<_>>>()?;
+        let sequence_archives = lists[KIND_SEQUENCE_ARCHIVE]
+            .iter()
+            .map(|r| {
+                r.map(|r| {
+                    Ok(SequenceArchiveInfo {
+                        file: u16_at(r, 0)?,
+                    })
+                })
+                .transpose()
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let players = lists[KIND_PLAYER]
+            .iter()
+            .map(|r| r.map(PlayerInfo::parse).transpose())
+            .collect::<Result<Vec<_>>>()?;
+        let groups = lists[KIND_GROUP]
+            .iter()
+            .map(|r| r.map(group_entries).transpose())
+            .collect::<Result<Vec<_>>>()?;
 
         // Names are a convenience: a damaged SYMB block loses them, not the archive.
-        let sequence_names = match symb.and_then(|s| Ok::<_, Error>((s, list(s, 0)?))) {
-            Ok((s, offsets)) => offsets
-                .into_iter()
-                .map(|o| (o != 0).then(|| cstr(s, o as usize)).flatten())
-                .collect(),
-            Err(_) => Vec::new(),
-        };
+        let names = (0..KINDS)
+            .map(|kind| match symb.as_ref() {
+                Ok(s) => list(s, kind)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|o| {
+                        if o == 0 {
+                            return None;
+                        }
+                        // A sequence archive's entry is {name, names of its sequences}.
+                        let at = if kind == KIND_SEQUENCE_ARCHIVE {
+                            u32_at(s, o as usize).ok()?
+                        } else {
+                            o
+                        };
+                        cstr(s, at as usize)
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            })
+            .collect();
 
         Ok(Self {
             data,
@@ -229,7 +341,11 @@ impl<'a> Sdat<'a> {
             sequences,
             banks,
             wave_archives,
-            sequence_names,
+            sequence_archives,
+            players,
+            groups,
+            lists,
+            names,
         })
     }
 
@@ -245,12 +361,62 @@ impl<'a> Sdat<'a> {
 
     /// The sequence's name (`BG_001`, `ME_005`...).
     pub fn sequence_name(&self, index: usize) -> Option<&'a str> {
-        self.sequence_names.get(index).copied().flatten()
+        self.name(KIND_SEQUENCE, index)
     }
 
     /// Index of the sequence called `name`.
     pub fn find_sequence(&self, name: &str) -> Option<usize> {
-        self.sequence_names.iter().position(|n| *n == Some(name))
+        self.names[KIND_SEQUENCE]
+            .iter()
+            .position(|n| *n == Some(name))
+    }
+
+    /// Index of the sequence archive called `name`.
+    pub fn find_sequence_archive(&self, name: &str) -> Option<usize> {
+        self.names[KIND_SEQUENCE_ARCHIVE]
+            .iter()
+            .position(|n| *n == Some(name))
+    }
+
+    /// The raw INFO record of `kind` (`KIND_*`) at `index`: its bytes run to the end of the
+    /// block, records do not declare their length. `None` for an empty slot.
+    pub fn record(&self, kind: usize, index: usize) -> Option<&'a [u8]> {
+        self.lists.get(kind)?.get(index).copied().flatten()
+    }
+
+    /// Size of the list of `kind` (empty slots included).
+    pub fn list_len(&self, kind: usize) -> usize {
+        self.lists.get(kind).map_or(0, Vec::len)
+    }
+
+    /// The SYMB name of the record of `kind` at `index`.
+    pub fn name(&self, kind: usize, index: usize) -> Option<&'a str> {
+        self.names.get(kind)?.get(index).copied().flatten()
+    }
+
+    /// Size of the sequence-archive list (empty slots included).
+    pub fn sequence_archive_count(&self) -> usize {
+        self.sequence_archives.len()
+    }
+
+    /// The sequence archive (SSAR) `index`: its record and parsed file.
+    pub fn sequence_archive(&self, index: usize) -> Result<(SequenceArchiveInfo, Ssar<'a>)> {
+        let info = *self
+            .sequence_archives
+            .get(index)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| Error::NotFound(format!("SDAT sequence archive {index}")))?;
+        Ok((info, Ssar::parse(self.file(info.file)?)?))
+    }
+
+    /// The player record `index`: the polyphony limit of a group of sequences.
+    pub fn player(&self, index: usize) -> Option<PlayerInfo> {
+        self.players.get(index).copied().flatten()
+    }
+
+    /// The group record `index`: what a load request brings into memory together.
+    pub fn group(&self, index: usize) -> Option<&[GroupEntry]> {
+        self.groups.get(index)?.as_deref()
     }
 
     /// Bytes of the file with this FAT index.
@@ -313,6 +479,69 @@ impl<'a> Sseq<'a> {
         }
         Ok(Self {
             stream: &file[start..end],
+        })
+    }
+}
+
+/// One sequence of a sequence archive (12 bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SsarEntry {
+    /// Where the sequence starts in the archive's stream; `None` for an empty slot.
+    pub offset: Option<u32>,
+    pub bank: u16,
+    pub volume: u8,
+    pub channel_priority: u8,
+    pub player_priority: u8,
+    /// Index in the PLAYER list.
+    pub player: u8,
+}
+
+/// A sequence archive (SSAR, the sound effects): many short sequences sharing one command
+/// stream. Track and jump offsets count from the stream's start, as in a sequence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ssar<'a> {
+    pub stream: &'a [u8],
+    pub entries: Vec<SsarEntry>,
+}
+
+/// Offset marking an unused slot of a sequence archive.
+const SSAR_EMPTY: u32 = 0xffff_ffff;
+
+impl<'a> Ssar<'a> {
+    pub fn parse(file: &'a [u8]) -> Result<Self> {
+        magic(file, 0, *b"SSAR", "SSAR")?;
+        magic(file, FILE_HEADER, *b"DATA", "SSAR DATA")?;
+        let size = u32_at(file, FILE_HEADER + 4)? as usize;
+        let start = u32_at(file, FILE_HEADER + 8)? as usize;
+        let count = u32_at(file, FILE_HEADER + 12)? as usize;
+        let end = FILE_HEADER.saturating_add(size).min(file.len());
+        if start > end {
+            return Err(Error::Malformed("SSAR stream starts past its block"));
+        }
+        let raw = slice(
+            file,
+            FILE_HEADER + 16,
+            count.checked_mul(12).ok_or(Error::Malformed("count"))?,
+        )?;
+        let entries = raw
+            .as_chunks::<12>()
+            .0
+            .iter()
+            .map(|e| {
+                let offset = u32::from_le_bytes([e[0], e[1], e[2], e[3]]);
+                SsarEntry {
+                    offset: (offset != SSAR_EMPTY).then_some(offset),
+                    bank: u16::from_le_bytes([e[4], e[5]]),
+                    volume: e[6],
+                    channel_priority: e[7],
+                    player_priority: e[8],
+                    player: e[9],
+                }
+            })
+            .collect();
+        Ok(Self {
+            stream: &file[start..end],
+            entries,
         })
     }
 }
@@ -784,7 +1013,7 @@ mod tests {
         assert_eq!(sdat.sequence_name(1), Some("BG_TEST"));
         assert_eq!(sdat.find_sequence("BG_TEST"), Some(1));
         let (info, sseq) = sdat.sequence(1).unwrap();
-        assert_eq!((info.bank, info.volume, info.player_priority), (0, 100, 64));
+        assert_eq!((info.bank, info.volume, info.player), (0, 100, 64));
         assert_eq!(sseq.stream, [0xff, 0xff, 0xff]);
         let bank = sdat.bank(usize::from(info.bank)).unwrap();
         let swar = sdat.wave_archive(0).unwrap();
