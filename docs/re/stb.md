@@ -321,8 +321,8 @@ Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/
   `0x8444` par image jusqu'à `0x1f0000` (60 images par fondu), `02066d00` en tire l'alpha du
   texte. `0206b6c8` déplace la fenêtre à `(192 − (lignes − 1) × 20 − 8) / 2 − 16` (411) et
   `02045608` coupe le bip quand `W+0x19b2 == 0` (413). Exécuté par `Talk` : alpha des quads,
-  texte centré quand 410 a retiré le cadre, blips filtrés. L'arrêt du compteur de message
-  pendant la légende n'est pas modélisé **[hypothèse]**.
+  texte centré quand 410 a retiré le cadre, blips filtrés ; le compteur de message est
+  **gelé** pendant la légende (`020657c8` : l'action ne ferme pas avant 401, 405 reste 1).
 - Caméra à trois os (552) : `0204a170` suit `eye` et `lookat` de la source et pose la cible sur
   `foot` ; celle-ci est tournée tous les trois updates vers son déplacement. Exécuté par
   `Camera::ThreeBoneCamera` et `EventPlayer::drag_three_bone` ; sa capture à l'image 1820 de
@@ -338,9 +338,13 @@ la carte ; sprites 2D de script (521/522) ; bulles (541/542/561) ; placements (5
 mouvements 545/546 ; palette (238) ; retour de la caméra (328) — détail et preuves dans
 [stb-natives.md](stb-natives.md#effets-exécutés-à-lécran-j3).
 
-**Non exécuté** (rapporté par `--events-report`) : échange d'écrans, native 547 (transition de
-combat, hors v0.1) ; le son de porte (584) ; 559, 560, 571, 815, 581, 582 et 809 sont sans effet
-visible établi ou sans objet dessiné.
+- Échange d'écrans (109/110) : `Cutscene::screen_swapped` conserve le bit `POWCNT1` 15 entre
+  événements ; `screens::field/overlay` placent le champ et la fenêtre sur l'autre écran.
+
+**Non exécuté** (rapporté par `--events-report`) : native 547 (transition de combat, hors v0.1) ;
+le son de porte (584) ; l'échange d'écrans tant que le layout de `app.rs` n'applique pas
+`screen_swapped()` ; 559, 560, 571, 815, 581, 582 et 809 sont sans effet visible établi ou
+sans objet dessiné.
 
 ## Enchaînement du prologue (`dq9-core::scenario`)
 
@@ -377,5 +381,6 @@ Ce qui enchaîne les scènes est établi (ROM EU, Ghidra, `cargo dq9re triggers`
 - Champs inconnus des listes d'événements.
 - Appelant de l'entrée 200 et origine de `+0x40` (saut) dans la tâche d'événement.
 - Porte 584 : quartet bas de la zone (index du son 200–204) non lu, branche coulissante (bit
-  `0x20`) et sens inverse non modélisés ; arrêt du compteur de message pendant 409 et byte
-  `+0x265` de 839 non branchés.
+  `0x20`) et sens inverse non modélisés. 571 reste non identifiée (bit `0x10` sans lecteur,
+  sans effet visible établi) ; 839 (`+0x265`) n'apparaît pas dans le prologue (seulement
+  `ev28920`) et n'est donc pas piloté en v0.1.
