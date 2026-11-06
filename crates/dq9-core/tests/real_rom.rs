@@ -195,3 +195,26 @@ fn patched_save_start_matches_melonds_ram() {
     let rise = found.ram[1] - found.pose.position[1];
     assert!((0..0x1000).contains(&rise), "y rose by {rise}");
 }
+
+/// The scene flag of the opening events, as read in the original's event context at the
+/// first control (`build/orca/oracle/`, `docs/re/trigger.md` § « Drapeaux globaux posés à
+/// l'ouverture »): base 540 plus the record's rank in `eventlist_lv5.bin`.
+#[test]
+fn scene_flags_match_the_oracle_checkpoints() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    for (event, flag) in [
+        (21500, 1450),
+        (21507, 1451),
+        (21520, 1452),
+        (21521, 1453),
+        (21522, 1454),
+        (21596, 1461),
+    ] {
+        assert_eq!(
+            dq9_core::script::load::scene_flag(&rom, event),
+            Some(flag),
+            "event {event}"
+        );
+    }
+}

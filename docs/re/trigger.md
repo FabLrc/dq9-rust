@@ -377,6 +377,11 @@ prologue ; ils ne passent ni par les triggers ni par les natives des scripts.
   (`bat6.ml1`). L'état `pro1.ml1` montre déjà 540 dans `ctx+0x52` mais **pas** 1450 : la tâche
   était encore bloquée sur ses chargements, ce qui confirme que le drapeau n'est posé qu'au
   premier passage utile et non à la création du contexte.
+- **Réimplémentation** (`dq9-core`) : `script::load::scene_flag` lit le rang dans
+  `eventlist_lv5.bin` et ajoute la base puis `0x38e` — test `scene_flags_match_the_oracle_checkpoints`
+  sur la ROM (`21500`→1450 … `21596`→1461, sans liste de constantes d'événements). Le
+  branchement (insertion dans l'état du champ au démarrage effectif de la scène) est fait dans
+  `dq9-app`, pas dans `GameState::new_game` : c'est un effet de l'exécution des scènes.
 
 ### Drapeau de carte visitée (`Flags_SetMapVisited`, `0x0201ba78`)
 
@@ -394,6 +399,9 @@ gestionnaire de quêtes :
 - Contrôlé : **2774** = 2710 + 64 est déjà posé en `pro1`, ce qui correspond au groupe de
   cartes 6400 (`S14`, Starflight Express) ; [hypothèse] une carte `S14` est chargée avant le
   prologue (scène d'ouverture), ce que le runtime ne rejoue pas.
+- **Réimplémentation** (`dq9-core`) : `state::map_visit_flag` reproduit la branche
+  `99 < id <= 9999` et rend `None` pour les autres (non établies). Branchement : à l'entrée
+  de carte, avant les triggers (`dq9-app::change_map`), pas dans `GameState::new_game`.
 
 ### Reste inconnu
 

@@ -175,6 +175,21 @@ impl From<StartPoint> for HeroPose {
     }
 }
 
+/// Base of the "map visited" flags, set on map load by `Flags_SetMapVisited` (`0x0201ba78`,
+/// called from `0x02015448`): flag = base + map id / 100 for `99 < id <= 9999`.
+const MAP_VISIT_FLAG_BASE: u16 = 0xa96;
+
+/// Global flag the game sets when a map is entered (`Flags_SetMapVisited`, `0x0201ba78`).
+///
+/// Only the branch that the prologue uses is reproduced: a map id in `100..=9999` sets
+/// `0xa96 + id / 100` (2710 + tens), which gives 2721 for `M01M12` (1112), 2751 for `X01`
+/// (4100) and 2774 for the `S14` group (6400). Map ids 1949 and 20000..=29999 take branches
+/// of the original that are not established (`docs/re/trigger.md`, § « Drapeaux globaux
+/// posés à l'ouverture »); this returns `None` for them rather than guessing.
+pub fn map_visit_flag(map: u16) -> Option<u16> {
+    (99 < map && map <= 9999).then(|| MAP_VISIT_FLAG_BASE + map / 100)
+}
+
 /// Where the party is put when the map is entered (`ov_017::0219c598`, no explicit position).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Placement {
@@ -397,5 +412,20 @@ mod tests {
         assert_eq!(state.placement, Placement::MapStart);
         assert_eq!(state.scenario.chapter, 1);
         assert!(!state.events().global_flag(0));
+    }
+
+    #[test]
+    fn map_visit_flags_follow_the_map_load_rule() {
+        // Prologue maps seen in the oracle states (`docs/re/trigger.md`).
+        assert_eq!(map_visit_flag(1112), Some(2721));
+        assert_eq!(map_visit_flag(4100), Some(2751));
+        assert_eq!(map_visit_flag(6401), Some(2774));
+        // The flag is one per hundred map ids.
+        assert_eq!(map_visit_flag(1100), map_visit_flag(1199));
+        assert_eq!(map_visit_flag(100), Some(2711));
+        // Branches of the original that are not reproduced.
+        assert_eq!(map_visit_flag(99), None);
+        assert_eq!(map_visit_flag(10000), None);
+        assert_eq!(map_visit_flag(20101), None);
     }
 }
