@@ -110,8 +110,6 @@ fn event_record(files: &dyn Files, event: u16) -> Option<(String, Entries, u16)>
 /// First scene-flag base, set at boot by `Flags_SetStoryBases` (`0x02071698`, called from
 /// `main`) for event ids in [`SCENE_FLAG_IDS`].
 pub const SCENE_FLAG_BASE: u16 = 0x21c;
-/// Second scene-flag base, for event ids outside [`SCENE_FLAG_IDS`] (`0x02071698`).
-pub const SCENE_FLAG_BASE_HIGH: u16 = 0x302;
 /// Added by `EventTask_Update` (`ov_017::021bc77c`) when it turns the context's scene index
 /// (`ctx+0x52`) into a global flag.
 pub const SCENE_FLAG_OFFSET: u16 = 0x38e;
@@ -132,12 +130,15 @@ pub fn scene_flag(files: &dyn Files, event: u16) -> Option<u16> {
 
 /// [`scene_flag`] from the rank already read by [`event_record`].
 fn scene_flag_of(event: u16, rank: u16) -> Option<u16> {
-    let base = if SCENE_FLAG_IDS.contains(&u32::from(event)) {
-        SCENE_FLAG_BASE
-    } else {
-        SCENE_FLAG_BASE_HIGH
-    };
-    base.checked_add(rank)?.checked_add(SCENE_FLAG_OFFSET)
+    // Only the opening range is observed to set this flag. The low branch of the original
+    // (base 770, unconfirmed) does not fire for the prologue's 1130/1150/1160/1600: their
+    // original states carry no 1680/1681, so no flag is guessed here.
+    if !SCENE_FLAG_IDS.contains(&u32::from(event)) {
+        return None;
+    }
+    SCENE_FLAG_BASE
+        .checked_add(rank)?
+        .checked_add(SCENE_FLAG_OFFSET)
 }
 
 /// Loads the script of `event` with the texts of language `lang` (`en`, `fr`, …).
@@ -358,15 +359,12 @@ mod tests {
     }
 
     #[test]
-    fn scene_flag_uses_the_other_base_below_the_rom_range() {
-        let files = files(&[(1160, 1), (1600, 1)]);
-        assert_eq!(
-            scene_flag(&files, 1160),
-            Some(SCENE_FLAG_BASE_HIGH + SCENE_FLAG_OFFSET)
-        );
-        assert_eq!(
-            scene_flag(&files, 1600),
-            Some(SCENE_FLAG_BASE_HIGH + SCENE_FLAG_OFFSET + 1)
-        );
+    fn scene_flag_is_absent_outside_the_opening_range() {
+        let files = files(&[(1130, 1), (1160, 1), (1600, 1)]);
+        // The low-base branch of the original does not fire for these prologue events: their
+        // real states have no 1680/1681 (build/oracle-route/ram-after-1130.bin).
+        assert_eq!(scene_flag(&files, 1130), None);
+        assert_eq!(scene_flag(&files, 1160), None);
+        assert_eq!(scene_flag(&files, 1600), None);
     }
 }

@@ -85,6 +85,9 @@ leurs conclusions sont reprises dans `main` et les docs ; ne pas les réintégre
    (6405) chargée avant le prologue (2774), `0x72(22159)` et `0x6b` du trigger de fin de
    `21596` (4283, 4410), touche tenue (`KeyManager::RefreshKeys`, 4414). Détail et preuves :
    [`re/trigger.md`](re/trigger.md) et [`re/item.md`](re/item.md).
+   Le hook de scène est limité à la plage d'ouverture : les états originaux après
+   1130/1150/1160/1600 ne portent ni 1680 ni 1681, que le runtime posait à tort sur les
+   événements hors plage.
    **Seul écart restant** : `4135` (herbe médicinale, item 22000) dans la course féminine ou
    `4212` (slimedrop, 22087) dans `bat6`. Ce sont des **butins de combat aléatoires** : trois
    courses aux entrées identiques sauf le sexe donnent l'un ou aucun, jamais tous les deux.

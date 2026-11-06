@@ -367,11 +367,13 @@ que deux actions de trigger (objet donné et hôte de session).
   Les deux champs valent `-1` à l'initialisation (`func_ov017_021bba08`, `ov_017::021bbae4`).
 - L'index de scène vient du **rang de l'enregistrement dans `eventlist_lv5.bin`** : le lecteur
   de tables (`EventRecord_Parse`, `0x02071498`) ajoute à `ctx+0x52` la base 0x21c (540) pour
-  les événements 21000..39999, ou 0x302 (770) au-delà ; ces deux bases sont posées au
-  démarrage par `Flags_SetStoryBases` (`0x02071698`, appelée par `main`). Le rang (0, 1, 2…)
-  vient du compteur de `Tbl_Run` incrémenté par l'enregistrement précédent
-  (`EventRecord_Build`, `0x02071218`, `+4`), que `EventRecord_Parse` recopie en `ctx+0x46`
-  lorsque l'enregistrement le demande, puis auquel il ajoute la base.
+  les événements 21000..39999. Une seconde base 0x302 (770) existe dans le code de
+  `Flags_SetStoryBases` (`0x02071698`, appelée par `main`) pour les autres enregistrements,
+  mais elle n'est **pas observée** sur le prologue : les états originaux après 1130, 1150,
+  1160 et 1600 ne portent ni 1680 ni 1681. Le rang (0, 1, 2…) vient du compteur de
+  `Tbl_Run` incrémenté par l'enregistrement précédent (`EventRecord_Build`, `0x02071218`,
+  `+4`), que `EventRecord_Parse` recopie en `ctx+0x46` lorsque l'enregistrement le demande,
+  puis auquel il ajoute la base.
 - Contrôlé en RAM sur les états réels : `ctx+0x52` vaut 540, 541, 542, 543, 544 et 551 pour
   `ev21500`, `ev21507`, `ev21520`, `ev21521`, `ev21522` et `ev21596`, soit les drapeaux
   **1450 à 1454 et 1461** ; ce sont les six drapeaux de scène du premier contrôle
@@ -379,8 +381,10 @@ que deux actions de trigger (objet donné et hôte de session).
   était encore bloquée sur ses chargements, ce qui confirme que le drapeau n'est posé qu'au
   premier passage utile et non à la création du contexte.
 - **Réimplémentation** (`dq9-core`) : `script::load::scene_flag` lit le rang dans
-  `eventlist_lv5.bin` et ajoute la base puis `0x38e` — test `scene_flags_match_the_oracle_checkpoints`
-  sur la ROM (`21500`→1450 … `21596`→1461, sans liste de constantes d'événements). Le drapeau
+  `eventlist_lv5.bin` et ajoute la base puis `0x38e`, uniquement pour la plage
+  d'ouverture observée — test `scene_flags_match_the_oracle_checkpoints` sur la ROM
+  (`21500`→1450 … `21596`→1461) et test synthétique qui refuse 1130/1160/1600, sans liste
+  de constantes d'événements. Le drapeau
   voyage sur `EventScript` (même lecture de la liste que le script, pas de parse séparé) ; le
   branchement est fait dans `dq9-app::begin_event`, après `EventPlayer::prepare` et avant la
   première mise à jour du script (jamais dans `GameState::new_game`) : c'est un effet de
