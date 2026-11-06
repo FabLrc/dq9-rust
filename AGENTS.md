@@ -81,6 +81,33 @@ powershell -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
    toutes les données), faits et **[hypothèse]** / **[inconnu]** marqués comme tels.
 3. Implémentation + tests, puis mise à jour de `docs/roadmap.md` (section « Fait » et jalon).
 
+## Travail avec des agents
+
+Ces règles viennent d'une session où les reprises ont coûté plus que le code.
+
+- **Un propriétaire par fichier partagé et par lot.** `app.rs`, `field.rs`, `event.rs`,
+  `state.rs` de `dq9-core` et `trigger.rs` : annoncer le contrat avant de les modifier. Un
+  agent qui a besoin d'une modification hors de son périmètre envoie un `ask` précis, pas
+  un patch concurrent.
+- **Un lot = une branche, un commit cohérent, une preuve.** Le lot se termine par
+  `worker_done` avec SHA, commandes exécutées, résultat observé et limites. Un agent bloqué
+  sur une dépendance externe envoie un seul `ask` puis s'arrête ; il ne tourne pas en boucle
+  de statut.
+- **Pas de cause sans falsification.** Une route, une hauteur ou une transition ne se déduit
+  ni d'un parcours en X/Z seul, ni de l'égalité de quelques constantes ou placements avec la
+  décompilation. Il faut soit un état original, soit un test continu qui franchit le
+  passage. Sinon, marquer `[hypothèse]` et ne pas l'implémenter comme un fait.
+- **Un bogue visible impose un test visible.** Après une reproduction dans le navigateur ou
+  la fenêtre, ajouter un test natif qui assert l'état constaté (événement actif, légende
+  ouverte, position, carte) et sa disparition après la correction. Un test qui ne vérifie
+  que « la carte a changé » a laissé passer une légende du prologue sur une sauvegarde.
+- **Une passe de vérification par lot.** `cargo fmt --all --check`, clippy, tests et wasm :
+  une fois avant le push, pas après chaque édition. Ne pas relancer un défaut déjà signalé
+  par l'utilisateur pour le confirmer.
+- **Preuves locales, jamais commitées.** ROM, sauvegardes, états, captures et journaux
+  restent sous `build/` (ignoré) ; les comptes rendus citent le chemin et l'empreinte, pas
+  les données.
+
 ## Langues et commits
 
 - Documentation en français ; identifiants, commentaires de code et messages de commit en
