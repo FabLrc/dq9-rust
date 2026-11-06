@@ -377,8 +377,9 @@ Avancement :
 de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,
 dialogues, quêtes du village), sans combats. Critère : toute la suite d'événements du
 prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points. **État** : le
-parcours à pied atteint 1.1.2 (`X01M01`) ; le passage vers le chapitre 2 dépend des zones de
-type 1 de la tour de l'Observatoire (non modélisées, voir J2).
+parcours à pied atteint 1.1.2 (`X01M01`) ; le passage vers le chapitre 2 reste bloqué par
+l'accès à la terrasse haute de l'Observatoire. Les zones de type 1 non modélisées sont une
+**[hypothèse]** de cause, pas une transition de hauteur établie (voir J2).
 
 ## J4 — Combattre : **v0.2**
 

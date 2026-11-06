@@ -152,9 +152,12 @@ chose est imprimée en texte, avec la position des objets du groupe.
 
 `dq9-app --new-game --headless --auto` s'arrête à la première prise de contrôle et imprime le
 journal puis, pour chaque piste, `track i: c.s.b flags [{...}, {...}]`, `global flags: {...}`
-et la position du héros. `--pilot` continue (téléportations : ordre de l'histoire seulement).
-Le worker du parcours ajoute `--checkpoints FICHIER` (JSONL, mêmes noms de champs plus
-`tick`/`seconds`/`kind`/`event`/`hero`) ; le comparateur lit le rapport texte en attendant.
+et la position du héros. `--pilot` continue désormais par la marche et les interactions
+réelles, sans téléportation : le parcours vérifié atteint 1.1.2 dans `X01M01`, pas encore
+le chapitre 2. `--checkpoints FICHIER` écrit le JSONL (mêmes noms de champs plus
+`tick`/`seconds`/`kind`/`event`/`hero`) ; `-RuntimeJson` compare un objet de ce fichier.
+`--trace-inputs FICHIER` et `--replay FICHIER` reproduisent le parcours du pilote à caméra
+d'angle 0 ; cette preuve ne constitue ni un rejeu de caméra manuelle ni la parité melonDS.
 
 ### Comparateur
 
