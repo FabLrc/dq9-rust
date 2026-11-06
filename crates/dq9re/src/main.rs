@@ -18,6 +18,7 @@ mod state;
 mod stb;
 mod talk;
 mod text;
+mod triggers;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -142,6 +143,11 @@ enum Command {
         #[arg(long)]
         quiet: bool,
     },
+    /// List the rules of a scenario trigger file, filtered by event type, room, story point or
+    /// a number they mention (what an event or a battle chains to).
+    Triggers(triggers::TriggersArgs),
+    /// List the scenes of a story stage (`1.1`, `1.1-3`) with the map each happens on.
+    StageEvents { stage: String },
     /// List (and optionally extract) the members of a NARC file in the ROM.
     Narc {
         /// Path inside the ROM filesystem, e.g. `data/map/F01M01.ambl`.
@@ -316,6 +322,8 @@ fn main() -> Result<()> {
             lang,
             quiet,
         } => script::run(&rom, &target, &lang, quiet),
+        Command::Triggers(args) => triggers::run(&rom, &args),
+        Command::StageEvents { stage } => triggers::stage_events(&rom, &stage),
         Command::Narc {
             path,
             out,

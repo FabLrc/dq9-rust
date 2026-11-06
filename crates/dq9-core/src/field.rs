@@ -27,7 +27,7 @@ use glam::Vec3;
 use nds_rom::Result;
 
 use crate::trigger::{
-    Flow, Request, State, TRACKS, Unsupported, degrees_to_angle, first_match, run_action,
+    Flow, Raw, Request, State, TRACKS, Unsupported, degrees_to_angle, first_match, run_action,
     run_deferred, track_of_room,
 };
 
@@ -35,11 +35,14 @@ use crate::trigger::{
 const TWO_PI: i32 = 0x6488;
 /// Events of `docs/re/trigger.md`.
 const EVENT_TALK: i32 = 0;
+const EVENT_TALK_END: i32 = 1;
 const EVENT_END: i32 = 11;
 const EVENT_ENTER_AREA: i32 = 2;
 const EVENT_ARRIVAL: i32 = 3;
 const EVENT_LEAVE_AREA: i32 = 5;
 const EVENT_WARP: i32 = 6;
+const EVENT_BATTLE_WON: i32 = 15;
+const EVENT_BATTLE_LOST: i32 = 16;
 const EVENT_DOORWAY: i32 = 17;
 const EVENT_LOADED: i32 = 20;
 /// Dot-product band of the doorway approach test (`0x170 - 0xccc`, `ov_017::02197a64`):
@@ -307,6 +310,17 @@ pub enum Event {
     Unsupported(u16),
 }
 
+/// A way out of a map (see [`Field::exits`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Exit {
+    /// The map it leads to by itself; `None` for a doorway only a trigger sends somewhere.
+    pub destination: Option<u16>,
+    /// A point inside its volume.
+    pub position: Vec3,
+    /// Direction to walk to touch a doorway (zero for a warp).
+    pub heading: Vec3,
+}
+
 /// Map state of the field: regions with their runtime bits, the area the leader stands in,
 /// the areas triggers added, and the trigger file of the map.
 #[derive(Debug, Clone)]
@@ -416,6 +430,67 @@ impl Field {
         let ended = self.fire(EVENT_END, &[(2, u32::from(event))], state);
         self.collect(ended, None, &mut events);
         events
+    }
+
+    /// A conversation ended (`TalkTask_Update`, `ov_017::021b8e8c`, closing states): fires trigger
+    /// event 1 with the NPC in word 0 and the conversation's context in word 5; the answer to
+    /// the last prompt (0 first choice, 1 second; 0 without a prompt: the message window sets
+    /// it to 0 as it opens) is what condition 0x10 reads. The actions are what a reply sets in
+    /// motion: an event, an item, the story's progress.
+    pub fn talk_ended(
+        &mut self,
+        npc: u16,
+        context: u16,
+        answer: Option<u8>,
+        state: &mut State,
+    ) -> Vec<Event> {
+        state
+            .raw
+            .insert(Raw::Field954, u32::from(answer.unwrap_or(0)));
+        let words = [(0, u32::from(npc)), (5, u32::from(context))];
+        let mut events = Vec::new();
+        let ended = self.fire(EVENT_TALK_END, &words, state);
+        self.collect(ended, None, &mut events);
+        events
+    }
+
+    /// A scripted battle ended (`BattleTask_Update`, `ov_017::021b790c`, `Trig_FireBattleEnd` and
+    /// `ov_017::021b7c3c`): fires trigger event 15 (won) or 16 (lost) with the battle number in
+    /// word 6, and returns what its actions ask for (the event that follows the fight).
+    pub fn battle_ended(&mut self, battle: u16, won: bool, state: &mut State) -> Vec<Event> {
+        let kind = if won {
+            EVENT_BATTLE_WON
+        } else {
+            EVENT_BATTLE_LOST
+        };
+        let mut events = Vec::new();
+        let ended = self.fire(kind, &[(6, u32::from(battle))], state);
+        self.collect(ended, None, &mut events);
+        events
+    }
+
+    /// The ways out of the map: the `0x72` warps and the doorways, with a point inside each and,
+    /// for a doorway, the direction to walk to touch it. For an autopilot that has to leave a
+    /// room; the game only has the hero walk into them.
+    pub fn exits(&self) -> Vec<Exit> {
+        let warps = self.warps.iter().map(|w| Exit {
+            destination: Some(w.destination),
+            position: from_fx(w.volume.center),
+            heading: Vec3::ZERO,
+        });
+        let doorways = self.doorways.iter().map(|slot| {
+            let facing = direction(i32::from(slot.zone.volume.facing));
+            Exit {
+                destination: slot
+                    .zone
+                    .warp
+                    .filter(|_| slot.flags & FLAG_WARP != 0)
+                    .map(|w| w.destination),
+                position: from_fx(slot.zone.volume.center),
+                heading: Vec3::new(facing[0], 0.0, facing[1]),
+            }
+        });
+        warps.chain(doorways).collect()
     }
 
     /// Whether any map change is among `events`.

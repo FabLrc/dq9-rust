@@ -262,6 +262,10 @@ ov_017::021d8438 g_TalkSelect       # selection state (flags, step, context, cou
 0x020e87d0 g_RankedValues          # s16[32] used by Flags_SetRanked
 0x020f33d8 g_GameState          # the GameState singleton (GameState::GetInstance returns this literal)
 ov_017::0219814c Area_CheckLeader  # fires events 2 (enter) / 5 (leave) for map areas
+ov_017::021b6f18 BattleTask_Init    # battle task (+0x3718 of the field manager): clears the request, state 10
+ov_017::021b6f9c BattleTask_End     # frees the battle allocator, resets the task; sets the "done" byte (+1)
+ov_017::021b7104 BattleTask_Setup   # copies the request filled by action 0x78 (battle number +0x28, n+0x8005 +0x24)
+ov_017::021b790c BattleTask_Update  # state machine; when the fight is over fires event 15 (won) / 16 (lost) with +0x28 in word 6
 ov_017::021bc77c EventTask_Update  # event task (+8 = event id from action 0x77); fires event 11 at its end
 
 # --- Event scripts (docs/re/stb.md) ---

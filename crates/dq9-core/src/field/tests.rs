@@ -623,3 +623,53 @@ fn a_marked_doorway_with_the_wrong_facing_is_not_matched() {
     f.enter(&mut State::default(), false);
     assert_eq!(f.doorway_flags(), [(0, 9, FLAG_WARP)]);
 }
+
+#[test]
+fn a_scripted_battle_chains_the_scene_after_its_victory() {
+    // ev21507 ends -> battle 26 (action 0x78); won -> ev21520; lost -> nothing.
+    let file = trigger_file(&[
+        record(11, vec![word(8, 21507), word(0x78, 26)]),
+        record(15, vec![word(0xc, 26), word(0x77, 21520)]),
+    ]);
+    let mut f = field(&Regions::default(), Some(file));
+    let mut state = State::default();
+    assert_eq!(
+        f.event_ended(21507, &mut state),
+        [Event::Request(Request::Battle(26))]
+    );
+    assert_eq!(f.event_ended(21508, &mut state), []);
+    assert_eq!(
+        f.battle_ended(26, true, &mut state),
+        [Event::Request(Request::Event(21520))]
+    );
+    assert_eq!(f.battle_ended(25, true, &mut state), []);
+    assert_eq!(f.battle_ended(26, false, &mut state), []);
+}
+
+#[test]
+fn the_end_of_a_conversation_fires_event_1_with_the_npc_context_and_answer() {
+    // NPC 101 asked with context 193 and answered with the first choice starts ev21591.
+    let file = trigger_file(&[record(
+        1,
+        vec![
+            word(6, 101),
+            word(0xb, 193),
+            word(0x10, 0),
+            word(0x77, 21591),
+        ],
+    )]);
+    let mut f = field(&Regions::default(), Some(file));
+    let mut state = State::default();
+    assert_eq!(
+        f.talk_ended(101, 193, Some(0), &mut state),
+        [Event::Request(Request::Event(21591))]
+    );
+    // No prompt: the answer reads 0.
+    assert_eq!(
+        f.talk_ended(101, 193, None, &mut state),
+        [Event::Request(Request::Event(21591))]
+    );
+    assert_eq!(f.talk_ended(101, 193, Some(1), &mut state), []);
+    assert_eq!(f.talk_ended(101, 192, Some(0), &mut state), []);
+    assert_eq!(f.talk_ended(102, 193, Some(0), &mut state), []);
+}
