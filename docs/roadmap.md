@@ -14,11 +14,15 @@ avec un prologue intégralement jouable.
 
 ### Intégré et publié
 
-- Dernier commit de jeu sur `main` : **`e51a0bd`** ; outillage complet : **`c5e1380`**.
-  CI Linux [42238441418](https://github.com/FabLrc/dq9-rust/actions/runs/42238441418) et
-  déploiement [Pages 42238441285](https://github.com/FabLrc/dq9-rust/actions/runs/42238441285)
-  réussis ; le lot watch a sa CI verte
-  ([42257346009](https://github.com/FabLrc/dq9-rust/actions/runs/42257346009)).
+- Dernier commit de jeu : **`445de2b`** (intégration `v01-field`) ; outillage : **`829db11`**.
+  CI Linux [42274982535](https://github.com/FabLrc/dq9-rust/actions/runs/42274982535) et
+  déploiement [Pages 42274980383](https://github.com/FabLrc/dq9-rust/actions/runs/42274980383)
+  réussis.
+- Runtime intégré : hooks `scene_flag`/`map_visit_flag`, NavGrid 3D, checkpoints/trace/replay.
+  Le pilote réel atteint **1.1.2** à 369,78 s (arrêt 377,8 s sur `X01M01`) et ses 22 670 pas
+  rejouent les 49 checkpoints **identiques** (`3da80263…`). Au premier contrôle il a 9 des 18
+  drapeaux de l'original ; `compare-runs.ps1` préfère désormais le même `kind` pour ne pas
+  confondre un chargement de carte avec une prise de contrôle.
 - Harnais oracle libretro (outil GPL externe, hors crates) : création du personnage et
   **premier contrôle original** reproductibles sans GUI, `dq9re state --ram` sur les images
   RAM de 4 Mio, catalogue `states index/find`, `state diff` et `state watch`. Le premier
@@ -79,7 +83,7 @@ octet. Ce n'est ni un parcours complet ni une preuve de parité avec melonDS.
    applicatif passe par `4103 → 4109 → 4103 → 4104`, puis 21510 avant 1.2.1.
    Comparer au vrai parcours original ; ne pas abaisser les murs ou les limites de marche.
    L'égalité de quelques constantes et placements ne prouve pas que tout le port est correct.
-4. **Finir les drapeaux.** Le premier contrôle de la branche field contient
+4. **Finir les drapeaux.** Le premier contrôle runtime contient
    `{337,1450..1454,1461,2721,2751}`, contre 18 drapeaux dans la référence `bat6` ; neuf
    restent absents. Les dernières traces attribuent `3191/3775/3955/4046` à l'acquisition de
    l'équipement initial (`0xc76 + index 1/585/765/856`), `2774` à la carte S14 6405 et `4414`
