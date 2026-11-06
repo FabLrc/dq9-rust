@@ -155,8 +155,6 @@ struct NavGrid {
     low: f32,
 }
 
-/// The floors of one column: the game's ground ray from `high`, then below the floor it found,
-/// until the map's lowest ground or [`MAX_FLOORS`].
 /// Whether the hero may move from `a` to `b`, as the game would move it: a short walk from
 /// `a` in that direction must make progress (turn, acceleration, wall slide and floor snap of
 /// [`Hero::step`]). A thin wall between two free cell centres, and a ledge crossable one way
@@ -181,6 +179,8 @@ fn edge_pass(world: &dq9_core::CollisionWorld, a: Vec3, b: Vec3) -> bool {
     (hero.position() - b).length() < 0.3
 }
 
+/// The floors of one column: the game's ground ray from `high`, then below the floor it found,
+/// until the map's lowest ground or [`MAX_FLOORS`].
 fn column_floors(
     world: &dq9_core::CollisionWorld,
     x: f32,
