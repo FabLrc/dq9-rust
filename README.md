@@ -142,8 +142,10 @@ cargo dq9re state watch --file build/oracle/watch.jsonl
 
 `prune-build.ps1` ne touche ni aux `.sav`, ni aux `.nds`, ni aux JSON ou images, et refuse la
 racine du dépôt. `compare-runs.ps1` aligne les checkpoints JSONL sur la carte et la piste
-courante, puis compare progression, drapeaux et quêtes ; il complète `oracle-compare.ps1`, qui
-part d'un état melonDS unique.
+courante, en préférant le même `kind` (`control`, `after`) et à défaut le point de contrôle du
+runtime : un chargement de carte ne se compare pas à une prise de contrôle. Il compare ensuite
+progression, drapeaux et quêtes ; il complète `oracle-compare.ps1`, qui part d'un état melonDS
+unique.
 
 La CI exécute fmt, clippy, les tests sous Linux et la compilation wasm, sans jamais avoir accès
 à la ROM, puis calcule l'avancement et met à jour ce README sur `main`. Un commit qui ne touche

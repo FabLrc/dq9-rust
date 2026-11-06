@@ -80,17 +80,28 @@ function Same([string] $What, $A, $B) {
     if ("$A" -ne "$B") { Fail "$What`: original $A, runtime $B" }
 }
 
-$used = @{}
-$aligned = 0
+$runtimeByKey = @{}
 foreach ($rt in $runtimeChecks) {
     $key = Story-Key $rt
-    $index = if ($used.ContainsKey($key)) { $used[$key] } else { 0 }
-    $candidates = @($originalChecks | Where-Object { (Story-Key $_) -eq $key })
-    if ($index -ge $candidates.Count) { continue }
-    $used[$key] = $index + 1
-    $or = $candidates[$index]
+    if (-not $runtimeByKey.ContainsKey($key)) { $runtimeByKey[$key] = @() }
+    $runtimeByKey[$key] = @($runtimeByKey[$key]) + $rt
+}
+
+$aligned = 0
+foreach ($or in $originalChecks) {
+    $key = Story-Key $or
+    if (-not $runtimeByKey.ContainsKey($key)) { continue }
+    $candidates = @($runtimeByKey[$key])
+    # A control point on the original side pairs with a control on the runtime side, not
+    # with the map load or an event boundary that happens to share the story key.
+    $preferred = @($candidates | Where-Object { $_.kind -eq $or.kind })
+    if ($preferred.Count -eq 0 -and $or.kind -ne 'control') {
+        $preferred = @($candidates | Where-Object { $_.kind -eq 'control' })
+    }
+    if ($preferred.Count -eq 0) { $preferred = $candidates }
+    $rt = $preferred[0]
     $aligned++
-    $where = "$key checkpoint $($index + 1)"
+    $where = "$key $($or.kind)"
     Same "$where map" $or.map $rt.map
     Same "$where current track" $or.track $rt.track
     if ($null -ne $or.daytime -and $null -ne $rt.daytime) {
@@ -126,6 +137,10 @@ foreach ($rt in $runtimeChecks) {
     }
 }
 
+$matchedOriginal = @($originalChecks | Where-Object {
+    $k = Story-Key $_
+    $runtimeByKey.ContainsKey($k)
+}).Count
 $matchedOriginal = @($originalChecks | Where-Object {
     $k = Story-Key $_
     $n = @($runtimeChecks | Where-Object { (Story-Key $_) -eq $k }).Count
