@@ -87,6 +87,8 @@ pub struct Options {
     /// An event to start as soon as the map is loaded (`--event`).
     pub event: Option<u16>,
     pub story: dq9_formats::cast::Story,
+    /// Explicit chapter/step/substep overrides for a loaded save.
+    pub story_override: [Option<u8>; 3],
     /// Start a new game: the first scene of the story (`docs/app.md`, § Nouvelle partie).
     pub new_game: bool,
 }
@@ -249,6 +251,11 @@ impl App {
                 return;
             }
         };
+        self.state = load::trigger_state(
+            start.state.as_ref(),
+            &self.options.story,
+            self.options.story_override,
+        );
         self.day = lighting::day_clock(
             start.state.as_ref().map(|s| s.clock),
             self.options.time,

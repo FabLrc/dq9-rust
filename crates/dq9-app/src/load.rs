@@ -63,6 +63,44 @@ pub fn start(map: Option<&str>, save: Option<&[u8]>) -> Result<Start> {
     })
 }
 
+/// Restores the saved trigger manager or initializes it from the selected story options.
+pub fn trigger_state(
+    game: Option<&GameState>,
+    story: &Story,
+    overrides: [Option<u8>; 3],
+) -> dq9_core::trigger::State {
+    let Some(game) = game else {
+        return dq9_core::field::initial_state(story);
+    };
+    let mut state = dq9_core::field::saved_state(game);
+    if !story.daytime {
+        state.time_of_day = 0;
+    }
+    for track in &mut state.tracks {
+        if let Some(chapter) = overrides[0] {
+            track.chapter = chapter;
+        }
+        if let Some(step) = overrides[1] {
+            track.step = step;
+        }
+        if let Some(substep) = overrides[2] {
+            track.substep = substep;
+        }
+    }
+    state
+}
+
+/// Cast settings from the active trigger track.
+pub fn story_from_state(story: &Story, state: &dq9_core::trigger::State) -> Story {
+    let mut story = story.clone();
+    let track = &state.tracks[state.track];
+    (story.chapter, story.step, story.substep) = (track.chapter, track.step, track.substep);
+    story.daytime = state.time_of_day != 0;
+    story.flags = state.flags.clone();
+    story.quests = state.quests.clone();
+    story
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

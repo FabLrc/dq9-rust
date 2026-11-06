@@ -368,6 +368,42 @@ pub fn initial_state(story: &dq9_formats::cast::Story) -> State {
     }
     state
 }
+/// Restores the quest manager state saved by `Save_UnpackProgress` (`0x020aaf94`).
+pub fn saved_state(game: &crate::state::GameState) -> State {
+    fn bits(bytes: &[u8]) -> std::collections::BTreeSet<i32> {
+        bytes
+            .iter()
+            .enumerate()
+            .flat_map(|(byte, &value)| {
+                (0..8).filter_map(move |bit| {
+                    (value & (1 << bit) != 0).then_some((byte * 8 + bit) as i32)
+                })
+            })
+            .collect()
+    }
+
+    let saved = game.events();
+    let mut state = State {
+        flags: bits(saved.global_flags()),
+        track: saved.current_track().min(TRACKS - 1),
+        time_of_day: game.clock.phase().index(),
+        ..State::default()
+    };
+    for (index, track) in state.tracks.iter_mut().enumerate() {
+        if let Some(saved) = saved.track(index) {
+            (track.chapter, track.step, track.substep) =
+                (saved.chapter(), saved.step(), saved.substep());
+            track.flags = [bits(saved.chapter_flags()), bits(saved.step_flags())];
+        }
+    }
+    for quest in 0..0xcc {
+        let value = saved.quest(quest);
+        if value != 0 {
+            state.quests.insert(quest, value);
+        }
+    }
+    state
+}
 
 impl Field {
     /// The field of map `room`: its regions and the bytes of its trigger file, if any.

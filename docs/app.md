@@ -97,14 +97,14 @@ dans la suivante en zone avancée (champ) ; `--fog OFFSET,SHIFT,COLOR,D0..D31` r
 brouillard (comparaisons à melonDS) ;
 `--layout stacked|side|top` : disposition des écrans DS (section « Écrans DS »).
 
-La distribution est celle du prologue **1.1.1 de jour** par défaut. `--chapter`, `--step`,
-`--substep` choisissent le point de l'histoire ; `--night` choisit les placements de nuit,
-indépendamment de `--time` (variante graphique de la carte). Une sauvegarde ne restaure ici
-que la carte, la position, le cap et l'heure : quête, drapeaux et groupe ne sont pas chargés
-(la distribution suit `--chapter`/`--step`/`--substep`). `--frame N`
-évalue exactement N pas fixes depuis le début des mouvements avant la capture (0 par défaut),
-avec la même mise à jour CPU qu'en fenêtre et sur le Web, sans dépendre du temps de chargement
-du GPU. Les sprites sont orientés vers la caméra de `--eye`/`--target` avant cette évaluation.
+La distribution suit la piste de scénario courante de la sauvegarde quand elle est chargée :
+progression, drapeaux et quêtes sont restaurés. Sinon, elle est celle du prologue `1.1.1` de jour.
+`--chapter`, `--step`, `--substep` remplacent explicitement les champs correspondants ;
+`--night` force les placements et conversations de nuit, indépendamment de `--time`.
+Avec `--map`, la sauvegarde ne fournit pas la position ni la progression. Le reste du groupe et
+le sac ne sont pas chargés. `--frame N` évalue exactement N pas fixes depuis le début des
+mouvements avant la capture (0 par défaut), sans dépendre du temps de chargement du GPU.
+Les sprites sont orientés vers la caméra de `--eye`/`--target` avant cette évaluation.
 
 Commandes : glisser avec le bouton gauche pour tourner, molette pour zoomer. En mode orbite,
 `ZQSD`/`WASD` (touches physiques) ou flèches sont le pavé du jeu : le héros tourne, accélère et

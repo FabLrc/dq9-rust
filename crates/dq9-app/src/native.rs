@@ -38,14 +38,14 @@ struct Cli {
     #[arg(long)]
     clock: Option<f32>,
     /// Story chapter (the prologue is 1.1.1).
-    #[arg(long, default_value_t = 1)]
-    chapter: u8,
+    #[arg(long)]
+    chapter: Option<u8>,
     /// Story step.
-    #[arg(long, default_value_t = 1)]
-    step: u8,
+    #[arg(long)]
+    step: Option<u8>,
     /// Story substep.
-    #[arg(long, default_value_t = 1)]
-    substep: u8,
+    #[arg(long)]
+    substep: Option<u8>,
     /// Use nighttime cast placements (independent of --time's map variant).
     #[arg(long)]
     night: bool,
@@ -141,9 +141,9 @@ struct Cli {
 impl Cli {
     fn story(&self) -> dq9_formats::cast::Story {
         let mut story = dq9_formats::cast::Story {
-            chapter: self.chapter,
-            step: self.step,
-            substep: self.substep,
+            chapter: self.chapter.unwrap_or(1),
+            step: self.step.unwrap_or(1),
+            substep: self.substep.unwrap_or(1),
             daytime: !self.night,
             ..dq9_formats::cast::Story::default()
         };
@@ -301,6 +301,7 @@ pub fn main() -> Result<()> {
         event,
         layout: cli.layout,
         story: cli.story(),
+        story_override: [cli.chapter, cli.step, cli.substep],
         new_game: cli.new_game,
     };
     let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
@@ -340,11 +341,21 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         ),
         None => (start.map.clone(), None),
     };
+    let mut trigger_state = load::trigger_state(
+        start.state.as_ref(),
+        &cli.story(),
+        [cli.chapter, cli.step, cli.substep],
+    );
+    let story = if start.state.is_some() {
+        load::story_from_state(&cli.story(), &trigger_state)
+    } else {
+        cli.story()
+    };
     let mut loaded = load::load(
         rom,
         &map,
         time,
-        &cli.story(),
+        &story,
         spawn,
         start.state.as_ref(),
         &start.look,
@@ -362,7 +373,7 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         loaded.hero = hero;
         talk.set_rom(rom);
         let steps = talk::parse_inputs(input)?;
-        talk::play(&steps, &mut loaded, rom, &cli.story(), &mut talk)?;
+        talk::play(&steps, &mut loaded, rom, &mut trigger_state, &mut talk)?;
         hero = loaded.hero;
     }
     println!(

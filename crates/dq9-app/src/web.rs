@@ -58,6 +58,7 @@ fn options() -> Options {
         event: None,
         layout: Layout::default(),
         new_game: false,
+        story_override: [None; 3],
         story: dq9_formats::cast::Story {
             chapter: 1,
             step: 1,
@@ -80,16 +81,19 @@ fn options() -> Options {
             "chapter" => {
                 if let Ok(n) = value.parse() {
                     options.story.chapter = n;
+                    options.story_override[0] = Some(n);
                 }
             }
             "step" => {
                 if let Ok(n) = value.parse() {
                     options.story.step = n;
+                    options.story_override[1] = Some(n);
                 }
             }
             "substep" => {
                 if let Ok(n) = value.parse() {
                     options.story.substep = n;
+                    options.story_override[2] = Some(n);
                 }
             }
             "night" => options.story.daytime = value == "0",

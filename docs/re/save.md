@@ -254,7 +254,7 @@ de quêtes de `trigger.md` : ses décalages valent tels quels.
 | `0x000` | 5 × 0x1c | pistes : octets chapitre, étape, sous-étape, 13 octets de drapeaux de chapitre, 12 octets de drapeaux d'étape |
 | `0x08c` | 0x234 | drapeaux globaux (4 512 bits, bit de poids faible d'abord : `Flags_Test`) ; l'indice `>= 0x400` des scripts est décalé de `0x6fa` (`Flags_TestExt`) |
 | `0x2c0` | 0xc | [inconnu] |
-| `0x2cc` | 0x66 | [inconnu] |
+| `0x2cc` | 0x66 | 204 quêtes, deux quartets par octet (état et drapeaux, voir `dialogue.md`) |
 | `0x332` | 1 | piste courante (0..4) |
 
 Vérifié sur la démo : piste courante 0, avec 19 / 2 / 1 = chapitre/étape/sous-étape des mots
@@ -283,9 +283,8 @@ caractère = indice dans la table de glyphes de la police `me`** (`font.md`), te
   retour sur la carte de campagne (l'id `11492` vaut 20002 = `F02` sur la démo, le vecteur
   (−57 ; 0,1 ; −31,5) est une position de cette carte).
 - Bits de `lieux visités` (`0xfe77ffff` sur la démo, l'éditeur ne nomme que les bits 1..=18).
-- Sens des drapeaux eux-mêmes (indices) : le bloc est typé, pas les bits. Les blocs de
-  `+0x2c0` (12 octets), `+0x2cc` (0x66 octets) et l'octet `+0x332` hors sélecteur de piste
-  n'ont pas de rôle établi.
+- Sens des drapeaux eux-mêmes (indices) : le bloc est typé, pas les bits. Le bloc `+0x2c0`
+  (12 octets) n'a pas de rôle établi.
 - Contenu interne des blocs `QuestLog`, `QuestTimers`, `Hints`, `Monsters`, `Alchemy`,
   `Accolades`, `TreasureMaps`, `Profile`, `Dqvc`, `Misc` : tailles et destinations en RAM
   établies, **champs non décodés**. Le sac (`Main`+7652) idem.

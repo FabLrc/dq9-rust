@@ -801,6 +801,17 @@ impl<'a> EventFlags<'a> {
         test_bit(self.global_flags(), index)
     }
 
+    /// Quest state and flags: one nibble per quest at quest manager `+0x2cc`.
+    pub fn quest(&self, index: i32) -> u8 {
+        let Ok(index) = usize::try_from(index) else {
+            return 0;
+        };
+        if index >= 0xcc {
+            return 0;
+        }
+        (self.0[0x2cc + index / 2] >> ((index & 1) * 4)) & 0xf
+    }
+
     /// Story flag `index` (`Flags_TestExt`, `0x0206eba8`): indices from `0x400` are shifted
     /// by `0x6fa`.
     pub fn story_flag(&self, index: i32) -> bool {

@@ -17,6 +17,21 @@ Implémentation : `crates/dq9-formats/src/dialogue.rs` (`parse`, `select`). Outi
   ont un PNJ de ce numéro dans le `.npc` de leur carte ; les autres appartiennent aux cartes
   de terrain `F*` (qui partagent `F.npc`) ou sont des restes.
 
+L'application utilisait déjà cette règle de nommage, mais initialisait les triggers avec
+`1.1.1` même après chargement d'une sauvegarde : la démo en `C01M09`, progression `19.2.1`,
+cherchait donc `C01A0` au lieu de `C01Q0`. Elle restaure désormais les cinq pistes et leurs
+drapeaux, les drapeaux globaux et les quartets de quêtes du bloc sauvegardé ; `Field::enter`
+sélectionne la piste de la salle avant la conversation. Les variantes d'une même famille de
+cartes gardent les trois mêmes caractères ; ce n'est pas une recherche de chemins de secours.
+La progression de la piste choisit la lettre, puis son étape et sa sous-étape choisissent la
+réplique. Les options explicites de progression remplacent les champs correspondants.
+
+Contrôles : sauvegarde de démonstration `19.2.1`, PNJ 25 en zone 80 : le navigateur ouvre
+`C01Q0/025_en.bin`, enregistrement 0, et la ligne s'affiche ; chargement sauvegarde avant ou
+après la ROM. Sur `M01`, étape 2, PNJ 2 : `M01A0/002_en.bin`, contexte 192, puis la fin de
+conversation déclenche l'événement 1380. Le texte du prêtre se termine par `<ADD>` ; le service
+religieux qui suit n'est pas implémenté.
+
 Le fichier (une table d'enregistrements, `table.md`) passe par `Talk_SelectLine`
 (`ov_017::021ba810`), qui rejette les PNJ hors de `0..=999`.
 

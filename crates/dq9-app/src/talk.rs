@@ -26,6 +26,15 @@ const LANGUAGE: &str = "en";
 /// Chapter letters of the dialogue archives (`Scenario_ChapterLetter`, `ov_017::0218d2c4`).
 const CHAPTER_LETTERS: &[u8] = b"ABCDEFGHIJSTKLMNOPQ";
 
+/// `TalkTask_Update` (`ov_017::021b8e8c`) uses the map family and current chapter.
+fn archive_path(map_code: &str, chapter: u8) -> Result<String> {
+    let letter = *CHAPTER_LETTERS
+        .get(usize::from(chapter).wrapping_sub(1))
+        .with_context(|| format!("chapter {chapter} has no dialogue archive"))?;
+    let area = map_code.get(..3).context("map code")?;
+    Ok(format!("data/scenario/{area}{}0.gp2", char::from(letter)))
+}
+
 /// The message window on the 256×192 screen (`func_02042b98(win, 2, 0x74, 0xfc, 0x4a)`).
 const WINDOW: [i32; 4] = [2, 0x74, 0xfc, 0x4a];
 /// Where the text starts, from the window's corner **[hypothèse]** (the game's text origin is
@@ -350,18 +359,15 @@ impl Talk {
             bail!("no message window (the ROM resources failed to load)");
         };
         let track = &state.tracks[state.track];
-        let letter = *CHAPTER_LETTERS
-            .get(usize::from(track.chapter).wrapping_sub(1))
-            .with_context(|| format!("chapter {} has no dialogue archive", track.chapter))?;
-        let area = map_code.get(..3).context("map code")?;
-        let archive = format!("data/scenario/{area}{}0.gp2", char::from(letter));
+        let archive = archive_path(map_code, track.chapter)?;
         let member = format!("{npc:03}_{LANGUAGE}.bin");
         let rom = Rom::parse(rom).context("parsing the ROM")?;
-        let archive = Gpc2::parse(rom.file_by_path(&archive)?).context("parsing the archive")?;
-        let Some(entry) = archive.find(&member) else {
+        let archive_data =
+            Gpc2::parse(rom.file_by_path(&archive)?).context("parsing the archive")?;
+        let Some(entry) = archive_data.find(&member) else {
             bail!("NPC {npc} has no dialogue file {member}");
         };
-        let data = archive.member(entry)?;
+        let data = archive_data.member(entry)?;
         let table = Table::parse(&data).context("not a record table")?;
         let lines = dialogue::parse(&table)?;
         let quests = |q: i32| state.quests.get(&q).copied().unwrap_or(0);
@@ -386,8 +392,7 @@ impl Talk {
         let font = assets.font()?;
         let script = talk::prepare(&font, text, &self.names, TEXT_WIDTH);
         status(&format!(
-            "talk: {area}{}0/{member} record {line}, context {context}",
-            char::from(letter)
+            "talk: {archive}/{member} record {line}, context {context}"
         ));
         self.counts.record(npc);
         self.conversation = Some((npc, context));
@@ -652,11 +657,10 @@ mod script {
         steps: &[Step],
         loaded: &mut LoadedMap,
         rom: &[u8],
-        story: &dq9_formats::cast::Story,
+        state: &mut dq9_core::trigger::State,
         talk: &mut Talk,
     ) -> Result<()> {
-        let mut state = field::initial_state(story);
-        let _ = loaded.field.enter(&mut state, false);
+        let _ = loaded.field.enter(state, false);
         talk.enter_map(loaded.npcs.clone());
         let mut run = |loaded: &mut LoadedMap, direction: Vec3, talk: &mut Talk| -> Result<()> {
             let talking = talk.is_active();
@@ -666,7 +670,7 @@ mod script {
                     &loaded.entry.code,
                     &loaded.hero,
                     &mut loaded.field,
-                    &mut state,
+                    state,
                 );
                 talk.discard_input();
                 if events.iter().any(|e| matches!(e, Event::MapChange(_))) {
@@ -686,7 +690,7 @@ mod script {
                 yaw: loaded.hero.yaw(),
                 input: direction.normalize_or_zero(),
             };
-            if field::Field::changes_map(&loaded.field.step(&leader, &mut state)) {
+            if field::Field::changes_map(&loaded.field.step(&leader, state)) {
                 bail!("the script leaves the map");
             }
             talk.step();
@@ -709,5 +713,59 @@ mod script {
             instance.world = Mat4::from_translation(loaded.hero.position());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod saved_dialogue_tests {
+    use super::archive_path;
+    use dq9_core::{state::GameState, trigger::track_of_room};
+    use dq9_formats::save::{FILE_SIZE, MAGIC, Save};
+
+    #[test]
+    fn saved_map_track_selects_the_dialogue_archive() {
+        let mut bytes = vec![0; FILE_SIZE];
+        bytes[..MAGIC.len()].copy_from_slice(MAGIC);
+        bytes[21] = 1;
+        let event = 11584;
+        bytes[event..event + 3].copy_from_slice(&[19, 2, 1]);
+        bytes[event + 3 * 0x1c..event + 3 * 0x1c + 3].copy_from_slice(&[11, 4, 2]);
+        bytes[event + 3 * 0x1c + 3] = 2;
+        bytes[event + 0x8c + 1] = 2;
+        bytes[event + 0x2cc + 5] = 0x30;
+        let mut save = Save::parse(&bytes).unwrap();
+        save.slot_mut(0).unwrap().seal();
+        let game = GameState::from_save(&save).unwrap();
+        let story = dq9_formats::cast::Story::default();
+        let mut state = crate::load::trigger_state(Some(&game), &story, [None; 3]);
+        state.track = track_of_room(109);
+        let track = &state.tracks[state.track];
+        assert_eq!((track.chapter, track.step, track.substep), (19, 2, 1));
+        assert_eq!(
+            archive_path("C01M09", track.chapter).unwrap(),
+            "data/scenario/C01Q0.gp2"
+        );
+        assert_eq!(
+            archive_path("C01M01", track.chapter).unwrap(),
+            "data/scenario/C01Q0.gp2"
+        );
+        assert!(state.flags.contains(&9));
+        assert_eq!(state.quests.get(&11), Some(&3));
+        state.track = track_of_room(200);
+        let track = &state.tracks[state.track];
+        assert_eq!((track.chapter, track.step, track.substep), (11, 4, 2));
+        assert_eq!(
+            archive_path("C02", track.chapter).unwrap(),
+            "data/scenario/C02S0.gp2"
+        );
+        assert!(track.flags[0].contains(&1));
+        let overridden = crate::load::trigger_state(Some(&game), &story, [Some(15), Some(7), None]);
+        assert_eq!(overridden.tracks[3].step, 7);
+        assert_eq!(
+            archive_path("C02", overridden.tracks[3].chapter).unwrap(),
+            "data/scenario/C02M0.gp2"
+        );
+        assert!(archive_path("C01", 0).is_err());
+        assert!(archive_path("C01", 20).is_err());
     }
 }

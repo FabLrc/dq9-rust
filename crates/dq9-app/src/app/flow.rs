@@ -22,18 +22,13 @@ impl App {
         }
     }
 
-    /// The story point a map is built for: the options', or in a new game the scenario's
-    /// current track, flags and quests (the cast placed by `place.bin` follows them).
+    /// The current track supplies the cast's story after a new game or a save load.
     pub(super) fn current_story(&self) -> dq9_formats::cast::Story {
-        let mut story = self.options.story.clone();
-        if self.options.new_game {
-            let track = &self.state.tracks[self.state.track];
-            (story.chapter, story.step, story.substep) = (track.chapter, track.step, track.substep);
-            story.daytime = self.state.time_of_day != 0;
-            story.flags = self.state.flags.clone();
-            story.quests = self.state.quests.clone();
+        if self.options.new_game || (self.options.save.is_some() && self.options.map.is_none()) {
+            crate::load::story_from_state(&self.options.story, &self.state)
+        } else {
+            self.options.story.clone()
         }
-        story
     }
 
     /// A new game: the state of `GameState::new_game` (scenario 1.1.1, the day's start, the
