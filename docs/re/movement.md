@@ -201,6 +201,11 @@ Toutes les entrées non portées de « Hors périmètre » ; le suivi lissé et 
 (l'orbite par défaut et le suivi direct du héros sont appliqués) ; une comparaison position
 par position à nombre d'images égal sous melonDS.
 
+`cargo dq9re map --reach` ([`map-archive.md`](map-archive.md#voir-la-collision-dq9re-map---image---reach))
+rejoue `Hero::step` sur une grille de 0,5 unité et rend les composantes par hauteur visibles :
+c'est l'outil à employer avant d'annoncer une route, plutôt qu'un BFS qui ne compare que
+`x/z`.
+
 ## Parcours joueur réel du prologue (preuve de marche)
 
 Le pilote headless marche (`Hero::step`, collisions, portes, recherche de partenaire) et la
