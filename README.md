@@ -1,14 +1,31 @@
-# dq9-online
+# DQ9 Rust
 
 Réimplémentation en Rust de *Dragon Quest IX – Sentinels of the Starry Skies* (Nintendo DS),
-pour Windows, macOS, Linux et le Web, avec le multijoueur de la DS rendu possible en ligne.
-Le jeu est rétro-analysé et ses ressources sont lues depuis **votre propre ROM** ; aucune
+pour Windows, macOS, Linux et le Web, avec à terme le multijoueur de la DS rendu possible en
+ligne. Le jeu est rétro-analysé et ses ressources sont lues depuis **votre propre ROM** ; aucune
 donnée du jeu n'est incluse dans ce dépôt.
 
-**État** : cartes texturées avec PNJ et animations en natif/Web, déplacement de terrain
-expérimental (`dq9-core`) ; portes, progression interactive et scènes restent à faire. Prochain
-objectif : une **v0.1 jouable** (prologue d'Angel Falls). Plan : `docs/roadmap.md`, lancement :
-`docs/app.md`.
+**État** : une première preuve technique se joue, en natif comme dans un navigateur.
+`cargo run -p dq9-app --release -- --new-game` lance l'ouverture et enchaîne les scènes du
+prologue jusqu'au contrôle libre à l'Observatoire. `--map M01`, ou une sauvegarde passée en
+`--save`, ouvre directement Angel Falls. On y trouve :
+
+- deux écrans DS (empilés, côte à côte ou écran du haut seul) ;
+- cartes texturées, éclairage, brouillard et heure du jour ;
+- PNJ animés et héros animé ;
+- déplacement porté en virgule fixe, avec collisions et caméra L/R ;
+- portes et maisons, conversations dans la fenêtre de message du jeu ;
+- scènes scriptées : interpréteur `.stb`, personnages, caméra, fondus, effets ;
+- musique, effets sonores et jingles ;
+- départ depuis une sauvegarde DS (`--save`).
+
+Manquent encore :
+
+- les combats : le premier combat scripté est compté comme gagné ;
+- quelques effets de scène ;
+- la comparaison image par image à melonDS, qui est le critère de la v0.1.
+
+Plan : `docs/roadmap.md` ; lancement et commandes : `docs/app.md`.
 
 <!-- coverage:start -->
 **Avancement : 2,0 %** des fonctions de jeu traduites (251 / 12 056), 2,5 % du code (65 Ko / 2 505 Ko).
@@ -55,19 +72,18 @@ Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (dé
 
 | Chemin | Rôle |
 |---|---|
-| `crates/nds-rom` | ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC. Sans E/S, compile en wasm. |
-| `crates/dq9-formats` | Formats Level-5 de DQ9 : compression, archives `.gp2`, tables d'enregistrements, polices, messages, choix des répliques, triggers, scripts `.stb`. Sans E/S, compile en wasm. |
-| `crates/dq9-render` | Rendu wgpu des cartes, proche du moteur 3D de la DS ; caméra libre. Sans E/S, compile en wasm. |
-| `crates/dq9-core` | État déterministe, requêtes de collision et déplacement provisoire. Sans E/S, compile en wasm. |
-| `crates/dq9-app` | Application (winit + wgpu, natif et Web) : `cargo run -p dq9-app --release -- --map M01` (`docs/app.md`). |
+| `crates/nds-rom` | ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC, modèles et animations G3D. Sans E/S, compile en wasm. |
+| `crates/dq9-formats` | Formats Level-5 de DQ9 : archives `.gp2`, tables, polices, messages, répliques, triggers, scripts `.stb`, cartes, personnages, éclairage, sauvegarde, SDAT. Sans E/S, compile en wasm. |
+| `crates/dq9-core` | Logique de jeu déterministe : état depuis une sauvegarde ou une nouvelle partie, déplacement et collisions en virgule fixe, caméra, portes et zones, triggers, conversations, interpréteur `.stb`, scènes, enchaînement du scénario. Sans E/S, compile en wasm. |
+| `crates/dq9-render` | Rendu wgpu proche du moteur 3D de la DS : cartes, PNJ, héros, éclairage, brouillard, interface 2D. Sans E/S, compile en wasm. |
+| `crates/dq9-audio` | Séquenceur SSEQ, banques, ondes et mixage du son de la DS. Sans E/S, compile en wasm. |
+| `crates/dq9-app` | Application (winit + wgpu, natif et Web) : `cargo run -p dq9-app --release -- --new-game` (`docs/app.md`). |
 | `crates/dq9re` | CLI de rétro-ingénierie (`cargo dq9re --help`). |
 | `crates/testrom` | Localise la ROM pour les tests sur données réelles. |
 | `re/symbols.txt` | Noms retrouvés, source de vérité appliquée au projet Ghidra. |
-| `re/ghidra_scripts/`, `scripts/` | Scripts Ghidra et PowerShell : installation des outils, import, requêtes, symboles. |
+| `re/ghidra_scripts/`, `scripts/` | Scripts Ghidra et PowerShell : installation des outils, import, requêtes, symboles, états melonDS. |
 | `docs/` | Feuille de route, architecture, ressources externes, notes de RE (`re/`). |
 | `rom/` | Votre ROM (ignorée par git). |
-
-`dq9-audio` sera créée au fil de la feuille de route (`docs/architecture.md`).
 
 ## Mise en place
 
@@ -138,14 +154,19 @@ Consigner une découverte :
 |---|---|
 | `docs/roadmap.md` | jalons jusqu'au portage complet, définition du « 100 % » |
 | `docs/architecture.md` | crates cibles et règles (portabilité, déterminisme, traçabilité) |
-| `docs/app.md` | lancer `dq9-app` (natif, navigateur), rendu et ses approximations |
+| `docs/app.md` | lancer `dq9-app` (natif, navigateur), options, commandes, événements, rendu et ses approximations |
 | `docs/ressources-externes.md` | décompilation, wiki, portage PC, outils DS, licences |
 | `docs/re/rom-layout.md` | structure de la ROM, overlays, systèmes de fichiers |
-| [`docs/re/nitro-sdk.md`](docs/re/nitro-sdk.md) | premier lot de 50 routines NitroSDK ARM9 identifiées, non portées |
+| [`docs/re/nitro-sdk.md`](docs/re/nitro-sdk.md) | routines NitroSDK ARM9 identifiées (classées Plateforme, non portées) |
 | `docs/re/gpc2.md`, `table.md` | archives et compression Level-5, tables d'enregistrements |
 | `docs/re/text.md`, `font.md` | textes, balises, pipeline des messages, polices |
-| `docs/re/dialogue.md`, `trigger.md`, `stb.md` | répliques des PNJ, triggers de scénario, scripts d'événements |
+| `docs/re/dialogue.md`, `trigger.md`, `stb.md` | répliques et fenêtre de message, triggers de scénario, scripts d'événements et leur exécution |
 | `docs/re/stb-natives.md` | inventaire des 228 natives employées : arguments, effets établis, adresses et inconnus |
+| `docs/re/maplist.md`, `map-archive.md`, `g3d.md` | liste des cartes, assemblage des cartes, portes et zones, modèles et animations G3D |
+| `docs/re/characters.md` | PNJ, distribution par étape, sprites, modèles, héros |
+| `docs/re/collision.md`, `movement.md` | collisions `.col2`, déplacement du héros et caméra |
+| `docs/re/lighting.md` | éclairage `.bats`, brouillard, heure du jour |
+| `docs/re/sdat.md` | son : SDAT, séquences, effets, jingles, musique des cartes |
 | `docs/re/save.md` | sauvegarde DS : conteneur, sommes de contrôle, champs typés, inconnus |
 | `docs/re/melonds-state.md` | oracle melonDS : lecture des sauvegardes d'état, adresses utiles, vérification restante |
 | `AGENTS.md` | contexte et règles pour les agents de développement |

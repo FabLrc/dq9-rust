@@ -488,7 +488,7 @@ impl App {
             CameraMode::Fly => "fly",
         };
         window.set_title(&format!(
-            "dq9-app: {} {} ({label}), time {}, {mode}",
+            "DQ9 Rust: {} {} ({label}), time {}, {mode}",
             entry.id, entry.code, self.time
         ));
     }
@@ -928,7 +928,7 @@ impl ApplicationHandler<UserEvent> for App {
         if self.window.is_some() {
             return;
         }
-        let attributes = Window::default_attributes().with_title("dq9-app");
+        let attributes = Window::default_attributes().with_title("DQ9 Rust");
         // On the web the page's CSS sizes the canvas.
         #[cfg(not(target_arch = "wasm32"))]
         let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(1024.0, 768.0));

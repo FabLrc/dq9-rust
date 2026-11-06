@@ -397,7 +397,7 @@ contrôle à chaque chapitre comparées à melonDS.
 
 ## J8 — Multijoueur et contenu en ligne
 
-Le « online » du projet : ce que la DS faisait en local, sur Internet.
+Le multijoueur en ligne du projet : ce que la DS faisait en local, sur Internet.
 
 - Coopération jusqu'à 4 joueurs (visites via Pavo) et mode Tag : protocole réseau propre, au
   niveau du jeu (pas d'émulation radio) ; données échangées d'après `ov_017` et la session
