@@ -93,6 +93,9 @@ pub struct Zone {
     /// tests the side the hero stands on rather than where he looks; `0x1` and `0x4` are
     /// runtime bits (no record has them).
     pub flags: u16,
+    /// Value 3 of the doorway's `0x74` record, low quartet: the sound the door plays
+    /// (`g_DoorSeTable`, effects 200-204) and, for other kinds, unused.
+    pub sound: u8,
     pub warp: Option<ZoneWarp>,
 }
 
@@ -192,6 +195,7 @@ fn zone(values: &[Value<'_>]) -> Result<Zone> {
         class: 0,
         number: 0,
         flags: 0,
+        sound: 0,
         warp: None,
     })
 }
@@ -209,6 +213,7 @@ fn complete(zone: &mut Zone, values: &[Value<'_>], maps: &[MapRecord<'_>]) -> Re
             zone.class = values[0].int() as u8;
             zone.number = values[1].int() as u8;
             zone.flags = values[2].int() as u16 & 0xfff;
+            zone.sound = values.get(3).map_or(0, |value| value.int() as u8 & 0xf);
             zone.warp = None;
             // A short record with the flag would read fields of an earlier record in the game
             // (`Fields`); it has no destination here.
