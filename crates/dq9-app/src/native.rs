@@ -323,10 +323,44 @@ pub fn main() -> Result<()> {
     }
     if let Some(script) = &cli.walk {
         let script = walk::parse_script(script)?;
-        let map = load::start(cli.map.as_deref(), save.as_deref())?.map;
-        let time = cli.time.unwrap_or(0);
-        let mut walker = walk::Walker::new(&rom, &map, time, &cli.story(), cli.start)?;
-        return walker.run(&script);
+        // The real application's fixed step, so a walk uses the same Hero/Field/door path as
+        // the window (the old Walker dropped Request::OpenDoor and stayed blocked).
+        let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+        let options = Options {
+            map: cli.map.clone(),
+            save,
+            time: cli.time,
+            clock: cli.clock,
+            layout: screens::Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: cli.story(),
+            story_override: [None; 3],
+            new_game: false,
+        };
+        let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
+        if let Some((x, z)) = cli.start {
+            app.place_hero(x, z)?;
+        }
+        let pose = |app: &App| match app.walk_pose() {
+            Some((id, code, at, yaw)) => format!(
+                "map {id} {code} hero ({:.3}, {:.3}, {:.3}) yaw {:.3}",
+                at.x, at.y, at.z, yaw
+            ),
+            None => "no map".to_owned(),
+        };
+        println!("start: {}", pose(&app));
+        for (index, part) in script.iter().enumerate() {
+            let frames = (part.seconds / crate::app::STEP).round() as u32;
+            println!("step {index}: {:?} for {frames} frames", part.direction);
+            for _ in 0..frames {
+                app.walk_step(part.direction);
+            }
+            println!("after step {index}: {}", pose(&app));
+        }
+        return Ok(());
     }
     if let Some((major, first, last)) = cli.events_report {
         return report::report(&rom, major, first..=last, &cli.story());

@@ -1055,6 +1055,41 @@ impl App {
         }
     }
 
+    /// One fixed step of a native `--walk` script: the world direction is fed exactly as the
+    /// pilot feeds it, through the same `Hero::step`/`Field::step`/door path as the window.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn walk_step(&mut self, direction: Vec3) {
+        self.pilot_dir = Some(direction);
+        self.run_steps(1);
+    }
+
+    /// Places the hero at `(x, z)` on the current map (`--start`), on the collision's ground.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn place_hero(&mut self, x: f32, z: f32) -> anyhow::Result<()> {
+        let code = self
+            .current
+            .as_ref()
+            .map(|(entry, _)| entry.code.clone())
+            .unwrap_or_default();
+        let hero = crate::walk::start_hero(&self.collision, &code, (x, z))?;
+        self.hero = Some(hero);
+        if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance) {
+            let world = runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()));
+            if let Some(instance) = runtime.scene.instances.get_mut(index) {
+                instance.world = world;
+            }
+        }
+        Ok(())
+    }
+
+    /// The loaded map, its code and the hero's pose, for the `--walk` logs.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn walk_pose(&self) -> Option<(u16, String, Vec3, f32)> {
+        let (entry, _) = self.current.as_ref()?;
+        let hero = self.hero?;
+        Some((entry.id, entry.code.clone(), hero.position(), hero.yaw()))
+    }
+
     /// One fixed step of a recorded input trace (`--trace-inputs`, replayed): the pad keys and
     /// the action key are fed exactly as recorded, and the journal checkpoints are captured.
     #[cfg(not(target_arch = "wasm32"))]

@@ -56,11 +56,20 @@ cargo run -p dq9-app --release -- --map M01 --frame 10 `
     --eye=-1.74,0.3,-3.5 --target=-1.74,-0.5,1.22 --screenshot build/scratch/app/hero.png
 ```
 
-`--walk` joue les mêmes pas fixes qu'en fenêtre (`Hero::step` avec les touches du pavé que
-la direction demandée presse, caméra au yaw 0, puis `Field::step` avec la pose du héros) : `+x`, `-x`, `+z`, `-z` (deux axes font une diagonale : `+x-z`) ou `idle`, deux
-points et une durée ; `--start x,z` pose le héros au sol de ce point (aussi avec
+`--walk` joue le **même pas fixe que la fenêtre** (`App::run_steps` : `Hero::step` avec les
+touches du pavé que la direction demande, caméra au yaw 0, puis `Field::step`, portes et
+demandes du champ) : `+x`, `-x`, `+z`, `-z` (deux axes font une diagonale : `+x-z`) ou
+`idle`, deux points et une durée ; `--start x,z` pose le héros au sol de ce point (aussi avec
 `--screenshot`, face à +z). Chaque changement de carte, chaque arrivée et chaque tronçon sont
-écrits sur la sortie standard.
+écrits sur la sortie standard. Une porte interne s'ouvre donc comme en jeu, par exemple la
+double porte de la bibliothèque de `X01M07` :
+
+```powershell
+cargo run -p dq9-app --release -- --map X01M07 --start -8.6,-6 --walk=-z:2 --mute
+# door 0/3 opens
+# door 0/2 opens
+# after step 0: map 4107 X01M07 hero (-9.307, 0.168, -9.381) yaw -0.000
+```
 
 ### Conversations
 
