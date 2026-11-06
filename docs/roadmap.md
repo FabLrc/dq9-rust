@@ -5,24 +5,24 @@ jouable le plus tôt possible**, en s'appuyant au maximum sur le travail public 
 (`ressources-externes.md`). Chaque étape se termine par une doc dans `docs/re/`, une
 implémentation testée et un commit.
 
-## Point de reprise — pause demandée le 6 novembre 2026
+## Point de reprise — reprise du 6 novembre 2026
 
-**Travail suspendu à la demande de l'utilisateur ; la v0.1 n'est pas validée.** Les agents
-OMP (`opencode-go/deepseek-v4.1-flash`) sont arrêtés, leurs branches poussées et leurs
-worktrees fermés après conservation des preuves locales. Ne pas confondre les lots livrés
-avec un prologue intégralement jouable.
+**La pause est levée ; la v0.1 n'est pas encore validée.** Les agents ont repris sur les
+outils d'oracle, de trace et de géométrie intégrés à `main`. Ne pas confondre les lots
+livrés avec un prologue intégralement jouable.
 
 ### Intégré et publié
 
-- Dernier commit de jeu : **`445de2b`** (intégration `v01-field`) ; outillage : **`829db11`**.
+- Dernier commit de jeu : **`4c02170`** (causes des drapeaux) ; outillage : **`829db11`**.
   CI Linux [42274982535](https://github.com/FabLrc/dq9-rust/actions/runs/42274982535) et
   déploiement [Pages 42274980383](https://github.com/FabLrc/dq9-rust/actions/runs/42274980383)
-  réussis.
+  réussis pour l'intégration `v01-field`.
 - Runtime intégré : hooks `scene_flag`/`map_visit_flag`, NavGrid 3D, checkpoints/trace/replay.
   Le pilote réel atteint **1.1.2** à 369,78 s (arrêt 377,8 s sur `X01M01`) et ses 22 670 pas
-  rejouent les 49 checkpoints **identiques** (`3da80263…`). Au premier contrôle il a 9 des 18
-  drapeaux de l'original ; `compare-runs.ps1` préfère désormais le même `kind` pour ne pas
-  confondre un chargement de carte avec une prise de contrôle.
+  rejouent les 49 checkpoints **identiques** (`3da80263…`). Au premier contrôle, les causes
+  des drapeaux sont branchées : **17 des 18** drapeaux de l'original, seul le butin aléatoire
+  du combat 26 (`4135` ou `4212`) reste hors runtime. `compare-runs.ps1` préfère le même
+  `kind` pour ne pas confondre un chargement de carte avec une prise de contrôle.
 - Harnais oracle libretro (outil GPL externe, hors crates) : création du personnage et
   **premier contrôle original** reproductibles sans GUI, `dq9re state --ram` sur les images
   RAM de 4 Mio, catalogue `states index/find`, `state diff` et `state watch`. Le premier
@@ -50,17 +50,11 @@ avec un prologue intégralement jouable.
   passent. La contre-vérification **visuelle complète sur Pages** de cette dernière correction
   reste à terminer : le défaut précédent, légende du prologue sur l'église, a été capturé.
 
-### Branches poussées, non intégrées à `main`
+### Branches
 
-| Branche | Dernier commit conservé | Contenu et portée |
-|---|---|---|
-| `FabLrc/v01-field` | `4534a0c` | Drapeaux de scène transmis par `EventScript` sans seconde lecture du catalogue, carte visitée avant les triggers, grille de navigation avec hauteur, trace/rejeu des entrées. Inclut le lot initial `04e417f` ; ne pas le réappliquer séparément. |
-| `FabLrc/v01-init-flags` | `06f074d` | Provenance et traces des drapeaux d'ouverture, symboles et notes supplémentaires. Les nouvelles provenances ne sont pas encore réimplémentées. |
-| `FabLrc/v01-height` | `45ad216` | RE et correction de conclusions erronées (`584535f`), plus `scripts/melondsds_host.py`, hôte libretro fonctionnel jusqu'aux menus et à la saisie du nom ; pas encore jusqu'au premier contrôle. |
-
-Sur `4534a0c`, le parcours **réel à pied** atteint 1.1.2 à 369,8 s, puis s'arrête à 377,8 s
-sur `X01M01`. Les 22 670 pas enregistrés rejouent les mêmes **49 checkpoints**, octet pour
-octet. Ce n'est ni un parcours complet ni une preuve de parité avec melonDS.
+Les anciennes branches `FabLrc/impl-*` et `FabLrc/v01-field` sont intégrées à `main`.
+`FabLrc/v01-init-flags` (`06f074d`) et `FabLrc/v01-height` (`45ad216`) sont historiques :
+leurs conclusions sont reprises dans `main` et les docs ; ne pas les réintégrer.
 
 ### Blocages et ordre de reprise
 
@@ -71,9 +65,10 @@ octet. Ce n'est ni un parcours complet ni une preuve de parité avec melonDS.
    anciennes branches d'outillage : elles sont déjà dans `main`.
 2. **Poursuivre le parcours original au-delà du premier contrôle.** Le harnais libretro
    exécute la ROM sans focus (rendu logiciel, RAM et `retro_serialize` accessibles) et la
-   création du personnage y est terminée. `bat6.ml1` n'est pas compatible avec
-   `retro_unserialize` : repartir d'une **nouvelle partie réelle** et enregistrer un état
-   (`--dump-ram`, `--state-out`, `--checkpoints`) à chaque point. Le prochain jalon est
+   création du personnage y est terminée. Un état de cœur au premier contrôle existe
+   (`build/oracle-host/core23050.bin`) ; le recharger s'il est compatible, sinon repartir
+   d'une **nouvelle partie réelle**, et enregistrer un état (`--dump-ram`, `--state-out`,
+   `--checkpoints`) à chaque point. Le prochain jalon est
    l'arrivée à 1.1.2 puis Angel Falls ; ne pas fabriquer d'état ni modifier les
    coordonnées/drapeaux pour contourner un blocage.
 3. **Résoudre l'accès à la tour `X01M01` → `X01M03`.** La grille 3D plafonne à y = 11,25 ;
