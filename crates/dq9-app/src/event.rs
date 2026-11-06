@@ -397,6 +397,7 @@ impl EventPlayer {
 
     /// The doors the scripts opened, with the angle both the render and the collision must
     /// apply (a rotation added to the placement's home transform, 0 to +π/2).
+    #[allow(dead_code)] // the collision side (field worker) reads the same state
     pub fn doors(&self) -> &[dq9_core::cutscene::Door] {
         self.cutscene.doors()
     }
