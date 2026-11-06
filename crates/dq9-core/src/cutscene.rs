@@ -581,11 +581,15 @@ impl Cutscene {
         let light = std::mem::take(&mut self.light);
         let ignored = std::mem::take(&mut self.ignored);
         let display_swap = self.display_swap;
+        // The map's doors are objects of the zone, not of the event: an event that starts
+        // after one opened must keep it open.
+        let doors = std::mem::take(&mut self.props.doors);
         *self = Self::new();
         self.fades = fades;
         self.light = light;
         self.ignored = ignored;
         self.display_swap = display_swap;
+        self.props.doors = doors;
     }
 
     /// Brightness back to normal, unlocked, and the lighting back to the field's: the event
@@ -671,6 +675,13 @@ impl Cutscene {
             sound,
         });
         true
+    }
+
+    /// One tick of the door angles only (a field door opening with no script).
+    pub fn tick_doors(&mut self) {
+        for door in &mut self.props.doors {
+            door.tick();
+        }
     }
 
     /// Forgets the map's doors (another map is loaded).

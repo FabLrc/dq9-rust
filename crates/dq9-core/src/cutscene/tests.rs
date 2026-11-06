@@ -688,6 +688,19 @@ fn a_door_turns_a_quarter_turn_in_sixteen_updates() {
 }
 
 #[test]
+fn a_map_door_survives_a_new_event() {
+    let mut c = Cutscene::new();
+    assert!(c.open_door(0, 2, false));
+    run(&mut c, 40);
+    assert_eq!(c.doors()[0].angle_fx(), 6434);
+    // A new event restarts the scene, not the map: the door stays open at its angle.
+    c.restart();
+    assert_eq!(c.doors().len(), 1);
+    assert_eq!(c.doors()[0].angle_fx(), 6434);
+    assert!(!c.open_door(0, 2, false));
+}
+
+#[test]
 fn a_timed_caption_ramps_in_holds_and_ramps_out() {
     let mut c = Cutscene::new();
     c.apply(&Event::CaptionTime { ticks: 140 });

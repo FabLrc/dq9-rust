@@ -276,7 +276,23 @@ cargo run -p dq9-app --release -- --new-game --headless --auto
 # Idem, avec un pilote qui, à chaque prise de contrôle, fait la conversation ou prend la sortie
 # qui fait avancer l'histoire (plafond `--headless-steps`, 200 000 pas par défaut) :
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot
+# Checkpoints JSONL (mêmes champs que `dq9re state --json`) et entrées image par image :
+cargo run -p dq9-app --release -- --new-game --headless --auto --pilot `
+  --checkpoints build/checkpoints.jsonl --trace-inputs build/inputs.jsonl
 ```
+
+`--checkpoints` écrit un objet JSON par prise de contrôle, changement de carte ou d'histoire,
+début/fin de scène et combat : `tick`, `seconds`, `kind`, `vblank` (= `tick`), `map`, `area`
+(code d'aire numérique), `track`, `daytime`, `tracks` (5 × chapitre/étape/sous-étape et les deux
+jeux de drapeaux), `flags` globaux, `quests` (nibble par quête), `event` (nul pour l'instant) et
+`hero` (position et cap). Le premier point de contrôle de `--new-game --headless --auto` est
+identique à l'état melonDS au même moment (`X01M05`, 210,42 s, 1.1.1, drapeaux globaux `{337}`,
+drapeaux d'étape `{1}`, héros `(0,660, -0,250, -3,610)`), à l'écart des 17 drapeaux globaux près
+(voir `docs/re/trigger.md`).
+
+`--trace-inputs` écrit le pavé et la touche action de chaque pas fixe (`frame`, `pad`
+`up/down/left/right`, `a`). Le pilote donne des directions du monde avec la caméra à l'angle 0 :
+la trace reproduit la preuve dans notre moteur, pas telle quelle une manette melonDS.
 
 Sur le Web : bouton « Nouvelle partie » de la page (ou `?newgame=1`), après avoir choisi la ROM.
 

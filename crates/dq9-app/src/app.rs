@@ -84,6 +84,8 @@ pub struct Options {
     pub mute: bool,
     /// Mix the sound offline (no device) so that `App::take_recording` can write it.
     pub record_sound: bool,
+    /// Record the pad and action key of every fixed step (`--trace-inputs`).
+    pub trace_inputs: bool,
     /// An event to start as soon as the map is loaded (`--event`).
     pub event: Option<u16>,
     pub story: dq9_formats::cast::Story,
@@ -128,6 +130,8 @@ pub struct App {
     pilot_dir: Option<Vec3>,
     /// Doors whose opening already fired the arrival trigger.
     doors_opened: std::collections::BTreeSet<(i32, i32)>,
+    /// Door angle last applied to the collision, to avoid redoing it every tick.
+    door_angles: std::collections::BTreeMap<(i32, i32), i32>,
     /// NPC conversations and the message window.
     talk: Talk,
     /// Script events: the event task and what it did to the scene.
@@ -138,6 +142,11 @@ pub struct App {
     panel: Option<Panel>,
     /// What the story did since the start, and the fixed step it did it at.
     journal: Journal,
+    /// JSONL snapshots of the story state at the checkpoints the oracle compares.
+    #[cfg(not(target_arch = "wasm32"))]
+    checkpoints: Vec<String>,
+    /// Pad bits and action key of every fixed step (`--trace-inputs`).
+    input_trace: Vec<(u8, bool)>,
     tick: u64,
     hero_instance: Option<usize>,
     /// The protagonist's look (the save's hero, else a new game's), kept across maps.
@@ -199,11 +208,15 @@ impl App {
             hero: None,
             pilot_dir: None,
             doors_opened: std::collections::BTreeSet::new(),
+            door_angles: std::collections::BTreeMap::new(),
             talk: Talk::default(),
             events: EventPlayer::new(),
             quiet_events: false,
             panel: None,
             journal: Journal::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            checkpoints: Vec::new(),
+            input_trace: Vec::new(),
             tick: 0,
             hero_instance: None,
             look: HeroLook::new_game(),
@@ -365,6 +378,9 @@ impl App {
         self.lighting_info = loaded.lighting.clone();
         let previous = self.current.as_ref().map(|(entry, _)| entry.id);
         self.collision = loaded.collision;
+        // The collision was rebuilt: even on the same map, every open door must be applied
+        // again. A real map change also forgets the doors and their triggers.
+        self.door_angles.clear();
         if previous != Some(loaded.entry.id) {
             self.events.clear_doors();
             self.doors_opened.clear();
@@ -691,6 +707,9 @@ impl App {
                         self.audio.script_sound(rom, &sound);
                     }
                 }
+                Outcome::DoorSound { block, placement } => {
+                    self.play_door_sound(block, placement);
+                }
                 Outcome::Finished => {}
             }
         }
@@ -761,6 +780,9 @@ impl App {
     /// Runs `due` fixed steps of the game logic.
     fn run_steps(&mut self, due: u32) {
         for _ in 0..due {
+            if self.options.trace_inputs {
+                self.input_trace.push((0, self.talk.confirm_pending()));
+            }
             self.step_sound();
             self.step_doors();
             self.tick += 1;
@@ -830,6 +852,14 @@ impl App {
                     right: steering && self.axis(&[KeyCode::KeyD, KeyCode::ArrowRight], &[]) > 0.0,
                 },
             };
+            if self.options.trace_inputs
+                && let Some(last) = self.input_trace.last_mut()
+            {
+                last.0 = u8::from(pad.up)
+                    | u8::from(pad.down) << 1
+                    | u8::from(pad.left) << 2
+                    | u8::from(pad.right) << 3;
+            }
             if steering {
                 self.turn_camera();
             }
@@ -897,17 +927,31 @@ impl App {
     }
 
     /// A doorway the field touched (native 584): the shared door state, the same the scripts
-    /// use, and its own effect (200 + low quartet) once.
+    /// use, and its own effect once.
     fn open_door(&mut self, block: u32, placement: u16) {
         if !self.events.open_door(block as i32, placement as i32, false) {
             return;
         }
-        if let (Some(field), Some(rom)) = (&self.field, &self.rom)
-            && let Some(low) = field.door_sound(block as u8, placement as u8)
-        {
+        self.play_door_sound(block as i32, placement as i32);
+        status(&format!("door {block}/{placement} opens"));
+    }
+
+    /// Native 584's effect: `g_DoorSeTable[low quartet]`, base effects 200 to 204, when the
+    /// map's doorway names that quartet.
+    fn play_door_sound(&mut self, block: i32, placement: i32) {
+        let Some(low) = self
+            .field
+            .as_ref()
+            .and_then(|field| field.door_sound(block as u8, placement as u8))
+        else {
+            status(&format!(
+                "door {block}/{placement}: no sound in this map's doorway"
+            ));
+            return;
+        };
+        if let Some(rom) = self.rom.as_deref() {
             self.audio.play_base_effect(rom, u16::from(low) + 200);
         }
-        status(&format!("door {block}/{placement} opens"));
     }
 
     /// One fixed step of the doors: when no script runs, advance the shared angles and move
@@ -936,24 +980,25 @@ impl App {
             };
             self.events.tick_doors(&mut stage);
         }
-        let doors: Vec<(i32, i32, i32, bool)> = self
-            .events
-            .doors()
-            .iter()
-            .map(|door| {
+        let count = self.events.doors().len();
+        let mut opened = false;
+        for index in 0..count {
+            let (block, placement, angle, done) = {
+                let door = &self.events.doors()[index];
                 (
                     door.block,
                     door.placement,
                     door.angle_fx(),
                     door.angle >= door.target,
                 )
-            })
-            .collect();
-        let mut opened = false;
-        for (block, placement, angle, done) in doors {
-            self.collision
-                .set_door_angle(block as u32, placement as u16, angle);
-            if done && self.doors_opened.insert((block, placement)) {
+            };
+            let key = (block, placement);
+            if self.door_angles.get(&key).copied() != Some(angle) {
+                self.collision
+                    .set_door_angle(block as u32, placement as u16, angle);
+                self.door_angles.insert(key, angle);
+            }
+            if done && self.doors_opened.insert(key) {
                 opened = true;
             }
         }
@@ -961,6 +1006,109 @@ impl App {
             let events = field.door_opened(&mut self.state);
             self.apply_events(events);
         }
+    }
+
+    /// Records the story state for the oracle (`dq9re state --json` field names): one JSON
+    /// object per checkpoint, in the order the journal recorded them.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn capture_checkpoint(&mut self, kind: &'static str) {
+        use std::fmt::Write as _;
+        let map = self.current.as_ref().map_or(0, |(entry, _)| entry.id);
+        let area = self
+            .current
+            .as_ref()
+            .and_then(|(entry, _)| entry.code.get(..3))
+            .and_then(|family| self.maps.iter().find(|map| map.code == family))
+            .map_or(0, |map| map.id);
+        let daytime = self.day.phase().is_daytime();
+        let mut out = String::new();
+        let _ = write!(
+            out,
+            "{{\"tick\":{},\"seconds\":{:.2},\"kind\":\"{kind}\",\"vblank\":{},\"map\":{},\"area\":{},\"track\":{},\"daytime\":{},",
+            self.tick,
+            self.tick as f64 / 60.0,
+            self.tick,
+            map,
+            area,
+            self.state.track,
+            daytime,
+        );
+        out.push_str("\"tracks\":[");
+        for (index, track) in self.state.tracks.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let list = |set: &std::collections::BTreeSet<i32>| {
+                set.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
+            };
+            let _ = write!(
+                out,
+                "{{\"chapter\":{},\"step\":{},\"substep\":{},\"chapter_flags\":[{}],\"step_flags\":[{}]}}",
+                track.chapter,
+                track.step,
+                track.substep,
+                list(&track.flags[0]),
+                list(&track.flags[1])
+            );
+        }
+        let flags = self
+            .state
+            .flags
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let quests = self
+            .state
+            .quests
+            .iter()
+            .map(|(quest, state)| format!("\"{quest}\":{state}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let hero = self.hero.map_or([0.0; 4], |hero| {
+            [
+                hero.position().x,
+                hero.position().y,
+                hero.position().z,
+                hero.yaw(),
+            ]
+        });
+        let _ = write!(
+            out,
+            "],\"flags\":[{flags}],\"quests\":{{{quests}}},\"event\":null,\"hero\":{{\"x\":{:.3},\"y\":{:.3},\"z\":{:.3},\"yaw\":{:.3}}}}}",
+            hero[0], hero[1], hero[2], hero[3]
+        );
+        self.checkpoints.push(out);
+    }
+
+    /// The checkpoints captured so far, one JSON object per line.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn checkpoints_jsonl(&self) -> String {
+        let mut out = self.checkpoints.join("\n");
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out
+    }
+
+    /// The recorded pad and action key, one JSON object per fixed step.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn input_trace_jsonl(&self) -> String {
+        let mut out = String::new();
+        for (frame, (bits, confirm)) in self.input_trace.iter().enumerate() {
+            let mut keys = Vec::new();
+            for (bit, name) in [(1u8, "up"), (2, "down"), (4, "left"), (8, "right")] {
+                if bits & bit != 0 {
+                    keys.push(format!("\"{name}\""));
+                }
+            }
+            out.push_str(&format!(
+                "{{\"frame\":{frame},\"pad\":[{}],\"a\":{}}}\n",
+                keys.join(","),
+                confirm
+            ));
+        }
+        out
     }
 
     fn redraw(&mut self) {

@@ -124,8 +124,6 @@ pub struct CollisionWorld {
     nodes: Vec<Node>,
     /// Node of each piece (`nodes` index).
     node_of_piece: Vec<usize>,
-    /// Original transform of each piece, before door rotations.
-    base: Vec<(Fx3, i32)>,
 }
 
 impl CollisionWorld {
@@ -204,8 +202,6 @@ impl CollisionWorld {
                     angle: i32::from(instance.world.angle),
                 });
                 out.node_of_piece.push(node);
-                out.base
-                    .push((instance.world.position, i32::from(instance.world.angle)));
             }
         }
         Ok(out)
@@ -213,11 +209,9 @@ impl CollisionWorld {
 
     /// Builds a world from meshes and their placements (tools and tests).
     pub fn from_pieces(meshes: Vec<Collision>, pieces: Vec<Piece>) -> Self {
-        let base = pieces.iter().map(|p| (p.position, p.angle)).collect();
         Self {
             meshes,
             node_of_piece: vec![usize::MAX; pieces.len()],
-            base,
             pieces,
             nodes: Vec::new(),
         }
@@ -257,7 +251,10 @@ impl CollisionWorld {
             if !inside {
                 continue;
             }
-            let (base_position, base_angle) = self.base[index];
+            let Some(base) = self.nodes.get(self.node_of_piece[index]) else {
+                continue;
+            };
+            let (base_position, base_angle) = (base.position, base.angle);
             let relative = fx::sub(base_position, pivot);
             // The map walk's rotation (`MTX_RotY33_` on a row vector, `0x02013168`).
             let rotated = [

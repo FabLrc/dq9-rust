@@ -154,6 +154,7 @@ fn options() -> Options {
         clock: None,
         mute: false,
         record_sound: false,
+        trace_inputs: false,
         event: None,
         layout: Layout::default(),
         new_game: false,

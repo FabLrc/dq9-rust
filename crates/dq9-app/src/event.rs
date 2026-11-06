@@ -196,6 +196,9 @@ pub enum Outcome {
     Finished,
     /// A sound native (712 to 738): the application's sound executes it (`audio::Audio`).
     Sound(Sound),
+    /// Native 584 opened a door with its own effect: the application looks up the map's
+    /// doorway sound (`Field::door_sound`) and plays base effect 200 + low quartet.
+    DoorSound { block: i32, placement: i32 },
 }
 
 /// What a step works on.
@@ -420,10 +423,7 @@ impl EventPlayer {
         if self.cutscene.doors().is_empty() {
             return;
         }
-        let collision = stage.collision;
-        let _ = self
-            .cutscene
-            .tick(&|x, z, y| collision.ground_height(x, z, y));
+        self.cutscene.tick_doors();
         self.apply_placements(stage);
     }
 
@@ -729,12 +729,15 @@ impl EventPlayer {
                 outcomes.push(Outcome::Ended(*event));
             }
             Event::Sound(sound) => outcomes.push(Outcome::Sound(sound.clone())),
-            Event::OpenDoor { sound: true, .. } => {
-                // `02018310` plays `g_DoorSeTable[record+0x2e & 0xf]` (200 to 204) on the base
-                // archive; the record's low quartet and the base effect index are not read
-                // here, so the sound is reported rather than guessed.
-                self.coverage.miss("door sound");
-            }
+            Event::OpenDoor {
+                block,
+                placement,
+                sound: true,
+                ..
+            } => outcomes.push(Outcome::DoorSound {
+                block: *block,
+                placement: *placement,
+            }),
             _ => {}
         }
         for output in self.cutscene.apply(&event) {

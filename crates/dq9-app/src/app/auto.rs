@@ -671,7 +671,9 @@ impl App {
     pub fn play_auto(&mut self, max_steps: u64, pilot: bool) -> Stop {
         let mut started = false;
         let mut bot = Pilot::default();
+        self.checkpoints.clear();
         for _ in 0..max_steps {
+            let recorded = self.journal.steps.len();
             let busy = self.events.is_active() || self.events.pending_start().is_some();
             if (busy || self.talk.is_active()) && self.tick.is_multiple_of(PRESS_EVERY) {
                 self.talk.press(Button::Confirm);
@@ -685,6 +687,19 @@ impl App {
                 }
             }
             self.run_steps(1);
+            for index in recorded..self.journal.steps.len() {
+                let kind = match &self.journal.steps[index].1 {
+                    Step::Map { .. } | Step::MapChange { .. } => Some("map"),
+                    Step::Progress { .. } => Some("progress"),
+                    Step::EventStarted(_) => Some("event_start"),
+                    Step::EventEnded(_) => Some("event_end"),
+                    Step::Battle { .. } => Some("battle"),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    self.capture_checkpoint(kind);
+                }
+            }
             let busy = self.events.is_active() || self.events.pending_start().is_some();
             started |= busy;
             if started && !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
@@ -699,6 +714,7 @@ impl App {
                 // for the place where it stops.
                 if last.is_none_or(|(_, s)| s != story) {
                     self.journal.record(self.tick, Step::Control { map, story });
+                    self.capture_checkpoint("control");
                 }
                 if pilot {
                     if bot.goal.is_some() {

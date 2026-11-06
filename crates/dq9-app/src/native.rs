@@ -136,6 +136,13 @@ struct Cli {
     /// the story on, instead of stopping: a player's stand-in (docs/app.md, § Nouvelle partie).
     #[arg(long, requires = "auto")]
     pilot: bool,
+    /// With `--auto`: writes the story state at every checkpoint as JSONL (the field names of
+    /// `dq9re state --json`), for the melonDS comparison.
+    #[arg(long, requires = "auto")]
+    checkpoints: Option<PathBuf>,
+    /// With `--auto`: writes the pad and action key of every fixed step as JSONL, for replay.
+    #[arg(long, requires = "auto")]
+    trace_inputs: Option<PathBuf>,
 }
 
 impl Cli {
@@ -293,6 +300,7 @@ pub fn main() -> Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let options = Options {
         record_sound: cli.sound_wav.is_some() && cli.headless_steps.is_some(),
+        trace_inputs: cli.trace_inputs.is_some(),
         map: cli.map.clone(),
         save,
         time: cli.time,
@@ -308,6 +316,14 @@ pub fn main() -> Result<()> {
     if cli.auto {
         let stop = app.play_auto(u64::from(cli.headless_steps.unwrap_or(200_000)), cli.pilot);
         print!("{}", app.auto_report(&stop));
+        if let Some(path) = &cli.checkpoints {
+            std::fs::write(path, app.checkpoints_jsonl())
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
+        if let Some(path) = &cli.trace_inputs {
+            std::fs::write(path, app.input_trace_jsonl())
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
         return Ok(());
     }
     if cli.headless || cli.headless_steps.is_some() {
