@@ -11,17 +11,20 @@ une fois la ROM lue et le jeu prend le clavier automatiquement. Les fichiers ROM
 sauvegarde restent locaux : aucun envoi au serveur.
 La démo est publique, expérimentale et nécessite un navigateur récent avec WebGPU ou WebGL 2.
 
-**État** : une première preuve technique se joue, en natif comme dans un navigateur.
-`cargo run -p dq9-app --release -- --new-game` lance l'ouverture et enchaîne les scènes du
-prologue jusqu'au contrôle libre à l'Observatoire. `--map M01`, ou une sauvegarde passée en
-`--save`, ouvre directement Angel Falls. On y trouve :
+**État** : v0.1 fonctionnelle en natif, partiellement certifiée dans le navigateur.
+`cargo run -p dq9-app --release -- --new-game` lance l'ouverture, enchaîne le prologue,
+l'Observatoire et le retour à Angel Falls, puis les scènes du village. Les tâches 1.2
+(anneau, veuve, écurie), le verrou de sortie et le retour 1.4.1 sont couverts par des tests
+réels sur la ROM. `--map M01`, ou une sauvegarde passée en `--save`, ouvre directement Angel Falls.
+On y trouve :
 
 - deux écrans DS (empilés, côte à côte ou écran du haut seul) ;
 - cartes texturées, éclairage, brouillard et heure du jour ;
 - PNJ animés et héros animé ;
 - déplacement porté en virgule fixe, avec collisions et caméra L/R ;
-- portes et maisons, conversations dans la fenêtre de message du jeu ;
-- scènes scriptées : interpréteur `.stb`, personnages, caméra, fondus, effets ;
+- portes, maisons et warps scénarisés, conversations dans la fenêtre de message du jeu ;
+- scènes scriptées : interpréteur `.stb`, personnages, caméra, fondus, effets, nuit ;
+- tâches du village 1.2 : anneau, veuve, écurie, verrou de sortie, retour 1.4.1 ;
 - musique, effets sonores et jingles ;
 - départ depuis une sauvegarde DS (`--save`).
 
@@ -29,9 +32,14 @@ Manquent encore :
 
 - les combats : le premier combat scripté est compté comme gagné ;
 - quelques effets de scène ;
-- la comparaison image par image à melonDS, qui est le critère de la v0.1.
+- la **certification navigateur continue** : la page publiée joue l'ouverture, le premier
+  contrôle, 1140 et 1130, puis le hall surélevé, mais le parcours automatisé ne franchit pas
+  encore le hall vers 4107, la tour et Angel Falls. Le parcours natif et les tests ROM
+  couvrent ces étapes ; la session navigateur de bout en bout reste à faire ;
+- la comparaison des drapeaux sur tout le parcours : le point de contrôle 1.1.2 et le pas
+  terrain à 30 Hz sont vérifiés, avec le seul écart de butin aléatoire `4135`.
 
-Plan : `docs/roadmap.md` ; lancement et commandes : `docs/app.md`.
+Plan, limites et preuves : `docs/roadmap.md` ; lancement et commandes : `docs/app.md`.
 
 <!-- coverage:start -->
 **Avancement : 2,1 %** des fonctions de jeu traduites (263 / 12 056), 2,7 % du code (70 Ko / 2 505 Ko).
