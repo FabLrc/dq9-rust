@@ -141,9 +141,11 @@ les drapeaux 12 et 14 au lieu de 8 et 10, soit le bit `0x4` (`dq9re doors --stat
 `stornway_at_night_marks_its_two_locked_doorways`). Les portes de l'église (numéros 18 et 20)
 restent libres, et le héros les prend.
 
-**Non modélisé** : les actions qui touchent les objets de carte (`0x6d`, `0x95`/`0x96`,
-`0x99`…), l'animation de la porte et la marche automatique, les gardes de
-`ov_017::0219755c`, les zones des autres types.
+**Non modélisé** : l'animation de la porte et la marche automatique, les gardes de
+`ov_017::0219755c`, les zones des autres types, et l'application par la fenêtre des objets de
+carte `0x6d`, `0x99`… Pour `0x95`/`0x96`, l'émission est faite (`Request::SetPlacementHidden`,
+voir le tableau des actions) ; l'application au rendu et aux collisions appartient à
+`dq9-app`.
 
 ## Mots (`Trig_CompileWords`, `0x0205ec80`)
 
@@ -309,7 +311,7 @@ synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
 | 0x90 | bits 11–13 de l'entrée de la quête `arg` = `haut` (quête dans l'état 2, pas invité) | 155 |
 | 0x91 † | fenêtre choisie par `arg` **[sens inconnu]** | 49 |
 | 0x92 / 0x93 | drapeau `arg + 0x776` | 0 |
-| 0x95 / 0x96 | cache / montre l'objet de carte (`arg`, `haut`), ou note l'état dans `+0x41b` s'il n'est pas chargé **[hypothèse sur le sens]** | 342 / 97 |
+| 0x95 / 0x96 | cache / montre **immédiatement** l'objet de carte : bloc = `arg & 0xff`, placement = moitié haute de l'opérande 0. `Trig_RunAction` cas 0x31/0x32 (`0x02061c14`) : `func_02019508(manager, arg, opérande)` puis `func_02013380(objet, arg, 0/1)`; si l'objet n'est pas chargé, `func_0206ea8c(manager, arg & 0xff, (opérande + 0x80) >> 16, …)` note l'état dans `+0x41b`. Émis en `Request::SetPlacementHidden { block, placement, hidden }`, dans l'ordre de la liste et avant les actions différées. `0x95(0, 0x100000)` = bloc 0, placement 16, caché (tour `X01M01`) | 342 / 97 |
 | 0x97 | fenêtre `+0x3b60` avec `arg` **[sens inconnu]** | 23 |
 | 0x9b † | drapeau `haut` du jeu 1 puis lance l'événement `arg` | 14 |
 | 0x9c † | termine la quête `arg`, reprend l'objet `haut`, donne l'objet `bas` | 15 |
@@ -549,6 +551,164 @@ sous **1.2..1.2** (`dq9re triggers X01 --with 21591`) : il n'est pas chargé à 
 1.1.2. La suite d'origine passe par `4101 → 4103 → 4109 → 4103 → 4104`, l'événement `21510`
 (1.2.1) puis `21591` ; une route directe `21591` après 1.1.2 est exclue par les conditions
 d'origine.
+
+## Chaîne du prologue d'Angel Falls (1.1.2 → 1.4.1)
+
+Établie sur la ROM européenne avec `dq9re stage-events 1.1-3`, `dq9re triggers`, `dq9re cast`,
+`dq9re talk`, `dq9re stb` et `dq9re script 1.2-3` ; les dumps et traces sont sous
+`build/v01-20261107/village/` (ignoré). Chaque transition ci-dessous est la **seule** action
+`0x84` qui atteint ce point d'histoire : un point d'histoire n'avance que par une action de
+trigger, jamais par une scène. Les scènes ne sont que des `0x77` ; elles ne modifient la
+progression que par le trigger de l'événement 11.
+
+### 1.1.2 → 1.2 : Yggdrasil et l'Observatoire
+
+| Étape | Preuve (`dq9re triggers`) | Interaction |
+|---|---|---|
+| 1.1.2, `X01M04` (4104), Yggdrasil | `room 4104 1.1..1.1 event 1: if 0x6(199) 0xb(80) 0x10(0) then 0x77(21510)` | PNJ 199 de type 1 (point d'examen, invisible) à `(0, 9.1, -3.04)`, zone 80 ; répondre **oui** à `Offer the benevolessence up to Yggdrasil?` |
+| fin de `21510` | `room 4104 1.1..1.1 event 11: if 0x8(21510) then 0x73(22159) 0x84(0, 1, 2, 1) …` | retire la benevolessence, passe en **1.2.1** |
+| 1.2.1, `X01M07` (4107), Apus Major | `room 4107 1.2..1.3 event 0: if 0x6(139) 0x5(0) then 0x76(139, 192) 0x68(0)` | dialogue 192 (« Well done… »), puis contexte 193 (« Make ready, and then speak with the female Celestrian ») ; l'action `0x68(0)` lève le drapeau **jeu 1 n° 0** |
+| `X01M05` (4105), gardienne 101 | `room 4105 1.2..1.2 event 0: if 0x6(101) 0x4(0) 0x52(13007, …) then 0x76(101, 193)` ; `event 1: if 0x6(101) 0xb(193) 0x10(0) then 0x77(21591)` | la condition `0x52(13007)` exige la tenue céleste, portée depuis la création ; la ligne 193 est la question « descendre vers le Protectorat ? » ; répondre **oui** |
+| fin de `21591` | `room 4105 1.2..1.2 event 11: if 0x8(21591) then 0xe1(1100)` | transport vers la carte **1100** (`M01`) |
+
+### 1.2 : arrivée et tâches du village
+
+À l'arrivée avec transition, `Field::enter` joue l'événement 20 puis l'événement 3 :
+
+- événement 20 (`room 1100 1.1..1.2`) : `0x95(0, 0x1a0000)` (cache le placement 26),
+  `0x96(0, 0x1b0000)` (montre 27), `0x95(0, 0x1c0000)` (cache 28), puis
+  `0x8f(10, -2, -1, 21, -10, -2, 15, 0)` : aire **10**, autour de l'entrée du village ;
+- événement 3 (`1.2..1.2`, drapeau jeu 1 n° 1 baissé) : `0x97(1)`, `0x77(21592)`,
+  `0x68(1)`, `0xc5(3)`. `21592` est la scène d'Ivor (trois messages `//Ivor//`) ; elle se
+  termine sans autre trigger.
+
+Le point de départ de `M01` est `(-6.45, -1.95, 13.55)`, hors de l'aire 10 ; en marchant vers
+le nord (l'entrée à `z ≈ 18`) on entre dans l'aire :
+
+| Étape | Preuve | Interaction |
+|---|---|---|
+| aire 10 atteinte | `room 1100 1.2..1.2 event 2: if 0x7(10) then 0x76(230, 192)` | conversation automatique avec le PNJ invisible 230 (`-6.51, -1.85, 17.91`) |
+| fin de cette conversation | `event 1: if 0x6(230) 0xb(192) then 0x77(1310)` | scène 1310 (fondu, caméra, héros ramené à `(-6.45, -1.85, 13.55)`) |
+
+Les trois tâches qui font avancer 1.2 (drapeaux **jeu 1** 3, 4 et 5) :
+
+| Tâche | Preuve | Effet |
+|---|---|---|
+| **Anneau de l'esprit** : parler au PNJ 210 (`s097`, `26.91, -1.05, 2.16`) | `room 1100 1.2..1.2 event 0: if 0x6(210) 0x5(3) then 0x77(1390)` ; `event 11: if 0x8(1390) then 0x72(22158) 0x68(3) 0x7c(210)` | scène 1390 (`<HERO> acquires a keepsake ring`), objet **22158**, drapeau jeu 1 n° 3, PNJ 210 retiré |
+| **La veuve** : parler au PNJ 12 de `M01M06` (1106), `1.50, 0.15, 0` | avec le drapeau 3 levé : `event 0: if 0x6(12) 0x4(3) 0x5(4) then 0x76(12, 193)` ; `event 1: if 0x6(12) 0xb(193) 0x10(0) then 0x77(1330) 0x73(22158) 0x72(22159) 0x68(4)` | ligne 193 (« Please, Guardian… help to reunite my husband's ring ») avec choix ; répondre **oui** ; scène 1330 (l'anneau glissé dans le manteau), l'objet 22158 est pris, la benevolessence **22159** donnée, drapeau jeu 1 n° 4 |
+| **L'écurie** : parler aux PNJ 211 à 215 de `M01M04` (1104) | `event 0: if 0x6(211) 0x1(316) then 0x76(211, 192)` ; `event 1: if 0x6(211) 0x1(316) 0x0(317) 0x0(318) 0x0(319) 0x0(320) 0x5(5) then 0x72(22079) 0x64(316) 0x7c(211) 0x77(1340)` ; variante sans les quatre autres drapeaux pour les quatre premiers | chacun des cinq donne **22079**, lève son drapeau (316…320) et est retiré ; le **cinquième** (les quatre autres drapeaux levés, drapeau jeu 1 n° 5 baissé) joue 1340 : le palefrenier remercie, la benevolessence 22159 est donnée (`event 11: if 0x8(1340) then 0x68(5) 0x64(315) 0x72(22159)`) |
+
+La **sortie de maison** est le verrou de 1.2 → 1.3 : la zone `0x72` de 1104 ou de 1106
+déclenche l'événement 6 (`room 1104 1.2..1.2 event 6: if 0x9(1104) 0x4(4) 0x4(5) then
+0x66(1) 0xb1(1, 0) 0x84(0, 1, 3, 1)`, variante 1106 avec `0x66(0)`). Il faut donc les
+drapeaux jeu 1 n° 4 (1330) **et** n° 5 (1340) ; le drapeau jeu 0 (0 ou 1 selon la maison)
+choisit la scène d'arrivée 1350 ou 1360. `0xb1(1, 0)` passe le moment de la journée à **0
+(nuit)**.
+
+Scène **non obligatoire mais d'histoire** : le chien 95 (`n097a`, `20.29, -1.05, -0.67`) →
+`if 0x6(95) 0x5(2) 0x5(3) then 0x77(1320)` ; la fin de 1320 fait `0x68(2)` et avance en
+**1.2.2** (`0x84(0, 1, 2, 2)`). Aucun verrou de 1.2 → 1.3 ne teste la sous-étape : la scène
+peut être vue à tout moment avant de sortir, et son oubli ne bloque pas la transition.
+
+### 1.3 : nuit, âme errante et retour
+
+- événement 20 (`room 1100 1.3..1.4`) : `0x96(0, 0x1a0000)`, `0x96(0, 0x1b0000)`,
+  `0x95(0, 0x1c0000)`, puis `0x8f(12, 3, 0, 0, 0, -1, -4, 17)` : aire **12** ;
+- événement 3 : `0x2(0)` (drapeau jeu 0 n° 0 levé) → `0x77(1350)` ; `0x2(1)` → `0x77(1360)` ;
+  la variante jouée lève le drapeau jeu 0 n° 2 et baisse le drapeau global 315 ;
+- aire 12 (x `0..3`, z `-4..0`) → `room 1100 1.3..1.3 event 2: if 0x7(12) 0x5(0) then
+  0x77(1410)` : leçon d'Aquila sur les âmes errantes ; sa fin lève le drapeau jeu 1 n° 0 ;
+- PNJ 94 (`n007g`, `15.76, -1.05, -6.78`) →
+  `room 1100 1.3..1.3 event 0: if 0x6(94) 0x5(1) then 0x77(21595) 0x72(22159)` : la scène de
+  l'âme errante. Elle n'ouvre aucune conversation (pas de `0x76`), donc aucun fichier de
+  répliques `094_en.bin` n'est nécessaire.
+
+Fin de `21595`, cas normal de l'original : le script appelle la native **559**
+(`ov_001::021609e4`) avec 1 sur le chemin normal (`559(1)` juste avant le fondu final de
+`mark(13)` ; `559(0)` seulement sur la branche de `mark(12)`), ce qui écrit `+0x490` du
+gestionnaire de quêtes. Le trigger de fin prend donc la branche
+`event 11: if 0x8(21595) 0x1f(1) then 0x84(0, 1, 4, 1) 0x97(2) 0x85(4105, …)`: retour
+direct à l'Observatoire (`4105`) en **1.4.1**. Le runtime ne modélise pas 559 : `+0x490`
+reste 0 et il prend `0x1f(0)` (`0x68(1) 0x84(0, 1, 3, 2) 0x8d(1)`), puis le repli
+d'origine : parler à Aquila 99 (`s019n`, `4.46, -1.05, -2.06`), ligne de sous-étape 2 avec
+choix, `event 1: if 0x6(99) 0xb(0) 0x10(0) 0x4(1) then 0x77(21593)` ; la fin de 21593 fait
+`0x84(0, 1, 4, 1) 0x97(2) 0x85(4105, …)`. Les deux routes atteignent 1.4.1, mais l'original
+ne joue pas 21593.
+
+### Tâches d'histoire et quêtes numérotées
+
+- Les tâches 1330 et 1340 sont des **tâches d'histoire**, pas des quêtes numérotées : aucune
+  action de journal (`0x7d`, `0x7f`, `0x90`, `0x9c`/`0x9d`) ; leur état tient dans les
+  drapeaux jeu 1 n° 3–5 et les drapeaux globaux 315 et 316–320.
+- Les quêtes numérotées des mêmes cartes (quête 7 chez le PNJ 1, quête 103 chez le PNJ 1,
+  quête 193 à l'auberge d'Ivor) sont des conditions `0x14`/`0x19`/`0x1a` de triggers
+  `1.1..19.99` : elles restent disponibles sans jamais intervenir dans le verrou
+  1.2 → 1.3. `dq9re triggers M01 --with 7` les montre à côté des lignes du prologue.
+- La scène 1610 (`X01M07`, PNJ 130, réponse **non**) est du lore (la disparition d'un
+  Guardian) ; elle ne touche ni progression ni quête.
+- `1370` (Ivor, choix) et `1380` (PNJ 2) sont des scènes de couleur locale : `0x68(13)` et
+  `0x66(7)` respectivement, aucune action `0x84`.
+
+### Écarts connus sur ce chemin
+
+1. **Native 559** (`ov_001::021609e4`) : écrit l'octet `+0x490` lu par la condition `0x1f`.
+   Sans elle, 21595 prend le repli 1.3.2 + 21593 au lieu du retour direct 1.4.1. Contrat
+   proposé : un `Event` du script (ou une commande de type `Raw`) écrit `Raw::Quest490` dans
+   l'état de l'application avant que `Field::event_ended(21595)` ne soit appelé ; fichiers
+   nécessaires : `dq9-core/src/script/natives.rs`, `dq9-core/src/cutscene.rs`,
+   `dq9-app/src/app.rs` (et `dq9-app/src/event.rs`, propriété de la tour). L'assertion doit
+   vérifier `Raw::Quest490 == 1` après la scène et le warp `4105` tiré par le trigger 11.
+2. **Moment de la journée du rendu** : `0xb1(1, 0)` met `state.time_of_day` à 0 avant le
+   changement de carte, et `story_from_state` en dérive le cast nuit, mais `dq9-app` garde son
+   propre `self.time`/`DayClock` pour l'éclairage (`load::load(..., self.time, ...)`) : la
+   scène 1.3 est donc éclairée de jour. Contrat proposé : synchroniser `self.day`/`self.time`
+   (sans recharger la carte, `set_time` recharge) quand `state.time_of_day` a changé entre
+   deux lots d'événements, en ne touchant pas aux options `--time`/`--clock` explicites.
+   Fichiers : `dq9-app/src/app.rs` (+ `lighting.rs` déjà fourni).
+3. **Retrait de PNJ (0x7c)** : `Request::RemoveNpc` n'enlève le PNJ que de la liste de
+   conversation (`Talk::remove_npc`) ; l'instance du modèle reste dans la scène rendue. Les
+   cinq tas de l'écurie et l'esprit 210 restent donc visibles après leur scène. Assertion
+   proposée : après application de `RemoveNpc(210)` puis de 1390, l'instance du cast 210 est
+   masquée (et idem pour 211–215 après 1340).
+4. `0x8d` (`Request::Other(141)`), `560` et `571` ne changent pas le déroulement observé :
+   les scènes 1.2–1.3 vont à leur terme (`dq9re script 1.2-3`) ; aucun correctif n'est
+   établi pour l'instant.
+
+### Reproduction
+
+```powershell
+$ROM = "rom/Dragon Quest IX - Sentinels of the Starry Skies (Europe) (En,Fr,De,Es,It).nds"
+dq9re --rom $ROM stage-events 1.1-3
+dq9re --rom $ROM triggers X01 --story 1.2
+dq9re --rom $ROM triggers M01 --story 1.2
+dq9re --rom $ROM triggers M01 --story 1.3
+dq9re --rom $ROM triggers M01 --with 21510
+dq9re --rom $ROM triggers M01 --with 1330
+dq9re --rom $ROM script 1.2-3 --quiet
+# diagnostic isolé (ne prouve pas le parcours continu) :
+dq9-app --rom $ROM --events-report 1.2-3 --mute
+dq9-app --rom $ROM --event 21591 --chapter 1 --step 2 --substep 1 --headless --headless-steps 4000 --press-every 30 --mute
+dq9-app --rom $ROM --event 21595 --chapter 1 --step 3 --substep 1 --night --headless --headless-steps 6000 --press-every 20 --mute
+```
+
+### Assertions de régression proposées
+
+- **Émission 0x95/0x96** (faite, `field_triggers_emit_placement_hide_and_show`) : un trigger
+  synthétique porte `0x95(0x1234, 0x00100000)` puis `0x96(0x01ff, 0x00070000)` et un
+  `0x77(5000)` différé ; `Field::event_ended` rend
+  `[SetPlacementHidden{block:0x34, placement:16, hidden:true},
+  SetPlacementHidden{block:0xff, placement:7, hidden:false}, Event(5000)]`.
+- **Verrou de sortie** : état 1.2.x, drapeaux jeu 1 4 et 5 levés, meneur dans la zone `0x72`
+  de 1104 → un pas rend `MapChange{destination:1100, cause:Warp}`, `state.time_of_day == 0`
+  et la piste (1, 3, 1) ; avec un seul des deux drapeaux, aucun changement de carte.
+- **1330** : état 1.2.1 avec drapeau jeu 1 n° 3, événement 1 du PNJ 12, contexte 193,
+  réponse 0 → `Event(1330)`, 22158 retiré, 22159 donné, drapeau 4 levé (et drapeau
+  d'obtention 4283).
+- **1340** : événement 1 du PNJ 211 avec les drapeaux 317–320 levés et 316 baissé →
+  `Event(1340)` et `RemoveNpc(211)` ; avec 317 seulement, pas d'événement mais 22079 donné,
+  316 levé et `RemoveNpc(211)`.
+- **559** : après exécution de 21595, `Raw::Quest490 == 1` et le trigger 11 rend le warp
+  4105 avec la piste (1, 4, 1), sans 21593.
 
 ## Exemples
 
