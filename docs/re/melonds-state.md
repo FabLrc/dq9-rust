@@ -380,8 +380,101 @@ image RAM temporaire : **une seule** implémentation des offsets, et `--checkpoi
 les garde pour le catalogue ou pour `oracle-compare.ps1`.
 
 Limites : l'image vidéo capturée est celle de la **dernière** image exécutée ; seuls joypad
-et stylet sont fournis (pas de micro, pas de Wi-Fi, pas de RTC réglée) ; l'A en boucle avance
-les dialogues mais ne suffit pas à finir une conversation qui rouvre (voir plus bas).
+et stylet sont fournis (pas de micro, pas de Wi-Fi, pas de RTC réglée). L'A en boucle ferme
+bien les messages, mais il peut **rouvrir** une conversation de PNJ répétable une fois la
+scène finie : la progression de l'histoire reste alors identique, ce n'est pas un blocage de
+la fenêtre de message (preuve en 2026-11-07 ci-dessous).
+
+### Reprise d'état, fenêtre de message et coordonnées tactiles (2026-11-07)
+
+`--state-in` reprend exactement un fichier écrit par `--state-out` (même cœur) : les
+milestones d'une course découpée en segments se reproduisent dans une seule course continue
+(§ « Course originale continue » ci-dessous). Le harnais expose aussi la RAM principale, donc
+l'état de la fenêtre de message se lit **sans capture** : `W = 020421b0()`, c'est-à-dire
+`u32[u32[0x020421bc] + 0x1c]` ; le 2026-11-07, `W = 0x021152f4` dans les deux états
+`build/orca/route/idle-state.bin` et `build/v01-20261107/oracle/end1600-state.bin`.
+
+| Champ | Sens |
+|---|---|
+| `W+0x998` | fenêtre active (1) ou fermée (0) |
+| `W+0x9a0` | état d'attente de `MsgWin_Update` (0 attend la touche, 3 `<ADD>`, 5 frappe, 6 choix) |
+| `W+0x19bd` | octet rendu par la native 405 (`get_message_state`) : 1 tant que le message n'est pas refermé |
+| `W+0x912` | 3 = flèche d'attente affichée ; 5 alterne pendant la frappe |
+| `W+0x954` | réponse du dernier `YESNO` : −1 pas de réponse, 0 oui, 1 non |
+
+Mesure : depuis `idle-state.bin`, un A à l'image 61 fait passer `W+0x998` et `W+0x19bd` de 1 à
+0 à l'image 67 ; la scène affiche alors son message suivant à l'image 110 et se termine à
+l'image 238. L'appui A est donc reçu et le texte se ferme.
+
+**Fausse impasse après 1160.** Le message « Stop! Benevolence is not a toy! » n'appartient pas
+à l'événement 1160 : c'est l'entrée 169 de `data/event/ev01600/ev01600_en.bin` (clés 168, 169,
+170), la scène de l'Observatoire où un compagnon demande à recevoir la bienveillance
+(`data/scenario/X01A0/130_en.bin`, PNJ 130 de `X01M07` en (−9,27 ; 0,25 ; 1,16)). Une fois 1160
+terminé, le héros est en contrôle libre ; les A en boucle rouvrent la conversation répétable
+du PNJ 130, dont la scène 1600 se rejoue (le choix « Yes » puis 168 → 169 → 170) toutes les
+60 à 80 images, et l'histoire reste en 1.1.1. Aucun état n'était bloqué : il fallait **arrêter
+les A et marcher**. Preuve : un A à l'image 61 ferme la fenêtre et laisse le contrôle libre à
+l'image 238 ; `--watch 0x021152f4:0x1a00` montre 998 qui repasse de 0 à 1 à chaque nouvelle
+conversation.
+
+**Coordonnées tactiles.** `--input` attend `[x, y]` sur l'image **empilée 256 × 384** (haut
+puis bas), comme documenté plus haut ; l'écran tactile est la partie basse, donc `y` doit être
+dans `192..383`. Les essais antérieurs `[128, 160]` visaient l'écran du haut et ne pouvaient
+pas atteindre le stylet ; ils ne prouvent rien sur la vitesse du texte ni sur une attente
+tactile.
+
+### Course originale continue : 1160 → 1170 → 1.1.2 (2026-11-07)
+
+Entrées et preuves (ignorées par git) : `build/v01-20261107/oracle/`. La course part de
+`build/orca/route/idle-state.bin`, ferme la scène 1600, marche jusqu'à `X01M01`, parle au
+PNJ 127 (trigger `room 4101, event 0 : 0x6[?](127) 0x4[?](3) 0x5[?](4) → 0x77(1170)`), joue
+1170, puis s'arrête à la première image de 1.1.2.
+
+```powershell
+python scripts/melondsds_host.py --rom <ROM> --core tools/build/melondsds_libretro.dll `
+    --state-in build/orca/route/idle-state.bin `
+    --input build/v01-20261107/oracle/continuous.jsonl --frames 3966 `
+    --checkpoints build/v01-20261107/oracle/continuous-cp.jsonl `
+    --state-out build/v01-20261107/oracle/continuous-state.bin `
+    --dump-ram build/v01-20261107/oracle/continuous-ram.bin `
+    --shot build/v01-20261107/oracle/continuous-112.png
+cargo dq9re map X01M01 --state build/v01-20261107/oracle/continuous-state.bin
+cargo dq9re state build/v01-20261107/oracle/continuous-state.bin --json
+```
+
+Repères de la course (image, pose du héros, carte) :
+
+| Image | Pose | Point |
+|---:|---|---|
+| 800 | (−8,275 ; 0,169 ; 1,257) | contrôle libre après 1600, `X01M07` 1.1.1 |
+| 1100 | (−8,275 ; 0,169 ; 5,957) | descente plein sud |
+| 1200 | (0,985 ; 0,169 ; 5,957) | passage à l'est |
+| 1440 | (1,177 ; 0,169 ; 6,5) | mur sud |
+| 1940 | (−7,32 ; 0,169 ; 14,98) | couloir ouest puis sud |
+| 2200 | (0 ; 4,25 ; 31,72) | entrée `X01M01` par la porte de `X01M07` |
+| 2590 | (−3,509 ; 7,843 ; 28,514) | rampe sud-ouest |
+| 3010 | (2,704 ; 11,249 ; 22,103) | plateforme haute |
+| 3230 | (10,125 ; 11,249 ; 15,937) | côté est de la plateforme |
+| 3400 | (1,68 ; 11,249 ; 21,919) | retour au centre |
+| 3480 | (1,303 ; 11,249 ; 18,651) | A devant le PNJ 127 |
+| 3571 | (1,303 ; 11,249 ; 18,651) | message « Apus Major has sent you… » |
+| 3965 | (2,77 ; 11,25 ; 18,19) | **première image de 1.1.2** |
+
+À l'image 3965, `dq9re state --json` donne carte `4101`, area `4100`, piste 0,
+`chapter/step/substep = 1.1.2`, `step_flags {1,2,3,4}`, drapeaux globaux inchangés
+(`1450–1454,1461,2721,2751,2774,3191,3775,3955,4046,4135,4283,4410,4414`), héros
+(2,77 ; 11,25 ; 18,19), cap 1,888.
+
+Le trigger de fin de 1170 exécute `0x68(4)` (drapeau de piste), `0x95(0, 0x100000)` puis
+`0x84(0,1,1,2)` (avance 1.1.2). Dans l'original, `dq9re map X01M01 --state` nomme l'effet du
+`0x95` : sur `continuous-state.bin`, « block 0 (X01M0100.bmdj): instance 16 hidden » ; sur
+`talk127b-state.bin` (1.1.1, avant 1170), « the loaded blocks match the assembly ». L'instance
+16 est donc bien **masquée à 1.1.2** par le jeu : un runtime qui ignore `0x95` garde le mur
+mince S1 et ne peut pas prétendre au même état.
+
+Empreintes SHA-256 : `continuous.jsonl` `3d0fd18d…`, checkpoints `469404ea…`, état
+`496fec9e…`, image RAM `cc30d043…`, capture `fd0c728e…`, `idle-state.bin` `cad28ef0…`,
+état 1.1.1 `talk127b-state.bin` `efd0ff3e…`.
 
 ### Mesure du 2026-11-06 (ROM EU, melonDS 1.1, BIOS libres)
 
