@@ -634,11 +634,15 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   (`X01A0.gp2/108_en.bin`, enregistrement 0), qui s'avance et se ferme au clavier. Une
   seconde nouvelle partie rejoue les touches directionnelles du pilote depuis le contrôle
   4105 : conversation du PNJ 111, événement `1140`, PNJ 105 (contexte 80) et événement `1130`
-  atteints visuellement et dans la console. Les segments suivants, joués au clavier pendant
-  14,3 s, n'ont pas produit de changement de carte (4106 absent du journal) ; le héros reste
-  sur 4105 et le franchissement n'est donc pas prouvé. Captures, traces et SHA-256 dans
-  `build/v01-20261107/browser/`. Aucun chargement de sauvegarde, téléportation ou état interne
-  injecté ; portes, 1170, tour et 21510/1.2.1 restent à vérifier.
+  atteints visuellement et dans la console. Après la scène 1130, des pressions brèves au clavier
+  et des captures ont confirmé le franchissement des escaliers jusqu'au chemin de pierre surélevé
+  et l'exploration du hall ; le héros reste toutefois sur 4105, sans événement ni transition 4107,
+  même au bout du chemin devant la bannière. La capture d'extrémité est
+  `15-banner-endpoint-still-4105.webp` (SHA-256
+  `253cf6ee00a55be7fce1bf564912874bbb6649fb59b1e33d47666bf4a37b18fa`), avec les captures du
+  chemin surélevé et de l'aile est dans `build/v01-20261107/browser/` et
+  `browser-navigation-addendum.SHA256SUMS`. Aucune sauvegarde, téléportation ou injection d'état
+  interne ; portes, 4107, 1170, tour et 21510/1.2.1 restent à vérifier.
 - Chargement d'une sauvegarde après « Nouvelle partie » : scénario natif Windows exercé
   avec la ROM EU et une sauvegarde locale (`a_save_selected_after_a_new_game_loads_that_save`).
   `new_game` devient faux et `C01M09` (carte 109) remplace le prologue. Le test couvre un
