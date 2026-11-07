@@ -13,8 +13,8 @@ livrés avec un prologue intégralement jouable.
 
 ### Lots actifs — 7 novembre 2026
 
-Run Orca `run_93299987d8b6`, quatre workers actifs (plafond : six) :
-trois OMP `opencode-go/deepseek-v4.1-flash` et un OMP `openai-codex/gpt-6-luna`
+Run Orca `run_93299987d8b6`, six workers actifs (plafond : six) :
+cinq OMP `opencode-go/deepseek-v4.1-flash` et un OMP `openai-codex/gpt-6-luna`
 pour le parcours visuel. Contrôles et intégration centralisés.
 
 - `v01-oracle7` : 1170 puis 1.1.2 atteints dans l'original sans téléportation, pose
@@ -28,6 +28,11 @@ pour le parcours visuel. Contrôles et intégration centralisés.
   visuel des PNJ ; propriétaire de `app.rs`, `event.rs`, `talk.rs` et `re/trigger.md`.
 - `v01-browser7` (Luna 6) : parcours réel au clavier sur la page publiée, captures et
   frontières de scènes ; propriétaire de `app.md` et du texte du README, hors couverture.
+- `placement-review7` : revue en lecture seule des invariants de placement, portes,
+  consommateurs de scènes et construction headless ; compte rendu sous `build/`, intégré
+  à la documentation par le coordinateur.
+- `cadence-contract7` : lecture des mesures originales par image et contrat de cadence
+  terrain à 30 Hz ; aucune modification concurrente de `app.rs`.
 
 Lots clôturés et worktrees fermés : `v01-web7` (`574d24c`, resélection du même fichier,
 vérifiée sur Pages), `v01-parity7` (`69287f9`, comparaisons sans réutilisation de points),
