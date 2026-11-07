@@ -440,9 +440,7 @@ une ROM refusée désactive de nouveau « Nouvelle partie ».
 Les champs ROM et sauvegarde sont vidés dès qu'un fichier est lu : choisir de nouveau le même
 chemin (même ROM après une erreur, même sauvegarde après « Nouvelle partie ») déclenche donc
 un nouveau `change` et remplace la partie en cours. Sans cela le navigateur ne renvoie aucun
-événement et le fichier reste celui de la session précédente. `#status` ne garde que les
-messages utiles au joueur (lecture du fichier, carte chargée, nouvelle partie, erreur) : les
-lignes de musique, d'effets sonores et de conversation restent dans la console.
+événement et le fichier reste celui de la session précédente.
 
 Le workflow `.github/workflows/pages.yml` compile la version wasm optimisée à chaque push
 sur `main` qui touche le binaire web (`crates/**`, `Cargo.toml`, `Cargo.lock`,
@@ -633,8 +631,8 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   dialogue sont annulés et ne reprennent pas pendant les 120 pas fixes suivants. Le test et
   ses imports sont compilés uniquement sous Windows ; le chemin navigateur reste en wasm.
 - Réinitialisation de session sur le site publié (7 novembre 2026) : page
-  `https://fablrc.github.io/dq9-rust/` (binaire du dernier commit de code `98043b3`, les
-  commits suivants ne touchant que `docs/` et `re/`), ROM européenne locale de 256 Mio
+  `https://fablrc.github.io/dq9-rust/` (déploiement Pages réussi `42284105022`, tête
+  `9a25199`), ROM européenne locale de 256 Mio
   (SHA-256 `f305494b…a63b1f`) et `build/sav/demo.sav` (C01M09, SHA-256 `cf0f43b4…1c24a8`),
   navigateur piloté sans fenêtre, 1280 × 900, DPR 1,25. Un fichier qui n'est pas une ROM
   affiche l'erreur française et désactive « Nouvelle partie » ; une ROM valide rend le focus
@@ -648,15 +646,17 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   conversation du PNJ 25 (`C01Q0/025_en.bin`, « Hi! Welcome »). Captures et manifeste
   SHA-256 : `build/v01-20261107/web/` (`web-40` à `web-51`, `coordinator-*.png`,
   `SHA256SUMS`).
-- Même fichier choisi deux fois (défaut de la version publiée `98043b3`) : après « Nouvelle
+- Même fichier choisi deux fois (défaut observé sur la page publiée) : après « Nouvelle
   partie », rechoisir le chemin déjà présent dans le champ sauvegarde ne déclenche aucun
   `change`, donc la sauvegarde n'est pas relue et le prologue reste affiché ; un autre chemin
   fonctionne. Correctif dans `web.rs` : vider les champs ROM et sauvegarde dès la lecture du
   fichier. Preuve avant correctif : `web-48-same-save-ignored.png` (ciel du prologue, champ
   `demo.sav`, aucune ligne `Sauvegarde lue`) contre
-  `web-49-other-save-loads-c01m09.png`. Le statut affichait aussi `sound effect 0 on handle 0`
-  et les lignes `talk:` ; elles restent dans la console, plus dans `#status`. Ces deux
-  corrections restent à reconstruire et à contrôler sur la page publique.
+  `web-49-other-save-loads-c01m09.png`. Aucun test natif ne peut exercer la sémantique
+  `change` d'un `<input type=file>` ; le test natif
+  `a_save_selected_after_a_new_game_loads_that_save` couvre l'état arrière (annulation de
+  l'événement et du dialogue), et le correctif navigateur reste contrôlé par le smoke
+  Chromium.
 - Portes internes de la version publiée `17bef8c` : sur `X01M07`, ROM choisie localement,
   marche au clavier autour des colonnes puis ouverture des deux vantaux (`door 0/3 opens`,
   `door 0/2 opens`) et franchissement visible jusque dans la bibliothèque. Capture conservée
