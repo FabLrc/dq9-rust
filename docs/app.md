@@ -437,6 +437,13 @@ ensemble de touches, donc le héros ne continue pas à marcher. Les erreurs (fic
 ROM qui n'est pas `YDQP01`, moteur graphique absent) s'affichent en rouge dans `#status` ;
 une ROM refusée désactive de nouveau « Nouvelle partie ».
 
+Les champs ROM et sauvegarde sont vidés dès qu'un fichier est lu : choisir de nouveau le même
+chemin (même ROM après une erreur, même sauvegarde après « Nouvelle partie ») déclenche donc
+un nouveau `change` et remplace la partie en cours. Sans cela le navigateur ne renvoie aucun
+événement et le fichier reste celui de la session précédente. `#status` ne garde que les
+messages utiles au joueur (lecture du fichier, carte chargée, nouvelle partie, erreur) : les
+lignes de musique, d'effets sonores et de conversation restent dans la console.
+
 Le workflow `.github/workflows/pages.yml` compile la version wasm optimisée à chaque push
 sur `main` qui touche le binaire web (`crates/**`, `Cargo.toml`, `Cargo.lock`,
 `rust-toolchain*`) ou le workflow lui-même, ainsi que sur lancement manuel : un commit de
@@ -625,6 +632,31 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   événement encore en attente, puis un prologue actif avec légende ouverte : tâche et
   dialogue sont annulés et ne reprennent pas pendant les 120 pas fixes suivants. Le test et
   ses imports sont compilés uniquement sous Windows ; le chemin navigateur reste en wasm.
+- Réinitialisation de session sur le site publié (7 novembre 2026) : page
+  `https://fablrc.github.io/dq9-rust/` (binaire du dernier commit de code `98043b3`, les
+  commits suivants ne touchant que `docs/` et `re/`), ROM européenne locale de 256 Mio
+  (SHA-256 `f305494b…a63b1f`) et `build/sav/demo.sav` (C01M09, SHA-256 `cf0f43b4…1c24a8`),
+  navigateur piloté sans fenêtre, 1280 × 900, DPR 1,25. Un fichier qui n'est pas une ROM
+  affiche l'erreur française et désactive « Nouvelle partie » ; une ROM valide rend le focus
+  à `dq9` et active le bouton. « Nouvelle partie » puis la même sauvegarde aussitôt (avant
+  toute légende) : la console montre `event 21500 queued` puis `event 21500 starts`, suivis de
+  `Sauvegarde lue localement` et `109 C01M09` ; l'église s'affiche sans légende ni scène du
+  prologue, et 1,5 s de flèche haut franchissent la porte (`map change 109 -> 100`) sans
+  qu'aucun `event 21500` ne réapparaisse. Cas légende active de la coordination : légende
+  « Hello? Is there anybody there? » ouverte, sauvegarde chargée, église sans légende, puis
+  120 images de flèche haut avec déplacement du héros. Entrée dans l'église ouvre la
+  conversation du PNJ 25 (`C01Q0/025_en.bin`, « Hi! Welcome »). Captures et manifeste
+  SHA-256 : `build/v01-20261107/web/` (`web-40` à `web-51`, `coordinator-*.png`,
+  `SHA256SUMS`).
+- Même fichier choisi deux fois (défaut de la version publiée `98043b3`) : après « Nouvelle
+  partie », rechoisir le chemin déjà présent dans le champ sauvegarde ne déclenche aucun
+  `change`, donc la sauvegarde n'est pas relue et le prologue reste affiché ; un autre chemin
+  fonctionne. Correctif dans `web.rs` : vider les champs ROM et sauvegarde dès la lecture du
+  fichier. Preuve avant correctif : `web-48-same-save-ignored.png` (ciel du prologue, champ
+  `demo.sav`, aucune ligne `Sauvegarde lue`) contre
+  `web-49-other-save-loads-c01m09.png`. Le statut affichait aussi `sound effect 0 on handle 0`
+  et les lignes `talk:` ; elles restent dans la console, plus dans `#status`. Ces deux
+  corrections restent à reconstruire et à contrôler sur la page publique.
 - Portes internes de la version publiée `17bef8c` : sur `X01M07`, ROM choisie localement,
   marche au clavier autour des colonnes puis ouverture des deux vantaux (`door 0/3 opens`,
   `door 0/2 opens`) et franchissement visible jusque dans la bibliothèque. Capture conservée
