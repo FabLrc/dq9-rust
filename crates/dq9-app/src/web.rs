@@ -222,6 +222,9 @@ fn watch_rom_input(proxy: EventLoopProxy<UserEvent>) {
             return;
         };
         let (name, size) = (file.name(), file.size());
+        // A file input fires `change` only when its value differs: clear the selection so
+        // picking the same ROM again (after a new game or a refused file) is read again.
+        target.set_value("");
         target.set_disabled(true);
         set_disabled("newgame", true);
         announce(&format!(
@@ -274,6 +277,9 @@ fn watch_save_input(proxy: EventLoopProxy<UserEvent>) {
             return;
         };
         let size = file.size();
+        // Same as the ROM field: choosing the same save again must replace the running game,
+        // not be ignored because the input still holds that path.
+        target.set_value("");
         target.set_disabled(true);
         let proxy = proxy.clone();
         let target = target.clone();

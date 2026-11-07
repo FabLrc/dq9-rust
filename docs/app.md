@@ -656,7 +656,14 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   `change` d'un `<input type=file>` ; le test natif
   `a_save_selected_after_a_new_game_loads_that_save` couvre l'état arrière (annulation de
   l'événement et du dialogue), et le correctif navigateur reste contrôlé par le smoke
-  Chromium.
+  Chromium. Candidat local (wasm release + bindgen, `scripts/verify.ps1` vert en 45,6 s :
+  fmt, clippy, tests du workspace avec ROM réelle, build wasm) servi sur
+  `http://127.0.0.1:8007` : sauvegarde chargée d'abord, puis « Nouvelle partie » jusqu'au
+  ciel d'ouverture, puis le même `demo.sav` rechoisi dans le champ sauvegarde ; l'église
+  C01M09 revient, les deux champs de fichier sont vides, le focus est sur `dq9` et aucune
+  erreur de page n'apparaît. Captures `candidate-save-first.png` (SHA-256
+  `949db6e7…f029d`), `candidate-newgame-between.png` (`23dc84fd…b0ab1`) et
+  `candidate-same-save-reselected.png` (`ef296340…7943`).
 - Portes internes de la version publiée `17bef8c` : sur `X01M07`, ROM choisie localement,
   marche au clavier autour des colonnes puis ouverture des deux vantaux (`door 0/3 opens`,
   `door 0/2 opens`) et franchissement visible jusque dans la bibliothèque. Capture conservée
