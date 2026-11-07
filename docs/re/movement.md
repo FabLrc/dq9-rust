@@ -267,12 +267,16 @@ décompilation européenne (`Trig_RunAction` `0x02061c14`, cas `0x31`/`0x32` = a
 `0x95`/`0x96`) appelle `Zone3D_FindPlacement` (`0x02019518`, entrée de bloc = `arg`, id =
 moitié haute) puis `func_02013390(placement, arg, 0|1)`, qui pose ou efface le bit `0x4` de
 `placement+2` et pose le bit `0x40` : exactement ce que fait la native 574
-(`StbNat_SetPlacementHidden`). L'événement 11 de fin de 1170 cache donc la barrière **juste
-avant** d'avancer la piste à 1.1.2 ; l'événement 20 de chargement la montre à la sous-étape 1
-et la cache à la sous-étape 2. Le chargement de la carte est fidèle : sur l'état melonDS
-`build/melonds-height/probe.ml1`, `cargo dq9re map X01M01 --state …` compare les 17 instances
-(placement 16 compris, à l'origine) et conclut « the loaded blocks match the assembly » ; seul
-l'effet du trigger manquait.
+(`StbNat_SetPlacementHidden`). La requête de collision lit ce bit : `Zone3D_PieceTriangles`
+(`0x02017da0`, `iVar3+0x28` = parent) rend 0 triangles si le nœud de la pièce, ou un de ses
+parents, a le bit `0x4` de `+2` (`(*(ushort *)(iVar3 + 2) & 4) == 0` puis la boucle sur les
+parents), exactement l'état que notre `piece_hidden` parcourt. L'événement 11 de fin de 1170
+cache donc la barrière **juste avant** d'avancer la piste à 1.1.2 ; l'événement 20 de
+chargement la montre à la sous-étape 1 et la cache à la sous-étape 2. Le chargement de la
+carte est fidèle : sur l'état melonDS `build/melonds-height/probe.ml1`,
+`cargo dq9re map X01M01 --state …` compare les 17 instances (placement 16 compris, à
+l'origine) et conclut « the loaded blocks match the assembly » ; seul l'effet du trigger
+manquait.
 
 Correctif (en cours) : `CollisionWorld::set_placement_hidden(bloc, id, caché)` rend le
 placement et son sous-arbre invisibles aux requêtes (sol, murs, `floors`, `resolve`), avec un
@@ -282,9 +286,16 @@ instances dessinées (mêmes placements que la native 574), et le pilote jette s
 quand `revision()` change. La preuve attendue, sans téléport ni mur abaissé :
 
 ```powershell
-cargo dq9re map X01M01 --reach=2.77,11.25,18.19 --to=-8.226,15.5,16.379
+# cible : la rampe sous le centre du warp n° 9 (le centre y 15,5 est au milieu de la
+# boîte, pas un sol ; la rampe y 13,868 + 0,0999 de hauteur de station = 13,97)
+cargo dq9re map X01M01 --reach=2.77,11.25,18.19 --to=-8.226,13.97,16.379
 # aujourd'hui : 9320 nœuds, y 4.249..11.251, « not reached »
 # après le correctif : « reached » par la rampe, une fois le placement 16 caché
+
+# Preuve que S1 est le seul lien manquant : depuis le pied amont de la rampe, à l'ouest
+# de S1, le remplissage 3D atteint déjà le warp et monte jusqu'à y 23,118.
+cargo dq9re map X01M01 --reach=-1.25,12.42,17.5 --to=-8.226,13.97,16.379
+# 9542 nœuds, y 4.249..23.118, « reached »
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot
 # le pilote doit quitter 1.1.2 sur X01M03 (map 4103), puis continuer
 ```
