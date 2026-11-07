@@ -11,6 +11,27 @@ implémentation testée et un commit.
 outils d'oracle, de trace et de géométrie intégrés à `main`. Ne pas confondre les lots
 livrés avec un prologue intégralement jouable.
 
+### Lots actifs — 7 novembre 2026
+
+Run Orca `run_93299987d8b6`, cinq workers OMP
+`opencode-go/deepseek-v4.1-flash` (plafond : six). Aucun résultat ci-dessous n'est encore
+validé ; les contrôles et l'intégration restent centralisés.
+
+- `v01-oracle7` : attente du message 1160, référence après 1170 et en 1.1.2 ;
+  propriétaire de `melondsds_host.py` et `re/melonds-state.md`.
+- `v01-tower7` : passage continu `X01M01 → X01M03`, collision, mouvement et pilote ;
+  propriétaire de `collision.rs`, `movement.rs`, `app/auto.rs` et `re/movement.md`.
+- `v01-web7` : remplacement de session et prise du clavier sur Pages ;
+  propriétaire de `web.rs`, `web/index.html` et `app.md`.
+- `v01-village7` : chaîne réelle des scènes et tâches du village, contrats manquants ;
+  propriétaire de `field.rs`, `trigger.rs`, `event.rs` et `re/trigger.md`.
+- `v01-parity7` : comparaisons aux mêmes frontières et déplacement à images égales ;
+  propriétaire des comparateurs, de `tests/movement_rom.rs` et de `re/outils.md`.
+
+Chaque worker pousse ses constats documentés sur sa branche. Le code attend les contrôles
+du coordinateur avant commit et push. Les preuves restent sous `build/v01-20261107/`
+(ignoré), avec empreintes ; les worktrees sont fermés après préservation et intégration.
+
 ### Intégré et publié
 
 - Dernier commit : **`9a25199`** (drapeaux de scène limités à l'ouverture) ; outillage :
