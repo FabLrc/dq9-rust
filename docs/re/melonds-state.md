@@ -472,9 +472,55 @@ Le trigger de fin de 1170 exécute `0x68(4)` (drapeau de piste), `0x95(0, 0x1000
 16 est donc bien **masquée à 1.1.2** par le jeu : un runtime qui ignore `0x95` garde le mur
 mince S1 et ne peut pas prétendre au même état.
 
+**3965 est une frontière de progression, pas une prise de contrôle.** Le héros reste bloqué
+environ 60 à 80 images après l'avance de piste (aucune direction ne le déplace à l'image
+3965) ; c'est pour cela que le point de contrôle de progression ne doit pas être comparé à
+une prise de contrôle du runtime. `control112-state.bin` est l'état **contrôlable** après
+90 images sans entrée : même pose, fenêtre de message fermée, et `Left` 40 images déplace
+le héros en (−0,875 ; 11,65 ; 17,853).
+
+#### Mur S1 et tour `X01M01` → `X01M03` → `X01M09`
+
+La pièce 12 masquée est `X01A01S1.col2` (2 triangles, `184` octets) : un mur mince à
+x `0,0186..0,1055`, y `9..14`, z `15,42..18,99`, dans les coordonnées de la carte.
+
+- **1.1.1 (mur présent)** : depuis `seg11-state.bin` (1,68 ; 11,25 ; 21,19), `Up` 44 images
+  puis `Left` s'arrête à (0,947 ; 11,25 ; 18,557) ; 60 images de `Left` supplémentaires ne
+  déplacent plus le héros.
+- **1.1.2 (mur masqué)** : depuis `control112-state.bin`, `Left` traverse x = 0,9 et le
+  héros monte : (−0,144 ; 11,459 ; 17,944) à l'image 4096, puis (−7,432 ; 13,727 ; 16,402)
+  quand la carte passe à `4103` (`X01M03`). Il arrive en (−9,75 ; 4,25 ; 17,62), puis
+  `Up` atteint `4109` (`X01M09`) à l'image 4376 en (−9,236 ; 4,25 ; 11,727). L'identifiant de
+  carte change quelques images avant le déplacement de la pose : le point stable d'arrivée
+  est (−9,75 ; 4,25 ; 17,62), à comparer après la transition.
+
+Course continue étendue (`continuous2.jsonl`, même départ `idle-state.bin`) :
+
+```powershell
+python scripts/melondsds_host.py --rom <ROM> --core tools/build/melondsds_libretro.dll `
+    --state-in build/orca/route/idle-state.bin `
+    --input build/v01-20261107/oracle/continuous2.jsonl --frames 4416 `
+    --checkpoints build/v01-20261107/oracle/continuous2-cp.jsonl `
+    --state-out build/v01-20261107/oracle/continuous2-state.bin `
+    --dump-ram build/v01-20261107/oracle/continuous2-ram.bin `
+    --shot build/v01-20261107/oracle/x01m09-4415.png
+```
+
+| Image | Carte | Pose | Point |
+|---:|---:|---|---|
+| 3965 | 4101 | (2,77 ; 11,25 ; 18,19) | 1.1.2, contrôle encore verrouillé |
+| 4055 | 4101 | (2,77 ; 11,25 ; 18,19) | contrôle réel, message fermé |
+| 4096 | 4101 | (−0,144 ; 11,459 ; 17,944) | traverse le mur S1 masqué |
+| 4196 | 4103 | (−7,432 ; 13,727 ; 16,402) | carte `X01M03` (pose pas encore déplacée) |
+| 4236 | 4103 | (−9,75 ; 4,25 ; 17,62) | arrivée stable dans `X01M03` |
+| 4376 | 4109 | (−9,236 ; 4,25 ; 11,727) | `X01M09` |
+| 4415 | 4109 | (−7,36 ; 0,199 ; 10,22) | fin de la course rejouée |
+
 Empreintes SHA-256 : `continuous.jsonl` `3d0fd18d…`, checkpoints `469404ea…`, état
 `496fec9e…`, image RAM `cc30d043…`, capture `fd0c728e…`, `idle-state.bin` `cad28ef0…`,
-état 1.1.1 `talk127b-state.bin` `efd0ff3e…`.
+état 1.1.1 `talk127b-state.bin` `efd0ff3e…`, `continuous2.jsonl` `76e11b30…`, checkpoints
+`d0ef2a09…`, état `11411a78…`, image RAM `be2765ce…`, `control112-state.bin` `3714213d…`,
+capture `X01M09` `b85b8730…`.
 
 ### Mesure du 2026-11-06 (ROM EU, melonDS 1.1, BIOS libres)
 
