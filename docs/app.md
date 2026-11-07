@@ -631,10 +631,14 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   clavier est actif sur `dq9` ; l'ouverture visuelle atteint les événements `21500`, `21507`,
   `21520`, `21521`, `21522`, puis `21596` et le premier contrôle sur `X01M05` (4105).
   Flèches et Espace ouvrent à pied une conversation avec le PNJ 108
-  (`X01A0.gp2/108_en.bin`, enregistrement 0), qui s'avance et se ferme au clavier. Captures,
-  journal console et empreintes dans `build/v01-20261107/browser/`. Ce run ne prouve pas encore
-  les portes de bibliothèque, 1170, la tour ni 21510/1.2.1 ; pas de sauvegarde, téléportation
-  ou état interne injecté.
+  (`X01A0.gp2/108_en.bin`, enregistrement 0), qui s'avance et se ferme au clavier. Une
+  seconde nouvelle partie rejoue les touches directionnelles du pilote depuis le contrôle
+  4105 : conversation du PNJ 111, événement `1140`, PNJ 105 (contexte 80) et événement `1130`
+  atteints visuellement et dans la console. Les segments suivants, joués au clavier pendant
+  14,3 s, n'ont pas produit de changement de carte (4106 absent du journal) ; le héros reste
+  sur 4105 et le franchissement n'est donc pas prouvé. Captures, traces et SHA-256 dans
+  `build/v01-20261107/browser/`. Aucun chargement de sauvegarde, téléportation ou état interne
+  injecté ; portes, 1170, tour et 21510/1.2.1 restent à vérifier.
 - Chargement d'une sauvegarde après « Nouvelle partie » : scénario natif Windows exercé
   avec la ROM EU et une sauvegarde locale (`a_save_selected_after_a_new_game_loads_that_save`).
   `new_game` devient faux et `C01M09` (carte 109) remplace le prologue. Le test couvre un
