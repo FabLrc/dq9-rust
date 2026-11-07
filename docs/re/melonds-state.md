@@ -522,6 +522,24 @@ Empreintes SHA-256 : `continuous.jsonl` `3d0fd18d…`, checkpoints `469404ea…`
 `d0ef2a09…`, état `11411a78…`, image RAM `be2765ce…`, `control112-state.bin` `3714213d…`,
 capture `X01M09` `b85b8730…`.
 
+#### Portes du retour et limite `X01M01` → `X01M05` (2026-11-07)
+
+Les portes de `X01M01` (`dq9re doors X01M01`) placent deux volumes distincts sous la
+plateforme d'arrivée (0 ; 4,25 ; 31,72) :
+
+| Porte | `0x73` (volume) | Destination |
+|---|---|---|
+| `X01M05` | `(0, 1, 35)`, demi-tailles `2,5 × 3 × 2` | `X01M05` (2,15 ; 22,4) |
+| `X01M07` | `(0, 5, 30,5)`, demi-tailles `3 × 2` | `X01M07` (0,17 ; 16,9) |
+
+Depuis l'arrivée (0 ; 4,25 ; 31,72), `Down` 40 images s'arrête à (0 ; 4,25 ; 34,5) sans
+changement de carte ; la hauteur ne descend pas à 1 et `Up`/`Left`/`Right` ne font que
+revenir ou glisser. Le volume `X01M05` est donc **sous** la plateforme d'arrivée : ce n'est
+pas un trajet de même niveau vers (0 ; 1 ; 34), et l'arrivée par la porte `X01M07`
+(0,17 ; 16,9) est un autre chemin. Le chemin physique observé monte `X01M01` jusqu'à
+`X01M03`/`X01M09` ; le retour bas (y = 1) n'est pas encore obtenu dans l'original et reste
+**[inconnu]**, à ne pas déduire d'un simple X/Z.
+
 ### Mesure du 2026-11-06 (ROM EU, melonDS 1.1, BIOS libres)
 
 Référence : nouvelle partie réelle, combat 26 gagné, états pris toutes les 20 s. Le premier
