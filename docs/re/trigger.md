@@ -293,7 +293,7 @@ synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
 | 0x77, 0x80 † | lance l'événement `arg` : les 524 valeurs de 0x77 sont des `data/event/evNNNNN.gp2`, `data/evspt_lv5/evNNNNN.gp2` ou des entrées de `eventlist6.bin` / `evl_quest.bin` (`stb.md`) | 622 / 0 |
 | 0x78 † | lance le combat scripté `arg` (enregistrement d'index `arg` de `data/event/eventbattle.bin`), § « Combats scriptés » | 65 |
 | 0x79, 0x89, 0xe1 † | transport vers la salle `arg` (structure `+0x3f8` de la sauvegarde) | 163, 0, 22 |
-| 0x85, 0x8a, 0xe2 † | idem avec un point d'entrée `haut` | 30, 1, 5 |
+| 0x85, 0x8a, 0xe2 † | idem avec un **événement d'arrivée** `haut` (`Save_Warp+0x20`, `Trig_RunDeferred` cas 0x85 : `*(u32*)(warp+0x20) = opérande`) | 30, 1, 5 |
 | 0x7a / 0x7b † | position (3 flottants × 4096) / direction du transport | 179 / 33 |
 | 0x7c † | retire le PNJ `arg` (drapeau 0x8000 de son objet) | 39 |
 | 0x7d | inscrit la quête `arg` au journal ; **arrête** la liste si le journal est plein ou si la quête n'est pas proposée ; drapeau 0x119d | 258 |
@@ -639,10 +639,13 @@ L'opérande de `0x85` n'est pas un point d'entrée de carte : c'est **l'événem
 sur la carte d'arrivée**. `0x85(4105, 1415380992)` vaut `0x85(4105, 21597)` et 21597 est
 exactement la scène d'ouverture de 1.4 (`evspt_lv5/ev21597`, « Aquila : I have important
 matters to discuss with Apus Major »). Même motif dans `M01` : 2200 → 2210, 2400 → 2410,
-2750 → 2760, 2760 → 2800. `Trig_RunDeferred` (cas 0x85) écrit cet opérande en `Save_Warp+0x10`,
-et `MapChange.entry` le transporte déjà, mais `dq9-app::change_map` l'ignore. Le runtime
-s'arrête donc sur la carte 4105 à 1.4.1 sans jouer 21597 ; c'est le seul chaînon manquant
-après la fin du prologue.
+2750 → 2760, 2760 → 2800. Preuve dans le code : `Trig_RunDeferred` (cas 0x85) écrit cet
+opérande en `Save_Warp+0x20` (`(uint *)(puVar15 + 0x10)` sur un `ushort *`), et l'arrivée
+`ov_017::0219e384` appelle `ov_017::0219fc88(param_1, *(u32 *)(Save_Warp + 0x20))` ; cette
+fonction pose le numéro en `ctx+8` et met la tâche d'événement en file (`func_020469b4`).
+`MapChange.entry` transporte déjà cette valeur, mais `dq9-app::change_map` l'ignore. Le
+runtime s'arrête donc sur la carte 4105 à 1.4.1 sans jouer 21597 ; c'est le seul chaînon
+manquant après la fin du prologue.
 
 ### Tâches d'histoire et quêtes numérotées
 
