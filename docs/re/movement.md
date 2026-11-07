@@ -199,7 +199,9 @@ mesure, de ± 1 image** ; la validation image par image reste à faire.
 
 Toutes les entrées non portées de « Hors périmètre » ; le suivi lissé et les zones de caméra
 (l'orbite par défaut et le suivi direct du héros sont appliqués) ; une comparaison position
-par position à nombre d'images égal sous melonDS.
+par position à nombre d'images égal sous melonDS ; le câblage complet des actions `0x95`/`0x96`
+(demande de trigger → `CollisionWorld::set_placement_hidden` et instances dessinées) et de la
+native 574/575 sur les placements de collision.
 
 `cargo dq9re map --reach` ([`map-archive.md`](map-archive.md#voir-la-collision-dq9re-map---image---reach))
 rejoue `Hero::step` sur une grille de 0,5 unité et rend les composantes par hauteur visibles :
@@ -230,19 +232,59 @@ cargo run -p dq9-app --release -- --new-game --headless `
   (312 s), double porte de bibliothèque poussée puis ouverte (deux vantaux, 331–334 s), aire 2
   ajoutée par l'événement 20 (événement 1150), NPC 130 (1600), retour par la porte vers
   `X01M01` (356 s), NPC 127 (1170) à 369,8 s → **histoire 1.1.2**.
-- Le pilote s'arrête à 377,8 s sur `X01M01` : ses **sondes dans les huit directions** depuis
+- Le pilote s'arrêtait à 377,8 s sur `X01M01` : ses **sondes dans les huit directions** depuis
   y 8,25 et y 11,25 plafonnent à y 11,25. Ce n'est pas seulement la sonde : une marche
   exhaustive depuis la pose d'histoire (`(2,77 ; 11,25 ; 18,19)`) **et** depuis le point de
   départ de la carte (`(0 ; 8,25 ; 30)`), avec des arêtes validées en 3D (`Hero::step`, montée
-  ≤ 1,0, chute ≤ 10), plafonne aussi à y 11,25. Le mur fin `X01A01S1` (bloc 0, placement 12,
-  normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`, `y 9..14`) sépare la terrasse du pied de la
-  rampe menant au warp `0x72` **type 0** (n° 9) vers `X01M03`. Les zones `0x73` de **type 1**
-  sont **inertes** (aucun lecteur dans `Field_CheckRegions`, voir `map-archive.md`) : ce n'est
-  ni un monte-charge ni une tâche 8. **[inconnu]** : la connexion manquante (placement de
-  collision déplacé, plateforme animée ou changement de carte scénarisé), à établir sur
-  melonDS. `NavGrid` collecte désormais tous les sols d'une colonne
+  ≤ 1,0, chute ≤ 10), plafonne aussi à y 11,25. Le mur fin `X01A01S1` (bloc 0, instance 16,
+  normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`, `y 9..14`) sépare la terrasse du pied de
+  la rampe menant au warp `0x72` **type 0** (n° 9) vers `X01M03`. Les zones `0x73` de
+  **type 1** sont **inertes** (aucun lecteur dans `Field_CheckRegions`, voir
+  `map-archive.md`) : ce n'est ni un monte-charge ni une tâche 8. La cause n'est pas une
+  connexion manquante mais une **barrière scriptée** que le port n'appliquait pas
+  (§ suivant). `NavGrid` collecte tous les sols d'une colonne
   (`CollisionWorld::floors`) et valide chaque arête en 3D (`Hero::step`, distance 3D au
   voisin) : une arête qui ne fait que glisser sous une terrasse est rejetée.
 - Limite de la trace : le pilote donne les directions avec la caméra du jeu à l'angle 0 et le
   rejeu force ce même cap ; elle prouve le parcours headless dans notre moteur, pas un rejeu à
   la manette melonDS avec caméra manuelle.
+
+### Barrière de la rampe (actions 0x95/0x96, placement 16)
+
+La barrière `X01A01S1` est le **placement 16** du bloc 0 (id d'instance, pas le numéro de
+ressource 12). Le déclencheur qui la lève est dans `data/scenario/triggerX01.bin` :
+
+```
+$ cargo dq9re triggers X01 --story 1.1
+room 4101 1.1..1.1 event 11: if 0x8(1170) then 0x68(set_track_flag,4) \
+    0x95(hide_object,0,1048576) 0x84(advance_track,0,1,1,2)
+room 4101 1.1..1.1 event 20: if 0x9(4101) 0x23(1) then 0x96(show_object,0,1048576)
+room 4101 1.1..1.1 event 20: if 0x9(4101) 0x23(2) then 0x95(hide_object,0,1048576)
+```
+
+L'opérande `1048576 = 0x00100000` porte l'id de placement dans sa moitié haute : `16`. La
+décompilation européenne (`Trig_RunAction` `0x02061c14`, cas `0x31`/`0x32` = actions
+`0x95`/`0x96`) appelle `Zone3D_FindPlacement` (`0x02019518`, entrée de bloc = `arg`, id =
+moitié haute) puis `func_02013390(placement, arg, 0|1)`, qui pose ou efface le bit `0x4` de
+`placement+2` et pose le bit `0x40` : exactement ce que fait la native 574
+(`StbNat_SetPlacementHidden`). L'événement 11 de fin de 1170 cache donc la barrière **juste
+avant** d'avancer la piste à 1.1.2 ; l'événement 20 de chargement la montre à la sous-étape 1
+et la cache à la sous-étape 2. Le chargement de la carte est fidèle : sur l'état melonDS
+`build/melonds-height/probe.ml1`, `cargo dq9re map X01M01 --state …` compare les 17 instances
+(placement 16 compris, à l'origine) et conclut « the loaded blocks match the assembly » ; seul
+l'effet du trigger manquait.
+
+Correctif (en cours) : `CollisionWorld::set_placement_hidden(bloc, id, caché)` rend le
+placement et son sous-arbre invisibles aux requêtes (sol, murs, `floors`, `resolve`), avec un
+compteur `revision()` ; l'action `0x95`/`0x96` doit produire une demande
+`Request::SetPlacement` traitée par l'application à la fois sur la collision et sur les
+instances dessinées (mêmes placements que la native 574), et le pilote jette sa grille de sol
+quand `revision()` change. La preuve attendue, sans téléport ni mur abaissé :
+
+```powershell
+cargo dq9re map X01M01 --reach=2.77,11.25,18.19 --to=-8.226,15.5,16.379
+# aujourd'hui : 9320 nœuds, y 4.249..11.251, « not reached »
+# après le correctif : « reached » par la rampe, une fois le placement 16 caché
+cargo run -p dq9-app --release -- --new-game --headless --auto --pilot
+# le pilote doit quitter 1.1.2 sur X01M03 (map 4103), puis continuer
+```
