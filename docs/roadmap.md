@@ -61,8 +61,13 @@ du coordinateur avant commit et push. Les preuves restent sous `build/v01-202611
   Les PNJ retirés par `0x7c` disparaissent du rendu et restent absents jusqu'au changement
   de carte. Tests réels : `event_21595...`, `only_a_trigger_warp...`,
   `house_exit_time_of_day...`, `removing_npc_210...`, `stable_pickups...`.
-- Vérification combinée : fmt, clippy, 40 tests d'application sur ROM+sauvegarde, 170 tests
+- Vérification combinée : fmt, clippy, 43 tests d'application sur ROM+sauvegarde, 170 tests
   de `dq9-core`, tous les tests d'espace de travail et wasm verts.
+- Tâches du village 1.2 couvertes sur la vraie ROM : anneau de l'esprit
+  `keepsake_ring_task_gives_22158_raises_flag_3_and_removes_npc_210`, veuve
+  `widow_task_takes_22158_gives_22159_and_raises_flag_4` et absence de scène sans le
+  drapeau 3, écurie `stable_pickups...` jusqu'à 1340 et drapeau 5, verrou de sortie avec les
+  deux drapeaux, aire 12/1410/21595/1.4.1, et non-réapparition des PNJ retirés.
 - Comparaison au point de contrôle libre de 1.1.2 : l'original
   `build/v01-20261107/oracle/control112-as-control.jsonl` (VBlank 58392, pose
   `(2,77 ; 11,25 ; 18,19)`) et le runtime final concordent sur la carte, la piste
@@ -550,15 +555,14 @@ Avancement :
 de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,
 dialogues, quêtes du village), sans combats. Critère : toute la suite d'événements du
 prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points. **État** : le
-parcours natif continu atteint Angel Falls 1100 et joue les scènes 21592/1380/1390/1370.
-Le pilote tourne ensuite entre la carte 1100 et M01M08 sans accomplir les tâches du village ;
-la validation manuelle de ces interactions et le parcours navigateur sur la version publiée
-restent à terminer. Le pas terrain à 30 Hz est intégré ; la comparaison stricte aux mêmes
-images est couverte par le test de cadence, mais la parité complète des drapeaux n'est pas
-déclarée acquise. **Navigateur** : la build finale `21e1e42` joue l'ouverture, le premier
-contrôle, 1140 et 1130, puis le hall surélevé ; elle n'a pas de session continue certifiée
-jusqu'à 4107, la tour ou Angel Falls. La v0.1 n'est donc **pas certifiée jouable de bout en
-bout dans le navigateur**, même si le binaire publié et le parcours natif sont fonctionnels.
+parcours natif continu atteint Angel Falls 1100 et joue les scènes 21592/1380/1390/1370 ;
+les trois tâches 1.2 (anneau, veuve, écurie), leur verrou de sortie, l'aire 12, 21595 et le
+retour 1.4.1 sont couverts par des tests réels sur la ROM. Le pilote ne joue pas ces tâches
+seul, mais la fonctionnalité du jeu est établie. Le pas terrain à 30 Hz et le point de
+contrôle libre 1.1.2 sont vérifiés. **Navigateur** : la build finale `21e1e42` joue
+l'ouverture, le premier contrôle, 1140 et 1130, puis le hall surélevé ; elle n'a pas de
+session continue certifiée jusqu'à 4107, la tour ou Angel Falls. La v0.1 est
+**fonctionnellement complète, mais non certifiée de bout en bout dans le navigateur**.
 
 ## J4 — Combattre : **v0.2**
 
