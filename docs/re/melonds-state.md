@@ -540,6 +540,19 @@ pas un trajet de même niveau vers (0 ; 1 ; 34), et l'arrivée par la porte `X01
 `X01M03`/`X01M09` ; le retour bas (y = 1) n'est pas encore obtenu dans l'original et reste
 **[inconnu]**, à ne pas déduire d'un simple X/Z.
 
+**Segment natif rejoué tel quel : falsifié.** Le 2026-11-07, le coordinateur a fourni
+`build/v01-20261107/oracle/native-4103-to21510-relative.jsonl` (57 changements de pad, A,
+828 images) avec pour départ `X01M03` (−18,62 ; 4,2 ; 4,25), appyaw −2,374. L'original est
+placé au même endroit par `m03-westentry-state.bin` (−18,408 ; 4,25 ; 4,216). Rejoué **tel
+quel**, le flux natif donne à son image relative 541 (la nôtre 546 après 5 images de
+`Down+Left` pour aligner le cap) `X01M03` (−11,4 ; 4,25 ; 11,7), **pas** `X01M04`
+(0 ; −0,01 ; 19,62) : la divergence commence vers l'image 120. Les pads natifs supposent la
+caméra du runtime (yaw 0) ; ceux de l'original ne se transposent pas directement. Il faudrait
+des **positions natives image par image** (ou des waypoints monde), pas seulement les pads,
+pour refaire le chemin physique. Empreintes : `m03-westentry-state.bin` `43c5b351…`,
+`native-replay.jsonl` `922b1077…`, `native-replay-cp.jsonl` `81e8509e…`,
+`native-replay2.jsonl` `94bfc6f8…`, `native-replay2-cp.jsonl` `975fa115…`.
+
 ### Mesure du 2026-11-06 (ROM EU, melonDS 1.1, BIOS libres)
 
 Référence : nouvelle partie réelle, combat 26 gagné, états pris toutes les 20 s. Le premier
