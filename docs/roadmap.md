@@ -13,33 +13,24 @@ livrés avec un prologue intégralement jouable.
 
 ### Lots actifs — 7 novembre 2026
 
-Run Orca `run_93299987d8b6`, six workers actifs (plafond : six) :
-cinq OMP `opencode-go/deepseek-v4.1-flash` et un OMP `openai-codex/gpt-6-luna`
-pour le parcours visuel. Contrôles et intégration centralisés.
+Run Orca `run_93299987d8b6`, quatre workers actifs : trois OMP
+`opencode-go/deepseek-v4.1-flash` et le navigateur DeepSeek. Aucun modèle OpenAI n'est
+utilisé. Contrôles et intégration centralisés.
 
-- `v01-oracle7` : 1170 puis 1.1.2 atteints dans l'original sans téléportation, pose
-  `(2,77 ; 11,25 ; 18,19)`. Le coordinateur a rejoué les 3 966 images et vérifié le
-  placement 16 caché. Le worker continue vers Angel Falls.
-  Propriétaire de `melondsds_host.py` et `re/melonds-state.md`.
-- `v01-return7` : retour physique depuis la terrasse vers `X01M05`, Apus Major et la
-  gardienne, puis arrivée à Angel Falls ; propriétaire de `app/auto.rs`, `collision.rs`,
-  `movement.rs` et `re/movement.md`.
-- `v01-transition7` : éclairage de nuit, événement d'arrivée des transports `0x85`, retrait
-  visuel des PNJ ; propriétaire de `app.rs`, `event.rs`, `talk.rs` et `re/trigger.md`.
-- `v01-browser7` (Luna 6) : parcours réel au clavier sur la page publiée, captures et
-  frontières de scènes ; propriétaire de `app.md` et du texte du README, hors couverture.
+- `v01-oracle7` : référence originale poursuivie vers Angel Falls ; propriétaire de
+  `melondsds_host.py` et `re/melonds-state.md`.
+- `v01-browser7` : parcours réel au clavier sur la page publiée, captures et frontières de
+  scènes ; propriétaire de `app.md` et du texte du README, hors couverture.
 - `placement-review7` : revue en lecture seule des invariants de placement, portes,
-  consommateurs de scènes et construction headless ; compte rendu sous `build/`, intégré
-  à la documentation par le coordinateur.
-- `cadence-contract7` : lecture des mesures originales par image et contrat de cadence
-  terrain à 30 Hz ; aucune modification concurrente de `app.rs`.
+  consommateurs de scènes et construction headless ; compte rendu sous `build/`.
+- `v01-cadence7` : implémentation du pas terrain original à 30 Hz, avec rendu, son,
+  messages et scènes à 60 Hz ; propriétaire de `app.rs`, `native.rs` et des tests de
+  mouvement.
 
 Lots clôturés et worktrees fermés : `v01-web7` (`574d24c`, resélection du même fichier,
-vérifiée sur Pages), `v01-parity7` (`69287f9`, comparaisons sans réutilisation de points),
-`v01-tower7` et `v01-village7` (code combiné `8d41723`, placement S1, native 559,
-restauration des portes et tests headless réellement exécutés). L'original masculin sans
-butin et le runtime concordent au premier contrôle sur progression, drapeaux, quêtes et
-position (tolérance 0,001) ; la parité par image du terrain reste ouverte.
+`v01-parity7` (`69287f9`), `v01-tower7` et `v01-village7` (`8d41723`), `v01-return7`
+(`781b9d5`, retour physique et pilot) et `v01-transition7` (`6cbce07`, nuit, arrivée 21597,
+retrait des PNJ). Les trois commits ont été intégrés dans `main`.
 
 Chaque worker pousse ses constats documentés sur sa branche. Le code attend les contrôles
 du coordinateur avant commit et push. Les preuves restent sous `build/v01-20261107/`
@@ -47,17 +38,23 @@ du coordinateur avant commit et push. Les preuves restent sous `build/v01-202611
 
 ### Intégré et publié
 
-- Dernier lot de jeu : **`8d41723`**. CI Linux
-  [42368823873](https://github.com/FabLrc/dq9-rust/actions/runs/42368823873) et déploiement
-  [Pages 42368823919](https://github.com/FabLrc/dq9-rust/actions/runs/42368823919) réussis.
-- Parcours natif réel depuis une nouvelle partie : 1170 finit à **334,45 s** (1.1.2),
-  la rampe mène à `X01M03` à **336,40 s**, puis `4109 → 4103 → 4104` et 21510 donnent
-  **1.2.1 à 391,12 s**. Arrêt à 444,7 s sur `X01M01` : retour vers 4105 encore bloqué pour
-  le pilote. Trace, checkpoints et journaux : `build/v01-20261107/tower/coordinator-fixed-pilot*`,
-  empreintes dans `build/v01-20261107/coordinator-proof-manifest.json`.
-- La vraie scène 21595, exécutée isolément, pose `Raw::Quest490 = 1` avant son trigger de fin :
-  retour en 1.4.1 sur 4105, sans le repli 21593. Ce test ne prouve pas le parcours continu
-  du village. Les événements d'arrivée des transports et l'éclairage de nuit restent à brancher.
+- Dernier lot de jeu : **`250c095`**. CI Linux
+  [42377690426](https://github.com/FabLrc/dq9-rust/actions/runs/42377690426) et déploiement
+  [Pages 42377690381](https://github.com/FabLrc/dq9-rust/actions/runs/42377690381) réussis.
+- Parcours natif complet observé : 1170 finit à 334,45 s, la rampe mène à `X01M03` à
+  336,40 s, Yggdrasil (21510) donne 1.2.1 à 391,12 s. Le pilote revient ensuite
+  physiquement par `4107 → 4105`, parle à la gardienne, déclenche 21591 et arrive à
+  **Angel Falls 1100**, puis joue 21592/1380/1390/1370 et s'arrête à 665,2 s sur `M01M08`.
+  Le retour de 1.2.1 utilise la pente est et la porte 0/3, sans téléportation. Preuves :
+  `build/v01-20261107/combined/full-cp.jsonl` et `full-inputs.jsonl`.
+- `Raw::Quest490 = 1` est posé par la native 559 avant le trigger de fin de 21595 ;
+  21595 va en 1.4.1 sur 4105 et 21597 est lancé **une fois** après le changement de carte.
+  L'éclairage suit le moment de la journée du champ sauf `--time`/`--clock` explicites.
+  Les PNJ retirés par `0x7c` disparaissent du rendu et restent absents jusqu'au changement
+  de carte. Tests réels : `event_21595...`, `only_a_trigger_warp...`,
+  `house_exit_time_of_day...`, `removing_npc_210...`, `stable_pickups...`.
+- Vérification combinée : fmt, clippy, 33 tests d'application sur ROM+sauvegarde, 170 tests
+  de `dq9-core`, tous les tests d'espace de travail et wasm verts en 62,2 s.
 - Les comparateurs consomment chaque point une seule fois et refusent zéro alignement.
   Le butin aléatoire 4135/4212 reste visible dans les comparaisons des courses qui l'ont reçu ;
   aucun drapeau n'a été forcé.
@@ -117,11 +114,13 @@ leurs conclusions sont reprises dans `main` et les docs ; ne pas les réintégre
    Le worker a également franchi la rampe vers `X01M03`, puis `X01M09`. Étendre la trace
    continue et relever les véritables retours du contrôle, pas seulement la progression.
    Ne pas fabriquer d'état ni modifier les coordonnées/drapeaux.
-3. **Retour vers le bas de l'Observatoire après 21510.** Le passage de hauteur est corrigé :
-   le trigger de fin de 1170 cache bien S1 dans l'original, et le parcours natif complet
-   franchit la rampe sans téléportation ni mur abaissé. Le prochain blocage du pilote est
-   le retour `X01M01 → X01M05` en 1.2.1 ; distinguer une route de grille absente d'un défaut
-   de déplacement ou de porte, et comparer au trajet original continu.
+3. **Tâches du village et parité par image.** Le retour physique est résolu et le pilote
+   arrive à Angel Falls 1100 puis joue 21592/1380/1390/1370. Il tourne ensuite entre 1100 et
+   M01M08 sans accomplir les tâches du village (anneau, veuve, écurie) ; la jouabilité
+   manuelle de ces interactions doit être validée et le pilote n'est pas un critère produit.
+   Le pas terrain reste à porter à 30 Hz (`v01-cadence7`) pour la comparaison stricte par
+   image ; le pas actuel à 60 Hz n'a pas de dérive cumulative mais garde un écart maximal
+   d'un pas de terrain.
 4. **Drapeaux de l'ouverture : causes établies et branchées.** Le premier contrôle du
    runtime pose désormais les 17 drapeaux `337, 1450..1454, 1461, 2721, 2751, 2774, 3191,
    3775, 3955, 4046, 4283, 4410, 4414`, chacun par sa cause : équipement initial (épée de
@@ -537,10 +536,11 @@ Avancement :
 de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,
 dialogues, quêtes du village), sans combats. Critère : toute la suite d'événements du
 prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points. **État** : le
-parcours à pied atteint **1.2.1** après la rampe de l'Observatoire et Yggdrasil (21510).
-Le pilote ne retrouve pas encore le retour vers `X01M05`. Restent le parcours continu
-des tâches d'Angel Falls, les transitions de nuit et d'arrivée, les retraits visuels des PNJ,
-la comparaison aux mêmes points originaux et la validation complète sur Pages.
+parcours natif continu atteint Angel Falls 1100 et joue les scènes 21592/1380/1390/1370.
+Le pilote tourne ensuite entre la carte 1100 et M01M08 sans accomplir les tâches du village ;
+la validation manuelle de ces interactions et le parcours navigateur sur la version publiée
+restent à terminer. Le pas terrain à 30 Hz est en cours ; la comparaison stricte aux mêmes
+images et la parité complète des drapeaux ne sont pas déclarées acquises.
 
 ## J4 — Combattre : **v0.2**
 
