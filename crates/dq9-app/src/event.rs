@@ -317,6 +317,10 @@ pub struct EventPlayer {
     three_bone: Option<ThreeBoneDrag>,
     /// The scene lighting the renderer's environment was last built from.
     applied_light: SceneLight,
+    /// Map NPCs native 0x7c removed: their cast instance stays hidden through the following
+    /// script updates (a scene seeds every NPC of the cast). A map change forgets them with
+    /// the map.
+    removed_npcs: BTreeSet<u16>,
 }
 
 impl Default for EventPlayer {
@@ -366,10 +370,11 @@ impl EventPlayer {
             prepared_scene_flag: None,
             three_bone: None,
             applied_light: SceneLight::default(),
+            removed_npcs: BTreeSet::new(),
         }
     }
 
-    /// Queues an event (a trigger's action 0x77, 0x80 or 0x9b, or `--event`).
+    /// Queues an event (a trigger's action 0x77, 0x80, 0x9b or 0x85/0x8a entry, or `--event`).
     pub fn queue(&mut self, event: u16) {
         status(&format!("event {event} queued"));
         self.director.dispatch(vec![Request::Event(event)]);
@@ -423,6 +428,8 @@ impl EventPlayer {
     pub fn map_loaded(&mut self, camera: &Camera) {
         self.applied_light = SceneLight::default();
         self.bindings.placements.clear();
+        // The removals of action 0x7c belong to the map that is left.
+        self.removed_npcs.clear();
         // The new map's collision is built from the map, not from the old placements.
         self.collision_changes.clear();
         if self.saved_camera.is_some() {
@@ -463,6 +470,19 @@ impl EventPlayer {
     #[allow(dead_code)] // the collision side (field worker) reads the same state
     pub fn doors(&self) -> &[dq9_core::cutscene::Door] {
         self.cutscene.doors()
+    }
+
+    /// Action 0x7c: NPC `npc` leaves the map (the object's flag `0x8000`). Its cast instance is
+    /// hidden now and is not seeded or placed by the next scripts (`seed`, `present`,
+    /// `restore_npcs` skip it) until the map changes.
+    pub fn remove_npc(&mut self, scene: &mut AnimatedScene, npc: u16) {
+        self.removed_npcs.insert(npc);
+        match scene.npc_instance(npc) {
+            Some(instance) => self.set_world(scene, instance, Mat4::from_scale(Vec3::ZERO)),
+            None => self
+                .coverage
+                .miss(format!("NPC {npc} not in the map's cast")),
+        }
     }
 
     /// The event running now (`None` between scenes), for the checkpoints.
@@ -692,6 +712,10 @@ impl EventPlayer {
                 continue;
             }
             let id = instance.instance as i32;
+            // A removed NPC has no node: `present` would otherwise place it again.
+            if u16::try_from(id).is_ok_and(|id| self.removed_npcs.contains(&id)) {
+                continue;
+            }
             let (scale, rotation, position) = instance.world.to_scale_rotation_translation();
             let (y, x, z) = rotation.to_euler(EulerRot::YXZ);
             self.cutscene.seed(
@@ -710,6 +734,13 @@ impl EventPlayer {
     /// Puts the map NPCs back where the cast placed them.
     fn restore_npcs(&mut self, stage: &mut Stage) {
         for (index, world) in std::mem::take(&mut self.bindings.homes) {
+            // An NPC removed after its home was recorded (action 0x7c during the scene) stays
+            // away.
+            if stage.scene.scene.instances.get(index).is_some_and(|i| {
+                u16::try_from(i.instance).is_ok_and(|id| self.removed_npcs.contains(&id))
+            }) {
+                continue;
+            }
             if let Some(i) = stage.scene.scene.instances.get_mut(index)
                 && i.world != world
             {
@@ -1008,10 +1039,13 @@ impl EventPlayer {
                     self.hero_hidden = !node.visible;
                 }
                 Target::Npc(id) => {
-                    let Some(instance) = u16::try_from(id)
-                        .ok()
-                        .and_then(|id| stage.scene.npc_instance(id))
-                    else {
+                    let Some(id) = u16::try_from(id).ok() else {
+                        continue;
+                    };
+                    if self.removed_npcs.contains(&id) {
+                        continue;
+                    }
+                    let Some(instance) = stage.scene.npc_instance(id) else {
                         continue;
                     };
                     if !node.placed {
@@ -1026,7 +1060,7 @@ impl EventPlayer {
                         .and_then(|i| stage.scene.scene.models.get(i.model))
                         .is_some_and(|m| m.archive.ends_with(".spr"));
                     let world = if sprite {
-                        stage.scene.set_npc_angle(id as u16, node.pose.rotation.y);
+                        stage.scene.set_npc_angle(id, node.pose.rotation.y);
                         if node.visible {
                             Mat4::from_translation(node.pose.position)
                         } else {

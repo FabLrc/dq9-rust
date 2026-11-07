@@ -16,7 +16,7 @@ use std::sync::Arc;
 use crate::screens::{self, Layout};
 use dq9_core::camera::FieldCamera;
 use dq9_core::cutscene::{ClockCommand, PlacementChange};
-use dq9_core::field::{self, Event, Field, Leader, MapChange};
+use dq9_core::field::{self, Cause, Event, Field, Leader, MapChange};
 use dq9_core::fx::reduce_angle;
 use dq9_core::scenario::{Journal, Step};
 use dq9_core::state::{DayClock, GameState, TimeOfDay};
@@ -587,10 +587,33 @@ impl App {
         true
     }
 
+    /// Action 0xb1 (`0x6e`) of a trigger: the field changed the time of day, and the
+    /// application's clock and lighting follow before anything else in the same event list.
+    /// Fired before a `MapChange`, it makes the destination map load at the new time.
+    ///
+    /// `--time`/`--clock` keep the priority for the oracle captures. The map is **not**
+    /// reloaded: `set_time` would rebuild the scene and replay its entry events; a same-map
+    /// change only moves the environment.
+    fn sync_day_phase(&mut self) {
+        if self.options.time.is_some() || self.options.clock.is_some() {
+            return;
+        }
+        if self.state.time_of_day == self.day.phase().index() {
+            return;
+        }
+        self.day.set_phase(lighting::phase(self.state.time_of_day));
+        self.time = self.day.phase().index();
+        self.environment = lighting::environment(self.lighting_info.as_ref(), self.day);
+        if let Some(renderer) = &mut self.renderer {
+            renderer.environment = self.environment.clone();
+        }
+    }
+
     /// Carries out what the field asks for: the first map change (loading its destination
     /// at the arrival pose), and logs the trigger requests that wait for J3. Returns whether
     /// the map changed.
     fn apply_events(&mut self, events: Vec<Event>) -> bool {
+        self.sync_day_phase();
         let mut changed = false;
         for event in events {
             match event {
@@ -609,7 +632,7 @@ impl App {
                     status(&format!("event {id} ignored while an event loads its map"));
                 }
                 Event::Request(Request::Battle(number)) => self.run_battle(number),
-                Event::Request(Request::RemoveNpc(npc)) => self.talk.remove_npc(npc),
+                Event::Request(Request::RemoveNpc(npc)) => self.remove_npc(npc),
                 Event::Request(Request::SetPlacementHidden {
                     block,
                     placement,
@@ -632,6 +655,16 @@ impl App {
             }
         }
         changed
+    }
+
+    /// Action 0x7c: the NPC leaves the map. It stops being a talk target and its cast
+    /// instance is hidden in the scene (the object's flag `0x8000`, `02013380`); the event
+    /// player keeps it hidden through the following script updates.
+    fn remove_npc(&mut self, npc: u16) {
+        self.talk.remove_npc(npc);
+        if let Some(scene) = self.runtime.as_mut() {
+            self.events.remove_npc(scene, npc);
+        }
     }
 
     /// Trigger actions 0x95/0x96 (`Trig_RunAction` cases 0x31/0x32): the placement `(block,
@@ -684,6 +717,19 @@ impl App {
         self.chain += 1;
         let loaded = self.load_map(&change.destination.to_string(), true, spawn, None, true);
         self.chain -= 1;
+        // Actions 0x85/0x8a encode the arrival event (`Save_Warp+0x20`, read by
+        // `ov_017::0219e384` → `ov_017::0219fc88`, which puts it in the event task's list):
+        // it starts once the destination map and its own entry triggers are in place. A
+        // doorway or the `0x72` spawn entry is not an event, and the buffer holds no event
+        // number 0 (the ROM has no `ev00000`).
+        if loaded
+            && change.cause == Cause::Trigger
+            && let Some(entry) = change.entry
+            && let Ok(entry) = u16::try_from(entry)
+            && entry != 0
+        {
+            self.events.queue(entry);
+        }
         loaded
     }
 
@@ -1652,6 +1698,68 @@ mod tests {
     use dq9_core::state::GameState;
     use dq9_formats::save::Save;
 
+    /// Start-up options of a ROM-backed regression on an explicit map and story point, with
+    /// no save and no pinned time (`--time`/`--clock` absent: the field may set the night).
+    fn map_options(map: &str, story: (u8, u8, u8, bool)) -> Options {
+        Options {
+            map: Some(map.into()),
+            save: None,
+            time: None,
+            clock: None,
+            layout: Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: dq9_formats::cast::Story {
+                chapter: story.0,
+                step: story.1,
+                substep: story.2,
+                daytime: story.3,
+                ..Default::default()
+            },
+            story_override: [None; 3],
+            new_game: false,
+        }
+    }
+
+    /// Whether the cast instance of NPC `npc` is drawn on the loaded scene.
+    fn cast_drawn(app: &App, npc: u16) -> bool {
+        let runtime = app.runtime.as_ref().expect("a map is loaded");
+        runtime
+            .npc_instance(npc)
+            .is_some_and(|index| runtime.scene.instances[index].drawn())
+    }
+
+    /// Number of `Step::Map` entries for `map` in the journal.
+    fn map_loads(app: &App, map: u16) -> usize {
+        app.journal
+            .steps
+            .iter()
+            .filter(|(_, step)| matches!(step, Step::Map { id, .. } if *id == map))
+            .count()
+    }
+
+    /// Plays the pending event until it ends, pressing the action key to read the messages.
+    fn play_pending_event(app: &mut App, event: u16) {
+        let mut played = false;
+        for frame in 0..60_000 {
+            if frame % 20 == 0 {
+                app.talk.press(Button::Confirm);
+            }
+            app.run_steps(1);
+            played |= app.events.started().contains(&event);
+            if played && !app.events.is_active() && app.events.pending_start().is_none() {
+                return;
+            }
+        }
+        panic!(
+            "event {event} did not end: started {:?}, current {:?}",
+            app.events.started(),
+            app.events.current()
+        );
+    }
+
     /// The web bug: after "Nouvelle partie", picking a save must load that save, not start
     /// the prologue again. Exercises the same `set_save` path with a real save and ROM,
     /// through the proxy-less headless constructor.
@@ -1894,6 +2002,247 @@ mod tests {
             "the fallback event 21593 must not start: {:?}",
             app.events.started()
         );
+
+        // `0x85(4105, 21597)`: the arrival event the trigger encodes (Save_Warp+0x20) starts
+        // once the destination map is loaded, exactly once, and its end raises game-1 flag 0.
+        assert_eq!(
+            app.events.pending_start(),
+            Some(21597),
+            "the 0x85 entry event must be queued after the map change"
+        );
+        assert_eq!(
+            map_loads(&app, 4105),
+            1,
+            "the entry event must not reload 4105"
+        );
+        play_pending_event(&mut app, 21597);
+        assert_eq!(
+            app.events
+                .started()
+                .iter()
+                .filter(|&&event| event == 21597)
+                .count(),
+            1,
+            "the entry event is queued once: {:?}",
+            app.events.started()
+        );
+        assert!(
+            app.state.tracks[0].flags[1].contains(&0),
+            "the end of 21597 raises game-1 flag 0 (room 4105, 1.4 event 11)"
+        );
+        assert_eq!(map_loads(&app, 4105), 1, "21597 plays on the loaded map");
+        assert!(!app.events.started().contains(&21593));
+    }
+
+    /// Stands the hero inside the `0x72` exit of the loaded house, with the two game-1 flags
+    /// the exit rule waits for, and takes one fixed step.
+    fn leave_house(app: &mut App) {
+        app.state.tracks[0].flags[1].insert(4);
+        app.state.tracks[0].flags[1].insert(5);
+        let exit = app
+            .field
+            .as_ref()
+            .expect("the house is loaded")
+            .exits()
+            .into_iter()
+            .find(|exit| exit.warp.is_some())
+            .expect("M01M04 has its house exit");
+        app.hero = Some(Hero::at(exit.position, 0.0));
+        app.run_steps(1);
+    }
+
+    /// `room 1104 ... event 6` (`0xb1(1, 0)`) sets the night before the house-exit warp: the
+    /// application clock follows before the map change, 1100 loads at night, and 1104 is not
+    /// reloaded (a reload would replay its entry events).
+    #[test]
+    fn house_exit_time_of_day_reaches_the_application_before_the_map_change() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("1104", (1, 2, 1, true)), Some(rom.to_vec()));
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1104));
+        // A daytime start with no --time/--clock: the field's own 0xb1 is what must move the
+        // clock, so the application's daytime state is set explicitly here.
+        app.day = lighting::day_clock(None, Some(TimeOfDay::Day.index()), None);
+        app.time = app.day.phase().index();
+        assert_eq!((app.time, app.state.time_of_day), (2, 2));
+        assert_eq!(map_loads(&app, 1104), 1);
+        leave_house(&mut app);
+        assert_eq!(app.state.time_of_day, 0, "0xb1(1, 0) sets the night");
+        assert_eq!(
+            app.time,
+            TimeOfDay::Night.index(),
+            "the application clock follows the field"
+        );
+        assert_eq!(app.day.phase(), TimeOfDay::Night);
+        assert_eq!(
+            app.current.as_ref().map(|(entry, _)| entry.id),
+            Some(1100),
+            "the exit warp loads the village"
+        );
+        assert_eq!(
+            map_loads(&app, 1104),
+            1,
+            "the change must not reload the house"
+        );
+    }
+
+    /// `--time`/`--clock` keep the priority: a trigger's `0xb1` changes the trigger state but
+    /// not the lighting an oracle capture pinned.
+    #[test]
+    fn a_pinned_time_of_day_wins_over_the_trigger() {
+        let Some(rom) = testrom::load() else { return };
+        let mut options = map_options("1104", (1, 2, 1, true));
+        options.time = Some(TimeOfDay::Day.index());
+        let mut app = App::new_headless(options, Some(rom.to_vec()));
+        assert_eq!(
+            (app.time, app.day.phase()),
+            (TimeOfDay::Day.index(), TimeOfDay::Day)
+        );
+        leave_house(&mut app);
+        assert_eq!(app.state.time_of_day, 0, "the trigger still sets the night");
+        assert_eq!(
+            app.time,
+            TimeOfDay::Day.index(),
+            "--time keeps the lighting it pinned"
+        );
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1100));
+    }
+
+    /// A `MapChange` that carries an entry number but is not a trigger warp starts nothing.
+    fn assert_entry_ignored(rom: &[u8], cause: Cause) {
+        let mut app = App::new_headless(map_options("1100", (1, 2, 1, true)), Some(rom.to_vec()));
+        let change = MapChange {
+            destination: 4105,
+            position: None,
+            angle: None,
+            entry: Some(21597),
+            cause,
+        };
+        assert!(app.apply_events(vec![Event::MapChange(change)]));
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(4105));
+        assert_eq!(
+            app.events.pending_start(),
+            None,
+            "{cause:?} is not a trigger warp"
+        );
+        assert!(app.events.started().is_empty());
+    }
+
+    /// Only a trigger warp starts its `entry` event: a doorway or a `0x72` spawn entry that
+    /// carries the same number starts nothing.
+    #[test]
+    fn only_a_trigger_warp_starts_its_entry_event() {
+        let Some(rom) = testrom::load() else { return };
+        assert_entry_ignored(rom, Cause::Warp { index: 0, kind: 0 });
+        assert_entry_ignored(
+            rom,
+            Cause::Doorway {
+                class: 0,
+                number: 0,
+            },
+        );
+        let mut app = App::new_headless(map_options("1100", (1, 2, 1, true)), Some(rom.to_vec()));
+        let change = MapChange {
+            destination: 4105,
+            position: None,
+            angle: None,
+            entry: Some(21597),
+            cause: Cause::Trigger,
+        };
+        assert!(app.apply_events(vec![Event::MapChange(change)]));
+        assert_eq!(
+            app.events.pending_start(),
+            Some(21597),
+            "a trigger warp starts its entry event"
+        );
+    }
+
+    /// Action 0x7c after 1390: the cast instance of NPC 210 disappears from the scene, and no
+    /// other NPC of the village is hidden.
+    #[test]
+    fn removing_npc_210_hides_its_cast_instance() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("1100", (1, 2, 1, true)), Some(rom.to_vec()));
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1100));
+        assert!(cast_drawn(&app, 210), "NPC 210 stands in the village");
+        assert!(cast_drawn(&app, 95), "the dog stands in the village");
+        let events = app
+            .field
+            .as_mut()
+            .unwrap()
+            .event_ended(1390, &mut app.state);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::Request(Request::RemoveNpc(210)))),
+            "event 11 of 1390 removes NPC 210: {events:?}"
+        );
+        app.apply_events(events);
+        assert!(
+            !cast_drawn(&app, 210),
+            "the keepsake-ring NPC must leave the scene"
+        );
+        assert!(cast_drawn(&app, 95), "the other villagers stay");
+        assert!(
+            app.state.tracks[0].flags[1].contains(&3),
+            "game-1 flag 3 is raised"
+        );
+    }
+
+    /// Each stable pickup (event 1 of NPCs 211 to 215) removes its own pile from the scene,
+    /// the fifth starts 1340, and the following script keeps every removed pile hidden.
+    #[test]
+    fn stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("1104", (1, 2, 1, true)), Some(rom.to_vec()));
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1104));
+        for npc in 211..=215 {
+            assert!(cast_drawn(&app, npc), "pile {npc} stands in the stable");
+        }
+        assert!(
+            cast_drawn(&app, 15),
+            "the stablemaster stands in the stable"
+        );
+        for npc in 211..=215 {
+            let events = app
+                .field
+                .as_mut()
+                .unwrap()
+                .talk_ended(npc, 0, Some(0), &mut app.state);
+            assert!(
+                events.iter().any(|event| matches!(
+                    event,
+                    Event::Request(Request::RemoveNpc(removed)) if *removed == npc
+                )),
+                "talking to pile {npc} removes it: {events:?}"
+            );
+            app.apply_events(events);
+            assert!(!cast_drawn(&app, npc), "pile {npc} must leave the scene");
+            // The piles not picked up yet must stay. The piles removed before this one are
+            // checked at their own turn and again after 1340.
+            for other in npc + 1..=215 {
+                assert!(
+                    cast_drawn(&app, other),
+                    "pile {other} must stay while {npc} is removed"
+                );
+            }
+        }
+        assert_eq!(
+            app.events.pending_start(),
+            Some(1340),
+            "the fifth pickup starts the stable scene"
+        );
+        play_pending_event(&mut app, 1340);
+        assert!(
+            app.state.tracks[0].flags[1].contains(&5),
+            "the end of 1340 raises game-1 flag 5"
+        );
+        for npc in 211..=215 {
+            assert!(
+                !cast_drawn(&app, npc),
+                "pile {npc} must not come back after the scene"
+            );
+        }
+        assert!(cast_drawn(&app, 15), "the stablemaster stays drawn");
     }
 
     #[test]

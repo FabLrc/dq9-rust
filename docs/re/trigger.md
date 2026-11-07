@@ -628,12 +628,12 @@ Fin de `21595`, cas normal de l'original : le script appelle la native **559**
 `mark(13)` ; `559(0)` seulement sur la branche de `mark(12)`), ce qui écrit `+0x490` du
 gestionnaire de quêtes. Le trigger de fin prend donc la branche
 `event 11: if 0x8(21595) 0x1f(1) then 0x84(0, 1, 4, 1) 0x97(2) 0x85(4105, …)`: retour
-direct à l'Observatoire (`4105`) en **1.4.1**. Le runtime ne modélise pas 559 : `+0x490`
-reste 0 et il prend `0x1f(0)` (`0x68(1) 0x84(0, 1, 3, 2) 0x8d(1)`), puis le repli
-d'origine : parler à Aquila 99 (`s019n`, `4.46, -1.05, -2.06`), ligne de sous-étape 2 avec
-choix, `event 1: if 0x6(99) 0xb(0) 0x10(0) 0x4(1) then 0x77(21593)` ; la fin de 21593 fait
-`0x84(0, 1, 4, 1) 0x97(2) 0x85(4105, …)`. Les deux routes atteignent 1.4.1, mais l'original
-ne joue pas 21593.
+direct à l'Observatoire (`4105`) en **1.4.1**. Le runtime applique 559 depuis `8d41723` :
+`dq9-core` émet `Event::SetQuestSignal(u8)` et `dq9-app` écrit `Raw::Quest490` en traitant
+`Outcome::SetQuestSignal`, dans l'ordre des résultats et donc **avant** l'`Ended` qui exécute
+l'événement 11. La branche `0x1f(0)` de repli (`0x68(1) 0x84(0, 1, 3, 2) 0x8d(1)`), puis
+la conversation avec Aquila 99 (`s019n`, `4.46, -1.05, -2.06`) et la scène 21593 restent dans
+les données mais ne sont plus jouées : l'original ne les joue pas non plus.
 
 L'opérande de `0x85` n'est pas un point d'entrée de carte : c'est **l'événement à enchaîner
 sur la carte d'arrivée**. `0x85(4105, 1415380992)` vaut `0x85(4105, 21597)` et 21597 est
@@ -643,9 +643,12 @@ matters to discuss with Apus Major »). Même motif dans `M01` : 2200 → 2210, 
 opérande en `Save_Warp+0x20` (`(uint *)(puVar15 + 0x10)` sur un `ushort *`), et l'arrivée
 `ov_017::0219e384` appelle `ov_017::0219fc88(param_1, *(u32 *)(Save_Warp + 0x20))` ; cette
 fonction pose le numéro en `ctx+8` et met la tâche d'événement en file (`func_020469b4`).
-`MapChange.entry` transporte déjà cette valeur, mais `dq9-app::change_map` l'ignore. Le
-runtime s'arrête donc sur la carte 4105 à 1.4.1 sans jouer 21597 ; c'est le seul chaînon
-manquant après la fin du prologue.
+`MapChange.entry` transporte cette valeur et `dq9-app::change_map` l'envoie maintenant à la
+file d'événements **après** le chargement de la carte de destination et de ses propres
+triggers d'entrée, uniquement quand `cause` vaut `Cause::Trigger` : une porte (`Doorway`) ou
+l'entrée de spawn d'un `0x72` (`Warp`) n'est pas un événement. Un `entry` nul ne lance rien
+(la ROM n'a pas d'`ev00000`), et l'événement n'est mis en file qu'une fois par changement de
+carte. L'événement joue sur la carte déjà chargée, sans rechargement.
 
 ### Tâches d'histoire et quêtes numérotées
 
@@ -661,40 +664,46 @@ manquant après la fin du prologue.
 - `1370` (Ivor, choix) et `1380` (PNJ 2) sont des scènes de couleur locale : `0x68(13)` et
   `0x66(7)` respectivement, aucune action `0x84`.
 
-### Écarts connus sur ce chemin
+### Comportements branchés et écarts restants
 
-1. **Native 559** (`ov_001::021609e4`) : écrit l'octet `+0x490` lu par la condition `0x1f`.
-   Sans elle, 21595 prend le repli 1.3.2 + 21593 au lieu du retour direct 1.4.1.
-   **Émission en cours d'intégration** : `dq9-core` émet `Event::SetQuestSignal(u8)` (argument
-   lu par `StbArg_Int`, troncature `u8`) ; la consommation par l'application (écriture de
-   `Raw::Quest490` avant que `Field::event_ended(21595)` ne lise la condition) reste à
-   brancher. Fichiers : `script/natives.rs`, `script/event.rs`, `cutscene.rs` (bras de match
-   exhaustif), `dq9-app/src/event.rs` et `app.rs` (application). Assertion : `Raw::Quest490 ==
-   1` après la scène, puis le trigger 11 rend le warp `4105` avec la piste (1, 4, 1), sans
-   21593 ; la preuve est la branche 1.4.1 jouée sur la vraie scène 21595, pas la seule
-   présence de l'énumération.
-2. **Événement d'arrivée de `0x85`** (voir plus haut) : `MapChange.entry` porte 21597 mais
-   n'est pas consommé. **Non implémenté.** Contrat : après le chargement d'une carte par un
-   transport de trigger, lancer l'événement `entry` une fois la carte chargée (même
-   ordonnancement que la native 538 / la liste d'événements), sans le confondre avec un point
-   d'entrée de spawn. Assertion : fin de 21593 ou branche 1.4.1 de 21595 → `Event(21597)` puis
-   carte 4105.
-3. **Moment de la journée du rendu** : `0xb1(1, 0)` met `state.time_of_day` à 0 avant le
-   changement de carte, et `story_from_state` en dérive le cast nuit, mais `dq9-app` garde son
-   propre `self.time`/`DayClock` pour l'éclairage (`load::load(..., self.time, ...)`) : la
-   scène 1.3 est donc éclairée de jour. **Non implémenté.** Contrat exact, dans
-   `dq9-app/src/app.rs` seul : au début de `App::apply_events`, si `options.time` et
-   `options.clock` sont absents et que `state.time_of_day != self.day.phase().index()`, faire
+1. **Native 559** (`ov_001::021609e4`) — **branchée** dans `8d41723`. `dq9-core` émet
+   `Event::SetQuestSignal(u8)` (argument lu par `StbArg_Int`, troncature `u8`) ; `dq9-app`
+   écrit `Raw::Quest490` dans `step_event`, dans l'ordre des résultats (`Outcome`), donc
+   avant l'`Ended` qui exécute l'événement 11. Fichiers : `script/natives.rs`,
+   `script/event.rs`, `cutscene.rs` (bras de match exhaustif), `dq9-app/src/event.rs` et
+   `app.rs`. Test de bout en bout :
+   `event_21595_sets_quest490_and_takes_the_1_4_1_warp` (`Raw::Quest490 == 1`, piste
+   (1, 4, 1), warp `4105`, ni 21593 ni son démarrage).
+2. **Événement d'arrivée de `0x85`/`0x8a`** — **branché** (ce lot). `MapChange.entry` est
+   mis en file par `App::change_map` après `load_map` (donc après la carte de destination et
+   ses triggers d'entrée), seulement pour `Cause::Trigger`, une fois par changement, et pas
+   pour une porte (`Doorway`) ni l'entrée de spawn d'un `0x72` (`Warp`). Un `entry` nul est
+   ignoré (aucun `ev00000` dans la ROM). Tests :
+   `event_21595_sets_quest490_and_takes_the_1_4_1_warp` (4105 chargée une fois, 21597 démarre
+   une fois et son événement 11 lève le drapeau jeu 1 n° 0) et
+   `only_a_trigger_warp_starts_its_entry_event` (mêmes causes `Warp`/`Doorway` : aucun
+   événement ; `Trigger` : 21597).
+3. **Moment de la journée du rendu** — **branché** (ce lot). Au début de
+   `App::apply_events`, `App::sync_day_phase` : si `options.time` et `options.clock` sont
+   absents et que `state.time_of_day != self.day.phase().index()`, il fait
    `self.day.set_phase(lighting::phase(state.time_of_day))` et
-   `self.time = self.day.phase().index()`, **sans** `set_time` (qui recharge la carte et
-   rejouerait les triggers d'entrée) ; le `MapChange` traité ensuite dans le même
-   `apply_events` charge alors l'éclairage de nuit. Les options `--time`/`--clock` gardent la
-   priorité pour les captures d'oracle.
-4. **Retrait de PNJ (0x7c)** : `Request::RemoveNpc` n'enlève le PNJ que de la liste de
-   conversation (`Talk::remove_npc`) ; l'instance du modèle reste dans la scène rendue. Les
-   cinq tas de l'écurie et l'esprit 210 restent donc visibles après leur scène. Assertion
-   proposée : après application de `RemoveNpc(210)` puis de 1390, l'instance du cast 210 est
-   masquée (et idem pour 211–215 après 1340).
+   `self.time = self.day.phase().index()`, puis reconstruit `Environment` (et
+   `Renderer::environment` quand il existe) — **sans** `set_time`, qui recharge la carte et
+   rejouerait ses triggers d'entrée. Le `MapChange` traité ensuite dans le même
+   `apply_events` charge la destination à la nouvelle heure (placements et éclairage de
+   nuit ; cast via `story_from_state` pour une nouvelle partie). `--time`/`--clock` gardent
+   la priorité pour les captures d'oracle. Tests :
+   `house_exit_time_of_day_reaches_the_application_before_the_map_change` (1104 non
+   rechargée, 1100 chargée la nuit) et `a_pinned_time_of_day_wins_over_the_trigger`.
+4. **Retrait de PNJ (0x7c)** — **branché** (ce lot). `App::remove_npc` retire toujours le
+   PNJ de la liste de conversation (`Talk::remove_npc`) et appelle
+   `EventPlayer::remove_npc`, qui masque l'instance du cast (échelle nulle, l'objet porte le
+   drapeau `0x8000`, `02013380`). L'identifiant retiré est retenu : `seed`, `present` et
+   `restore_npcs` ne le replacent plus pendant les scènes suivantes ; un changement de carte
+   efface la liste avec la carte. Tests :
+   `removing_npc_210_hides_its_cast_instance` et
+   `stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden` (les cinq tas, 1340, et
+   aucun retour après la scène ; le palefrenier 15 reste dessiné).
 5. `0x8d` (`Request::Other(141)`), `560` et `571` ne changent pas le déroulement observé. Les
    11 scènes `data/event` des étapes 1.2–1.3 vont à leur terme (`dq9re script 1.2-3`) ; les
    scènes `evspt_lv5` 21592, 21593 et 21595 se jouent aussi jusqu'au bout, mais isolément
@@ -711,11 +720,27 @@ dq9re --rom $ROM triggers M01 --story 1.2
 dq9re --rom $ROM triggers M01 --story 1.3
 dq9re --rom $ROM triggers M01 --with 21510
 dq9re --rom $ROM triggers M01 --with 1330
+dq9re --rom $ROM triggers M01 --with 1390
+dq9re --rom $ROM triggers M01 --with 1340
 dq9re --rom $ROM script 1.2-3 --quiet
 # diagnostic isolé (ne prouve pas le parcours continu) :
 dq9-app --rom $ROM --events-report 1.2-3 --mute
 dq9-app --rom $ROM --event 21591 --chapter 1 --step 2 --substep 1 --headless --headless-steps 4000 --press-every 30 --mute
-dq9-app --rom $ROM --event 21595 --chapter 1 --step 3 --substep 1 --night --headless --headless-steps 6000 --press-every 20 --mute
+dq9-app --rom $ROM --event 21595 --chapter 1 --step 3 --substep 1 --night --headless --headless-steps 12000 --press-every 20 --mute
+# attendu : map change 1100 -> 4105 (Trigger), puis « event 21597 queued », « starts »,
+# « ended » une seule fois ; aucune ligne « event 21593 ».
+dq9-app --rom $ROM --event 21597 --chapter 1 --step 4 --substep 1 --headless --headless-steps 4000 --press-every 20 --mute
+```
+
+Preuves natives (Windows, ROM trouvée par `DQ9_ROM` ou `rom/`) :
+
+```powershell
+cargo test -p dq9-app event_21595_sets_quest490_and_takes_the_1_4_1_warp -- --nocapture
+cargo test -p dq9-app only_a_trigger_warp_starts_its_entry_event -- --nocapture
+cargo test -p dq9-app house_exit_time_of_day_reaches_the_application_before_the_map_change -- --nocapture
+cargo test -p dq9-app a_pinned_time_of_day_wins_over_the_trigger -- --nocapture
+cargo test -p dq9-app removing_npc_210_hides_its_cast_instance -- --nocapture
+cargo test -p dq9-app stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden -- --nocapture
 ```
 
 ### Assertions de régression proposées
@@ -734,10 +759,24 @@ dq9-app --rom $ROM --event 21595 --chapter 1 --step 3 --substep 1 --night --head
 - **1340** : événement 1 du PNJ 211 avec les drapeaux 317–320 levés et 316 baissé →
   `Event(1340)` et `RemoveNpc(211)` ; avec 317 seulement, pas d'événement mais 22079 donné,
   316 levé et `RemoveNpc(211)`.
-- **559** : après exécution de 21595, `Raw::Quest490 == 1` et le trigger 11 rend le warp
-  4105 avec la piste (1, 4, 1), sans 21593.
-- **Entrée `0x85`** : fin de 21593 (ou branche 1.4.1 de 21595) → la carte 4105 se charge puis
-  `Event(21597)` est lancé (aucun événement si `entry` est absent, comme pour les `0x72`).
+- **559** (fait, `event_21595_sets_quest490_and_takes_the_1_4_1_warp`) : après exécution de
+  21595, `Raw::Quest490 == 1` et le trigger 11 rend le warp 4105 avec la piste (1, 4, 1),
+  sans 21593.
+- **Entrée `0x85`** (fait, `event_21595_sets_quest490_and_takes_the_1_4_1_warp` et
+  `only_a_trigger_warp_starts_its_entry_event`) : la carte 4105 se charge **une fois**, puis
+  `Event(21597)` est mis en file une fois et joue ; son événement 11 lève le drapeau jeu 1
+  n° 0. Les causes `Warp` et `Doorway` avec le même `entry` ne lancent rien, et un `entry`
+  nul non plus.
+- **Moment de la journée** (fait,
+  `house_exit_time_of_day_reaches_the_application_before_the_map_change` et
+  `a_pinned_time_of_day_wins_over_the_trigger`) : la sortie de maison (0xb1 nuit) met
+  `app.time`/`app.day` à la nuit avant le `MapChange`, charge 1100 la nuit sans recharger
+  1104, et `--time` garde la priorité.
+- **Retrait de PNJ** (fait, `removing_npc_210_hides_its_cast_instance` et
+  `stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden`) : après `RemoveNpc(210)`
+  de 1390 l'instance 210 n'est plus dessinée, les autres PNJ le restent ; les tas 211–215
+  disparaissent chacun à leur ramassage, 1340 ne les fait pas revenir, et le palefrenier 15
+  reste dessiné.
 
 ## Exemples
 
