@@ -615,6 +615,16 @@ scène 1350/1360 n'est mise en file. Tests :
 `house_exit_requires_both_task_flags_and_advances_to_1_3` (1104 et 1106) et
 `house_exit_without_a_task_flag_returns_to_1100_without_advancing`.
 
+Les deux tâches restantes sont couvertes de bout en bout par des tests d'application sur la
+ROM réelle (`App::new_headless`, sans EventLoop) qui passent par le talk et la lecture
+d'événements réels : `keepsake_ring_task_gives_22158_raises_flag_3_and_removes_npc_210`
+(joue d'abord la scène d'arrivée 21592 mise en file par l'événement 3, puis parle à 210 :
+1390 donne 22158, lève le drapeau jeu 1 n° 3, retire 210 et ne lève aucun autre drapeau) ;
+`widow_task_takes_22158_gives_22159_and_raises_flag_4` (1106, drapeau 3 et anneau 22158
+comme préconditions : contexte 193, réponse oui, 1330, 22158 pris, 22159 donné, drapeau 4,
+veuve toujours dessinée) ; `widow_without_flag_3_starts_no_scene` (contexte 192, aucun
+événement mis en file, objet et drapeaux inchangés).
+
 Scène **non obligatoire mais d'histoire** : le chien 95 (`n097a`, `20.29, -1.05, -0.67`) →
 `if 0x6(95) 0x5(2) 0x5(3) then 0x77(1320)` ; la fin de 1320 fait `0x68(2)` et avance en
 **1.2.2** (`0x84(0, 1, 2, 2)`). Aucun verrou de 1.2 → 1.3 ne teste la sous-étape : la scène

@@ -2210,6 +2210,158 @@ mod tests {
         );
     }
 
+    /// The keepsake ring through the real talk trigger: at 1.2.1 the village's arrival scene
+    /// 21592 runs first (`room 1100 1.2..1.2 event 3`), then talking to NPC 210 fires its
+    /// event 0 (`if 0x6(210) 0x5(3) then 0x77(1390)`). The end of 1390 gives item 22158,
+    /// raises game-1 flag 3 and removes NPC 210; no other flag moves.
+    #[test]
+    fn keepsake_ring_task_gives_22158_raises_flag_3_and_removes_npc_210() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("1100", (1, 2, 1, true)), Some(rom.to_vec()));
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1100));
+        // A bare `--map` loads without the arrival triggers; the real arrival from 4105 is a
+        // transition (`0xe1(1100)`), and only then does event 3 queue 21592 and raise game-1
+        // flag 1. Enter once more with the transition, as `App::change_map` does.
+        assert!(app.load_map("1100", true, None, None, true));
+        // Event 3 of room 1100 queues the 1.2 arrival scene: it is the game's own arrival,
+        // not a test flag, and it must finish before the village is talkable.
+        assert_eq!(
+            app.events.pending_start(),
+            Some(21592),
+            "the 1.2 arrival scene waits on the loaded village"
+        );
+        play_pending_event(&mut app, 21592);
+        assert!(cast_drawn(&app, 210), "NPC 210 stands in the village");
+        assert!(cast_drawn(&app, 95), "the dog stands in the village");
+        assert!(!app.state.items.contains_key(&22158));
+        let before = app.state.tracks[0].flags.clone();
+
+        talk_to(&mut app, 210);
+        assert_eq!(
+            app.events.pending_start(),
+            Some(1390),
+            "NPC 210's event 0 queues the keepsake-ring scene"
+        );
+        assert!(
+            !app.talk.is_active(),
+            "the trigger replaces the conversation"
+        );
+        play_pending_event(&mut app, 1390);
+
+        assert_eq!(
+            app.state.items.get(&22158),
+            Some(&1),
+            "the end of 1390 gives the keepsake ring 22158"
+        );
+        assert!(
+            app.state.tracks[0].flags[1].contains(&3),
+            "the end of 1390 raises game-1 flag 3"
+        );
+        assert!(!cast_drawn(&app, 210), "NPC 210 leaves the scene");
+        assert!(cast_drawn(&app, 95), "no other villager is removed");
+        let added: Vec<i32> = app.state.tracks[0].flags[1]
+            .difference(&before[1])
+            .copied()
+            .collect();
+        assert_eq!(added, vec![3], "only game-1 flag 3 is raised");
+        assert_eq!(
+            app.state.tracks[0].flags[0], before[0],
+            "the ring touches no game-0 flag"
+        );
+        assert_eq!(
+            (
+                app.state.tracks[0].chapter,
+                app.state.tracks[0].step,
+                app.state.tracks[0].substep,
+            ),
+            (1, 2, 1),
+            "the ring does not advance the track"
+        );
+    }
+
+    /// The widow's task through the real conversation: with game-1 flag 3 and the ring 22158
+    /// held, NPC 12's event 0 opens context 193 (`if 0x6(12) 0x4(3) 0x5(4)`). Answering Yes
+    /// closes it into event 1, which queues 1330, takes 22158, gives 22159 and raises flag 4.
+    /// The scene leaves the widow on the map.
+    #[test]
+    fn widow_task_takes_22158_gives_22159_and_raises_flag_4() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("1106", (1, 2, 1, true)), Some(rom.to_vec()));
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1106));
+        // Documented preconditions: the keepsake ring (its own test proves the trigger gives
+        // it) and game-1 flag 3, raised with it.
+        app.state.obtain(22158, 1);
+        app.state.tracks[0].flags[1].insert(3);
+        let before = app.state.tracks[0].flags.clone();
+        assert!(cast_drawn(&app, 12), "the widow stands in the house");
+
+        talk_to(&mut app, 12);
+        assert!(
+            app.talk.is_active(),
+            "event 0 opens the widow's context 193"
+        );
+        finish_conversation(&mut app);
+        assert_eq!(
+            app.events.pending_start(),
+            Some(1330),
+            "answering Yes queues the widow scene"
+        );
+        play_pending_event(&mut app, 1330);
+
+        assert_eq!(app.state.items.get(&22158), Some(&0), "the ring is taken");
+        assert_eq!(
+            app.state.items.get(&22159),
+            Some(&1),
+            "the benevolessence is given"
+        );
+        assert!(
+            app.state.tracks[0].flags[1].contains(&4),
+            "event 1 raises game-1 flag 4"
+        );
+        assert!(cast_drawn(&app, 12), "the widow stays in the house");
+        let added: Vec<i32> = app.state.tracks[0].flags[1]
+            .difference(&before[1])
+            .copied()
+            .collect();
+        assert_eq!(added, vec![4], "only game-1 flag 4 is raised");
+        assert_eq!(
+            app.state.tracks[0].flags[0], before[0],
+            "no game-0 flag moves"
+        );
+    }
+
+    /// Without game-1 flag 3 the widow offers context 192, and event 1 requires context 193:
+    /// the conversation closes without queueing 1330 or touching the ring.
+    #[test]
+    fn widow_without_flag_3_starts_no_scene() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("1106", (1, 2, 1, true)), Some(rom.to_vec()));
+        app.state.obtain(22158, 1);
+        let before = app.state.tracks[0].flags.clone();
+        talk_to(&mut app, 12);
+        assert!(
+            app.talk.is_active(),
+            "the widow still talks, with context 192"
+        );
+        finish_conversation(&mut app);
+        assert_eq!(app.events.pending_start(), None, "no scene is queued");
+        assert_eq!(
+            app.state.items.get(&22158),
+            Some(&1),
+            "the ring stays in the bag"
+        );
+        assert!(!app.state.items.contains_key(&22159));
+        assert_eq!(
+            app.state.tracks[0].flags[1], before[1],
+            "no game-1 flag moves"
+        );
+        assert_eq!(
+            app.state.tracks[0].flags[0], before[0],
+            "no game-0 flag moves"
+        );
+        assert!(cast_drawn(&app, 12), "the widow stays");
+    }
+
     /// Each stable pickup (event 1 of NPCs 211 to 215) removes its own pile from the scene,
     /// the fifth starts 1340, and the following script keeps every removed pile hidden.
     #[test]
@@ -2336,6 +2488,21 @@ mod tests {
         app.hero = Some(Hero::at(position, yaw));
         app.talk.press(Button::Confirm);
         app.run_steps(1);
+    }
+
+    /// Presses the action key until the open conversation closes, as a player reading the
+    /// pages would. The first choice is the cursor of every prompt, so a `<YESNO>` gets Yes.
+    fn finish_conversation(app: &mut App) {
+        for frame in 0..60_000 {
+            if frame % 20 == 0 {
+                app.talk.press(Button::Confirm);
+            }
+            app.run_steps(1);
+            if !app.talk.is_active() {
+                return;
+            }
+        }
+        panic!("the conversation did not close");
     }
 
     /// `room 1104 1.2..1.2 event 6` / `room 1106 ... event 6`: the two task flags are the
