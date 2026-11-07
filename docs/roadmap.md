@@ -13,31 +13,28 @@ livrés avec un prologue intégralement jouable.
 
 ### Lots actifs — 7 novembre 2026
 
-Run Orca `run_93299987d8b6`, cinq workers OMP
-`opencode-go/deepseek-v4.1-flash` (plafond : six). Les contrôles et l'intégration restent
-centralisés. Les lots Web et comparateurs sont intégrés ; les trois autres continuent.
+Run Orca `run_93299987d8b6`, quatre workers actifs (plafond : six) :
+trois OMP `opencode-go/deepseek-v4.1-flash` et un OMP `openai-codex/gpt-6-luna`
+pour le parcours visuel. Contrôles et intégration centralisés.
 
 - `v01-oracle7` : 1170 puis 1.1.2 atteints dans l'original sans téléportation, pose
   `(2,77 ; 11,25 ; 18,19)`. Le coordinateur a rejoué les 3 966 images et vérifié le
   placement 16 caché. Le worker continue vers Angel Falls.
   Propriétaire de `melondsds_host.py` et `re/melonds-state.md`.
-- `v01-tower7` : le trigger de fin de 1170 masque le placement 16 (mur S1) par `0x95` ;
-  cet effet n'était pas appliqué. Correction en cours, franchissement restant à vérifier.
-  Propriétaire de `collision.rs`, `movement.rs`, `app/auto.rs`, `app.rs`, `event.rs` et
-  `re/movement.md`.
-- `v01-web7` : lot terminé, intégré et poussé dans `574d24c`, worktree fermé. Le même
-  fichier ROM/sauvegarde peut être resélectionné. Vérification complète native/wasm et
-  essai visuel du candidat réussis ; Pages `42365931020` et CI `42365931007` réussis.
-  La resélection de la même sauvegarde a été contre-vérifiée sur la page déployée.
-  Le remplacement d'une session avec légende active a également été vérifié sur Pages :
-  sauvegarde dans l'église, déplacement, aucune ancienne légende visible.
-- `v01-village7` : chaîne réelle des scènes et tâches du village, contrats manquants ;
-  propriétaire de `field.rs`, `trigger.rs` et `re/trigger.md`. Émet la visibilité des
-  placements, appliquée côté application par le lot tour.
-- `v01-parity7` : lot comparateurs intégré dans `69287f9`, worktree fermé. L'original
-  masculin sans butin et le runtime ont les mêmes progression, drapeaux, quêtes et position
-  au premier contrôle (tolérance de position 0,001). Cela ne valide pas les autres points :
-  la différence de cadence terrain 30/60 Hz laisse la comparaison par image ouverte.
+- `v01-return7` : retour physique depuis la terrasse vers `X01M05`, Apus Major et la
+  gardienne, puis arrivée à Angel Falls ; propriétaire de `app/auto.rs`, `collision.rs`,
+  `movement.rs` et `re/movement.md`.
+- `v01-transition7` : éclairage de nuit, événement d'arrivée des transports `0x85`, retrait
+  visuel des PNJ ; propriétaire de `app.rs`, `event.rs`, `talk.rs` et `re/trigger.md`.
+- `v01-browser7` (Luna 6) : parcours réel au clavier sur la page publiée, captures et
+  frontières de scènes ; propriétaire de `app.md` et du texte du README, hors couverture.
+
+Lots clôturés et worktrees fermés : `v01-web7` (`574d24c`, resélection du même fichier,
+vérifiée sur Pages), `v01-parity7` (`69287f9`, comparaisons sans réutilisation de points),
+`v01-tower7` et `v01-village7` (code combiné `8d41723`, placement S1, native 559,
+restauration des portes et tests headless réellement exécutés). L'original masculin sans
+butin et le runtime concordent au premier contrôle sur progression, drapeaux, quêtes et
+position (tolérance 0,001) ; la parité par image du terrain reste ouverte.
 
 Chaque worker pousse ses constats documentés sur sa branche. Le code attend les contrôles
 du coordinateur avant commit et push. Les preuves restent sous `build/v01-20261107/`
@@ -45,16 +42,20 @@ du coordinateur avant commit et push. Les preuves restent sous `build/v01-202611
 
 ### Intégré et publié
 
-- Dernier commit : **`9a25199`** (drapeaux de scène limités à l'ouverture) ; outillage :
-  **`829db11`**. CI Linux
-  [42284105057](https://github.com/FabLrc/dq9-rust/actions/runs/42284105057) et déploiement
-  [Pages 42284105022](https://github.com/FabLrc/dq9-rust/actions/runs/42284105022) réussis.
-- Runtime intégré : hooks `scene_flag`/`map_visit_flag`, NavGrid 3D, checkpoints/trace/replay.
-  Le pilote réel atteint **1.1.2** à 369,78 s (arrêt 377,8 s sur `X01M01`) et ses 22 670 pas
-  rejouent les 49 checkpoints **identiques** (`3da80263…`). Au premier contrôle, les causes
-  des drapeaux sont branchées : **17 des 18** drapeaux de l'original, seul le butin aléatoire
-  du combat 26 (`4135` ou `4212`) reste hors runtime. `compare-runs.ps1` préfère le même
-  `kind` pour ne pas confondre un chargement de carte avec une prise de contrôle.
+- Dernier lot de jeu : **`8d41723`**. CI Linux
+  [42368823873](https://github.com/FabLrc/dq9-rust/actions/runs/42368823873) et déploiement
+  [Pages 42368823919](https://github.com/FabLrc/dq9-rust/actions/runs/42368823919) réussis.
+- Parcours natif réel depuis une nouvelle partie : 1170 finit à **334,45 s** (1.1.2),
+  la rampe mène à `X01M03` à **336,40 s**, puis `4109 → 4103 → 4104` et 21510 donnent
+  **1.2.1 à 391,12 s**. Arrêt à 444,7 s sur `X01M01` : retour vers 4105 encore bloqué pour
+  le pilote. Trace, checkpoints et journaux : `build/v01-20261107/tower/coordinator-fixed-pilot*`,
+  empreintes dans `build/v01-20261107/coordinator-proof-manifest.json`.
+- La vraie scène 21595, exécutée isolément, pose `Raw::Quest490 = 1` avant son trigger de fin :
+  retour en 1.4.1 sur 4105, sans le repli 21593. Ce test ne prouve pas le parcours continu
+  du village. Les événements d'arrivée des transports et l'éclairage de nuit restent à brancher.
+- Les comparateurs consomment chaque point une seule fois et refusent zéro alignement.
+  Le butin aléatoire 4135/4212 reste visible dans les comparaisons des courses qui l'ont reçu ;
+  aucun drapeau n'a été forcé.
 - Référence originale reprise : premier contrôle, X01M05, X01M07 puis retour physique dans
   `X01M01`. Le blocage précédemment attribué à 1160 était une erreur de pilotage : la
   réplique appartient à la scène répétable 1600 du compagnon ; les A répétés la relançaient.
@@ -101,9 +102,9 @@ leurs conclusions sont reprises dans `main` et les docs ; ne pas les réintégre
 
 ### Blocages et ordre de reprise
 
-1. **Reprendre depuis la référence outillée.** Le harnais, `state --ram`, le catalogue et le
-   traceur sont intégrés. Produire les états originaux des points suivants (1.1.2, Angel
-   Falls, quêtes, fin du prologue) avec le même harnais, puis les comparer au runtime par
+1. **Poursuivre la comparaison à partir des références outillées.** La référence 1.1.2
+   existe ; produire Angel Falls, les tâches du village et la fin du prologue avec le même
+   harnais, puis comparer au runtime par
    `state diff` et `compare-runs.ps1` aux mêmes points d'histoire. Ne pas réintégrer les
    anciennes branches d'outillage : elles sont déjà dans `main`.
 2. **Poursuivre la référence originale vers Angel Falls.** 1170 et 1.1.2 sont reproduits
@@ -111,13 +112,11 @@ leurs conclusions sont reprises dans `main` et les docs ; ne pas les réintégre
    Le worker a également franchi la rampe vers `X01M03`, puis `X01M09`. Étendre la trace
    continue et relever les véritables retours du contrôle, pas seulement la progression.
    Ne pas fabriquer d'état ni modifier les coordonnées/drapeaux.
-3. **Résoudre l'accès à la tour `X01M01` → `X01M03`.** La grille 3D plafonne à y = 11,25 ;
-   le passage haut n'est pas atteint. Une route vérifiée seulement en X/Z était fausse.
-   La proposition de contourner la tour via 21591 est également rejetée : ce trigger n'est
-   chargé qu'en **1.2**, pas en 1.1.2 (`dq9re triggers X01 --with 21591`). Le baseline
-   applicatif passe par `4103 → 4109 → 4103 → 4104`, puis 21510 avant 1.2.1.
-   Comparer au vrai parcours original ; ne pas abaisser les murs ou les limites de marche.
-   L'égalité de quelques constantes et placements ne prouve pas que tout le port est correct.
+3. **Retour vers le bas de l'Observatoire après 21510.** Le passage de hauteur est corrigé :
+   le trigger de fin de 1170 cache bien S1 dans l'original, et le parcours natif complet
+   franchit la rampe sans téléportation ni mur abaissé. Le prochain blocage du pilote est
+   le retour `X01M01 → X01M05` en 1.2.1 ; distinguer une route de grille absente d'un défaut
+   de déplacement ou de porte, et comparer au trajet original continu.
 4. **Drapeaux de l'ouverture : causes établies et branchées.** Le premier contrôle du
    runtime pose désormais les 17 drapeaux `337, 1450..1454, 1461, 2721, 2751, 2774, 3191,
    3775, 3955, 4046, 4283, 4410, 4414`, chacun par sa cause : équipement initial (épée de
@@ -495,11 +494,11 @@ Avancement :
       native 538, le trigger 11, l'action `0x78` et le trigger 15, puis le joueur a la main à
       l'Observatoire (`--new-game --headless --auto`, 210 s de jeu). Le pilote **marche** :
       direction au pavé, `Hero::step`, collisions, portes (la double porte de `X01M07` est
-      poussée puis ouverte par la native 584), et atteint l'histoire **1.1.2** à `X01M01`
-      (NPC 127, événement 1170) sans téléport ; il s'y arrête, l'accès à la terrasse du warp
-      `X01M03` restant inconnu. **Reste** : le combat 26 (J4), la connexion de hauteur de
-      l'Observatoire, comparer l'ordre, les durées et les drapeaux à melonDS ; le pilote est
-      un outil de test, pas une fonction du jeu.
+      poussée puis ouverte par la native 584), passe 1170, franchit la rampe vers `X01M03`
+      et atteint **1.2.1** après Yggdrasil (21510) sans téléportation. Le retour vers
+      `X01M05` bloque encore le pilote. **Reste** : le combat 26 (J4), le parcours continu
+      d'Angel Falls et la comparaison d'ordre, de durées et de drapeaux à melonDS ;
+      le pilote est un outil de test, pas une fonction du jeu.
 - [ ] **Interpréteur `.stb`** : `dq9_core::script` traduit `Stb_Run` et ses auxiliaires
       (`ov_017::021d4980…021d6148`, marqueurs `port:`), joue les entrées 200, 100 et 300 d'un
       événement une mise à jour à la fois (`Script::step`) et rend des `Event` typés (fondus,
@@ -507,7 +506,7 @@ Avancement :
       `Signal` (message fermé, acteur au repos, caméra au repos…). Le `Director` démarre l'événement
       d'une requête `Request::Event` des triggers et enchaîne la native 538. Les 30 scripts du
       prologue (étapes 1.1 à 1.3) vont à leur terme sans erreur (`cargo dq9re script 1.1-3`, test
-      réel `prologue_scripts_run_to_completion`) ; 8 natives de rôle inconnu ou sans effet
+      réel `prologue_scripts_run_to_completion`) ; 7 natives de rôle inconnu ou sans effet
       rendu sont rapportées une fois et ignorées. **Exécution à l'écran** (`dq9_core::cutscene`, `dq9-app/src/event.rs`,
       [`app.md`](app.md) § « Événements », [`re/stb.md`](re/stb.md) § « Exécution à l'écran ») :
       `--stage 1.1` / `--event N` jouent les scènes (fondus, messages dans la fenêtre de
@@ -533,12 +532,10 @@ Avancement :
 de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,
 dialogues, quêtes du village), sans combats. Critère : toute la suite d'événements du
 prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points. **État** : le
-parcours à pied atteint 1.1.2 (`X01M01`) ; le passage vers le chapitre 2 reste bloqué par
-l'accès à la terrasse haute de l'Observatoire. Une marche 3D exhaustive depuis la pose
-d'histoire et depuis le départ de la carte plafonne à y 11,25 ; le warp `X01M03` est à y 15,5.
-Les zones de type 1 sont **inertes** (aucun lecteur dans le champ) : la connexion manquante
-(placement de collision déplacé, plateforme ou changement de carte scénarisé) est **[inconnue]**
-et à établir sur melonDS (voir J2).
+parcours à pied atteint **1.2.1** après la rampe de l'Observatoire et Yggdrasil (21510).
+Le pilote ne retrouve pas encore le retour vers `X01M05`. Restent le parcours continu
+des tâches d'Angel Falls, les transitions de nuit et d'arrivée, les retraits visuels des PNJ,
+la comparaison aux mêmes points originaux et la validation complète sur Pages.
 
 ## J4 — Combattre : **v0.2**
 
