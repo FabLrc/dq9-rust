@@ -664,25 +664,32 @@ manquant après la fin du prologue.
 ### Écarts connus sur ce chemin
 
 1. **Native 559** (`ov_001::021609e4`) : écrit l'octet `+0x490` lu par la condition `0x1f`.
-   Sans elle, 21595 prend le repli 1.3.2 + 21593 au lieu du retour direct 1.4.1. **Correctif
-   en cours** : `dq9-core` émet `Event::SetQuestSignal(u8)` (argument lu par `StbArg_Int`,
-   troncature `u8`) ; l'application doit écrire `Raw::Quest490` avant que
-   `Field::event_ended(21595)` ne lise la condition. Fichiers : `script/natives.rs`,
-   `script/event.rs`, `cutscene.rs` (bras de match exhaustif), `dq9-app/src/event.rs` et
-   `app.rs` (application). Assertion : `Raw::Quest490 == 1` après la scène, puis le trigger 11
-   rend le warp `4105` avec la piste (1, 4, 1), sans 21593.
+   Sans elle, 21595 prend le repli 1.3.2 + 21593 au lieu du retour direct 1.4.1.
+   **Émission en cours d'intégration** : `dq9-core` émet `Event::SetQuestSignal(u8)` (argument
+   lu par `StbArg_Int`, troncature `u8`) ; la consommation par l'application (écriture de
+   `Raw::Quest490` avant que `Field::event_ended(21595)` ne lise la condition) reste à
+   brancher. Fichiers : `script/natives.rs`, `script/event.rs`, `cutscene.rs` (bras de match
+   exhaustif), `dq9-app/src/event.rs` et `app.rs` (application). Assertion : `Raw::Quest490 ==
+   1` après la scène, puis le trigger 11 rend le warp `4105` avec la piste (1, 4, 1), sans
+   21593 ; la preuve est la branche 1.4.1 jouée sur la vraie scène 21595, pas la seule
+   présence de l'énumération.
 2. **Événement d'arrivée de `0x85`** (voir plus haut) : `MapChange.entry` porte 21597 mais
-   n'est pas consommé. Contrat : après le chargement d'une carte par un transport de trigger,
-   lancer l'événement `entry` une fois la carte chargée (même ordonnancement que la native
-   538 / la liste d'événements), sans le confondre avec un point d'entrée de spawn.
-   Assertion : fin de 21593 ou branche 1.4.1 de 21595 → `Event(21597)` puis carte 4105.
+   n'est pas consommé. **Non implémenté.** Contrat : après le chargement d'une carte par un
+   transport de trigger, lancer l'événement `entry` une fois la carte chargée (même
+   ordonnancement que la native 538 / la liste d'événements), sans le confondre avec un point
+   d'entrée de spawn. Assertion : fin de 21593 ou branche 1.4.1 de 21595 → `Event(21597)` puis
+   carte 4105.
 3. **Moment de la journée du rendu** : `0xb1(1, 0)` met `state.time_of_day` à 0 avant le
    changement de carte, et `story_from_state` en dérive le cast nuit, mais `dq9-app` garde son
    propre `self.time`/`DayClock` pour l'éclairage (`load::load(..., self.time, ...)`) : la
-   scène 1.3 est donc éclairée de jour. Contrat proposé : synchroniser `self.day`/`self.time`
-   (sans recharger la carte, `set_time` recharge) quand `state.time_of_day` a changé entre
-   deux lots d'événements, en ne touchant pas aux options `--time`/`--clock` explicites.
-   Fichiers : `dq9-app/src/app.rs` (+ `lighting.rs` déjà fourni).
+   scène 1.3 est donc éclairée de jour. **Non implémenté.** Contrat exact, dans
+   `dq9-app/src/app.rs` seul : au début de `App::apply_events`, si `options.time` et
+   `options.clock` sont absents et que `state.time_of_day != self.day.phase().index()`, faire
+   `self.day.set_phase(lighting::phase(state.time_of_day))` et
+   `self.time = self.day.phase().index()`, **sans** `set_time` (qui recharge la carte et
+   rejouerait les triggers d'entrée) ; le `MapChange` traité ensuite dans le même
+   `apply_events` charge alors l'éclairage de nuit. Les options `--time`/`--clock` gardent la
+   priorité pour les captures d'oracle.
 4. **Retrait de PNJ (0x7c)** : `Request::RemoveNpc` n'enlève le PNJ que de la liste de
    conversation (`Talk::remove_npc`) ; l'instance du modèle reste dans la scène rendue. Les
    cinq tas de l'écurie et l'esprit 210 restent donc visibles après leur scène. Assertion
