@@ -624,6 +624,17 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
 
 ## Vérification
 
+- Parcours navigateur sur Pages (7 novembre 2026, preuve partielle) : déploiement réussi
+  `42368823919`, commit `8d41723`, URL
+  `https://fablrc.github.io/dq9-rust/?newgame=1&release=8d41723`, ROM européenne locale
+  de 256 Mio, Chromium piloté, fenêtre 1280 × 900 (DPR 1,25). Après lecture de la ROM, le
+  clavier est actif sur `dq9` ; l'ouverture visuelle atteint les événements `21500`, `21507`,
+  `21520`, `21521`, `21522`, puis `21596` et le premier contrôle sur `X01M05` (4105).
+  Flèches et Espace ouvrent à pied une conversation avec le PNJ 108
+  (`X01A0.gp2/108_en.bin`, enregistrement 0), qui s'avance et se ferme au clavier. Captures,
+  journal console et empreintes dans `build/v01-20261107/browser/`. Ce run ne prouve pas encore
+  les portes de bibliothèque, 1170, la tour ni 21510/1.2.1 ; pas de sauvegarde, téléportation
+  ou état interne injecté.
 - Chargement d'une sauvegarde après « Nouvelle partie » : scénario natif Windows exercé
   avec la ROM EU et une sauvegarde locale (`a_save_selected_after_a_new_game_loads_that_save`).
   `new_game` devient faux et `C01M09` (carte 109) remplace le prologue. Le test couvre un
