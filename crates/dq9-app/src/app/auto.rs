@@ -34,6 +34,13 @@ const PRESS_EVERY: u64 = 20;
 const MAX_ACTIONS: u32 = 300;
 /// Distance under which a waypoint counts as reached.
 const WAYPOINT_REACH: f32 = 0.55;
+/// Height under which a waypoint or a goal counts as reached. A walkway above a cell centre
+/// is a **different** node of the grid: a flat-only test accepts the landing's centre while
+/// the hero still stands on a balcony four units above it (`X01M01`, y 8.25 over 4.25), and a
+/// loose tolerance lets the hero "reach" the first stairway step from the ramp surface above
+/// it, then press east against geometry without ever descending. Half an edge's climb
+/// ([`STEP_HEIGHT`]) plus the standing offset keeps the test on the waypoint's own floor.
+const LEVEL_REACH: f32 = 0.8;
 /// Frames of walking without progress before the route is planned again, then given up.
 const REPLAN_FRAMES: u32 = 45;
 const STUCK_FRAMES: u32 = 120;
@@ -75,6 +82,9 @@ enum Goal {
         heading: Vec3,
         /// The doorway's `(class, number)` when this is an internal door (no destination).
         door: Option<(u8, u8)>,
+        /// [`exit_key`] of the way out tried: a map may offer several exits to one
+        /// destination, and failing one must not forbid the others.
+        key: u64,
     },
 }
 
@@ -96,6 +106,13 @@ struct Pilot {
     talked: BTreeSet<(u16, u16, u16, u64)>,
     /// Exits taken: `(room, destination, story digest)`.
     left: BTreeSet<(u16, u16, u64)>,
+    /// Single ways out tried, taken or not: `(room, destination, story digest, exit key)`.
+    /// A map may lead to one destination by a warp and by doorways; a walk that fails on one
+    /// of them must not forbid the others.
+    tried_exits: BTreeSet<(u16, u16, u64, u64)>,
+    /// Ways out whose walk failed: `(room, destination, exit key)`, across story digests. A
+    /// goal that keeps failing must not be retried forever after each flag change.
+    failed_exits: BTreeSet<(u16, u16, u64)>,
     /// Areas walked into: `(room, area index, story digest)`.
     entered: BTreeSet<(u16, usize, u64)>,
     /// The story digest at which each room was last looked at for something to do.
@@ -132,8 +149,10 @@ struct Pilot {
     wait: u32,
     /// Completed doors the walkable grid was built with.
     grid_doors: usize,
-    /// Cells the walk could not leave: `(room, cell)`, learned when stuck.
-    blocked: BTreeSet<(u16, usize)>,
+    /// Grid nodes the walk could not leave: `(room, cell, level)`, learned when stuck. A cell
+    /// may stack floors (a walkway over a hall), so blocking the cell alone would forbid the
+    /// other floor too.
+    blocked: BTreeSet<(u16, usize, u8)>,
 }
 
 /// Floors a grid cell may carry: the game's maps stack walkways over halls.
@@ -214,8 +233,11 @@ const STEPS: [(i32, i32, u32); 8] = [
     (-1, -1, 14),
 ];
 
-/// Height the hero may gain between two adjacent cells (stairs and ramps).
-const STEP_HEIGHT: f32 = 1.25;
+/// Height the hero may gain or lose between two adjacent cells. A route must stay on one
+/// surface: ramps and stairs change the floor continuously (well under a unit per 0.5 cell),
+/// so a bigger jump is a stacked walkway, not a step. With 1.25 the pilot planned a route on
+/// the lower floor and then pressed at it from the ramp above (X01M01, y 6.05 over 4.25).
+const STEP_HEIGHT: f32 = 0.75;
 
 /// The two orthogonal directions that flank a diagonal one (no corner cutting between two
 /// walls that the diagonal alone would slip through).
@@ -514,11 +536,11 @@ impl NavGrid {
                 let Some(next_cell) = self.cell_xy(ix as i32 + dx, iz as i32 + dz) else {
                     continue;
                 };
-                if blocked.contains(&next_cell) {
-                    continue;
-                }
                 for level in 0..usize::from(self.levels_of(next_cell)) {
                     let next = next_cell * MAX_FLOORS + level;
+                    if blocked.contains(&next) {
+                        continue;
+                    }
                     if (self.floor_of(next) - here).abs() > STEP_HEIGHT {
                         continue;
                     }
@@ -572,6 +594,20 @@ impl NavGrid {
         }
         None
     }
+}
+
+/// Identity of one way out of a map for the pilot's book: class and number name a doorway,
+/// while the position and destination separate the warps of one map (a library warp and the
+/// doorway to the same map are distinct exits).
+fn exit_key(exit: &Exit) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    exit.destination.hash(&mut hasher);
+    exit.door.is_some().hash(&mut hasher);
+    exit.class.hash(&mut hasher);
+    exit.number.hash(&mut hasher);
+    exit.position.x.to_bits().hash(&mut hasher);
+    exit.position.z.to_bits().hash(&mut hasher);
+    hasher.finish()
 }
 
 /// The closed internal doorway (type 2, no destination) nearest to the straight path from
@@ -655,7 +691,11 @@ impl App {
                 if let Some(why) = bot.stuck.take() {
                     let map = self.current.as_ref().map_or(0, |(e, _)| e.id);
                     self.journal.record(self.tick, Step::Unhandled(why.clone()));
-                    return Stop::Stuck { map, why };
+                    // The goal could not be walked; it is booked as tried, so choose
+                    // another. The run only stops when the pilot has nothing left to try.
+                    if !self.pursue(&mut bot) {
+                        return Stop::Stuck { map, why };
+                    }
                 }
             }
             self.run_steps(1);
@@ -727,7 +767,7 @@ impl App {
             .is_none_or(|grid| !grid.contains(points))
             && let Some(grid) = NavGrid::build(&self.collision, points, base_y)
         {
-            bot.blocked.retain(|(at, _)| *at != room);
+            bot.blocked.retain(|(at, _, _)| *at != room);
             bot.grids.insert(room, grid);
         }
     }
@@ -737,8 +777,8 @@ impl App {
         let blocked: BTreeSet<usize> = bot
             .blocked
             .iter()
-            .filter(|(at, _)| *at == room)
-            .map(|(_, cell)| *cell)
+            .filter(|(at, _, _)| *at == room)
+            .map(|(_, cell, level)| cell * MAX_FLOORS + *level as usize)
             .collect();
         bot.grids.get(&room)?.plan(from, to, &blocked)
     }
@@ -780,7 +820,7 @@ impl App {
                 // The map and its triggers were built again: the collision may differ (a
                 // story-driven placement show or hide), so the room's grid is stale.
                 bot.grids.remove(&room);
-                bot.blocked.retain(|(at, _)| *at != room);
+                bot.blocked.retain(|(at, _, _)| *at != room);
                 bot.grid_revision = self.collision.revision();
             }
             bot.built = Some((room, digest));
@@ -814,7 +854,7 @@ impl App {
             .count();
         if bot.grid_doors != done {
             bot.grids.remove(&room);
-            bot.blocked.retain(|(at, _)| *at != room);
+            bot.blocked.retain(|(at, _, _)| *at != room);
             bot.grid_doors = done;
         }
         let exits = field.exits();
@@ -993,6 +1033,7 @@ impl App {
                     position: spot,
                     heading: exit.heading,
                     door: Some((exit.class, exit.number)),
+                    key: exit_key(&exit),
                 },
             );
             return true;
@@ -1006,8 +1047,12 @@ impl App {
         let mut untried: Vec<Exit> = exits
             .iter()
             .filter(|exit| {
-                exit.destination
-                    .is_some_and(|d| self.same_family(d) && !bot.left.contains(&(room, d, digest)))
+                exit.destination.is_some_and(|d| {
+                    let key = exit_key(exit);
+                    self.same_family(d)
+                        && !bot.tried_exits.contains(&(room, d, digest, key))
+                        && !bot.failed_exits.contains(&(room, d, key))
+                })
             })
             .copied()
             .collect();
@@ -1020,6 +1065,8 @@ impl App {
             };
             if let Some((spot, route)) = self.exit_spot(bot, room, from, &exit) {
                 bot.left.insert((room, destination, digest));
+                bot.tried_exits
+                    .insert((room, destination, digest, exit_key(&exit)));
                 bot.actions += 1;
                 let what = format!("walks out of map {room} for {destination}");
                 status(&what);
@@ -1034,6 +1081,7 @@ impl App {
                         position: spot,
                         heading: exit.heading,
                         door: None,
+                        key: exit_key(&exit),
                     },
                 );
                 return true;
@@ -1054,6 +1102,7 @@ impl App {
             let Some((spot, route)) = self.exit_spot(bot, room, from, &exit) else {
                 continue;
             };
+            bot.tried_exits.insert((room, hop, digest, exit_key(&exit)));
             bot.actions += 1;
             let what = format!("walks back through map {room} to {hop}");
             status(&what);
@@ -1068,6 +1117,7 @@ impl App {
                     position: spot,
                     heading: exit.heading,
                     door: None,
+                    key: exit_key(&exit),
                 },
             );
             return true;
@@ -1135,12 +1185,16 @@ impl App {
         let mut spots = inside;
         if exit.heading != Vec3::ZERO {
             // A doorway reacts to a hero walking against its facing: start in front of it when
-            // no walkable cell lies inside.
+            // no walkable cell lies inside. The standing point must be on the doorway's floor:
+            // a balcony above it cannot walk in.
             let heading = flat(exit.heading).normalize_or_zero();
             spots.extend(
                 grid.cells_near(exit.position, 3.0)
                     .into_iter()
-                    .filter(|spot| flat(*spot - exit.position).dot(heading) <= 0.2),
+                    .filter(|spot| {
+                        flat(*spot - exit.position).dot(heading) <= 0.2
+                            && (spot.y - exit.position.y).abs() < LEVEL_REACH
+                    }),
             );
         }
         let near = grid.cells_near(exit.position, 3.5);
@@ -1239,68 +1293,112 @@ impl App {
             bot.stall += 1;
         }
         if bot.stall > REPLAN_FRAMES && bot.replans < 8 {
-            // The collision probe let this cell through but the walk wedges here: forbid
-            // entering it and plan around it.
+            // The waypoint was validated when the route was built; what fails is the approach
+            // from where the hero stands, so forbid that node (not the goal's) and plan around
+            // it.
             if let Some(grid) = bot.grids.get(&room)
-                && let Some(step) = bot.route.get(bot.route_at).copied()
-                && let Some(node) = grid.nearest_node(step, 1.0)
+                && let Some(node) = grid.nearest_node(position, 0.75)
                 && bot.blocked.len() < 256
             {
-                bot.blocked.insert((room, grid.cell(node)));
+                bot.blocked
+                    .insert((room, grid.cell(node), (node % MAX_FLOORS) as u8));
             }
             bot.route = self
                 .route(bot, room, position, goal.point())
                 .unwrap_or_default();
             bot.route_at = 0;
             bot.best_waypoint = f32::INFINITY;
+            // One replan per stalled window: the stall budget starts again, so the learned
+            // cells differ instead of burning all eight replans in eight frames.
+            bot.stall = 0;
             bot.replans += 1;
         }
         if bot.stall > STUCK_FRAMES {
             let next = bot.route.get(bot.route_at).copied();
-            bot.stuck = Some(format!(
-                "pilot stuck on map {room} at {position:?} walking to {:?} \
+            status(&format!(
+                "autopilot: stuck on map {room} at {position:?} walking to {:?} \
                  (waypoint {:?} of {} at {next:?})",
                 goal.point(),
                 bot.route_at,
                 bot.route.len()
             ));
+            // The goal is unreachable: book it like a failed exit and let the pilot choose
+            // another; `play_auto` reports the stop only when nothing else is left.
+            match goal {
+                Goal::Exit {
+                    destination: Some(destination),
+                    key,
+                    ..
+                } => {
+                    bot.left.insert((room, destination, bot.goal_digest));
+                    bot.tried_exits
+                        .insert((room, destination, bot.goal_digest, key));
+                    bot.failed_exits.insert((room, destination, key));
+                }
+                Goal::Exit {
+                    door: Some((class, number)),
+                    ..
+                } => {
+                    if self.events.doors().iter().any(|door| {
+                        door.block == i32::from(class) && door.placement == i32::from(number)
+                    }) {
+                        bot.wait = 40;
+                    } else {
+                        bot.opened.insert((class, number));
+                    }
+                }
+                _ => {}
+            }
+            bot.stuck = Some(format!(
+                "pilot stuck on map {room} at {position:?} walking to {:?}",
+                goal.point()
+            ));
             bot.goal = None;
             return;
         }
-        // Reached the end of the route (or the last cell): act.
+        // Reached the end of the route: act. Both tests are 3D: the cell centre of a lower
+        // floor sits at the same x/z as the balcony over it.
         let end = goal.point();
-        let mut at_end = flat(position - end).length() < WAYPOINT_REACH;
-        if matches!(goal, Goal::Talk { .. }) {
-            at_end &= (position.y - end.y).abs() < 1.0;
-        }
+        let at_level = |waypoint: Vec3| (position.y - waypoint.y).abs() < LEVEL_REACH;
+        let at_end = flat(position - end).length() < WAYPOINT_REACH && at_level(end);
         while bot.route_at < bot.route.len() {
             let waypoint = bot.route[bot.route_at];
-            if flat(position - waypoint).length() < WAYPOINT_REACH {
+            if flat(position - waypoint).length() < WAYPOINT_REACH && at_level(waypoint) {
                 bot.route_at += 1;
                 bot.best_waypoint = f32::INFINITY;
             } else {
                 break;
             }
         }
-        if !at_end && bot.route_at >= bot.route.len() && bot.replans < 8 {
-            // The route stopped short (a floor the grid did not join when it was planned):
-            // plan again from here before giving up.
-            if let Some(route) = self.route(bot, room, position, end) {
-                bot.route = route;
-                bot.route_at = 0;
-                bot.replans += 1;
+        if !at_end && bot.route_at >= bot.route.len() {
+            // The route ends short of the goal: plan again from here. A plan the grid refuses
+            // counts as a failure, so the goal is abandoned instead of taken for reached (an
+            // empty route is not an arrival).
+            if bot.replans < 8 {
+                match self.route(bot, room, position, end) {
+                    Some(route) => {
+                        bot.route = route;
+                        bot.route_at = 0;
+                        bot.best_waypoint = f32::INFINITY;
+                        bot.replans += 1;
+                        return;
+                    }
+                    None => bot.replans = 8,
+                }
             }
-        }
-        if !at_end && bot.route_at >= bot.route.len() && bot.replans >= 8 {
             status(&format!(
                 "autopilot: cannot reach {end:?} from {position:?} on map {room}"
             ));
             match goal {
                 Goal::Exit {
                     destination: Some(destination),
+                    key,
                     ..
                 } => {
                     bot.left.insert((room, destination, bot.goal_digest));
+                    bot.tried_exits
+                        .insert((room, destination, bot.goal_digest, key));
+                    bot.failed_exits.insert((room, destination, key));
                 }
                 Goal::Exit {
                     door: Some((class, number)),
@@ -1319,7 +1417,7 @@ impl App {
             bot.goal = None;
             return;
         }
-        if at_end || bot.route_at >= bot.route.len() {
+        if at_end {
             match goal {
                 Goal::Talk { yaw, .. } => {
                     // Turn to face the NPC: the partner search weights the facing direction.
@@ -1340,6 +1438,7 @@ impl App {
                 Goal::Exit {
                     destination,
                     heading,
+                    key,
                     ..
                 } => {
                     bot.exit_frames += 1;
@@ -1348,6 +1447,9 @@ impl App {
                             Some(destination) => {
                                 status(&format!("autopilot: no way out at {end:?}"));
                                 bot.left.insert((room, destination, bot.goal_digest));
+                                bot.tried_exits
+                                    .insert((room, destination, bot.goal_digest, key));
+                                bot.failed_exits.insert((room, destination, key));
                             }
                             // A door without destination only opens; let it finish.
                             None => bot.wait = 40,
