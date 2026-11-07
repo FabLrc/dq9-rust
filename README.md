@@ -34,7 +34,7 @@ Manquent encore :
 Plan : `docs/roadmap.md` ; lancement et commandes : `docs/app.md`.
 
 <!-- coverage:start -->
-**Avancement : 2,1 %** des fonctions de jeu traduites (262 / 12 056), 2,7 % du code (70 Ko / 2 505 Ko).
+**Avancement : 2,1 %** des fonctions de jeu traduites (263 / 12 056), 2,7 % du code (70 Ko / 2 505 Ko).
 Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (définition dans `docs/roadmap.md`).
 
 <details><summary>Détail par module</summary>
@@ -44,7 +44,7 @@ Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (dé
 | ARM9 | 233 / 5 464 (4,2 %) | 61 Ko / 826 Ko (7,2 %) |
 | ITCM | 0 / 34 (0,0 %) | 0 Ko / 6 Ko (0,0 %) |
 | ov_000 | 0 / 826 (0,0 %) | 0 Ko / 190 Ko (0,0 %) |
-| ov_001 | 0 / 515 (0,0 %) | 0 Ko / 70 Ko (0,0 %) |
+| ov_001 | 1 / 515 (0,1 %) | 1 Ko / 70 Ko (0,0 %) |
 | ov_002 | 0 / 213 (0,0 %) | 0 Ko / 101 Ko (0,0 %) |
 | ov_003 | 0 / 510 (0,0 %) | 0 Ko / 176 Ko (0,0 %) |
 | ov_004 | 0 / 532 (0,0 %) | 0 Ko / 113 Ko (0,0 %) |
