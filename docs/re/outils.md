@@ -228,48 +228,59 @@ n'est pas affecté ; une comparaison de yaw devra convertir l'un des deux.
 
 ## Déplacement à nombre d'images égal
 
-Le champ se met à jour à 30 Hz ; `Hero::step` prend le nombre d'images comptées par le jeu
-(`ticks = 2`), l'application avançant à 60 Hz avec `ticks = 1`. La comparaison honnête se
-fait donc soit au même nombre de mises à jour à 30 Hz, soit à la même image en tenant
-compte de la phase.
+Le champ se met à jour à 30 Hz ; l'application avance à 60 Hz avec `ticks = 1` et une
+vitesse par image deux fois plus petite, `Hero::step` acceptant aussi `ticks = 2` pour le
+rythme réel du jeu. Comparer les deux à la même image demande donc de partir du **même
+état** : même position, même vitesse (arrêtée) et **même orientation**.
 
-Expérience reproductible (preuves et empreintes dans
-`build/v01-20261107/parity/`) : reprendre l'état de cœur du premier contrôle
-(`build/oracle-host/core23050.bin`, vblank 23033), tenir `up`, relever la RAM à chaque
-image ; puis, côté runtime, `--start 0.66,-3.61` avec 120 segments `-z` d'une image.
+Première tentative, depuis le premier contrôle sans aligner l'orientation
+(`build/v01-20261107/parity/movement-up/`) : original `core23050.bin` (vblank 23033) avec
+`up` tenu, RAM relevée à chaque image ; runtime avec `--start 0.66,-3.61` et 120 segments
+`-z` d'une image. Le déplacement sur deux images est identique à 0,001 près sur 47 des 51
+intervalles de l'image 20 à 120 (écart maximal 0,016 aux ruptures de pente ; pas stable
+0,192 unité = 786 en virgule fixe), mais à l'image 120 l'original est à `z = -13.565` et le
+runtime à `z = -13.495`. Cet écart venait du départ : `--walk` n'a pas d'option de yaw et
+pose le héros face à `+z` (angle brut 0) alors que l'original regarde 4,860 ; la rotation
+initiale et l'accélération ne se terminaient pas au même moment. Cette mesure ne prouvait
+donc pas un défaut de cadence.
+
+Deuxième expérience, orientation identique
+(`build/v01-20261107/parity/movement-facing/`) :
 
 ```powershell
+# original : tourner vers l'angle brut 0 (bas), s'arrêter, puis tenir up à l'image 70
 python scripts/melondsds_host.py --rom <ROM> `
     --core tools/build/melondsds_libretro.dll `
     --state-in build/oracle-host/core23050.bin `
-    --input build/v01-20261107/parity/movement-up/up-const.jsonl --frames 121 `
-    --checkpoints build/v01-20261107/parity/movement-up/original-up-121.jsonl `
+    --input build/v01-20261107/parity/movement-facing/prep.jsonl --frames 191 `
+    --checkpoints build/v01-20261107/parity/movement-facing/original-prep.jsonl `
     --checkpoint-every 1 --dq9re target/release/dq9re.exe
 
 $S = (1..120 | ForEach-Object { '-z:0.0166667' }) -join ','
-target/release/dq9-app.exe --rom <ROM> --map 4105 --start 0.66,-3.61 `
+target/release/dq9-app.exe --rom <ROM> --map 4105 --start 1.756,-3.041 `
     --walk $S --mute
 ```
 
-Résultats :
+L'original s'arrête à `(1.756, -0.250, -3.041)`, angle brut 0, vitesse nulle à l'image 70 ;
+`--start 1.756,-3.041` pose exactement le même état (angle brut 0, vitesse nulle). Résultat
+à la même image, sur 120 images de `up` :
 
-- l'état sauvegardé est pris au milieu d'un cycle : la première mise à jour originale tombe
-  à l'image 3, la mise à jour `k` est visible à l'image `2k+1` ;
-- après la rotation initiale, le déplacement sur deux images est identique à 0,001 près sur
-  47 des 51 intervalles de l'image 20 à 120 ; l'écart maximal est 0,016 aux deux ruptures de
-  pente du sol. Le pas stable vaut 0,192 unité (786 en virgule fixe, `WALK_SPEED` 0x189 ×
-  2 / 4096) des deux côtés ;
-- à l'image 120, l'original est à `z = -13.565` et le runtime 60 Hz à `z = -13.495`
-  (0,070 d'écart cumulé), `x` et `y` à 0,002 près. L'écart vient du **départ** : `--walk`
-  n'a pas d'option de yaw et pose le héros face à `+z` (angle brut 0), alors que l'original
-  regarde l'angle brut 4,860. Le runtime commence donc à bouger à l'image 3, l'original à
-  l'image 5, et l'accélération ne se termine pas au même moment. La vitesse stable, elle,
-  est identique.
+- la trajectoire est la même : `x` identique, `y` à 0,003, `z` à 0,003 aux images 50, 100 et
+  120 ; le héros s'arrête sur la même limite `z = -11.299` ;
+- pendant la marche, l'écart suit la phase 30/60 Hz : l'original ne bouge qu'une image sur
+  deux, l'application avance à chaque image. L'écart maximal est 0,191, soit exactement un
+  pas de 30 Hz (786/4096 = 0,192), et il s'annule dès que les deux positions sont bloquées
+  au même mur. Aucune dérive cumulée ;
+- aux images paires (deux pas de 60 Hz = une mise à jour de 30 Hz), l'écart reste sous 0,08,
+  la différence venant des arrondis de collision sur les pentes.
 
-Le test `the_original_up_walk_is_reproduced_at_the_same_updates`
-(`crates/dq9-core/tests/movement_rom.rs`) encode les poses originales aux mises à jour 10,
-30 et 59 et rejoue `ticks = 2` sur la carte 4105. Il est **non exécuté** dans ce lot : la
-vérification (fmt, clippy, tests, wasm) revient au coordinateur. Limites : `--walk` ne peut
-pas partir d'un yaw arbitraire, et seuls les points du premier contrôle ont une référence
-originale ; les checkpoints d'événements et de cartes du runtime n'ont pas d'équivalent
-original dans les preuves existantes.
+Conclusion : l'application à 60 Hz suit l'original au pas de 30 Hz ; l'écart observé dans la
+première expérience était l'orientation initiale, pas une cadence fausse. Aucun changement
+de contrat de planification dans `app.rs` n'est demandé. Le test `Hero::step(ticks = 2)`
+ajouté puis retiré comparait une cadence et une phase différentes de celles de
+l'application : il n'est pas conservé.
+
+Limites : `--walk` ne peut pas partir d'un yaw arbitraire, d'où la préparation originale
+ci-dessus ; seuls les points du premier contrôle ont une référence originale dans les
+preuves existantes ; l'orientation est comparée après conversion (angle brut original,
+yaw applicatif).
