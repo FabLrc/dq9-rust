@@ -276,6 +276,10 @@ struct Bindings {
     balloons: HashMap<i32, usize>,
     /// What the scripts did to each map placement instance: its world before, and now.
     placements: HashMap<usize, Placement>,
+    /// Placements the scripts hid (natives 574, actions 0x95/0x96), by `(block entry,
+    /// placement id)`: a show restores a descendant only when no other hidden ancestor
+    /// remains.
+    hidden_placements: BTreeSet<(u32, u16)>,
     /// The palette operation applied to each target.
     tinted: HashMap<Target, Option<TexelOp>>,
 }
@@ -427,7 +431,13 @@ impl EventPlayer {
     /// A map was loaded: its environment and its placements are the map's own again.
     pub fn map_loaded(&mut self, camera: &Camera) {
         self.applied_light = SceneLight::default();
-        self.bindings.placements.clear();
+        // Every binding names the scene of the map that is left: the next scene reuses the
+        // indices for other placements, actors, sprites and NPCs, so keeping them would hide
+        // or move the new map's instances (a chained event on another map prepares its scene
+        // from them). The event state that does not name the scene (events started, coverage,
+        // the saved camera) stays.
+        self.bindings = Bindings::default();
+        self.dirty.clear();
         // The removals of action 0x7c belong to the map that is left.
         self.removed_npcs.clear();
         // The new map's collision is built from the map, not from the old placements.
@@ -462,7 +472,10 @@ impl EventPlayer {
         collision: &mut CollisionWorld,
         change: PlacementChange,
     ) {
-        self.apply_placement_change(scene, Some(collision), change);
+        // The collision first: it also holds the placement hierarchy the drawn instances
+        // follow (a hide reaches the whole subtree).
+        apply_collision_changes(collision, vec![change]);
+        self.apply_placement_change(scene, collision, change);
     }
 
     /// The doors the scripts opened, with the angle both the render and the collision must
@@ -1355,7 +1368,10 @@ impl EventPlayer {
             .map(|door| (door.block, door.placement, door.angle))
             .collect();
         for change in self.cutscene.take_placement_changes() {
-            self.apply_placement_change(stage.scene, None, change);
+            // The collision is the application's (it drains the queue); the drawn instances
+            // follow the placement hierarchy it holds.
+            self.collision_changes.push(change);
+            self.apply_placement_change(stage.scene, stage.collision, change);
         }
         for (block, placement, angle) in doors {
             let instances: Vec<usize> = stage
@@ -1386,75 +1402,111 @@ impl EventPlayer {
         }
     }
 
-    /// One placement change on the scene's instances and, when `collision` is given, on the
-    /// map's collision. Without it the change is queued for the application
-    /// ([`EventPlayer::take_collision_changes`]), which owns the collision world.
+    /// One placement change on the scene's instances; `hierarchy` is the collision's
+    /// placement tree, which the drawn instances have no link to.
     fn apply_placement_change(
         &mut self,
         scene: &mut AnimatedScene,
-        collision: Option<&mut CollisionWorld>,
+        hierarchy: &CollisionWorld,
         change: PlacementChange,
     ) {
         let (group, id) = match change {
             PlacementChange::Hidden { group, id, .. }
             | PlacementChange::Moved { group, id, .. } => (group, id),
         };
-        match (collision, change) {
-            (Some(collision), PlacementChange::Hidden { hidden, .. }) => {
-                collision.set_placement_hidden(group as u32, id as u16, hidden);
-            }
-            (Some(collision), PlacementChange::Moved { position, .. }) => {
-                let position = position.map(|v| (v * 4096.0) as i32);
-                collision.set_placement_position(group as u32, id as u16, position);
-            }
-            (None, change) => self.collision_changes.push(change),
+        let (block, placement) = (group as u32, id as u16);
+        let root_instances = placement_instances(&scene.scene, block, placement);
+        if root_instances.is_empty()
+            && !scene
+                .scene
+                .undrawn_placements
+                .iter()
+                .any(|&(entry, part)| entry == block && part == placement)
+        {
+            // A placement in neither list is not in the loaded map; the game records that for
+            // a later load (`func_0206ea8c`), which this runtime does not model, so it is
+            // reported instead of pretended applied. A collision mesh with no drawn instance
+            // may still have drawn descendants below it, which the hide follows.
+            self.coverage.miss(format!(
+                "placement ({group}, {id}) absent from the loaded map"
+            ));
         }
-        let instances: Vec<usize> = scene
-            .scene
-            .placements
-            .iter()
-            .filter(|&&(entry, placement, _)| {
-                i64::from(entry) == i64::from(group) && i32::from(placement) == id
-            })
-            .map(|&(_, _, instance)| instance)
-            .collect();
-        if instances.is_empty() {
-            // A collision mesh has no drawn instance: the collision gets the change (above
-            // when given, else from the queue). A placement in neither list is not in the
-            // loaded map; the game records that for a later load (`func_0206ea8c`), which
-            // this runtime does not model, so it is reported instead of pretended applied.
-            let collision_placement =
-                scene
-                    .scene
-                    .undrawn_placements
-                    .iter()
-                    .any(|&(entry, placement)| {
-                        i64::from(entry) == i64::from(group) && i32::from(placement) == id
-                    });
-            if !collision_placement {
-                self.coverage.miss(format!(
-                    "placement ({group}, {id}) absent from the loaded map"
-                ));
+        match change {
+            PlacementChange::Hidden { hidden, .. } => {
+                self.apply_placement_hidden(scene, hierarchy, block, placement, hidden);
             }
-            return;
-        }
-        for instance in instances {
-            // The placement at the map's own transform, even when the chosen time of day
-            // hid it: native 574 shows it again where the map put it.
-            let state = self
-                .bindings
-                .placements
-                .entry(instance)
-                .or_insert_with(|| Placement::of(&scene.scene.instances[instance]));
-            match change {
-                PlacementChange::Hidden { hidden, .. } => state.hidden = hidden,
-                PlacementChange::Moved { position, .. } => {
+            PlacementChange::Moved { position, .. } => {
+                for instance in root_instances {
+                    // The placement at the map's own transform, even when the chosen time of
+                    // day hid it: native 574 shows it again where the map put it.
+                    let state = self
+                        .bindings
+                        .placements
+                        .entry(instance)
+                        .or_insert_with(|| Placement::of(&scene.scene.instances[instance]));
                     state.position = Some(Vec3::from_array(position));
+                    let world = state.world();
+                    self.set_world(scene, instance, world);
                 }
             }
-            let world = state.world();
-            self.set_world(scene, instance, world);
         }
+    }
+
+    /// Natives 574 and actions 0x95/0x96 on the drawn scene: hides or shows placement
+    /// `(block, placement)` and every placement below it in the map's hierarchy, as the
+    /// collision does. The instances keep their home transform (`Placement::home`), so a show
+    /// puts each one back where the map built it; a descendant stays hidden while its own
+    /// state or another hidden ancestor hides it.
+    fn apply_placement_hidden(
+        &mut self,
+        scene: &mut AnimatedScene,
+        hierarchy: &CollisionWorld,
+        block: u32,
+        placement: u16,
+        hidden: bool,
+    ) {
+        let root = (block, placement);
+        let mut subtree = hierarchy.placement_subtree(block, placement);
+        if subtree.is_empty() {
+            // The hierarchy knows no such placement: the exact instance alone follows.
+            subtree.push(root);
+        }
+        if hidden {
+            self.bindings.hidden_placements.insert(root);
+        } else {
+            self.bindings.hidden_placements.remove(&root);
+        }
+        for (block, placement) in subtree {
+            let is_root = (block, placement) == root;
+            // A hide reaches every descendant through the root; a show restores one only when
+            // no other hidden ancestor holds it.
+            let ancestor_hidden =
+                (hidden && !is_root) || self.hidden_ancestor(hierarchy, block, placement);
+            for instance in placement_instances(&scene.scene, block, placement) {
+                let state = self
+                    .bindings
+                    .placements
+                    .entry(instance)
+                    .or_insert_with(|| Placement::of(&scene.scene.instances[instance]));
+                if is_root {
+                    state.hidden = hidden;
+                }
+                state.ancestor_hidden = ancestor_hidden;
+                let world = state.world();
+                self.set_world(scene, instance, world);
+            }
+        }
+    }
+
+    /// Whether a placement above `(block, placement)` in the map's hierarchy is hidden: the
+    /// placement then stays hidden when a descendant hide is shown.
+    fn hidden_ancestor(&self, hierarchy: &CollisionWorld, block: u32, placement: u16) -> bool {
+        hierarchy
+            .placement_path(block, placement)
+            .iter()
+            .rev()
+            .skip(1)
+            .any(|key| self.bindings.hidden_placements.contains(key))
     }
 }
 
@@ -1499,13 +1551,30 @@ fn monster_archive(files: &LazyRom, path: &str) -> Option<Vec<u8>> {
     nds_rom::compress::decompress(monster.file(cchr.id).ok()?).ok()
 }
 
+/// The scene instances of placement `(block, id)`: a model placement may draw one instance
+/// per model of its archive.
+fn placement_instances(scene: &dq9_render::Scene, block: u32, id: u16) -> Vec<usize> {
+    scene
+        .placements
+        .iter()
+        .filter(|&&(entry, placement, _)| entry == block && placement == id)
+        .map(|&(_, _, instance)| instance)
+        .collect()
+}
+
 /// A map placement a script hid or moved: its world before the first change and what it is
 /// now.
 #[derive(Debug, Clone, Copy)]
 struct Placement {
     /// Home world matrix of the placement, as built from the map (`0x02013168`).
     home: Mat4,
+    /// Hidden by the script or by the chosen time of day (native 574, actions 0x95/0x96): the
+    /// placement's own state.
     hidden: bool,
+    /// Hidden through an ancestor above it in the map's hierarchy, which the game hides as a
+    /// whole (`02013390`); the placement's own state survives so a show of the ancestor does
+    /// not re-show it when it was hidden by itself.
+    ancestor_hidden: bool,
     position: Option<Vec3>,
     /// Rotation around the placement's own origin, radians (native 584).
     angle: Option<f32>,
@@ -1513,21 +1582,23 @@ struct Placement {
 
 impl Placement {
     /// The state of a placement before a script changes it: its home transform and whether
-    /// the chosen time of day hides it (a null world scale).
+    /// the chosen time of day hides it (a null world scale). Nothing above it is hidden when
+    /// the state is first recorded, so the null scale is its own.
     fn of(instance: &dq9_render::SceneInstance) -> Self {
         Self {
             home: instance.home,
             hidden: !instance.drawn(),
+            ancestor_hidden: false,
             position: None,
             angle: None,
         }
     }
 
     /// The world matrix the scene draws: the home transform with the translation native 575
-    /// last wrote, and a null scale while native 574 hides it. Hiding, showing and moving are
-    /// independent, so their order does not change the result.
+    /// last wrote, and a null scale while native 574 hides it or an ancestor hides it. Hiding,
+    /// showing and moving are independent, so their order does not change the result.
     fn world(&self) -> Mat4 {
-        if self.hidden {
+        if self.hidden || self.ancestor_hidden {
             return Mat4::from_scale(Vec3::ZERO);
         }
         let mut world = self.home;
@@ -1625,5 +1696,535 @@ mod tests {
         assert_eq!(world.x_axis.truncate(), home.x_axis.truncate());
         assert_eq!(world.y_axis.truncate(), home.y_axis.truncate());
         assert_eq!(world.z_axis.truncate(), home.z_axis.truncate());
+    }
+}
+
+/// Real-data regressions of the placement hierarchy and of the map change (the ROM may be
+/// absent: every test returns early, as the other ROM-backed tests do).
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod rom_tests {
+    use super::*;
+    use crate::load::{self, LoadedMap};
+    use crate::report;
+    use crate::talk::{Button, Talk};
+    use dq9_core::field::initial_state;
+    use dq9_formats::cast::Story;
+    use dq9_formats::hero::HeroLook;
+
+    /// The story point and look the CLI and the other ROM tests use by default: `1.1.1`,
+    /// daytime (the events below were traced at that point).
+    fn pinned_story() -> Story {
+        Story {
+            chapter: 1,
+            step: 1,
+            substep: 1,
+            daytime: true,
+            ..Story::default()
+        }
+    }
+
+    /// The map of `event` at time 0, with the story and the look the other ROM tests use.
+    fn load_event_map(rom: &[u8], event: u16) -> (LoadedMap, Camera, Talk) {
+        let place = crate::event::place(rom, event).expect("event record");
+        let spawn = place.position.map(|(p, angle)| {
+            (
+                glam::Vec3::from_array(p),
+                dq9_core::field::yaw_of_angle(angle),
+            )
+        });
+        let loaded = load::load(
+            rom,
+            &place.map.to_string(),
+            0,
+            &pinned_story(),
+            spawn,
+            None,
+            &HeroLook::new_game(),
+        )
+        .expect("map of the event");
+        let mut camera = Camera::default();
+        if let Some(bounds) = loaded.runtime.scene.bounds() {
+            camera.frame(bounds);
+        }
+        let mut talk = Talk::default();
+        talk.set_rom(rom);
+        (loaded, camera, talk)
+    }
+
+    /// One fixed step as the application runs it (`App::step_event`): the pending event's
+    /// scene is prepared, the script and the cutscene advance, the collision takes the
+    /// placement changes and the scene animates. `press` reads the messages of the script.
+    #[allow(clippy::too_many_arguments)]
+    fn frame(
+        rom: &[u8],
+        player: &mut EventPlayer,
+        loaded: &mut LoadedMap,
+        hero: &mut Hero,
+        camera: &mut Camera,
+        talk: &mut Talk,
+        state: &State,
+        press: bool,
+    ) {
+        if press {
+            talk.press(Button::Confirm);
+        }
+        {
+            let mut stage = Stage {
+                rom,
+                world: state,
+                scene: &mut loaded.runtime,
+                hero,
+                collision: &loaded.collision,
+                camera,
+                talk,
+            };
+            if let Some(next) = player.pending_start() {
+                player.prepare(rom, next, &mut stage);
+            }
+            for outcome in player.step(&mut stage) {
+                // Nothing is heard here: a jingle is over as soon as it is asked for.
+                if matches!(outcome, Outcome::Sound(Sound::Jingle(_))) {
+                    player.jingle_ended();
+                }
+            }
+        }
+        apply_collision_changes(&mut loaded.collision, player.take_collision_changes());
+        talk.step();
+        loaded.runtime.step(camera).expect("scene animation");
+    }
+
+    /// Event 24590 of D04M02 hides placement `(0, 26)` at its update 2 and shows it at update
+    /// 257. The placement has twenty drawn children (ids 0 to 24, parts 12 to 34) that no
+    /// action of the script names: the image must follow the collision, which hides the whole
+    /// subtree (`Zone3D_FindPlacement` `0x02019518`, `02013390`).
+    #[test]
+    fn a_scripted_hide_takes_the_drawn_children_and_the_show_restores_them() {
+        let Some(rom) = testrom::load() else {
+            return;
+        };
+        let state = initial_state(&pinned_story());
+        let (mut loaded, mut camera, mut talk) = load_event_map(rom, 24590);
+        let mut hero = loaded.hero;
+        let mut player = EventPlayer::new();
+        player.queue(24590);
+
+        let subtree = loaded.collision.placement_subtree(0, 26);
+        assert!(
+            subtree.len() > 1,
+            "placement (0, 26) has no drawn hierarchy: {subtree:?}"
+        );
+        let root = placement_instances(&loaded.runtime.scene, 0, 26);
+        assert!(!root.is_empty(), "placement (0, 26) is not drawn");
+        let instances: Vec<usize> = subtree
+            .iter()
+            .flat_map(|&(block, id)| placement_instances(&loaded.runtime.scene, block, id))
+            .collect();
+        assert!(
+            instances.len() > root.len(),
+            "placement (0, 26) has no drawn child: {subtree:?}"
+        );
+        let root_instances: BTreeSet<usize> = root.iter().copied().collect();
+        assert!(
+            root.iter()
+                .any(|&instance| loaded.runtime.scene.instances[instance].drawn()),
+            "placement (0, 26) is hidden at the chosen time of day"
+        );
+        assert!(
+            instances.iter().any(|&instance| {
+                !root_instances.contains(&instance)
+                    && loaded.runtime.scene.instances[instance].drawn()
+            }),
+            "no drawn child of placement (0, 26): {subtree:?}"
+        );
+        let original: Vec<Mat4> = instances
+            .iter()
+            .map(|&instance| loaded.runtime.scene.instances[instance].world)
+            .collect();
+        let homes: Vec<Mat4> = instances
+            .iter()
+            .map(|&instance| loaded.runtime.scene.instances[instance].home)
+            .collect();
+        let drawn_before: Vec<bool> = instances
+            .iter()
+            .map(|&instance| loaded.runtime.scene.instances[instance].drawn())
+            .collect();
+        // A model of the same block that no action of the script names: neither the hide nor
+        // the show of (0, 26) may touch it.
+        let sibling = placement_instances(&loaded.runtime.scene, 0, 2);
+        assert!(
+            sibling
+                .iter()
+                .any(|&instance| loaded.runtime.scene.instances[instance].drawn()),
+            "the unrelated placement (0, 2) is not drawn"
+        );
+        let sibling_worlds: Vec<Mat4> = sibling
+            .iter()
+            .map(|&instance| loaded.runtime.scene.instances[instance].world)
+            .collect();
+
+        // The script's own hide: its update 2 runs at the fourth tick.
+        let mut hidden = false;
+        for tick in 0..120 {
+            frame(
+                rom,
+                &mut player,
+                &mut loaded,
+                &mut hero,
+                &mut camera,
+                &mut talk,
+                &state,
+                tick % 30 == 0,
+            );
+            if root
+                .iter()
+                .all(|&instance| !loaded.runtime.scene.instances[instance].drawn())
+            {
+                hidden = true;
+                break;
+            }
+        }
+        assert!(hidden, "event 24590 did not hide placement (0, 26)");
+        for &instance in &instances {
+            assert!(
+                !loaded.runtime.scene.instances[instance].drawn(),
+                "instance {instance} below the hidden placement (0, 26) stayed drawn"
+            );
+        }
+        for (&instance, &world) in sibling.iter().zip(&sibling_worlds) {
+            assert_eq!(
+                loaded.runtime.scene.instances[instance].world, world,
+                "the hide of (0, 26) changed the unrelated instance {instance}"
+            );
+        }
+
+        // The script's own show, at its update 257, puts every one of them back.
+        let mut shown = false;
+        for tick in 0..4_000 {
+            frame(
+                rom,
+                &mut player,
+                &mut loaded,
+                &mut hero,
+                &mut camera,
+                &mut talk,
+                &state,
+                tick % 30 == 0,
+            );
+            if root
+                .iter()
+                .any(|&instance| loaded.runtime.scene.instances[instance].drawn())
+            {
+                shown = true;
+                break;
+            }
+        }
+        assert!(shown, "event 24590 did not show placement (0, 26) again");
+        for (index, &instance) in instances.iter().enumerate() {
+            let drawn = loaded.runtime.scene.instances[instance].drawn();
+            assert_eq!(
+                drawn, drawn_before[index],
+                "instance {instance} after the show"
+            );
+            assert_eq!(
+                loaded.runtime.scene.instances[instance].world, original[index],
+                "the show of (0, 26) changed the world of instance {instance}"
+            );
+            if drawn {
+                assert_eq!(
+                    loaded.runtime.scene.instances[instance].world, homes[index],
+                    "instance {instance} did not come back on its home transform"
+                );
+            }
+        }
+        for (&instance, &world) in sibling.iter().zip(&sibling_worlds) {
+            assert_eq!(
+                loaded.runtime.scene.instances[instance].world, world,
+                "the show of (0, 26) changed the unrelated instance {instance}"
+            );
+        }
+
+        // The event ends; its actor instances are gone, the map's placements stay.
+        for tick in 0..2_000 {
+            if !player.is_active() && player.pending_start().is_none() {
+                break;
+            }
+            frame(
+                rom,
+                &mut player,
+                &mut loaded,
+                &mut hero,
+                &mut camera,
+                &mut talk,
+                &state,
+                tick % 30 == 0,
+            );
+        }
+        assert!(!player.is_active(), "event 24590 did not end");
+
+        // The trigger path (actions 0x95/0x96) on the same placement: the cascade hides the
+        // subtree and touches nothing else, and the show restores every instance exactly.
+        let before: Vec<Mat4> = loaded
+            .runtime
+            .scene
+            .instances
+            .iter()
+            .map(|instance| instance.world)
+            .collect();
+        let drawn: Vec<bool> = loaded
+            .runtime
+            .scene
+            .instances
+            .iter()
+            .map(dq9_render::SceneInstance::drawn)
+            .collect();
+        let subtree_instances: BTreeSet<usize> = instances.iter().copied().collect();
+        player.set_placement(
+            &mut loaded.runtime,
+            &mut loaded.collision,
+            PlacementChange::Hidden {
+                group: 0,
+                id: 26,
+                hidden: true,
+            },
+        );
+        for &instance in &instances {
+            assert!(
+                !loaded.runtime.scene.instances[instance].drawn(),
+                "action 0x95 left instance {instance} of the subtree drawn"
+            );
+        }
+        for (instance, &world) in before.iter().enumerate() {
+            if subtree_instances.contains(&instance) {
+                continue;
+            }
+            assert_eq!(
+                loaded.runtime.scene.instances[instance].world, world,
+                "hiding placement (0, 26) changed unrelated instance {instance}"
+            );
+            assert_eq!(
+                loaded.runtime.scene.instances[instance].drawn(),
+                drawn[instance],
+                "hiding placement (0, 26) hid unrelated instance {instance}"
+            );
+        }
+
+        // A child hidden by itself stays hidden when its hidden parent is shown again.
+        let child = subtree
+            .iter()
+            .copied()
+            .find(|&(block, id)| {
+                (block, id) != (0, 26)
+                    && !placement_instances(&loaded.runtime.scene, block, id).is_empty()
+            })
+            .expect("a drawn child of placement (0, 26)");
+        let child_instances = placement_instances(&loaded.runtime.scene, child.0, child.1);
+        player.set_placement(
+            &mut loaded.runtime,
+            &mut loaded.collision,
+            PlacementChange::Hidden {
+                group: child.0 as i32,
+                id: child.1 as i32,
+                hidden: true,
+            },
+        );
+        player.set_placement(
+            &mut loaded.runtime,
+            &mut loaded.collision,
+            PlacementChange::Hidden {
+                group: 0,
+                id: 26,
+                hidden: false,
+            },
+        );
+        for &instance in &child_instances {
+            assert!(
+                !loaded.runtime.scene.instances[instance].drawn(),
+                "the show of (0, 26) re-showed instance {instance} of {child:?}, hidden by itself"
+            );
+        }
+        for &instance in &root {
+            assert!(
+                loaded.runtime.scene.instances[instance].drawn(),
+                "the show of (0, 26) left its own instance {instance} hidden"
+            );
+        }
+        player.set_placement(
+            &mut loaded.runtime,
+            &mut loaded.collision,
+            PlacementChange::Hidden {
+                group: child.0 as i32,
+                id: child.1 as i32,
+                hidden: false,
+            },
+        );
+        for (instance, &world) in before.iter().enumerate() {
+            assert_eq!(
+                loaded.runtime.scene.instances[instance].world, world,
+                "the hide/show cycle changed instance {instance}"
+            );
+        }
+
+        // A show of the child while its parent stays hidden does not bring it back; the
+        // parent's show does.
+        player.set_placement(
+            &mut loaded.runtime,
+            &mut loaded.collision,
+            PlacementChange::Hidden {
+                group: 0,
+                id: 26,
+                hidden: true,
+            },
+        );
+        player.set_placement(
+            &mut loaded.runtime,
+            &mut loaded.collision,
+            PlacementChange::Hidden {
+                group: child.0 as i32,
+                id: child.1 as i32,
+                hidden: false,
+            },
+        );
+        for &instance in &child_instances {
+            assert!(
+                !loaded.runtime.scene.instances[instance].drawn(),
+                "instance {instance} of {child:?} showed under its hidden parent (0, 26)"
+            );
+        }
+        player.set_placement(
+            &mut loaded.runtime,
+            &mut loaded.collision,
+            PlacementChange::Hidden {
+                group: 0,
+                id: 26,
+                hidden: false,
+            },
+        );
+        for (instance, &world) in before.iter().enumerate() {
+            assert_eq!(
+                loaded.runtime.scene.instances[instance].world, world,
+                "the second hide/show cycle changed instance {instance}"
+            );
+        }
+    }
+
+    /// A chained event on another map must not apply the left map's scene indices to the new
+    /// scene. Event 9210 (M09M02, 7 instances, one NPC) -> 9220 (M09M04, 22) leaves the saved
+    /// home of that NPC at index 5, inside the new scene; event 9710 (M05, 35 instances, 15
+    /// NPCs) -> 9713 (O00, 31) leaves their homes at indices 19 to 33, inside it too. The
+    /// application loads the new map, calls `map_loaded` and prepares the event.
+    #[test]
+    fn a_chained_event_on_another_map_ignores_the_previous_map_bindings() {
+        let Some(rom) = testrom::load() else {
+            return;
+        };
+        let story = pinned_story();
+        let state = initial_state(&story);
+        for &(event, next) in &[(9210u16, 9220u16), (9710, 9713)] {
+            let (mut loaded, mut camera, mut talk) = load_event_map(rom, event);
+            let cast: Vec<usize> = loaded
+                .runtime
+                .scene
+                .instances
+                .iter()
+                .enumerate()
+                .filter(|(_, instance)| {
+                    instance.block == usize::MAX && instance.instance != usize::MAX
+                })
+                .map(|(index, _)| index)
+                .collect();
+            let mut hero = loaded.hero;
+            let mut player = EventPlayer::new();
+            player.queue(event);
+            let played = report::play(
+                rom,
+                &mut loaded,
+                &mut hero,
+                &mut camera,
+                &mut talk,
+                &mut player,
+                &state,
+                None,
+                &[],
+                Some(60),
+            )
+            .expect("playback of the event");
+            assert_eq!(
+                played.elsewhere,
+                Some(next),
+                "event {event} must chain to {next} on another map"
+            );
+            assert_eq!(player.pending_start(), Some(next));
+            assert!(
+                !cast.is_empty(),
+                "event {event}: the map has no NPC whose home could carry over"
+            );
+
+            let place = crate::event::place(rom, next).expect("place of the chained event");
+            let spawn = place.position.map(|(p, angle)| {
+                (
+                    glam::Vec3::from_array(p),
+                    dq9_core::field::yaw_of_angle(angle),
+                )
+            });
+            let mut there = load::load(
+                rom,
+                &place.map.to_string(),
+                0,
+                &story,
+                spawn,
+                None,
+                &HeroLook::new_game(),
+            )
+            .expect("map of the chained event");
+            // A stale home index must reach the new scene, or the test would prove nothing.
+            assert!(
+                cast.iter()
+                    .any(|&index| index < there.runtime.scene.instances.len()),
+                "event {event}: none of the {} NPC homes reaches the {} instances of {}",
+                cast.len(),
+                there.runtime.scene.instances.len(),
+                there.entry.code
+            );
+            let before: Vec<(Mat4, Mat4, bool)> = there
+                .runtime
+                .scene
+                .instances
+                .iter()
+                .map(|instance| (instance.world, instance.home, instance.drawn()))
+                .collect();
+            let mut there_hero = there.hero;
+            player.map_loaded(&camera);
+            {
+                let mut stage = Stage {
+                    rom,
+                    world: &state,
+                    scene: &mut there.runtime,
+                    hero: &mut there_hero,
+                    collision: &there.collision,
+                    camera: &mut camera,
+                    talk: &mut talk,
+                };
+                player.prepare(rom, next, &mut stage);
+            }
+            for (index, &(world, home, drawn)) in before.iter().enumerate() {
+                let instance = &there.runtime.scene.instances[index];
+                assert_eq!(
+                    instance.world, world,
+                    "instance {index} of {} moved by the bindings of event {event}",
+                    there.entry.code
+                );
+                assert_eq!(
+                    instance.home, home,
+                    "instance {index} of {} changed home transform after event {event}",
+                    there.entry.code
+                );
+                assert_eq!(
+                    instance.drawn(),
+                    drawn,
+                    "instance {index} of {} hid on the bindings of event {event}",
+                    there.entry.code
+                );
+            }
+        }
     }
 }

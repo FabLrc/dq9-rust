@@ -229,11 +229,7 @@ impl CollisionWorld {
     /// transforms read at build time, without re-parsing anything.
     /// Returns whether any collision piece moved.
     pub fn set_door_angle(&mut self, block: u32, placement: u16, angle: i32) -> bool {
-        let Some(root) = self
-            .nodes
-            .iter()
-            .position(|node| node.block == block && node.id == placement)
-        else {
+        let Some(root) = self.node_of(block, placement) else {
             return false;
         };
         let pivot = self.nodes[root].position;
@@ -275,11 +271,7 @@ impl CollisionWorld {
     /// queried (`Zone3D_FindPlacement` `0x02019518` names it by block entry and instance id).
     /// Returns whether the placement changed.
     pub fn set_placement_hidden(&mut self, block: u32, placement: u16, hidden: bool) -> bool {
-        let Some(root) = self
-            .nodes
-            .iter()
-            .position(|node| node.block == block && node.id == placement)
-        else {
+        let Some(root) = self.node_of(block, placement) else {
             return false;
         };
         if self.nodes[root].hidden == hidden {
@@ -296,11 +288,7 @@ impl CollisionWorld {
     /// becomes `position` (world `fx32`). The node and its collision subtree move by the
     /// delta; a later door rotation still pivots on the node. Returns whether a piece moved.
     pub fn set_placement_position(&mut self, block: u32, placement: u16, position: Fx3) -> bool {
-        let Some(root) = self
-            .nodes
-            .iter()
-            .position(|node| node.block == block && node.id == placement)
-        else {
+        let Some(root) = self.node_of(block, placement) else {
             return false;
         };
         let delta = fx::sub(position, self.nodes[root].position);
@@ -334,6 +322,53 @@ impl CollisionWorld {
         self.revision
     }
 
+    /// The node of placement `(block, id)`, the first in the map's order like
+    /// [`CollisionWorld::set_placement_hidden`].
+    fn node_of(&self, block: u32, id: u16) -> Option<usize> {
+        self.nodes
+            .iter()
+            .position(|node| node.block == block && node.id == id)
+    }
+
+    /// The placements of the subtree rooted at `(block, id)`, root first: the `(block entry,
+    /// instance id)` of the placement and of every descendant in the map's placement
+    /// hierarchy (`Instance::parent`). The drawn scene has no parent link, so this is how the
+    /// application hides or shows the same placements as the collision (natives 574, actions
+    /// 0x95/0x96: [`CollisionWorld::set_placement_hidden`]). Empty when the map has no such
+    /// placement (a world built by [`CollisionWorld::from_pieces`] has no hierarchy).
+    pub fn placement_subtree(&self, block: u32, id: u16) -> Vec<(u32, u16)> {
+        let Some(root) = self.node_of(block, id) else {
+            return Vec::new();
+        };
+        let mut subtree = vec![(self.nodes[root].block, self.nodes[root].id)];
+        subtree.extend(
+            (0..self.nodes.len())
+                .filter(|&index| index != root && self.node_under(index, root))
+                .map(|index| (self.nodes[index].block, self.nodes[index].id)),
+        );
+        subtree
+    }
+
+    /// The placement hierarchy above `(block, id)` and the placement itself, root first: the
+    /// strict ancestors are every entry but the last. Empty when the map has no such
+    /// placement. The walk is capped at the number of placements so a malformed map with a
+    /// parent cycle returns a cut path instead of looping.
+    pub fn placement_path(&self, block: u32, id: u16) -> Vec<(u32, u16)> {
+        let Some(mut node) = self.node_of(block, id) else {
+            return Vec::new();
+        };
+        let mut path = Vec::new();
+        while node != usize::MAX && path.len() <= self.nodes.len() {
+            let Some(n) = self.nodes.get(node) else {
+                break;
+            };
+            path.push((n.block, n.id));
+            node = n.parent.unwrap_or(usize::MAX);
+        }
+        path.reverse();
+        path
+    }
+
     /// Whether the placement node of `piece` is `root` or one of its descendants.
     fn piece_under(&self, piece: usize, root: usize) -> bool {
         self.node_under(self.node_of_piece[piece], root)
@@ -341,7 +376,12 @@ impl CollisionWorld {
 
     /// Whether `node` is `root` or one of its descendants.
     fn node_under(&self, mut node: usize, root: usize) -> bool {
-        while node != usize::MAX {
+        // A valid chain is shorter than the node list; the cap makes a malformed map with a
+        // parent cycle return instead of looping.
+        for _ in 0..=self.nodes.len() {
+            if node == usize::MAX {
+                return false;
+            }
             if node == root {
                 return true;
             }
@@ -358,7 +398,7 @@ impl CollisionWorld {
     /// a runtime action).
     fn piece_hidden(&self, piece: usize) -> bool {
         let mut node = self.node_of_piece[piece];
-        while node != usize::MAX {
+        for _ in 0..=self.nodes.len() {
             let Some(n) = self.nodes.get(node) else {
                 return false;
             };
