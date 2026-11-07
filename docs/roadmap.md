@@ -13,24 +13,19 @@ livrés avec un prologue intégralement jouable.
 
 ### Lots actifs — 7 novembre 2026
 
-Run Orca `run_93299987d8b6`, quatre workers actifs : trois OMP
-`opencode-go/deepseek-v4.1-flash` et le navigateur DeepSeek. Aucun modèle OpenAI n'est
-utilisé. Contrôles et intégration centralisés.
+Run Orca `run_93299987d8b6`, deux workers actifs : OMP DeepSeek pour la référence
+originale et OMP DeepSeek pour le parcours navigateur. Aucun modèle OpenAI.
 
-- `v01-oracle7` : référence originale poursuivie vers Angel Falls ; propriétaire de
+- `v01-oracle7` : référence originale poursuivie ; propriétaire de
   `melondsds_host.py` et `re/melonds-state.md`.
-- `v01-browser7` : parcours réel au clavier sur la page publiée, captures et frontières de
-  scènes ; propriétaire de `app.md` et du texte du README, hors couverture.
-- `placement-review7` : revue en lecture seule des invariants de placement, portes,
-  consommateurs de scènes et construction headless ; compte rendu sous `build/`.
-- `v01-cadence7` : implémentation du pas terrain original à 30 Hz, avec rendu, son,
-  messages et scènes à 60 Hz ; propriétaire de `app.rs`, `native.rs` et des tests de
-  mouvement.
+- `v01-browser7` : parcours visuel au clavier sur la version publiée, captures et
+  frontières de scènes ; propriétaire de `app.md` et du texte du README.
 
-Lots clôturés et worktrees fermés : `v01-web7` (`574d24c`, resélection du même fichier,
-`v01-parity7` (`69287f9`), `v01-tower7` et `v01-village7` (`8d41723`), `v01-return7`
-(`781b9d5`, retour physique et pilot) et `v01-transition7` (`6cbce07`, nuit, arrivée 21597,
-retrait des PNJ). Les trois commits ont été intégrés dans `main`.
+Lots clôturés et worktrees fermés : `v01-web7` (`574d24c`), `v01-parity7` (`69287f9`),
+`v01-tower7`/`v01-village7` (`8d41723`), `v01-return7` (`781b9d5`), `v01-transition7`
+(`6cbce07`), `v01-cadence7` (`0d2b57b`), `v01-village-accept7` (`fde950f`) et
+`v01-placement-fix7b` (`22243ef`). Tous intégrés dans `main` ; leurs preuves restent sous
+`build/v01-20261107/`.
 
 Chaque worker pousse ses constats documentés sur sa branche. Le code attend les contrôles
 du coordinateur avant commit et push. Les preuves restent sous `build/v01-20261107/`
@@ -38,9 +33,22 @@ du coordinateur avant commit et push. Les preuves restent sous `build/v01-202611
 
 ### Intégré et publié
 
-- Dernier lot de jeu : **`250c095`**. CI Linux
-  [42377690426](https://github.com/FabLrc/dq9-rust/actions/runs/42377690426) et déploiement
-  [Pages 42377690381](https://github.com/FabLrc/dq9-rust/actions/runs/42377690381) réussis.
+- Dernier lot de jeu : **`21e1e42`**. CI Linux
+  [42384404713](https://github.com/FabLrc/dq9-rust/actions/runs/42384404713) et déploiement
+  [Pages 42384404646](https://github.com/FabLrc/dq9-rust/actions/runs/42384404646) réussis.
+- Le pas terrain suit à nouveau le jeu : `Hero::step(ticks = 2)`, `Field::step` et la pose
+  du modèle avancent aux images impaires de la boucle 60 Hz ; audio, portes, dialogues,
+  scènes, caméra et rendu restent à 60 Hz. Le test
+  `field_cadence_holds_the_pose_and_matches_the_original_every_vblank` reproduit les angles
+  et positions originaux image par image.
+- Une visibilité de placement masque désormais tout son sous-arbre dessiné (enfants compris)
+  avec restauration exacte des transformations ; un changement de carte efface tous les
+  index de scène de l'ancienne carte avant un événement enchaîné. Tests réels sur D04M02 et
+  sur les paires 20986 → 29413 / 9210 → 9220 / 9710 → 9713.
+- Le village 1.2 est verrouillé par les drapeaux de tâches 4 et 5 : sans eux, la sortie de
+  maison revient à 1100 sans avancer ; avec eux, l'éclairage passe à la nuit dans la même
+  image, 1350/1360 se joue, l'aire 12 lance 1410, puis 21595 donne 1.4.1 sur 4105 avec
+  21597 une seule fois et sans 21593. Quatre tests réels couvrent ce parcours.
 - Parcours natif complet observé : 1170 finit à 334,45 s, la rampe mène à `X01M03` à
   336,40 s, Yggdrasil (21510) donne 1.2.1 à 391,12 s. Le pilote revient ensuite
   physiquement par `4107 → 4105`, parle à la gardienne, déclenche 21591 et arrive à
