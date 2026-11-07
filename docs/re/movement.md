@@ -201,10 +201,19 @@ Toutes les entrées non portées de « Hors périmètre » ; le suivi lissé et 
 (l'orbite par défaut et le suivi direct du héros sont appliqués) ; une comparaison position
 par position à nombre d'images égal sous melonDS.
 
+Le pilote juge désormais ses points de passage et son but en **3D** (§ « Retour de 1.2.1 ») ;
+la grille ne relie deux cellules voisines que si l'écart d'étage reste sous `STEP_HEIGHT`
+(0,75), donc une rampe ou un escalier continus, jamais deux coursives empilées ; l'arête est en
+plus validée par `Hero::step`. Une cellule peut porter plusieurs étages. Restent : la cadence
+30 Hz, et la comparaison à melonDS du parcours de retour.
+
 `cargo dq9re map --reach` ([`map-archive.md`](map-archive.md#voir-la-collision-dq9re-map---image---reach))
 rejoue `Hero::step` sur une grille de 0,5 unité et rend les composantes par hauteur visibles :
 c'est l'outil à employer avant d'annoncer une route, plutôt qu'un BFS qui ne compare que
-`x/z`.
+`x/z`. Deux précautions : la grille du remplissage est ancrée sur son point de départ, donc un
+`--to` très précis peut manquer une cellule déjà atteinte (comparer des points ronds ou
+relancer depuis l'autre extrémité) ; et la commande charge la carte **statique**, sans les
+demandes `0x95`/`0x96` d'un trigger.
 
 ## Parcours joueur réel du prologue (preuve de marche)
 
@@ -221,6 +230,12 @@ cargo run -p dq9-app --release -- --new-game --headless `
 - **22 670 pas fixes** dans `inputs.jsonl` (pavé et touche action par image) ; le rejeu sans
   pilote donne **les mêmes checkpoints octet pour octet** (sha256
   `3da80263943fe45ab8bde29c4b23657bc2b82102fea2de09d2fb4db59f57e2a8`) jusqu'à l'histoire 1.1.2.
+- Le lot tour (main `8d41723`) porte la trace à **26 681 pas fixes** et à l'histoire
+  **1.2.1** (fin de 21510 à 391,12 s), enregistrée dans
+  `build/v01-20261107/tower/coordinator-fixed-pilot-inputs.jsonl` et ses points
+  `…-checkpoints.jsonl` (journal `…stdout.txt`, erreurs `…stderr.txt`). Le pilote y arrive
+  sur `4101` à 407,67 s par le warp 0 de `4103`, puis s'arrête à 444,7 s : c'est le retour
+  décrit plus bas.
 - **Premier contrôle** à 210,42 s : `X01M05`, aire 4100, 1.1.1, drapeaux globaux
   `{337, 1450, 1451, 1452, 1453, 1454, 1461, 2721, 2751}`, drapeaux d'étape `{1}`, héros
   `(0,660, -0,250, -3,610)` — les six drapeaux de scène et les deux de carte concordent avec
@@ -293,23 +308,141 @@ et la compilation wasm sont verts (dont les 28 tests de l'application, exécuté
 et une sauvegarde explicites). Preuve de collision, sans téléport ni mur abaissé :
 
 ```powershell
-# cible : la rampe sous le centre du warp n° 9 (le centre y 15,5 est au milieu de la
-# boîte, pas un sol ; la rampe y 13,868 + 0,0999 de hauteur de station = 13,97)
+# Contrôle NÉGATIF : la carte statique garde S1 (le placement 16 n'est caché que par
+# l'événement 11 de fin de 1170, que cette commande ne joue pas) ; « not reached » est
+# donc attendu et ne prouve pas un défaut du port.
 cargo dq9re map X01M01 --reach=2.77,11.25,18.19 --to=-8.226,13.97,16.379
-# avant le correctif : 9320 nœuds, y 4.249..11.251, « not reached »
-# avec le placement 16 caché : « reached » par la rampe
+# 9320 nœuds, y 4.249..11.251, « not reached » — contrôle négatif sur la carte statique
 
-# Le seul lien manquant était bien S1 : depuis le pied amont de la rampe, à l'ouest de
-# S1, le remplissage 3D atteint déjà le warp et monte jusqu'à y 23,118.
+# Depuis l'ouest de S1, sur la rampe, le remplissage 3D atteint le warp et monte à y 23,118
+# (toujours la carte statique : S1 est encore là, la rampe est du bon côté).
 cargo dq9re map X01M01 --reach=-1.25,12.42,17.5 --to=-8.226,13.97,16.379
 # 9542 nœuds, y 4.249..23.118, « reached »
 
+# Contrôle POSITIF du cache : le test d'application joue la vraie demande de l'événement 11
+# (placement 16) puis la marche réelle du héros jusqu'à X01M03 :
+cargo test -p dq9-app trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot
 # observé : 1170 finit à 334,45 s (histoire 1.1.2) ; la carte 4103 est atteinte à
 # 336,40 s par le warp n° 9, puis 4109 -> 4103 -> 4104 ; 21510 (PNJ 199) finit à
-# 391,12 s (histoire 1.2.1). Le pilote s'arrête ensuite à 444,7 s sur 4101 (1.2.1)
-# sans retrouver le chemin de 4105 : prochaine phase, hors de ce lot.
+# 391,12 s (histoire 1.2.1). Le retour depuis 1.2.1 est décrit ci-dessous.
 ```
 
-Le résultat ci-dessus est la preuve du passage de hauteur ; il ne revendique pas tout le
-prologue. Le retour de 1.2.1 vers 4105 et la cadence 30 Hz restent les lots suivants.
+Le contrôle négatif et le test d'application ne mesurent pas la même chose : le premier
+charge la carte **statique** (S1 visible, aucune demande `0x95`), le second joue la demande
+réelle de l'événement 11 et la marche du héros. Aucune option CLI `--reach` ne cache un
+placement : ne pas présenter la carte statique comme l'état du jeu après 1170.
+
+## Retour de 1.2.1 vers le bas de l'Observatoire
+
+Le pilote atteint l'histoire **1.2.1** à 391,12 s (fin de 21510 sur `4104`), revient par
+`4103` puis arrive sur `4101` à 407,67 s à `(-3,9 ; 12,47 ; 16,75)`, sur la rampe haute.
+Il s'y arrêtait à 444,7 s. La cause est **dans le pilote**, pas dans la collision :
+
+- le plan mène au warp `0x72` n° 8 de `4101` (boîte `(0 ; 5 ; 29)`, 4×4×2 → `y 3..7`) dont le
+  sol de station est à `y 4,25`. Le suiveur testait ses points de passage et son but en
+  **`x/z` seulement** : arrivé à `(-0,16 ; 8,25 ; 28,97)`, à 0,26 du but en `x/z` mais **4
+  unités au-dessus**, il déclarait le but atteint, poussait le cap nul du warp pendant 20
+  images puis abandonnait (« no way out at Vec3(0.01, 4.25, 29.17) », stderr de
+  `build/v01-20261107/tower/coordinator-fixed-pilot.stderr.txt`) ;
+- la connexion existe : le palier `4,25` communique avec la terrasse (`--reach` depuis
+  `0,4.25,29` couvre `y 4.249..11.251`), et le warp n° 8 s'atteint depuis le palier en
+  traversant la double porte `class 0, number 3` (`4101`, enregistrement `0x74` #14, zone
+  `0x73` #13 centrée `(0 ; 5 ; 30,5)`, drapeau `8` = `FLAG_WARP`) ;
+- les sorties vers `4105` de `4101` (`0x72` n° 7 en `(0 ; 1 ; 34)`, portes 0/6 et 0/7 en
+  `(0 ; 1 ; 35)`) sont **sous** le palier (boîtes `y -1..3` et `-0,5..2,5`) : aucun plan
+  n'atteint leurs cellules depuis `4,25`, et ce n'est pas un défaut à corriger en élargissant
+  la tolérance de hauteur. Le retour passe par `4107` ;
+- le carnet de sorties était indexé par `(carte, destination, histoire)` : **une** sortie
+  échouée vers `4107` interdisait aussi les portes vers `4107`, d'où l'oscillation
+  `4101 ↔ 4103 ↔ 4109 ↔ 4104` puis « no walkable way back through map 4101 to 4105 ».
+
+Correctifs (`crates/dq9-app/src/app/auto.rs`, code tenu pour les contrôles centraux) :
+
+- `LEVEL_REACH = 0,8` : un point de passage ou un but n'est atteint que si `|Δy|` est
+  inférieur, en plus de la distance `x/z`. Une tolérance plus large (1,5 avait été essayé)
+  laissait le héros « atteindre » la première marche d'un escalier depuis la rampe au-dessus
+  d'elle, puis pousser vers l'est sans jamais descendre ; 0,8 couvre la demi-montée d'une
+  arête (≤ 0,625) et la hauteur de station (0,0999) ;
+- les cellules bloquées après un coincement sont mémorisées par **nœud** `(cellule, étage)`
+  et non par cellule : une coursive au-dessus d'un passage n'est plus interdite avec lui ;
+- le carnet de sorties distingue chaque sortie (`class`/`number`, position, destination) :
+  une sortie en échec n'interdit plus les autres vers la même carte ;
+- un point d'appui « devant la porte » doit être sur l'étage de la porte (`|Δy| < 1,5` par
+  rapport au centre du volume) : le palier au-dessus d'une porte du dessous n'est plus
+  proposé ;
+- une route épuisée sans que le but soit atteint n'est **plus** prise pour une arrivée : le
+  pilote replanifie depuis sa position ; si la grille refuse le plan, le but est abandonné.
+  Avant, une route vide faisait compter les 20 images de sortie et concluait « no way out »
+  alors que le héros était encore quatre unités au-dessus du but ;
+- un coincement n'arrête plus la course : le but est abandonné et noté comme essayé (même
+  carnet que les sorties), le pilote en choisit un autre, et `Stop::Stuck` n'est rendu que
+  lorsqu'il ne reste plus rien à tenter. Un seul replan par fenêtre de 45 images
+  (`stall` remis à zéro), pour que les cellules apprises diffèrent au lieu d'épuiser les huit
+  replans en huit images ; le replan bloque le **nœud où le héros est coincé**, pas le point
+  de passage (déjà validé par la sonde), pour ne pas interdire le but lui-même ;
+- une sortie dont la marche a échoué est retenue **hors de l'histoire**
+  (`failed_exits` : carte, destination, clé de sortie) : un objectif qui échoue n'est pas
+  rejoué indéfiniment après chaque changement de drapeau ; les autres sorties vers la même
+  carte restent tentables.
+
+Ces règles sont génériques : aucune exception par carte, par étape ou par porte.
+
+Régression corrigée : le test
+`trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03` part d'un pilote neuf sur
+`4101` à 1.1.2 ; la première sortie essayée est le warp n° 8 vers `4107`, dont la salle est
+**derrière** la double porte (la zone du warp ne contient que `z 28..30`) et dont le plan de
+grille s'avère impraticable. Avec le test d'arrivée en 3D seul, le suiveur suivait ce plan et
+se bloquait à `(17,0 ; 6,24 ; 28,73)` ; l'ancien suiveur s'arrêtait plus tôt (arrivée en `x/z`)
+et passait au warp n° 9 vers `4103`. Désormais le but est abandonné et la sortie suivante
+(`4103`) est prise, ce que le test exige.
+
+Preuve de descente physique, sans `NavGrid`, sans téléport, sans drapeau forcé : le préfixe
+du parcours du pilote jusqu'à l'image 24 460 (qui pose le héros sur `4101` à
+`(-3,9 ; 12,47 ; 16,75)`) suivi de 450 images de pavé seulement (droite 90, bas+droite 60,
+gauche 150, haut 150) traverse la carte par le bas est, le palier et la porte :
+
+```powershell
+# entrées : build/v01-20261107/return/replay-descent-4107.jsonl (25 442 images, aucune touche A)
+cargo run -p dq9-app --release -- --new-game --headless `
+  --replay build/v01-20261107/return/replay-descent-4107.jsonl `
+  --checkpoints build/v01-20261107/return/replay-descent-4107-cp.jsonl
+# observé : image 24 460, carte 4101, héros (-3,9 ; 12,47 ; 16,75), histoire 1.2.1 ;
+# image 25 299, carte 4107, héros (0 ; 0,17 ; 16,9), histoire 1.2.1, cause
+# « Doorway { class: 0, number: 3 } ». sha256 c15c6b54… (entrées) et 192881e1… (points).
+```
+
+Résultat du pilote corrigé sur l'état 1.2.1, avec le plafond de pas demandé :
+
+```powershell
+cargo run -p dq9-app --release -- --map X01M01 --chapter 1 --step 2 --substep 1 `
+  --headless --auto --pilot --headless-steps 30000 --mute
+# observé : 4101 -> 4107 par « Doorway { class: 0, number: 3 } » à 44,6 s ; PNJ 139 (Apus) ;
+# 4107 -> 4105 par le warp 1 à 59,9 s ; puis 4105/4106 et 4105/4107/4101 ; arrêt à 207,8 s
+# sur 4101. Aucun téléport.
+
+# Pilote complet depuis la nouvelle partie, mêmes règles, deux minutes de jeu :
+cargo run -p dq9-app --release -- --new-game --headless --auto --pilot `
+  --checkpoints build/v01-20261107/return/full-return-cp.jsonl `
+  --trace-inputs build/v01-20261107/return/full-return-inputs.jsonl
+# observé : 407,7 s retour sur 4101 (1.2.1) ; 475,7 s sortie vers 4107, arrivée à 485,8 s
+# par la porte 0/3 ; Apus (PNJ 139) ; 4105 à 500,9 s par le warp 1 ; gardien 101 à 514,1 s ;
+# 21591 de 519,7 à 526,3 s puis carte 1100 (Angel Falls) par le warp du trigger 11 ;
+# 21592, 1380, 1390, 1370 (scènes du village) ; M01M08 à 582,4 s ; arrêt à 665,2 s en
+# contrôle libre sur 1108, héros (-2,20 ; 0,10 ; 0,78). Historique 1.2.1, drapeaux de piste
+# 0 {4, 7} et {0, 1, 3, 12, 13}. Aucun téléport, aucun drapeau forcé.
+```
+
+Le chemin physique correspondant : descendre le flanc est (`8,25 → 6,14 → 4,25`), longer le
+`4,25` vers l'ouest jusqu'au palier `(0 ; 4,25 ; 31,1)`, entrer vers le sud dans la double
+porte → `4107`. Dans `4107`, Apus (PNJ 139, événement 0 : `0x68(set_track_flag,0)`), puis le
+warp `0x72` n° 8 en `(0 ; 0 ; 9,5)` vers `4105`, le gardien (PNJ 101, événement 1 :
+`0xb(193) 0x10(0)` → `0x77` 21591), et 21591 → `0xe1` warp vers `1100`.
+
+Limites : le code reste à committer après les contrôles centraux ; la preuve de descente est
+un rejeu de nos entrées dans **notre** moteur, pas un rejeu melonDS ; l'ordre et les durées ne
+sont pas comparés ; la suite à `1100` (quêtes du village) appartient aux lots village et
+scènes, et la cadence 30 Hz reste à traiter.
+
+Le résultat ci-dessus ne revendique pas tout le prologue. La cadence 30 Hz reste le lot
+suivant.
