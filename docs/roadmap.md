@@ -61,8 +61,14 @@ du coordinateur avant commit et push. Les preuves restent sous `build/v01-202611
   Les PNJ retirés par `0x7c` disparaissent du rendu et restent absents jusqu'au changement
   de carte. Tests réels : `event_21595...`, `only_a_trigger_warp...`,
   `house_exit_time_of_day...`, `removing_npc_210...`, `stable_pickups...`.
-- Vérification combinée : fmt, clippy, 33 tests d'application sur ROM+sauvegarde, 170 tests
-  de `dq9-core`, tous les tests d'espace de travail et wasm verts en 62,2 s.
+- Vérification combinée : fmt, clippy, 40 tests d'application sur ROM+sauvegarde, 170 tests
+  de `dq9-core`, tous les tests d'espace de travail et wasm verts.
+- Comparaison au point de contrôle libre de 1.1.2 : l'original
+  `build/v01-20261107/oracle/control112-as-control.jsonl` (VBlank 58392, pose
+  `(2,77 ; 11,25 ; 18,19)`) et le runtime final concordent sur la carte, la piste
+  `1.1.2`, les quatre drapeaux d'étape, les quêtes et la position au centième. Seul
+  `4135`, butin aléatoire de la course féminine, manque au runtime ; aucun autre écart.
+  Le test de cadence couvre le déplacement image par image.
 - Les comparateurs consomment chaque point une seule fois et refusent zéro alignement.
   Le butin aléatoire 4135/4212 reste visible dans les comparaisons des courses qui l'ont reçu ;
   aucun drapeau n'a été forcé.
