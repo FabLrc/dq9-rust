@@ -12,10 +12,17 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/compare-runs.ps1 `
 #       -Original build/oracle/original.jsonl -Runtime build/oracle/runtime.jsonl
 #
-# Exit code 0 when every aligned pair agrees; 1 on the first differences (up to -Limit lines);
-# 2 when an input is unreadable or a line is not JSON. `-HeroTolerance` (default 0) also
-# compares the hero's x/y/z; 0 disables it because the two runs may stand a few centimetres
-# apart at a scene boundary.
+# Exit code 0 when every aligned pair agrees and at least one pair was aligned; 1 on a
+# difference, or when nothing could be aligned (the files then prove nothing together); 2 when
+# an input is unreadable or a line is not JSON. `-HeroTolerance` (default 0) also compares the
+# hero's x/y/z; 0 disables it because the two runs may stand a few centimetres apart at a scene
+# boundary.
+#
+# Each runtime checkpoint is paired at most once. A checkpoint whose kind has no counterpart
+# (a `f012625` movement sample, for example) is left unmatched: pairing it with a control
+# point that shares its story key would compare two different moments as if they were one.
+# The only cross-kind pair kept is the original `after` (a follow-up capture at the same
+# story point) with the runtime `control`.
 param(
     [Parameter(Mandatory)] [string] $Original,
     [Parameter(Mandatory)] [string] $Runtime,
@@ -81,31 +88,47 @@ function Same([string] $What, $A, $B) {
 }
 
 $runtimeByKey = @{}
-foreach ($rt in $runtimeChecks) {
-    $key = Story-Key $rt
-    if (-not $runtimeByKey.ContainsKey($key)) { $runtimeByKey[$key] = @() }
-    $runtimeByKey[$key] = @($runtimeByKey[$key]) + $rt
+for ($index = 0; $index -lt $runtimeChecks.Count; $index++) {
+    $key = Story-Key $runtimeChecks[$index]
+    if (-not $runtimeByKey.ContainsKey($key)) {
+        $runtimeByKey[$key] = [System.Collections.Generic.List[object]]::new()
+    }
+    $runtimeByKey[$key].Add([pscustomobject]@{
+        Index = $index
+        Checkpoint = $runtimeChecks[$index]
+    })
 }
+$usedRuntime = [System.Collections.Generic.HashSet[int]]::new()
 
 $aligned = 0
+$unmatched = 0
 foreach ($or in $originalChecks) {
     $key = Story-Key $or
-    if (-not $runtimeByKey.ContainsKey($key)) { continue }
-    $candidates = @($runtimeByKey[$key])
-    # A control point on the original side pairs with a control on the runtime side, not
-    # with the map load or an event boundary that happens to share the story key.
-    $preferred = @($candidates | Where-Object { $_.kind -eq $or.kind })
-    if ($preferred.Count -eq 0 -and $or.kind -ne 'control') {
-        $preferred = @($candidates | Where-Object { $_.kind -eq 'control' })
+    $pick = $null
+    if ($runtimeByKey.ContainsKey($key)) {
+        $available = @($runtimeByKey[$key] |
+            Where-Object { -not $usedRuntime.Contains([int]$_.Index) })
+        # Same kind first: a map load, an event boundary and a control point that share a
+        # story key are different moments.
+        $same = @($available | Where-Object { $_.Checkpoint.kind -eq $or.kind })
+        if ($same.Count -gt 0) {
+            $pick = $same[0]
+        } elseif ($or.kind -eq 'after') {
+            $control = @($available | Where-Object { $_.Checkpoint.kind -eq 'control' })
+            if ($control.Count -gt 0) { $pick = $control[0] }
+        }
     }
-    if ($preferred.Count -eq 0) { $preferred = $candidates }
-    $rt = $preferred[0]
+    if ($null -eq $pick) { $unmatched++; continue }
+    [void]$usedRuntime.Add([int]$pick.Index)
+    $rt = $pick.Checkpoint
     $aligned++
     $where = "$key $($or.kind)"
     Same "$where map" $or.map $rt.map
     Same "$where current track" $or.track $rt.track
     if ($null -ne $or.daytime -and $null -ne $rt.daytime) {
         Same "$where daytime" ([bool]$or.daytime) ([bool]$rt.daytime)
+    } elseif ($null -ne $or.daytime -or $null -ne $rt.daytime) {
+        Fail "$where daytime: only one checkpoint reports it"
     }
     $orTracks = @($or.tracks)
     $rtTracks = @($rt.tracks)
@@ -127,26 +150,30 @@ foreach ($or in $originalChecks) {
     $aq = Quest-Text $or.quests
     $bq = Quest-Text $rt.quests
     if ($aq -ne $bq) { Fail "$where quests: original [$aq], runtime [$bq]" }
-    if ($HeroTolerance -gt 0 -and $null -ne $or.hero -and $null -ne $rt.hero) {
-        foreach ($axis in 'x', 'y', 'z') {
-            $delta = [Math]::Abs([double]$or.hero.$axis - [double]$rt.hero.$axis)
-            if ($delta -gt $HeroTolerance) {
-                Fail ("$where hero $axis`: original $($or.hero.$axis), runtime $($rt.hero.$axis), delta {0:N4}" -f $delta)
+    if ($HeroTolerance -gt 0) {
+        if ($null -eq $or.hero -or $null -eq $rt.hero) {
+            Fail "$where hero: only one checkpoint reports it"
+        } else {
+            foreach ($axis in 'x', 'y', 'z') {
+                $delta = [Math]::Abs([double]$or.hero.$axis - [double]$rt.hero.$axis)
+                if ($delta -gt $HeroTolerance) {
+                    Fail ("$where hero $axis`: original $($or.hero.$axis), runtime $($rt.hero.$axis), delta {0:N4}" -f $delta)
+                }
             }
         }
     }
 }
 
-$matchedOriginal = @($originalChecks | Where-Object {
-    $k = Story-Key $_
-    $runtimeByKey.ContainsKey($k)
-}).Count
-$matchedOriginal = @($originalChecks | Where-Object {
-    $k = Story-Key $_
-    $n = @($runtimeChecks | Where-Object { (Story-Key $_) -eq $k }).Count
-    $n -gt 0
-}).Count
-Write-Output ("aligned {0} checkpoint(s); original {1}, runtime {2}; {3} original checkpoint(s) have a matching key" -f `
-    $aligned, $originalChecks.Count, $runtimeChecks.Count, $matchedOriginal)
+$unused = $runtimeChecks.Count - $usedRuntime.Count
+Write-Output ("aligned {0} original checkpoint(s) with {1} distinct runtime checkpoint(s); original {2}, runtime {3}; unmatched original {4}, unused runtime {5}" -f `
+    $aligned, $usedRuntime.Count, $originalChecks.Count, $runtimeChecks.Count, $unmatched, $unused)
+if ($aligned -eq 0) {
+    Write-Output 'NO PARITY: no original checkpoint has a runtime checkpoint at the same story point and kind'
+    exit 1
+}
+if ($unmatched -gt 0) {
+    Write-Output ("note: {0} original checkpoint(s) have no unused runtime counterpart and are not compared" -f $unmatched)
+}
 if ($fail -eq 0) { Write-Output 'OK: aligned checkpoints identical' }
-exit $fail
+if ($fail -gt 0) { exit 1 }
+exit 0

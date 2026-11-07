@@ -62,6 +62,7 @@ $tracks = @{}
 $global = $null
 $runtimeMap = $null
 $runtimeQuests = $null
+$runtimeQuestsMissing = $false
 $runtimeDaytime = $null
 $runtimeTrack = $null
 
@@ -71,7 +72,13 @@ if ($RuntimeJson) {
     # A missing `track` must not become 0 (a false OK); the text path rejects it the same way.
     $runtimeTrack = if ($null -eq $rt.track) { $null } else { [int]$rt.track }
     $global = Set-FromArray $rt.flags
-    $runtimeQuests = Quest-Map $rt.quests
+    if ($null -eq $rt.PSObject.Properties['quests']) {
+        # An absent field is not an empty quest log: it cannot prove that the runtime and
+        # melonDS agree, so the comparison reports the gap instead of passing.
+        $runtimeQuestsMissing = $true
+    } else {
+        $runtimeQuests = Quest-Map $rt.quests
+    }
     if ($null -ne $rt.daytime) { $runtimeDaytime = [bool]$rt.daytime }
     for ($i = 0; $i -lt $rt.tracks.Count; $i++) {
         $t = $rt.tracks[$i]
@@ -122,16 +129,33 @@ function Same([string] $what, $a, $b) {
     if ("$a" -ne "$b") { Fail "$what`: melonDS $a, runtime $b" }
 }
 
-$scenario = $ds.tracks[$ds.track]
-Write-Output "checkpoint: vblank $($ds.vblank), map $($ds.map), track $($ds.track) $($scenario.chapter).$($scenario.step).$($scenario.substep)"
+$scenario = if ($null -ne $ds.tracks -and $null -ne $ds.track -and $ds.track -ge 0 -and $ds.track -lt $ds.tracks.Count) {
+    $ds.tracks[$ds.track]
+} else {
+    $null
+}
+if ($null -ne $scenario) {
+    Write-Output "checkpoint: vblank $($ds.vblank), map $($ds.map), track $($ds.track) $($scenario.chapter).$($scenario.step).$($scenario.substep)"
+} else {
+    Write-Output "checkpoint: vblank $($ds.vblank), map $($ds.map), track $($ds.track) (out of range)"
+}
 Write-Output "runtime: map $runtimeMap, tracks $($tracks.Count), global flags $($global.Count)"
 Same 'map' $ds.map $runtimeMap
+if ($null -eq $scenario) {
+    Fail 'current track: melonDS reports no scenario track at that index'
+}
 if ($null -eq $runtimeTrack) {
     Fail 'current track: the runtime report does not name it; pass -TrackIndex or -RuntimeJson'
 } else {
     Same 'current track' $ds.track $runtimeTrack
 }
-if ($null -ne $runtimeDaytime) { Same 'daytime' $ds.daytime $runtimeDaytime }
+if ($null -ne $runtimeDaytime) {
+    Same 'daytime' $ds.daytime $runtimeDaytime
+} elseif ($RuntimeJson) {
+    Fail 'daytime: the runtime checkpoint does not report it'
+}
+if ($ds.tracks.Count -eq 0) { Fail 'melonDS state has no scenario tracks' }
+if ($tracks.Count -eq 0) { Fail 'the runtime state has no scenario tracks' }
 if ($tracks.Count -ne $ds.tracks.Count) {
     Fail "track count: melonDS $($ds.tracks.Count), runtime $($tracks.Count)"
 }
@@ -156,7 +180,9 @@ if ($onlyDs.Count) { Fail "global flags only in melonDS: $($onlyDs -join ',')" }
 if ($onlyRt.Count) { Fail "global flags only in the runtime: $($onlyRt -join ',')" }
 
 $dsQuests = Quest-Map $ds.quests
-if ($null -ne $runtimeQuests) {
+if ($runtimeQuestsMissing) {
+    Fail 'quests: the runtime checkpoint has no quests field, so the quest log cannot be compared'
+} elseif ($null -ne $runtimeQuests) {
     $qOnlyDs = @($dsQuests.Keys | Where-Object { -not $runtimeQuests.ContainsKey($_) } | Sort-Object)
     $qOnlyRt = @($runtimeQuests.Keys | Where-Object { -not $dsQuests.ContainsKey($_) } | Sort-Object)
     $qDiff = @($dsQuests.Keys | Where-Object { $runtimeQuests.ContainsKey($_) -and $runtimeQuests[$_] -ne $dsQuests[$_] } | Sort-Object)
@@ -165,9 +191,12 @@ if ($null -ne $runtimeQuests) {
     if ($qDiff.Count) { Fail "quest nibbles differ: $(($qDiff | ForEach-Object { "$_ melonDS=$($dsQuests[$_]) runtime=$($runtimeQuests[$_])" }) -join ', ')" }
 } elseif ($dsQuests.Count) {
     Fail "quests present in melonDS ($(($dsQuests.Keys | Sort-Object | ForEach-Object { "$_=$($dsQuests[$_])" }) -join ',')) but the runtime state has none: use -RuntimeJson"
+} elseif ($RuntimeJson) {
+    Write-Output 'quests: none in melonDS and none in the runtime checkpoint'
 } else {
-    Write-Output 'quests: none on either side'
+    Write-Output 'quests: none in melonDS; the text report does not carry the runtime quests'
 }
 
 if ($fail -eq 0) { Write-Output 'OK: story point and flags identical' }
-exit $fail
+if ($fail -gt 0) { exit 1 }
+exit 0

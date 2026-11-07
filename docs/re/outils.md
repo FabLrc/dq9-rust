@@ -271,14 +271,21 @@ L'original s'arrête à `(1.756, -0.250, -3.041)`, angle brut 0, vitesse nulle �
   deux, l'application avance à chaque image. L'écart maximal est 0,191, soit exactement un
   pas de 30 Hz (786/4096 = 0,192), et il s'annule dès que les deux positions sont bloquées
   au même mur. Aucune dérive cumulée ;
-- aux images paires (deux pas de 60 Hz = une mise à jour de 30 Hz), l'écart reste sous 0,08,
+- aux images paires (deux pas de 60 Hz = une mise à jour de 30 Hz), l'écart reste sous 0,10,
   la différence venant des arrondis de collision sur les pentes.
 
-Conclusion : l'application à 60 Hz suit l'original au pas de 30 Hz ; l'écart observé dans la
-première expérience était l'orientation initiale, pas une cadence fausse. Aucun changement
-de contrat de planification dans `app.rs` n'est demandé. Le test `Hero::step(ticks = 2)`
-ajouté puis retiré comparait une cadence et une phase différentes de celles de
-l'application : il n'est pas conservé.
+Conclusion : l'application à 60 Hz suit l'original au pas de 30 Hz, sans dérive cumulée,
+mais **l'égalité stricte à chaque VBlank n'est pas atteinte** : l'application avance à
+chaque image, l'original tient sa position une image sur deux. L'écart mesuré est borné par
+un pas de champ (0,191 au maximum, 0,097 aux images paires, 0,003 à l'arrêt). Le critère
+v0.1 « déplacement à nombre d'images contrôlé » reste donc **ouvert** ; une égalité stricte
+exigerait de faire tourner la logique de champ à 30 Hz (`ticks = 2` toutes les deux images,
+position tenue l'image intermédiaire), décision de conception pour le coordinateur et le
+propriétaire du déplacement, pas un correctif appliqué ici. Aucun nouveau réglage CLI n'a
+été ajouté.
+
+Le test `Hero::step(ticks = 2)` ajouté puis retiré comparait une cadence et une phase
+différentes de celles de l'application : il n'est pas conservé.
 
 Limites : `--walk` ne peut pas partir d'un yaw arbitraire, d'où la préparation originale
 ci-dessus ; seuls les points du premier contrôle ont une référence originale dans les
