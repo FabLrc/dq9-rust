@@ -14,17 +14,24 @@ livrés avec un prologue intégralement jouable.
 ### Lots actifs — 7 novembre 2026
 
 Run Orca `run_93299987d8b6`, cinq workers OMP
-`opencode-go/deepseek-v4.1-flash` (plafond : six). Aucun résultat ci-dessous n'est encore
-validé ; les contrôles et l'intégration restent centralisés.
+`opencode-go/deepseek-v4.1-flash` (plafond : six). Les contrôles et l'intégration restent
+centralisés ; un lot Web est validé, les quatre autres continuent.
 
-- `v01-oracle7` : attente du message 1160, référence après 1170 et en 1.1.2 ;
-  propriétaire de `melondsds_host.py` et `re/melonds-state.md`.
-- `v01-tower7` : passage continu `X01M01 → X01M03`, collision, mouvement et pilote ;
-  propriétaire de `collision.rs`, `movement.rs`, `app/auto.rs` et `re/movement.md`.
-- `v01-web7` : remplacement de session et prise du clavier sur Pages ;
-  propriétaire de `web.rs`, `web/index.html` et `app.md`.
+- `v01-oracle7` : le message attribué à 1160 est celui de la scène répétable 1600 ;
+  les A répétés la relançaient. Le worker poursuit le trajet physique vers 1170/1.1.2.
+  Propriétaire de `melondsds_host.py` et `re/melonds-state.md`.
+- `v01-tower7` : le trigger de fin de 1170 masque le placement 16 (mur S1) par `0x95` ;
+  cet effet n'était pas appliqué. Correction en cours, franchissement restant à vérifier.
+  Propriétaire de `collision.rs`, `movement.rs`, `app/auto.rs`, `app.rs`, `event.rs` et
+  `re/movement.md`.
+- `v01-web7` : lot terminé, intégré et poussé dans `574d24c`, worktree fermé. Le même
+  fichier ROM/sauvegarde peut être resélectionné. Vérification complète native/wasm et
+  essai visuel du candidat réussis ; redéploiement Pages demandé par le push.
+  Le remplacement d'une session avec légende active a également été vérifié sur Pages :
+  sauvegarde dans l'église, déplacement, aucune ancienne légende visible.
 - `v01-village7` : chaîne réelle des scènes et tâches du village, contrats manquants ;
-  propriétaire de `field.rs`, `trigger.rs`, `event.rs` et `re/trigger.md`.
+  propriétaire de `field.rs`, `trigger.rs` et `re/trigger.md`. Émet la visibilité des
+  placements, appliquée côté application par le lot tour.
 - `v01-parity7` : comparaisons aux mêmes frontières et déplacement à images égales ;
   propriétaire des comparateurs, de `tests/movement_rom.rs` et de `re/outils.md`.
 
@@ -44,12 +51,13 @@ du coordinateur avant commit et push. Les preuves restent sous `build/v01-202611
   des drapeaux sont branchées : **17 des 18** drapeaux de l'original, seul le butin aléatoire
   du combat 26 (`4135` ou `4212`) reste hors runtime. `compare-runs.ps1` préfère le même
   `kind` pour ne pas confondre un chargement de carte avec une prise de contrôle.
-- Référence originale reprise : premier contrôle, X01M05 (rampe centrale, escalier est et
-  pont vers le warp 16), X01M07 et events 1150/1160 atteints sans téléport. Elle bute sur le
-  **dialogue de 1160** : le choix Yes est confirmé, mais le message suivant « Stop!
-  Benevolence is not a toy! » reste ouvert et ne répond ni à A, ni aux taps, ni à 50 s
-  d'attente. L'état 1.1.2 original n'est donc pas obtenu. Entrées, états et captures
-  conservés sous `build/oracle-route/` (ignoré) ; le dernier état est `idle-state.bin`.
+- Référence originale reprise : premier contrôle, X01M05, X01M07 puis retour physique dans
+  `X01M01`. Le blocage précédemment attribué à 1160 était une erreur de pilotage : la
+  réplique appartient à la scène répétable 1600 du compagnon ; les A répétés la relançaient.
+  Un appui isolé puis l'attente ferment le message (contre-vérifié par le coordinateur,
+  `build/v01-20261107/oracle/coordinator-unblock.png`). L'état original après 1170/1.1.2
+  reste à produire ; les anciennes preuves demeurent sous `build/oracle-route/` et
+  `build/orca/route/`, les nouvelles sous `build/v01-20261107/oracle/` (ignorés).
 - Harnais oracle libretro (outil GPL externe, hors crates) : création du personnage et
   **premier contrôle original** reproductibles sans GUI, `dq9re state --ram` sur les images
   RAM de 4 Mio, catalogue `states index/find`, `state diff` et `state watch`. Le premier
@@ -90,16 +98,11 @@ leurs conclusions sont reprises dans `main` et les docs ; ne pas les réintégre
    Falls, quêtes, fin du prologue) avec le même harnais, puis les comparer au runtime par
    `state diff` et `compare-runs.ps1` aux mêmes points d'histoire. Ne pas réintégrer les
    anciennes branches d'outillage : elles sont déjà dans `main`.
-2. **Débloquer la référence originale après 1160.** Le harnais exécute la ROM sans focus et
-   un état de cœur au premier contrôle existe (`build/oracle-host/core23050.bin`). Le parcours
-   original a atteint X01M07 et les events 1150/1160, mais reste bloqué sur le message de
-   1160 : le choix Yes est confirmé, puis « Stop! Benevolence is not a toy! » reste affiché
-   malgré A, taps et 50 s d'attente. Prochaine piste : traiter ce message avec
-   `DQIX_WATCH`/DQIX Enhanced ou une sauvegarde au texte rapide, pas en déduisant la suite du
-   runtime. Une fois 1170 atteint, relever la pose : elle décidera si le warp 9 de la terrasse
-   est légitime ou si le runtime doit changer de route. Le prochain jalon est
-   l'arrivée à 1.1.2 puis Angel Falls ; ne pas fabriquer d'état ni modifier les
-   coordonnées/drapeaux pour contourner un blocage.
+2. **Poursuivre la référence originale après 1600.** Ne plus traiter la réplique du
+   compagnon comme un blocage de 1160 : le pilotage relançait sa conversation répétable.
+   Le worker est sorti de `X01M07` vers `X01M01` sans téléportation et poursuit vers 1170.
+   Relever la pose et l'état après 1170, puis en 1.1.2 et à Angel Falls ; ne pas fabriquer
+   d'état ni modifier les coordonnées/drapeaux pour contourner un blocage.
 3. **Résoudre l'accès à la tour `X01M01` → `X01M03`.** La grille 3D plafonne à y = 11,25 ;
    le passage haut n'est pas atteint. Une route vérifiée seulement en X/Z était fausse.
    La proposition de contourner la tour via 21591 est également rejetée : ce trigger n'est
