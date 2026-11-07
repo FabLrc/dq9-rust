@@ -1,8 +1,9 @@
 # Déplacement et sol du héros
 
 `dq9-core` reproduit le déplacement du chef de groupe à pied, tel que le code de `ov_017` le
-calcule : arithmétique `fx32` (4096 = 1,0) au bit près, un pas par image, sans E/S. Quatre
-modules : [`fx`](../../crates/dq9-core/src/fx.rs) (diviseur et racine matériels, vecteurs,
+calcule : arithmétique `fx32` (4096 = 1,0) au bit près, un pas par mise à jour du jeu, sans
+E/S. Quatre modules : [`fx`](../../crates/dq9-core/src/fx.rs) (diviseur et racine matériels,
+vecteurs,
 angles), [`movement`](../../crates/dq9-core/src/movement.rs) (`Hero`, d-pad, vitesse, glissement),
 [`collision`](../../crates/dq9-core/src/collision.rs) (maillages `.col2`, grille, rayon du sol,
 sphère contre les murs) et [`camera`](../../crates/dq9-core/src/camera.rs) (rotation `L`/`R`).
@@ -41,9 +42,37 @@ groupe, dans l'ordre du jeu :
    distance parcourue après collision ne dépasse pas celle d'avant (`0x0218e5a8`–`0x0218e658`).
 
 `ticks` est le nombre d'images écoulées depuis la dernière mise à jour du jeu
-(`GameState+0x3c4`, plafonné à 3, 2 au départ) : la logique tourne à 30 Hz nominal, 2 ticks
-par mise à jour. L'application avance d'un tick à 60 Hz ; la vitesse en régime est la même
-(5,76 unités/s) et la montée en vitesse, par `0x28` par tick, aussi.
+(`GameState+0x3c4`, plafonné à 3, 2 au départ) : la logique du champ tourne à 30 Hz, 2 ticks
+par mise à jour. La boucle externe de `dq9-app` reste à 60 Hz (VBlanks) ; à chaque VBlank
+`App::run_steps` incrémente `tick` puis ne fait tourner `Hero::step(..., 2)`, `Field::step`,
+la démarche et l'instance de rendu que sur les `tick` impairs, la pose étant tenue à l'image
+intermédiaire. Audio, portes, messages, VM d'événements, caméra et `runtime.step` restent à
+60 Hz. `tick` est la phase VBlank libre du jeu : il n'est remis à 0 que par
+`start_new_game`, jamais par un chargement de carte, une sauvegarde ou un retour de
+contrôle. La vitesse en régime est la même (5,76 unités/s) et la montée en vitesse, par
+`0x28` par tick, aussi.
+
+Cette cadence est vérifiée sur la ROM réelle par
+`field_cadence_holds_the_pose_and_matches_the_original_every_vblank` (`app.rs`) : à partir de
+la pose `(1,756 ; −3,041)`, angle brut 0, vitesse 0 de `X01M05`, les pas impairs donnent les
+angles bruts exacts 0, 1608, 3216, …, 12868 et les `z` fx de la capture originale, les pas
+pairs tenant la pose octet pour octet (caméra comprise). Le premier VBlank ne lit que le
+pavé, le premier déplacement est au troisième pas de champ (VBlank 5) et le demi-tour se
+cale sur la cible au VBlank 19 (revue
+`build/v01-20261107/review/cadence-30hz-field-review.md` §7).
+
+**[hypothèse]** `Field::step` (donc `step_doorways`) tourne lui aussi une fois par mise à
+jour, comme `Field_CheckRegions` : le compteur d'approche d'une porte, à
+`APPROACH_FRAMES = 3`, déclenche alors l'événement 17 au 4e appel, soit 8 VBlanks. La chaîne
+d'appel statique (`0x020d6cb4` → `ov_017::0218b688` → `0218cbd4` → `Field_CheckRegions`) ne
+donne pas la cadence de la boucle principale ; la mesure melonDS (4 VBlanks ⇒ champ à 60 Hz,
+8 ⇒ 30 Hz) reste à faire. Ne pas régater `field.step` seul sans cette mesure.
+
+**`--screenshot`/`--frame`** ([`outils.md`](outils.md)) est une voie d'aperçu hors
+`App::run_steps` : elle garde `Hero::step(..., 1)` par image demandée et ne prétend pas
+reproduire la cadence. Les chemins de jeu (fenêtre, Web, pilote, rejeu) passent tous par
+`run_steps`.
+
 **[hypothèse]** les écarts d'échelonnage (hystérésis du sol de `0x28`, arrondis des demi-passes)
 sont négligeables à cette cadence.
 
@@ -204,8 +233,10 @@ par position à nombre d'images égal sous melonDS.
 Le pilote juge désormais ses points de passage et son but en **3D** (§ « Retour de 1.2.1 ») ;
 la grille ne relie deux cellules voisines que si l'écart d'étage reste sous `STEP_HEIGHT`
 (0,75), donc une rampe ou un escalier continus, jamais deux coursives empilées ; l'arête est en
-plus validée par `Hero::step`. Une cellule peut porter plusieurs étages. Restent : la cadence
-30 Hz, et la comparaison à melonDS du parcours de retour.
+plus validée par `Hero::step`. Une cellule peut porter plusieurs étages. Restent : la
+comparaison à melonDS du parcours de retour et la mesure de la cadence de `Field::step` pour
+les portes (§ « Ce qui est porté »). La sonde de connectivité du pilote (`edge_pass`) garde
+`ticks = 1` : c'est un test de franchissement, pas la cadence du champ.
 
 `cargo dq9re map --reach` ([`map-archive.md`](map-archive.md#voir-la-collision-dq9re-map---image---reach))
 rejoue `Hero::step` sur une grille de 0,5 unité et rend les composantes par hauteur visibles :
@@ -442,7 +473,10 @@ warp `0x72` n° 8 en `(0 ; 0 ; 9,5)` vers `4105`, le gardien (PNJ 101, événeme
 Limites : le code reste à committer après les contrôles centraux ; la preuve de descente est
 un rejeu de nos entrées dans **notre** moteur, pas un rejeu melonDS ; l'ordre et les durées ne
 sont pas comparés ; la suite à `1100` (quêtes du village) appartient aux lots village et
-scènes, et la cadence 30 Hz reste à traiter.
+scènes.
 
-Le résultat ci-dessus ne revendique pas tout le prologue. La cadence 30 Hz reste le lot
-suivant.
+Les compteurs de pas, temps et positions ci-dessus ont été mesurés avant la cadence de champ
+30 Hz de `run_steps`. Depuis, le pilote avance toujours d'un pas fixe de 60 Hz mais la logique
+de champ ne consomme le pavé qu'un VBlank sur deux : les trajectoires restent dans le moteur,
+mais les numéros d'image et les points de contrôle peuvent se décaler et doivent être
+re-mesurés par le lot de vérification, sans changer les entrées du pilote.

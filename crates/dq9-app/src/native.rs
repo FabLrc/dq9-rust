@@ -588,6 +588,10 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
             camera.look_at(eye, target);
         }
     } else {
+        // Preview path only (`--screenshot`, no `App`, no field task): one `Hero::step` per
+        // requested frame at `ticks = 1`, for inspecting poses and the animation clock. It
+        // deliberately does not implement the game's 30 Hz field cadence; gameplay (window,
+        // Web, pilot, replay) runs through `App::run_steps`, which gates it.
         for frame in 0..cli.frame {
             let direction = script
                 .as_deref()

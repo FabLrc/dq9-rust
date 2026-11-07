@@ -1,7 +1,8 @@
 //! Window, input and frame loop, shared by the native and Web builds.
 //!
-//! Updates run at a fixed 60 Hz (the DS frame rate) from an accumulator; rendering happens once
-//! per redraw.
+//! VBlanks run at a fixed 60 Hz (the DS frame rate) from an accumulator; rendering happens
+//! once per redraw. The field logic (hero, field task, gait) runs every second VBlank with
+//! `ticks = 2`, the original's 30 Hz game update; the other tasks stay at 60 Hz.
 //!
 //! Controls: drag with the left button to turn, wheel to zoom, `WASD`/arrows to move (the hero
 //! in orbit mode, the camera in fly mode), `Q`/`E` the game's `L`/`R` camera buttons in orbit
@@ -1029,6 +1030,12 @@ impl App {
             self.step_sound();
             self.step_doors();
             self.tick += 1;
+            // The DS game updates its field once per two VBlanks (`GameState+0x3c4` delta 2,
+            // `docs/re/movement.md`). `tick` is the free-running VBlank counter (reset only by
+            // `start_new_game`), so the original's update parity survives map loads and
+            // events. Everything not gated below (audio, doors, messages, event VM, camera,
+            // animation) stays at 60 Hz.
+            let field_due = self.tick % 2 == 1;
             self.journal.note_progress(self.tick, &self.state);
             if self.events.pending_start().is_some() || self.events.is_active() {
                 if !self.step_event() {
@@ -1141,27 +1148,42 @@ impl App {
             };
             if let Some(hero) = &mut self.hero {
                 let before = hero.position();
-                hero.step(&self.collision, pad, camera_yaw, 1);
-                self.camera.follow_hero(hero.position());
-                if let Some(field) = &mut self.field {
-                    let leader = Leader {
-                        position: hero.position(),
-                        yaw: hero.yaw(),
-                        input: move_direction.normalize_or_zero(),
-                    };
-                    events.extend(field.step(&leader, &mut self.state));
-                }
-                if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance) {
-                    // Motion from the distance covered this step (`dq9-render::hero`).
-                    let moved = hero.position() - before;
-                    let speed = Vec3::new(moved.x, 0.0, moved.z).length() / STEP;
-                    runtime.set_hero_gait(Gait::from_speed(speed));
-                    let world =
-                        runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()));
-                    if let Some(instance) = runtime.scene.instances.get_mut(index) {
-                        instance.world = world;
+                if field_due {
+                    // Two elapsed VBlanks, as `Character_Update` reads them (`ticks = 2`):
+                    // `update` turns, accelerates and moves for both ticks before
+                    // `read_input` samples the pad. The field task also runs on this same
+                    // game update, with the post-2-tick pose (the original's task order).
+                    hero.step(&self.collision, pad, camera_yaw, 2);
+                    if let Some(field) = &mut self.field {
+                        // `Field::step` carries the doorway approach counter
+                        // (`APPROACH_FRAMES = 3`): its 4th call fires event 17, so a door
+                        // now triggers on 8 VBlanks instead of 4. The original task's
+                        // cadence is the documented hypothesis (`docs/re/movement.md`);
+                        // this is not a separately re-timed door.
+                        let leader = Leader {
+                            position: hero.position(),
+                            yaw: hero.yaw(),
+                            input: move_direction.normalize_or_zero(),
+                        };
+                        events.extend(field.step(&leader, &mut self.state));
+                    }
+                    if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance) {
+                        // Motion over the two ticks: gait thresholds are in units/s, so
+                        // divide by `2 * STEP` (dividing by `STEP` would double the speed
+                        // and flip Walk/Run).
+                        let moved = hero.position() - before;
+                        let speed = Vec3::new(moved.x, 0.0, moved.z).length() / (2.0 * STEP);
+                        runtime.set_hero_gait(Gait::from_speed(speed));
+                        let world =
+                            runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()));
+                        if let Some(instance) = runtime.scene.instances.get_mut(index) {
+                            instance.world = world;
+                        }
                     }
                 }
+                // Held pose on the intermediate VBlank: the camera still follows it, as the
+                // original's follow runs per VBlank, not per game update.
+                self.camera.follow_hero(hero.position());
             }
             if self.apply_events(events) {
                 continue;
@@ -2325,5 +2347,76 @@ mod tests {
             "the pilot must walk from X01M01 to X01M03 through warp 9: {:?}",
             app.hero.map(|h| h.position())
         );
+    }
+
+    /// The original updates the field on one VBlank out of two: this walks a flat, straight
+    /// segment of `X01M05` from the capture's start pose and asserts the exact raw angle and
+    /// fx position at every VBlank. Expected values are the verified samples of
+    /// `build/v01-20261107/review/cadence-30hz-field-review.md` §7 (original
+    /// `original-prep.jsonl` and `Hero::step(ticks = 2)` model): even steps hold the previous
+    /// pose, odd steps turn by `0x324 × 2` and accelerate/move by two ticks.
+    #[test]
+    fn field_cadence_holds_the_pose_and_matches_the_original_every_vblank() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("X01M05", (1, 1, 1, true)), Some(rom.to_vec()));
+        assert_eq!(app.tick, 0, "a fresh app starts on phase 0");
+        assert!(
+            !app.events.is_active() && app.events.pending_start().is_none(),
+            "the flat segment must not be interrupted by an event"
+        );
+        let y = app
+            .collision
+            .ground_height(1.756, -3.041, 3.0)
+            .expect("ground under the capture's start pose");
+        // App yaw π is raw angle 0, facing +z at speed 0: the original's prepared state.
+        app.hero = Some(Hero::at(Vec3::new(1.756, y, -3.041), std::f32::consts::PI));
+        let hero = app.hero.expect("the map placed a hero");
+        assert_eq!(hero.angle(), 0);
+        assert_eq!(hero.speed(), 0);
+        assert_eq!(hero.position_fx(), [7192, (y * 4096.0) as i32, -12455]);
+
+        // `Hero::at` truncates -3.041 × 4096; the original's exact fx is not observable.
+        const BASE_Z: i32 = -12455;
+        const BASE_X: i32 = 7192;
+        const ANGLES: [i32; 10] = [0, 1608, 3216, 4824, 6432, 8040, 9648, 11256, 12864, 12868];
+        const Z_OFFSETS: [i32; 10] = [0, 0, -160, -454, -846, -1338, -1928, -2616, -3402, -4188];
+
+        let mut held = app.hero.expect("hero").position_fx();
+        let mut held_angle = 0;
+        for step in 1..=19u64 {
+            app.walk_step(Vec3::NEG_Z);
+            assert_eq!(app.tick, step);
+            let hero = app.hero.expect("the hero stays placed");
+            let position = hero.position_fx();
+            if step % 2 == 0 {
+                // The intermediate VBlank holds the pose byte for byte; the camera still
+                // follows it (per VBlank, not per game update).
+                assert_eq!(hero.angle(), held_angle, "angle held on step {step}");
+                assert_eq!(position, held, "position held on step {step}");
+                assert_eq!(
+                    app.camera.target.z,
+                    hero.position().z,
+                    "camera follows the held pose on step {step}"
+                );
+                continue;
+            }
+            let sample = (step as usize - 1) / 2;
+            assert_eq!(hero.angle(), ANGLES[sample], "raw angle on step {step}");
+            assert!(
+                (position[2] - (BASE_Z + Z_OFFSETS[sample])).abs() <= 2,
+                "z fx on step {step}: {} (expected {} ± 2)",
+                position[2],
+                BASE_Z + Z_OFFSETS[sample]
+            );
+            assert!(
+                (position[0] - BASE_X).abs() <= 1,
+                "x fx on step {step}: {} (expected {BASE_X} ± 1)",
+                position[0]
+            );
+            held = position;
+            held_angle = hero.angle();
+        }
+        assert_eq!(held_angle, 12868, "the turn clamps on the target");
+        assert!(!app.events.is_active());
     }
 }

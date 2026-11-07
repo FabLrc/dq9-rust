@@ -228,10 +228,15 @@ n'est pas affecté ; une comparaison de yaw devra convertir l'un des deux.
 
 ## Déplacement à nombre d'images égal
 
-Le champ se met à jour à 30 Hz ; l'application avance à 60 Hz avec `ticks = 1` et une
-vitesse par image deux fois plus petite, `Hero::step` acceptant aussi `ticks = 2` pour le
-rythme réel du jeu. Comparer les deux à la même image demande donc de partir du **même
-état** : même position, même vitesse (arrêtée) et **même orientation**.
+Le champ se met à jour à 30 Hz ; `App::run_steps` fait désormais tourner le champ
+(`Hero::step(..., 2)`, `Field::step`, démarche) un VBlank sur deux et tient la pose l'image
+intermédiaire ([`movement.md`](movement.md#ce-qui-est-porté)). `--walk` passe par `run_steps`
+et suit donc cette cadence. Les mesures de cette section datent de l'application à 60 Hz
+(`ticks = 1`) : elles gardent leur valeur de comparaison historique, mais la conclusion a
+changé et l'égalité stricte est maintenant vérifiée par un test natif sur ROM réelle
+(`field_cadence_holds_the_pose_and_matches_the_original_every_vblank`, `crates/dq9-app/src/app.rs`).
+Comparer deux moteurs à la même image demande de partir du **même état** : même position,
+même vitesse (arrêtée) et **même orientation**.
 
 Première tentative, depuis le premier contrôle sans aligner l'orientation
 (`build/v01-20261107/parity/movement-up/`) : original `core23050.bin` (vblank 23033) avec
@@ -274,18 +279,22 @@ L'original s'arrête à `(1.756, -0.250, -3.041)`, angle brut 0, vitesse nulle �
 - aux images paires (deux pas de 60 Hz = une mise à jour de 30 Hz), l'écart reste sous 0,10,
   la différence venant des arrondis de collision sur les pentes.
 
-Conclusion : l'application à 60 Hz suit l'original au pas de 30 Hz, sans dérive cumulée,
-mais **l'égalité stricte à chaque VBlank n'est pas atteinte** : l'application avance à
-chaque image, l'original tient sa position une image sur deux. L'écart mesuré est borné par
-un pas de champ (0,191 au maximum, 0,097 aux images paires, 0,003 à l'arrêt). Le critère
-v0.1 « déplacement à nombre d'images contrôlé » reste donc **ouvert** ; une égalité stricte
-exigerait de faire tourner la logique de champ à 30 Hz (`ticks = 2` toutes les deux images,
-position tenue l'image intermédiaire), décision de conception pour le coordinateur et le
-propriétaire du déplacement, pas un correctif appliqué ici. Aucun nouveau réglage CLI n'a
-été ajouté.
+Conclusion de la mesure historique : l'application à 60 Hz suivait l'original au pas de
+30 Hz, sans dérive cumulée, mais **l'égalité stricte à chaque VBlank n'était pas atteinte** :
+l'application avançait à chaque image, l'original tient sa position une image sur deux.
+L'écart mesuré était borné par un pas de champ (0,191 au maximum, 0,097 aux images paires,
+0,003 à l'arrêt).
 
-Le test `Hero::step(ticks = 2)` ajouté puis retiré comparait une cadence et une phase
-différentes de celles de l'application : il n'est pas conservé.
+Le critère v0.1 « déplacement à nombre d'images contrôlé » est maintenant **fermé pour ce
+segment** : le test natif sur ROM réelle rejoue exactement l'état de départ ci-dessus
+(`(1,756 ; −3,041)`, angle brut 0, vitesse 0) et vérifie à chaque VBlank les angles bruts
+exacts 0, 1608, 3216, …, 12868, les `z` fx de la capture originale (tolérance 2), la tenue
+octet pour octet des images paires et la caméra qui continue de suivre la pose tenue. La
+phase est celle de la revue : le premier VBlank ne lit que le pavé, le premier déplacement
+est au troisième pas de champ (VBlank 5), le demi-tour se cale au VBlank 19. La cadence de
+`Field::step` (portes) reste **[hypothèse]** — 4 appels à 30 Hz = 8 VBlanks — tant que la
+mesure melonDS décrite dans [`movement.md`](movement.md) n'est pas faite. Aucun réglage CLI
+n'a été ajouté.
 
 Limites : `--walk` ne peut pas partir d'un yaw arbitraire, d'où la préparation originale
 ci-dessus ; seuls les points du premier contrôle ont une référence originale dans les
