@@ -231,9 +231,11 @@ d'animation **[hypothèse]**, les modes 9 et 10 de 566 ne sont pas modélisés *
 les 30 scripts vont à leur terme, sans erreur de la machine, de 56 mises à jour (`ev01140`) à
 3 579 (`ev21500`, 1 023 événements, environ deux minutes à 30 Hz ; il enchaîne `ev21507` par la
 native 538) ; chaque message `Text::Id`
-existe dans la table du script ; 8 natives restent sans effet modélisé dans `dq9-core` : 547,
-559, 560, 571, 581, 582, 809 et 815 (les mêmes que « non identifiées » dans
-[stb-natives.md](stb-natives.md)). Ce n'est
+existe dans la table du script ; 7 natives restent sans effet modélisé dans `dq9-core` :
+547, 560, 571, 581, 582, 809 et 815 (les mêmes que « non identifiées » dans
+[stb-natives.md](stb-natives.md)). La native 559 écrit désormais le signal `+0x490` lu par
+la condition de trigger `0x1f` ; cette écriture doit précéder le trigger de fin de scène.
+Ce n'est
 pas une validation sous émulateur : l'ordre et les durées ne sont pas comparés à melonDS.
 
 ## Exécution à l'écran (`dq9-core::cutscene`, `dq9-app`)
@@ -343,7 +345,7 @@ mouvements 545/546 ; palette (238) ; retour de la caméra (328) — détail et p
   fenêtre sur l'autre écran.
 
 **Non exécuté** (rapporté par `--events-report`) : native 547 (transition de combat, hors v0.1) ;
-le son de porte (584) ; 559, 560, 571, 815, 581, 582 et 809 sont sans effet visible établi ou
+le son de porte (584) ; 560, 571, 815, 581, 582 et 809 sont sans effet visible établi ou
 sans objet dessiné.
 
 ## Enchaînement du prologue (`dq9-core::scenario`)
@@ -372,7 +374,7 @@ Ce qui enchaîne les scènes est établi (ROM EU, Ghidra, `cargo dq9re triggers`
 
 ## Questions ouvertes
 
-- Natives encore sans rôle (571, 559, 560, 547, 815) : tableau « non identifiées » de
+- Natives encore sans rôle (571, 560, 547, 815) : tableau « non identifiées » de
   [stb-natives.md](stb-natives.md#prologue-dangel-falls--natives-employées-j0).
 - Palette de 238 : les modes 1 et 2 ne sont pas observés ; objets de 809 et ombres de 581/582
   **[hypothèse]**.

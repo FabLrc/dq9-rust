@@ -463,6 +463,11 @@ pub enum Event {
     SyncSceneTimeOfDay,
     /// 808: writes the saved time of day (`Save_SetTimeOfDay`).
     SetTimeOfDay(i32),
+    /// 559 (`ov_001::021609e4`): writes the low byte of its `StbArg_Int` argument
+    /// (`ov_017::021d60f4`, floats truncated) to byte `+0x490` of the quest manager singleton
+    /// (`func_0205ec34`). Trigger condition 0x1f reads it back as a signed byte, so the
+    /// application stores the `u8` as `Raw::Quest490`.
+    SetQuestSignal(u8),
     /// 804: 3D fog.
     Fog(bool),
     /// 8, 9: the marker that chains the next map load to the event.

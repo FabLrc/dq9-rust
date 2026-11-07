@@ -27,8 +27,8 @@ use glam::Vec3;
 use nds_rom::Result;
 
 use crate::trigger::{
-    Flow, Raw, Request, State, TRACKS, Unsupported, degrees_to_angle, first_match, run_action,
-    run_deferred, track_of_room,
+    Flow, Raw, Request, State, TRACKS, Unsupported, degrees_to_angle, first_match, high,
+    run_action, run_deferred, track_of_room,
 };
 
 /// One turn as `fx32` (`0x6488`).
@@ -858,6 +858,9 @@ impl Field {
             Err(e) => Err(e),
             Ok(None) => Ok(None),
             Ok(Some(trigger)) => {
+                // Requests of immediate actions (0x95/0x96), in list order; the deferred
+                // list runs after the whole list, as `Trig_RunActions` then `Trig_RunDeferred`.
+                let mut immediate = Vec::new();
                 let mut deferred = Vec::new();
                 let mut completed = true;
                 for action in &trigger.actions {
@@ -872,6 +875,21 @@ impl Field {
                             mark_doorways(&mut self.doorways, action, action.code == 0x6c);
                             continue;
                         }
+                        // `Trig_RunAction` cases 0x31/0x32 (`0x02061c14`): in the loaded map
+                        // the placement is found and hidden/shown at once. A placement absent
+                        // from the loaded map would be kept as pending by the game
+                        // (`func_0206ea8c`); the runtime reports it as unhandled instead of
+                        // faking success.
+                        0x95 | 0x96 => {
+                            if !action.operands.is_empty() {
+                                immediate.push(Request::SetPlacementHidden {
+                                    block: action.arg & 0xff,
+                                    placement: high(action, 0),
+                                    hidden: action.code == 0x95,
+                                });
+                            }
+                            continue;
+                        }
                         _ => {}
                     }
                     match run_action(action, state) {
@@ -883,11 +901,10 @@ impl Field {
                         }
                     }
                 }
-                Ok(Some(if completed {
-                    run_deferred(&deferred, state)
-                } else {
-                    Vec::new()
-                }))
+                if completed {
+                    immediate.extend(run_deferred(&deferred, state));
+                }
+                Ok(Some(immediate))
             }
         };
         state.event = [0; 12];

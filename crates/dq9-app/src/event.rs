@@ -201,9 +201,37 @@ pub enum Outcome {
     Finished,
     /// A sound native (712 to 738): the application's sound executes it (`audio::Audio`).
     Sound(Sound),
+    /// Native 559: the low byte of quest-manager `+0x490` becomes `value`; trigger condition
+    /// 0x1f reads it (`Raw::Quest490`). The application owns that state.
+    SetQuestSignal(u8),
     /// Native 584 opened a door with its own effect: the application looks up the map's
     /// doorway sound (`Field::door_sound`) and plays base effect 200 + low quartet.
     DoorSound { block: i32, placement: i32 },
+}
+
+/// Applies the collision side of placement changes the scripts made (natives 574/575),
+/// as drained by [`EventPlayer::take_collision_changes`]. The application and the report
+/// playback both call it, so no consumer leaves a change queued.
+pub(crate) fn apply_collision_changes(
+    collision: &mut CollisionWorld,
+    changes: Vec<PlacementChange>,
+) {
+    for change in changes {
+        match change {
+            PlacementChange::Hidden { group, id, hidden } => {
+                collision.set_placement_hidden(group as u32, id as u16, hidden);
+            }
+            PlacementChange::Moved {
+                group,
+                id,
+                position,
+            } => {
+                // Natives 575 store `fx32` (float × 4096, truncated like `ToVec3fix`).
+                let position = position.map(|v| (v * 4096.0) as i32);
+                collision.set_placement_position(group as u32, id as u16, position);
+            }
+        }
+    }
 }
 
 /// What a step works on.
@@ -274,6 +302,9 @@ pub struct EventPlayer {
     hero_hidden: bool,
     /// Instances whose world matrix changed: the renderer must be told.
     dirty: Vec<usize>,
+    /// Placement changes the scripts made that the collision must also apply (natives
+    /// 574/575 on a collision mesh): drained by the application after each step.
+    collision_changes: Vec<PlacementChange>,
     coverage: Coverage,
     running: Option<u16>,
     /// The events that started, in order.
@@ -327,6 +358,7 @@ impl EventPlayer {
             saved_camera: None,
             hero_hidden: false,
             dirty: Vec::new(),
+            collision_changes: Vec::new(),
             coverage: Coverage::default(),
             running: None,
             started: Vec::new(),
@@ -391,6 +423,8 @@ impl EventPlayer {
     pub fn map_loaded(&mut self, camera: &Camera) {
         self.applied_light = SceneLight::default();
         self.bindings.placements.clear();
+        // The new map's collision is built from the map, not from the old placements.
+        self.collision_changes.clear();
         if self.saved_camera.is_some() {
             self.saved_camera = Some(*camera);
         }
@@ -404,6 +438,24 @@ impl EventPlayer {
     /// The instances whose world matrix changed since the last call.
     pub fn take_dirty(&mut self) -> Vec<usize> {
         std::mem::take(&mut self.dirty)
+    }
+
+    /// The placement changes the scripts made that the collision must apply (natives 574
+    /// and 575 on a collision mesh). Drained by the application after each event step.
+    pub fn take_collision_changes(&mut self) -> Vec<PlacementChange> {
+        std::mem::take(&mut self.collision_changes)
+    }
+
+    /// Applies one placement change now: a trigger action 0x95/0x96 hides or shows a map
+    /// placement, and the drawn instances and the collision both follow, as for natives
+    /// 574/575 (`02013390`). Used for trigger requests, outside the cutscene queue.
+    pub fn set_placement(
+        &mut self,
+        scene: &mut AnimatedScene,
+        collision: &mut CollisionWorld,
+        change: PlacementChange,
+    ) {
+        self.apply_placement_change(scene, Some(collision), change);
     }
 
     /// The doors the scripts opened, with the angle both the render and the collision must
@@ -750,6 +802,7 @@ impl EventPlayer {
                 outcomes.push(Outcome::Ended(*event));
             }
             Event::Sound(sound) => outcomes.push(Outcome::Sound(sound.clone())),
+            Event::SetQuestSignal(value) => outcomes.push(Outcome::SetQuestSignal(*value)),
             Event::OpenDoor {
                 block,
                 placement,
@@ -1268,56 +1321,7 @@ impl EventPlayer {
             .map(|door| (door.block, door.placement, door.angle))
             .collect();
         for change in self.cutscene.take_placement_changes() {
-            let (group, id) = match change {
-                PlacementChange::Hidden { group, id, .. }
-                | PlacementChange::Moved { group, id, .. } => (group, id),
-            };
-            let instances: Vec<usize> = stage
-                .scene
-                .scene
-                .placements
-                .iter()
-                .filter(|&&(entry, placement, _)| {
-                    i64::from(entry) == i64::from(group) && i32::from(placement) == id
-                })
-                .map(|&(_, _, instance)| instance)
-                .collect();
-            if instances.is_empty() {
-                let collision =
-                    stage
-                        .scene
-                        .scene
-                        .undrawn_placements
-                        .iter()
-                        .any(|&(entry, placement)| {
-                            i64::from(entry) == i64::from(group) && i32::from(placement) == id
-                        });
-                if collision {
-                    // A collision mesh: only the walls and floor change, nothing to draw.
-                    self.coverage.miss(COLLISION_PLACEMENT);
-                } else {
-                    self.coverage
-                        .miss(format!("placement ({group}, {id}) not in the map"));
-                }
-                continue;
-            }
-            for instance in instances {
-                // The placement at the map's own transform, even when the chosen time of day
-                // hid it: native 574 shows it again where the map put it.
-                let state = self
-                    .bindings
-                    .placements
-                    .entry(instance)
-                    .or_insert_with(|| Placement::of(&stage.scene.scene.instances[instance]));
-                match change {
-                    PlacementChange::Hidden { hidden, .. } => state.hidden = hidden,
-                    PlacementChange::Moved { position, .. } => {
-                        state.position = Some(Vec3::from_array(position));
-                    }
-                }
-                let world = state.world();
-                self.set_world(stage.scene, instance, world);
-            }
+            self.apply_placement_change(stage.scene, None, change);
         }
         for (block, placement, angle) in doors {
             let instances: Vec<usize> = stage
@@ -1345,6 +1349,77 @@ impl EventPlayer {
                 let world = state.world();
                 self.set_world(stage.scene, instance, world);
             }
+        }
+    }
+
+    /// One placement change on the scene's instances and, when `collision` is given, on the
+    /// map's collision. Without it the change is queued for the application
+    /// ([`EventPlayer::take_collision_changes`]), which owns the collision world.
+    fn apply_placement_change(
+        &mut self,
+        scene: &mut AnimatedScene,
+        collision: Option<&mut CollisionWorld>,
+        change: PlacementChange,
+    ) {
+        let (group, id) = match change {
+            PlacementChange::Hidden { group, id, .. }
+            | PlacementChange::Moved { group, id, .. } => (group, id),
+        };
+        match (collision, change) {
+            (Some(collision), PlacementChange::Hidden { hidden, .. }) => {
+                collision.set_placement_hidden(group as u32, id as u16, hidden);
+            }
+            (Some(collision), PlacementChange::Moved { position, .. }) => {
+                let position = position.map(|v| (v * 4096.0) as i32);
+                collision.set_placement_position(group as u32, id as u16, position);
+            }
+            (None, change) => self.collision_changes.push(change),
+        }
+        let instances: Vec<usize> = scene
+            .scene
+            .placements
+            .iter()
+            .filter(|&&(entry, placement, _)| {
+                i64::from(entry) == i64::from(group) && i32::from(placement) == id
+            })
+            .map(|&(_, _, instance)| instance)
+            .collect();
+        if instances.is_empty() {
+            // A collision mesh has no drawn instance: the collision gets the change (above
+            // when given, else from the queue). A placement in neither list is not in the
+            // loaded map; the game records that for a later load (`func_0206ea8c`), which
+            // this runtime does not model, so it is reported instead of pretended applied.
+            let collision_placement =
+                scene
+                    .scene
+                    .undrawn_placements
+                    .iter()
+                    .any(|&(entry, placement)| {
+                        i64::from(entry) == i64::from(group) && i32::from(placement) == id
+                    });
+            if !collision_placement {
+                self.coverage.miss(format!(
+                    "placement ({group}, {id}) absent from the loaded map"
+                ));
+            }
+            return;
+        }
+        for instance in instances {
+            // The placement at the map's own transform, even when the chosen time of day
+            // hid it: native 574 shows it again where the map put it.
+            let state = self
+                .bindings
+                .placements
+                .entry(instance)
+                .or_insert_with(|| Placement::of(&scene.scene.instances[instance]));
+            match change {
+                PlacementChange::Hidden { hidden, .. } => state.hidden = hidden,
+                PlacementChange::Moved { position, .. } => {
+                    state.position = Some(Vec3::from_array(position));
+                }
+            }
+            let world = state.world();
+            self.set_world(scene, instance, world);
         }
     }
 }
@@ -1460,10 +1535,6 @@ fn icon_sprite(files: &LazyRom, name: &str) -> Option<Vec<u8>> {
         .find(|e| e.path.eq_ignore_ascii_case(&wanted))?;
     narc.file(entry.id).ok().map(<[u8]>::to_vec)
 }
-
-/// Natives 574 and 575 on a collision mesh of the map: the walls and the floor change, which no
-/// image shows (`docs/re/stb-natives.md`). Not counted against an event by the report.
-pub const COLLISION_PLACEMENT: &str = "collision placement";
 
 /// A script asks a model for a motion none of its archives has: the game's name search fails
 /// and nothing changes (`ov_001::02164578` → `Object3D::MaybeSetRegularAnimation`, `02036e44`).

@@ -199,9 +199,7 @@ mesure, de ± 1 image** ; la validation image par image reste à faire.
 
 Toutes les entrées non portées de « Hors périmètre » ; le suivi lissé et les zones de caméra
 (l'orbite par défaut et le suivi direct du héros sont appliqués) ; une comparaison position
-par position à nombre d'images égal sous melonDS ; le câblage complet des actions `0x95`/`0x96`
-(demande de trigger → `CollisionWorld::set_placement_hidden` et instances dessinées) et de la
-native 574/575 sur les placements de collision.
+par position à nombre d'images égal sous melonDS.
 
 `cargo dq9re map --reach` ([`map-archive.md`](map-archive.md#voir-la-collision-dq9re-map---image---reach))
 rejoue `Hero::step` sur une grille de 0,5 unité et rend les composantes par hauteur visibles :
@@ -278,24 +276,40 @@ carte est fidèle : sur l'état melonDS `build/melonds-height/probe.ml1`,
 l'origine) et conclut « the loaded blocks match the assembly » ; seul l'effet du trigger
 manquait.
 
-Correctif (en cours) : `CollisionWorld::set_placement_hidden(bloc, id, caché)` rend le
-placement et son sous-arbre invisibles aux requêtes (sol, murs, `floors`, `resolve`), avec un
-compteur `revision()` ; l'action `0x95`/`0x96` doit produire une demande
-`Request::SetPlacement` traitée par l'application à la fois sur la collision et sur les
-instances dessinées (mêmes placements que la native 574), et le pilote jette sa grille de sol
-quand `revision()` change. La preuve attendue, sans téléport ni mur abaissé :
+Correctif : `CollisionWorld::set_placement_hidden(bloc, id, caché)` rend le placement et son
+sous-arbre invisibles aux requêtes (sol, murs, `floors`, `resolve`), avec un compteur
+`revision()` ; `set_placement_position` déplace le sous-arbre pour la native 575. L'action
+`0x95`/`0x96` produit une demande `Request::SetPlacementHidden` (immédiate, avant les actions
+différées) que l'application traite sur la collision et sur les instances dessinées ; les
+natives 574/575 suivent le même chemin pour les placements de collision, y compris depuis le
+rapport `--events-report`, et le pilote jette sa grille de sol quand `revision()` change ou
+après un rechargement de carte dû à l'histoire. Les tests de collision couvrent cacher/montrer,
+le bloc qui ne correspond pas, le parent qui cache son descendant, le déplacement du sous-arbre
+et la rotation d'un parent déplacé ; les tests sur la ROM jouent la vraie demande de
+l'événement 11 puis la marche continue jusqu'à `X01M03`.
+
+Vérification : `fmt`, `clippy --all-targets`, les tests de l'espace de travail sur la vraie ROM
+et la compilation wasm sont verts (dont les 28 tests de l'application, exécutés avec la ROM
+et une sauvegarde explicites). Preuve de collision, sans téléport ni mur abaissé :
 
 ```powershell
 # cible : la rampe sous le centre du warp n° 9 (le centre y 15,5 est au milieu de la
 # boîte, pas un sol ; la rampe y 13,868 + 0,0999 de hauteur de station = 13,97)
 cargo dq9re map X01M01 --reach=2.77,11.25,18.19 --to=-8.226,13.97,16.379
-# aujourd'hui : 9320 nœuds, y 4.249..11.251, « not reached »
-# après le correctif : « reached » par la rampe, une fois le placement 16 caché
+# avant le correctif : 9320 nœuds, y 4.249..11.251, « not reached »
+# avec le placement 16 caché : « reached » par la rampe
 
-# Preuve que S1 est le seul lien manquant : depuis le pied amont de la rampe, à l'ouest
-# de S1, le remplissage 3D atteint déjà le warp et monte jusqu'à y 23,118.
+# Le seul lien manquant était bien S1 : depuis le pied amont de la rampe, à l'ouest de
+# S1, le remplissage 3D atteint déjà le warp et monte jusqu'à y 23,118.
 cargo dq9re map X01M01 --reach=-1.25,12.42,17.5 --to=-8.226,13.97,16.379
 # 9542 nœuds, y 4.249..23.118, « reached »
+
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot
-# le pilote doit quitter 1.1.2 sur X01M03 (map 4103), puis continuer
+# observé : 1170 finit à 334,45 s (histoire 1.1.2) ; la carte 4103 est atteinte à
+# 336,40 s par le warp n° 9, puis 4109 -> 4103 -> 4104 ; 21510 (PNJ 199) finit à
+# 391,12 s (histoire 1.2.1). Le pilote s'arrête ensuite à 444,7 s sur 4101 (1.2.1)
+# sans retrouver le chemin de 4105 : prochaine phase, hors de ce lot.
 ```
+
+Le résultat ci-dessus est la preuve du passage de hauteur ; il ne revendique pas tout le
+prologue. Le retour de 1.2.1 vers 4105 et la cadence 30 Hz restent les lots suivants.

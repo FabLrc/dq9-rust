@@ -10,6 +10,8 @@
 //! Natives whose role is established but that act on the DS's memory or hardware only (the
 //! texture arenas, resource flags, allocator) have no equivalent here and are skipped without
 //! a report. Those whose role is not known are reported once ([`Event::Unimplemented`]).
+//!
+//! port: ov_001::021609e4
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -477,6 +479,9 @@ impl Ctx<'_> {
             411 => self.events.push(Event::CaptionCentered),
             413 => self.events.push(Event::CaptionSilent),
             558 => out.int(a, 0, self.rt.answer),
+            // 559 (`ov_001::021609e4`): `*(u8*)(quest manager + 0x490) = StbArg_Int(arg)`.
+            // The store truncates to a byte; trigger condition 0x1f sign-extends it again.
+            559 => self.events.push(Event::SetQuestSignal(a.int(0) as u8)),
             // `0215cf98`: a 5-bit colour, and the mode when a fifth argument is given.
             238 => self.events.push(Event::Tint {
                 slot: a.int(0),

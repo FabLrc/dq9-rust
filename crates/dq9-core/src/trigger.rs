@@ -726,8 +726,9 @@ const RANKED: [i16; 32] = [
     26, 27, 28, 29, 30, 31,
 ];
 
-/// High half of operand `i`, as the compiler stores it (`asr #16`, then `strh`).
-fn high(op: &Op, i: usize) -> u16 {
+/// High half of operand `i`, as the compiler stores it (`asr #16`, then `strh`). Public for
+/// the field's immediate 0x95/0x96 requests, which pack the placement there.
+pub(crate) fn high(op: &Op, i: usize) -> u16 {
     (op.operands[i].int() >> 16) as u16
 }
 
@@ -1045,6 +1046,17 @@ pub enum Request {
     /// `Field_TouchDoorways`) rotates the placement `placement` of block entry `block` by
     /// +90° and opens the way. The application animates the rotation.
     OpenDoor { block: u16, placement: u16 },
+    /// 0x95/0x96: hide (`0x95`) or show (`0x96`) the map object of block entry `block` and
+    /// placement `placement` (`Trig_RunAction` cases 0x31/0x32, `0x02061c14`). `block` is the
+    /// low byte of the argument and `placement` the high half of operand 0, as the game's
+    /// pending record stores them (`func_0206ea8c(manager, arg & 0xff, (operand + 0x80) >>
+    /// 16, hidden)`); `0x95(0, 0x100000)` is block 0, placement 16, hidden. Immediate: the
+    /// game applies it while the list runs (`func_02013380`), not after it.
+    SetPlacementHidden {
+        block: u16,
+        placement: u16,
+        hidden: bool,
+    },
     /// Progress changed: the map's triggers are reloaded.
     ReloadTriggers,
     /// A deferred action whose effect is not modelled.
@@ -1408,6 +1420,57 @@ mod tests {
         // Other tracks are untouched.
         assert_eq!(s.tracks[0], Track::default());
         assert_eq!(track_of_room(201), 3);
+    }
+
+    /// Actions 0x95/0x96 (`Trig_RunAction` cases 0x31/0x32, `0x02061c14`) hide or show a map
+    /// object immediately, so a fired field trigger emits them in list order, before the
+    /// deferred requests. The packed fields are the game's: block = argument low byte,
+    /// placement = high half of operand 0.
+    #[test]
+    fn field_triggers_emit_placement_hide_and_show() {
+        use crate::field::{Event, Field};
+        use dq9_formats::map::Regions;
+
+        let record = [
+            4101,
+            1,
+            1,
+            1,
+            1,
+            11,
+            word(0x95, 0x1234), // hide: block entry 0x34
+            0x0010_0000,        // placement 16
+            word(0x96, 0x01ff), // show: block entry 0xff
+            0x0007_0000,        // placement 7 (high half, like the game's operand)
+            word(0x77, 5000),   // deferred: start event 5000
+        ];
+        let regions = Regions {
+            warps: Vec::new(),
+            zones: Vec::new(),
+        };
+        let mut field = Field::new(4101, &regions, Some(table(&[&record]))).unwrap();
+        let mut state = State::default();
+        (
+            state.tracks[0].chapter,
+            state.tracks[0].step,
+            state.tracks[0].substep,
+        ) = (1, 1, 2);
+        assert_eq!(
+            field.event_ended(1, &mut state),
+            vec![
+                Event::Request(Request::SetPlacementHidden {
+                    block: 0x34,
+                    placement: 16,
+                    hidden: true,
+                }),
+                Event::Request(Request::SetPlacementHidden {
+                    block: 0xff,
+                    placement: 7,
+                    hidden: false,
+                }),
+                Event::Request(Request::Event(5000)),
+            ]
+        );
     }
 
     #[test]

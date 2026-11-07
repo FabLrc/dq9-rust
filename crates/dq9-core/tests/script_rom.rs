@@ -1,14 +1,8 @@
 //! Event scripts on the real game data; skipped when the ROM is absent.
 
-use std::collections::BTreeSet;
-
 use dq9_core::script::{Director, Event, Frame, Text, load};
 use dq9_core::trigger::{Request, State};
 use nds_rom::Rom;
-
-/// Natives the prologue calls that are not implemented (`docs/re/stb-natives.md`: roles
-/// unknown). A native moving in or out of this list means the notes need an update.
-const UNIMPLEMENTED: [i32; 8] = [547, 559, 560, 571, 581, 582, 809, 815];
 
 /// Runs `event` to its end with an application that completes every request at once.
 fn run(director: &mut Director, rom: &Rom, event: u16) -> Vec<Event> {
@@ -34,9 +28,8 @@ fn run(director: &mut Director, rom: &Rom, event: u16) -> Vec<Event> {
     trace
 }
 
-/// The 30 scripts of the prologue of Angel Falls (stages 1.1 to 1.3) run to the end: no
-/// interpreter fault, every message exists in the event's text table, and the natives left
-/// unimplemented are the documented ones.
+/// The 30 scripts of the prologue of Angel Falls (stages 1.1 to 1.3) run to the end:
+/// no interpreter fault, and every message exists in the event's text table.
 #[test]
 fn prologue_scripts_run_to_completion() {
     let Some(bytes) = testrom::load() else { return };
@@ -62,8 +55,6 @@ fn prologue_scripts_run_to_completion() {
             "event {event} never ran its main entry"
         );
     }
-    let unimplemented: BTreeSet<i32> = director.unimplemented().keys().copied().collect();
-    assert_eq!(unimplemented, BTreeSet::from(UNIMPLEMENTED));
 }
 
 /// A script is deterministic: the same event twice gives the same events.

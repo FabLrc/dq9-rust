@@ -113,6 +113,9 @@ struct Node {
     /// World transform before any door rotation.
     position: Fx3,
     angle: i32,
+    /// Hidden by the chosen time of day (`Instance::hidden`) or by a runtime action
+    /// (0x95/0x96, native 574). A hidden node hides its subtree from collision queries.
+    hidden: bool,
 }
 
 /// Collision meshes and their placements.
@@ -124,6 +127,9 @@ pub struct CollisionWorld {
     nodes: Vec<Node>,
     /// Node of each piece (`nodes` index).
     node_of_piece: Vec<usize>,
+    /// Counts the placement changes that alter the collidable geometry, so callers can drop
+    /// cached queries (the pilot's walkable grid, `dq9-app`).
+    revision: u64,
 }
 
 impl CollisionWorld {
@@ -149,6 +155,7 @@ impl CollisionWorld {
                     parent: instance.parent.map(|parent| base + parent),
                     position: instance.world.position,
                     angle: i32::from(instance.world.angle),
+                    hidden: instance.hidden,
                 });
             }
         }
@@ -165,9 +172,6 @@ impl CollisionWorld {
                 .get(block.archive.as_str())
                 .ok_or(Error::Malformed("collision archive not cached"))?;
             for (instance_index, instance) in block.instances.iter().enumerate() {
-                if instance.hidden {
-                    continue;
-                }
                 let Some(part_index) = instance.part else {
                     continue;
                 };
@@ -214,6 +218,7 @@ impl CollisionWorld {
             node_of_piece: vec![usize::MAX; pieces.len()],
             pieces,
             nodes: Vec::new(),
+            revision: 0,
         }
     }
 
@@ -235,20 +240,7 @@ impl CollisionWorld {
         let (sin, cos) = (fix32_sin(angle), fix32_cos(angle));
         let mut moved = false;
         for index in 0..self.pieces.len() {
-            let mut node = self.node_of_piece[index];
-            let mut inside = false;
-            while node != usize::MAX {
-                if node == root {
-                    inside = true;
-                    break;
-                }
-                node = self
-                    .nodes
-                    .get(node)
-                    .and_then(|n| n.parent)
-                    .unwrap_or(usize::MAX);
-            }
-            if !inside {
+            if !self.piece_under(index, root) {
                 continue;
             }
             let Some(base) = self.nodes.get(self.node_of_piece[index]) else {
@@ -275,6 +267,107 @@ impl CollisionWorld {
             moved = true;
         }
         moved
+    }
+
+    /// Trigger actions 0x95/0x96 (`Trig_RunAction` cases 0x31/0x32) and natives 574/575
+    /// (`ov_001::02163dec`, `02013390`) set or clear bit 2 of placement `placement`'s `+2`:
+    /// its node and subtree become hidden or shown. A hidden placement's collision is not
+    /// queried (`Zone3D_FindPlacement` `0x02019518` names it by block entry and instance id).
+    /// Returns whether the placement changed.
+    pub fn set_placement_hidden(&mut self, block: u32, placement: u16, hidden: bool) -> bool {
+        let Some(root) = self
+            .nodes
+            .iter()
+            .position(|node| node.block == block && node.id == placement)
+        else {
+            return false;
+        };
+        if self.nodes[root].hidden == hidden {
+            return false;
+        }
+        self.nodes[root].hidden = hidden;
+        if (0..self.pieces.len()).any(|index| self.piece_under(index, root)) {
+            self.revision = self.revision.wrapping_add(1);
+        }
+        true
+    }
+
+    /// Native 575 (`ov_001::02163e50`): the placement's translation (`+8`, `+0xc`, `+0x10`)
+    /// becomes `position` (world `fx32`). The node and its collision subtree move by the
+    /// delta; a later door rotation still pivots on the node. Returns whether a piece moved.
+    pub fn set_placement_position(&mut self, block: u32, placement: u16, position: Fx3) -> bool {
+        let Some(root) = self
+            .nodes
+            .iter()
+            .position(|node| node.block == block && node.id == placement)
+        else {
+            return false;
+        };
+        let delta = fx::sub(position, self.nodes[root].position);
+        if delta == [0; 3] {
+            return false;
+        }
+        self.nodes[root].position = position;
+        let mut moved = false;
+        for index in 0..self.nodes.len() {
+            if index != root && self.node_under(index, root) {
+                self.nodes[index].position = fx::add(self.nodes[index].position, delta);
+            }
+        }
+        for index in 0..self.pieces.len() {
+            if !self.piece_under(index, root) {
+                continue;
+            }
+            self.pieces[index].position = fx::add(self.pieces[index].position, delta);
+            moved = true;
+        }
+        if moved {
+            self.revision = self.revision.wrapping_add(1);
+        }
+        moved
+    }
+
+    /// Counts the runtime changes that alter the collidable geometry (placement visibility,
+    /// actions 0x95/0x96, natives 574/575). Callers that cache queries compare it, as the
+    /// pilot does with its walkable grid; door rotations have their own finished signal.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Whether the placement node of `piece` is `root` or one of its descendants.
+    fn piece_under(&self, piece: usize, root: usize) -> bool {
+        self.node_under(self.node_of_piece[piece], root)
+    }
+
+    /// Whether `node` is `root` or one of its descendants.
+    fn node_under(&self, mut node: usize, root: usize) -> bool {
+        while node != usize::MAX {
+            if node == root {
+                return true;
+            }
+            node = self
+                .nodes
+                .get(node)
+                .and_then(|n| n.parent)
+                .unwrap_or(usize::MAX);
+        }
+        false
+    }
+
+    /// Whether the piece's placement node or one of its ancestors is hidden (time of day or
+    /// a runtime action).
+    fn piece_hidden(&self, piece: usize) -> bool {
+        let mut node = self.node_of_piece[piece];
+        while node != usize::MAX {
+            let Some(n) = self.nodes.get(node) else {
+                return false;
+            };
+            if n.hidden {
+                return true;
+            }
+            node = n.parent.unwrap_or(usize::MAX);
+        }
+        false
     }
 
     pub fn meshes(&self) -> &[Collision] {
@@ -323,7 +416,10 @@ impl CollisionWorld {
             position[2] - 0x800,
         ];
         let mut found = None;
-        for piece in &self.pieces {
+        for (index, piece) in self.pieces.iter().enumerate() {
+            if self.piece_hidden(index) {
+                continue;
+            }
             let tris = self.triangles(piece, hi, lo);
             if tris.is_empty() {
                 continue;
@@ -350,7 +446,10 @@ impl CollisionWorld {
         let box_hi = [x_fx + 0x800, to_fx(high + 1.0), z_fx + 0x800];
         let box_lo = [x_fx - 0x800, to_fx(low - 1.0), z_fx - 0x800];
         let mut out: Vec<f32> = Vec::new();
-        for piece in &self.pieces {
+        for (index, piece) in self.pieces.iter().enumerate() {
+            if self.piece_hidden(index) {
+                continue;
+            }
             let tris = self.triangles(piece, box_hi, box_lo);
             if tris.is_empty() {
                 continue;
@@ -396,7 +495,10 @@ impl CollisionWorld {
         let mut low = Vec3::splat(f32::INFINITY);
         let mut high = Vec3::splat(f32::NEG_INFINITY);
         let mut floors: Vec<Vec3> = Vec::new();
-        for piece in &self.pieces {
+        for (index, piece) in self.pieces.iter().enumerate() {
+            if self.piece_hidden(index) {
+                continue;
+            }
             let mesh = &self.meshes[piece.mesh];
             let (sin, cos) = (angle_f32(piece.angle)).sin_cos();
             let origin = piece.position.map(|c| c as f32 / 4096.0);
@@ -477,7 +579,10 @@ impl CollisionWorld {
                 body.position[1] - RAY_DEPTH,
                 body.position[2] - body.radius / 2,
             ];
-            for piece in &self.pieces {
+            for (index, piece) in self.pieces.iter().enumerate() {
+                if self.piece_hidden(index) {
+                    continue;
+                }
                 let tris = self.triangles(piece, hi, lo);
                 if !tris.is_empty() {
                     self.resolve_piece(
@@ -985,6 +1090,195 @@ fn push_from_walls(
         }
     }
     (out, hit)
+}
+
+#[cfg(test)]
+mod placement_visibility {
+    use super::*;
+    use crate::testing::{self, floor, wall_x};
+
+    fn u(v: f32) -> i32 {
+        (v * 4096.0) as i32
+    }
+
+    /// A floor (placement 0), a wall at world `x = 1` (placement 16, the tower gate) and a
+    /// second wall at `x = 2` (placement 7, unaffected), each a piece.
+    fn world() -> CollisionWorld {
+        let floor_mesh = testing::mesh(4, &floor(2560, 0), 1, 1, 0x4000);
+        let wall_mesh = testing::mesh(4, &wall_x(256, -512, 512, 0, 512), 1, 1, 0x4000);
+        let other_mesh = testing::mesh(4, &wall_x(512, -512, 512, 0, 512), 1, 1, 0x4000);
+        CollisionWorld {
+            meshes: vec![floor_mesh, wall_mesh, other_mesh],
+            pieces: vec![
+                Piece {
+                    mesh: 0,
+                    position: [0; 3],
+                    angle: 0,
+                },
+                Piece {
+                    mesh: 1,
+                    position: [0; 3],
+                    angle: 0,
+                },
+                Piece {
+                    mesh: 2,
+                    position: [0; 3],
+                    angle: 0,
+                },
+            ],
+            nodes: vec![
+                Node {
+                    block: 0,
+                    id: 0,
+                    parent: None,
+                    position: [0; 3],
+                    angle: 0,
+                    hidden: false,
+                },
+                Node {
+                    block: 0,
+                    id: 16,
+                    parent: None,
+                    position: [0; 3],
+                    angle: 0,
+                    hidden: false,
+                },
+                Node {
+                    block: 0,
+                    id: 7,
+                    parent: None,
+                    position: [0; 3],
+                    angle: 0,
+                    hidden: false,
+                },
+            ],
+            node_of_piece: vec![0, 1, 2],
+            revision: 0,
+        }
+    }
+
+    fn body() -> Body {
+        Body {
+            position: [u(0.8), STAND_HEIGHT, u(0.3)],
+            fall: 0,
+            radius: 0x1000,
+            height: 0x1800,
+            wall: None,
+        }
+    }
+
+    #[test]
+    fn hiding_a_placement_removes_its_wall_and_showing_restores_it() {
+        let mut world = world();
+        let mut blocked = body();
+        let start = blocked.position;
+        world.resolve(&mut blocked, start, Mode::Whole);
+        assert!(blocked.wall.is_some(), "{:?}", blocked.position);
+
+        assert!(world.set_placement_hidden(0, 16, true));
+        assert_eq!(world.revision(), 1);
+        // The floor placement stays: only the named placement's subtree is hidden.
+        assert!(world.ground([0, u(0.5), 0]).is_some());
+        let mut free = body();
+        world.resolve(&mut free, start, Mode::Whole);
+        assert_eq!(free.position, start);
+        assert_eq!(free.wall, None);
+
+        assert!(world.set_placement_hidden(0, 16, false));
+        assert_eq!(world.revision(), 2);
+        let mut blocked_again = body();
+        world.resolve(&mut blocked_again, start, Mode::Whole);
+        assert!(blocked_again.wall.is_some());
+        // A placement of another block entry is not what the name means.
+        assert!(!world.set_placement_hidden(1, 16, true));
+        assert_eq!(world.revision(), 2);
+    }
+
+    #[test]
+    fn hiding_the_gate_leaves_the_other_wall_blocking() {
+        let mut world = world();
+        let mut gate = body();
+        let start = gate.position;
+        world.resolve(&mut gate, start, Mode::Whole);
+        assert!(gate.wall.is_some(), "placement 16 blocks");
+        assert!(world.set_placement_hidden(0, 16, true));
+        let mut free = body();
+        world.resolve(&mut free, start, Mode::Whole);
+        assert_eq!(free.position, start, "placement 16 no longer blocks");
+        assert_eq!(free.wall, None);
+        // Placement 7, at x = 2, is not the hidden one and still pushes to its radius.
+        let other_start = [u(1.6), STAND_HEIGHT, u(0.3)];
+        let mut other = Body {
+            position: other_start,
+            fall: 0,
+            radius: 0x1000,
+            height: 0x1800,
+            wall: None,
+        };
+        world.resolve(&mut other, other_start, Mode::Whole);
+        assert!(other.wall.is_some(), "the unaffected wall still blocks");
+        assert!(
+            (other.position[0] - u(1.5)).abs() <= 2,
+            "{:?}",
+            other.position
+        );
+    }
+
+    #[test]
+    fn hiding_a_parent_hides_the_collision_of_its_descendants() {
+        let mut world = world();
+        world.nodes[1].parent = Some(0);
+        assert!(world.set_placement_hidden(0, 0, true));
+        assert!(world.ground([0, u(0.5), 0]).is_none());
+        let mut free = body();
+        let start = free.position;
+        world.resolve(&mut free, start, Mode::Whole);
+        assert!(free.wall.is_none());
+        assert!(world.set_placement_hidden(0, 0, false));
+        assert!(world.ground([0, u(0.5), 0]).is_some());
+        let mut blocked = body();
+        world.resolve(&mut blocked, start, Mode::Whole);
+        assert!(blocked.wall.is_some());
+    }
+
+    #[test]
+    fn worlds_without_placement_nodes_cannot_be_hidden() {
+        let mut world = testing::world(&floor(2560, 0));
+        assert!(!world.set_placement_hidden(0, 16, true));
+        assert_eq!(world.revision(), 0);
+    }
+
+    #[test]
+    fn moving_a_placement_translates_its_collision_subtree_and_bumps_revision() {
+        let mut world = world();
+        world.nodes[1].parent = Some(0);
+        let wall_home = world.pieces[1].position;
+        let delta = [u(2.0), 0, 0];
+        assert!(world.set_placement_position(0, 0, delta));
+        assert_eq!(world.pieces[0].position, delta);
+        assert_eq!(world.pieces[1].position, fx::add(wall_home, delta));
+        assert_eq!(world.revision(), 1);
+        // Setting the same position again changes nothing.
+        assert!(!world.set_placement_position(0, 0, delta));
+        assert_eq!(world.revision(), 1);
+        // The block entry is part of the name.
+        assert!(!world.set_placement_position(1, 0, [0; 3]));
+        assert_eq!(world.revision(), 1);
+    }
+
+    #[test]
+    fn rotating_a_moved_parent_keeps_the_descendant_translation() {
+        let mut world = world();
+        world.nodes[1].parent = Some(0);
+        // Put the wall four units along +z of its parent, then move the parent two units +x.
+        assert!(world.set_placement_position(0, 16, [0, 0, u(4.0)]));
+        assert!(world.set_placement_position(0, 0, [u(2.0), 0, 0]));
+        assert_eq!(world.nodes[1].position, [u(2.0), 0, u(4.0)]);
+        // A quarter turn around the moved parent's origin: (0, 0, 4) relative becomes
+        // (+4, 0, 0) in the map walk's rotation, so the piece sits at (6, 0, 0).
+        assert!(world.set_door_angle(0, 0, 0x1922));
+        assert_eq!(world.pieces[1].position, [u(6.0), 0, 0]);
+    }
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@ use dq9_formats::cast::Story;
 use dq9_render::Camera;
 use nds_rom::Rom;
 
-use crate::event::{EventPlayer, Outcome, Stage};
+use crate::event::{EventPlayer, Outcome, Stage, apply_collision_changes};
 use crate::load::{self, LoadedMap};
 use crate::talk::{Button, Talk};
 
@@ -51,28 +51,33 @@ pub fn play(
         if press.contains(&frame) || press_every.is_some_and(|n| frame > 0 && frame % n == 0) {
             talk.press(Button::Confirm);
         }
-        let mut stage = Stage {
-            rom,
-            world: state,
-            scene: &mut loaded.runtime,
-            hero,
-            collision: &loaded.collision,
-            camera,
-            talk,
-        };
-        if let Some(next) = player.pending_start() {
-            if crate::event::place(rom, next).is_some_and(|p| p.map != loaded.entry.id) {
-                played.elsewhere = Some(next);
-                break;
+        {
+            let mut stage = Stage {
+                rom,
+                world: state,
+                scene: &mut loaded.runtime,
+                hero,
+                collision: &loaded.collision,
+                camera,
+                talk,
+            };
+            if let Some(next) = player.pending_start() {
+                if crate::event::place(rom, next).is_some_and(|p| p.map != loaded.entry.id) {
+                    played.elsewhere = Some(next);
+                    break;
+                }
+                player.prepare(rom, next, &mut stage);
             }
-            player.prepare(rom, next, &mut stage);
-        }
-        for outcome in player.step(&mut stage) {
-            // Nothing is heard here: a jingle is over as soon as it is asked for.
-            if matches!(outcome, Outcome::Sound(Sound::Jingle(_))) {
-                player.jingle_ended();
+            for outcome in player.step(&mut stage) {
+                // Nothing is heard here: a jingle is over as soon as it is asked for.
+                if matches!(outcome, Outcome::Sound(Sound::Jingle(_))) {
+                    player.jingle_ended();
+                }
             }
         }
+        // Natives 574/575 changed placements the collision must follow, as in `App::step`.
+        let changes = player.take_collision_changes();
+        apply_collision_changes(&mut loaded.collision, changes);
         talk.step();
         loaded.runtime.step(camera)?;
         played.steps = frame + 1;
@@ -85,14 +90,13 @@ pub fn play(
 }
 
 /// What the report does not count against an event (`docs/re/stb-natives.md`, § « Sans effet
-/// dans le rendu »): 559 and 815 (a flag nothing reads, an integrity probe), 560 (a subsystem
-/// test), 571 (a bit of `Object3D::flags_` nothing reads); 581 and 582 (which NPCs the shadows
+/// dans le rendu »): 815 (an integrity probe), 560 (a subsystem test),
+/// 571 (a bit of `Object3D::flags_` nothing reads); 581 and 582 (which NPCs the shadows
 /// are drawn for) and 809 (shows two objects of the hero's angel form), whose targets the
 /// renderer does not draw **[hypothèse]**; and the motions a model has no name for (a no-op in
 /// the game). A script that changes a collision placement (574, 575) **is** counted: the walls
 /// and the floor change even though no image shows them.
-const NO_VISIBLE_EFFECT: [&str; 8] = [
-    "native 559",
+const NO_VISIBLE_EFFECT: [&str; 7] = [
     "native 560",
     "native 571",
     "native 581",
@@ -304,24 +308,28 @@ mod tests {
             if frame > 0 && frame % 100 == 0 {
                 talk.press(Button::Confirm);
             }
-            let mut stage = Stage {
-                rom,
-                world: &state,
-                scene: &mut loaded.runtime,
-                hero: &mut hero,
-                collision: &loaded.collision,
-                camera: &mut camera,
-                talk: &mut talk,
-            };
-            if let Some(next) = player.pending_start() {
-                player.prepare(rom, next, &mut stage);
-            }
-            for outcome in player.step(&mut stage) {
-                // Nothing is heard here: a jingle is over as soon as it is asked for.
-                if matches!(outcome, Outcome::Sound(Sound::Jingle(_))) {
-                    player.jingle_ended();
+            {
+                let mut stage = Stage {
+                    rom,
+                    world: &state,
+                    scene: &mut loaded.runtime,
+                    hero: &mut hero,
+                    collision: &loaded.collision,
+                    camera: &mut camera,
+                    talk: &mut talk,
+                };
+                if let Some(next) = player.pending_start() {
+                    player.prepare(rom, next, &mut stage);
+                }
+                for outcome in player.step(&mut stage) {
+                    // Nothing is heard here: a jingle is over as soon as it is asked for.
+                    if matches!(outcome, Outcome::Sound(Sound::Jingle(_))) {
+                        player.jingle_ended();
+                    }
                 }
             }
+            let changes = player.take_collision_changes();
+            apply_collision_changes(&mut loaded.collision, changes);
             talk.step();
             loaded.runtime.step(&camera).unwrap();
             for &(index, home) in &hidden {

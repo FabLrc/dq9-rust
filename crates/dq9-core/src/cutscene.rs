@@ -1093,7 +1093,7 @@ impl Cutscene {
             | Event::Fog(_) => {
                 self.light.apply(event);
             }
-            Event::AddSceneFlags(_) | Event::Chaining(_) => {}
+            Event::AddSceneFlags(_) | Event::Chaining(_) | Event::SetQuestSignal(_) => {}
             Event::LoadFailed { .. } | Event::Fault(_) => {}
         }
         out

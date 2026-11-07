@@ -15,12 +15,12 @@ use std::sync::Arc;
 
 use crate::screens::{self, Layout};
 use dq9_core::camera::FieldCamera;
-use dq9_core::cutscene::ClockCommand;
+use dq9_core::cutscene::{ClockCommand, PlacementChange};
 use dq9_core::field::{self, Event, Field, Leader, MapChange};
 use dq9_core::fx::reduce_angle;
 use dq9_core::scenario::{Journal, Step};
 use dq9_core::state::{DayClock, GameState, TimeOfDay};
-use dq9_core::trigger::{Request, State};
+use dq9_core::trigger::{Raw, Request, State};
 use dq9_core::{CollisionWorld, Hero, Input};
 use dq9_formats::hero::HeroLook;
 use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Gait, Panel, Renderer};
@@ -33,7 +33,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::audio::Audio;
-use crate::event::{EventPlayer, Outcome, Stage};
+use crate::event::{EventPlayer, Outcome, Stage, apply_collision_changes};
 use crate::gpu::Gpu;
 use crate::lighting;
 use crate::load::{self, MapEntry};
@@ -181,7 +181,9 @@ pub fn status(message: &str) {
 }
 
 pub struct App {
-    proxy: EventLoopProxy<UserEvent>,
+    /// The event loop proxy (window/web paths); `None` for the native headless tests and
+    /// callers that never deliver a `UserEvent`.
+    proxy: Option<EventLoopProxy<UserEvent>>,
     options: Options,
     /// Time of day in use (`LightingManager+0x98`).
     time: u32,
@@ -267,6 +269,22 @@ impl std::fmt::Debug for App {
 
 impl App {
     pub fn new(proxy: EventLoopProxy<UserEvent>, options: Options, rom: Option<Vec<u8>>) -> Self {
+        Self::with_proxy(Some(proxy), options, rom)
+    }
+
+    /// The same application without an event loop proxy: no `resumed`/GPU setup, no
+    /// `UserEvent` delivery. The native headless tests use it so they never depend on winit
+    /// accepting a second `EventLoop` in the same process.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_headless(options: Options, rom: Option<Vec<u8>>) -> Self {
+        Self::with_proxy(None, options, rom)
+    }
+
+    fn with_proxy(
+        proxy: Option<EventLoopProxy<UserEvent>>,
+        options: Options,
+        rom: Option<Vec<u8>>,
+    ) -> Self {
         let state = field::initial_state(&options.story);
         let mut audio = Audio::new(options.mute);
         if options.record_sound {
@@ -479,6 +497,21 @@ impl App {
             self.events.clear_doors();
             self.doors_opened.clear();
         }
+        // A same-map reload keeps the doors open (`events.doors()` survived), so the freshly
+        // built collision must be turned to their current angles before anything (the pilot's
+        // walkable grid, the first hero step) queries it. Otherwise the doors read as closed
+        // until the next `step_doors`, and a grid built in that window never reopens.
+        let doors: Vec<(i32, i32, i32)> = self
+            .events
+            .doors()
+            .iter()
+            .map(|door| (door.block, door.placement, door.angle_fx()))
+            .collect();
+        for (block, placement, angle) in doors {
+            self.collision
+                .set_door_angle(block as u32, placement as u16, angle);
+            self.door_angles.insert((block, placement), angle);
+        }
         self.field = Some(loaded.field);
         self.talk.enter_map(loaded.npcs);
         self.hero = Some(loaded.hero);
@@ -577,6 +610,11 @@ impl App {
                 }
                 Event::Request(Request::Battle(number)) => self.run_battle(number),
                 Event::Request(Request::RemoveNpc(npc)) => self.talk.remove_npc(npc),
+                Event::Request(Request::SetPlacementHidden {
+                    block,
+                    placement,
+                    hidden,
+                }) => self.set_placement_hidden(block, placement, hidden),
                 Event::Request(Request::OpenDoor { block, placement }) => {
                     self.open_door(u32::from(block), placement)
                 }
@@ -594,6 +632,30 @@ impl App {
             }
         }
         changed
+    }
+
+    /// Trigger actions 0x95/0x96 (`Trig_RunAction` cases 0x31/0x32): the placement `(block,
+    /// id)` of the map is hidden or shown, for both the drawn instances and the collision.
+    fn set_placement_hidden(&mut self, block: u16, placement: u16, hidden: bool) {
+        let change = PlacementChange::Hidden {
+            group: i32::from(block),
+            id: i32::from(placement),
+            hidden,
+        };
+        let Some(scene) = self.runtime.as_mut() else {
+            self.collision
+                .set_placement_hidden(u32::from(block), placement, hidden);
+            return;
+        };
+        self.events
+            .set_placement(scene, &mut self.collision, change);
+    }
+
+    /// Natives 574/575 applied by a running event: the scene bindings were updated by the
+    /// event player, and the collision follows here (the collision world belongs to the app).
+    fn drain_placement_changes(&mut self) {
+        let changes = self.events.take_collision_changes();
+        apply_collision_changes(&mut self.collision, changes);
     }
 
     fn change_map(&mut self, change: &MapChange) -> bool {
@@ -794,6 +856,7 @@ impl App {
             };
             self.events.step(&mut stage)
         };
+        self.drain_placement_changes();
         self.talk.step();
         self.apply_event_lighting();
         for outcome in outcomes {
@@ -811,6 +874,12 @@ impl App {
                     if let Some(rom) = self.rom.as_deref() {
                         self.audio.script_sound(rom, &sound);
                     }
+                }
+                Outcome::SetQuestSignal(value) => {
+                    // Native 559: quest manager `+0x490`, read by trigger condition 0x1f
+                    // (`Raw::Quest490`). Applied in outcome order, before the `Ended` that
+                    // runs event 11 of the same event.
+                    self.state.raw.insert(Raw::Quest490, u32::from(value));
                 }
                 Outcome::DoorSound { block, placement } => {
                     self.play_door_sound(block, placement);
@@ -1116,6 +1185,7 @@ impl App {
             };
             self.events.tick_doors(&mut stage);
         }
+        self.drain_placement_changes();
         let count = self.events.doors().len();
         let mut opened = false;
         for index in 0..count {
@@ -1431,7 +1501,10 @@ impl ApplicationHandler<UserEvent> for App {
         };
         self.window = Some(window.clone());
         self.update_title();
-        let proxy = self.proxy.clone();
+        let Some(proxy) = self.proxy.clone() else {
+            status("no event loop proxy: no GPU setup");
+            return;
+        };
         let setup = async move {
             let event = match Gpu::new(window).await {
                 Ok(gpu) => UserEvent::Gpu(Box::new(gpu)),
@@ -1580,8 +1653,8 @@ mod tests {
     use dq9_formats::save::Save;
 
     /// The web bug: after "Nouvelle partie", picking a save must load that save, not start
-    /// the prologue again. Exercises the same `set_save` path with a real save and ROM. The
-    /// test event loop needs Windows' any-thread builder (cargo tests are threads).
+    /// the prologue again. Exercises the same `set_save` path with a real save and ROM,
+    /// through the proxy-less headless constructor.
     #[test]
     fn a_save_selected_after_a_new_game_loads_that_save() {
         let (Some(rom), Some(save_path)) = (testrom::load(), std::env::var_os("DQ9_SAVE")) else {
@@ -1590,14 +1663,6 @@ mod tests {
         };
         let save = std::fs::read(save_path).unwrap();
         let expected = GameState::from_save(&Save::parse(&save).unwrap()).unwrap();
-        use winit::platform::windows::EventLoopBuilderExtWindows;
-        let Ok(event_loop) = winit::event_loop::EventLoop::<UserEvent>::with_user_event()
-            .with_any_thread(true)
-            .build()
-        else {
-            eprintln!("skipping: no event loop");
-            return;
-        };
         let options = Options {
             map: None,
             save: None,
@@ -1618,7 +1683,7 @@ mod tests {
             story_override: [None; 3],
             new_game: true,
         };
-        let mut app = App::new(event_loop.create_proxy(), options, Some(rom.to_vec()));
+        let mut app = App::new_headless(options, Some(rom.to_vec()));
         assert!(app.options.new_game);
         assert_eq!(app.events.pending_start(), Some(21500));
         app.set_save(save.clone());
@@ -1660,14 +1725,6 @@ mod tests {
     #[test]
     fn a_new_game_raises_the_opening_flags() {
         let Some(rom) = testrom::load() else { return };
-        use winit::platform::windows::EventLoopBuilderExtWindows;
-        let Ok(event_loop) = winit::event_loop::EventLoop::<UserEvent>::with_user_event()
-            .with_any_thread(true)
-            .build()
-        else {
-            eprintln!("skipping: no event loop");
-            return;
-        };
         let options = Options {
             map: None,
             save: None,
@@ -1688,7 +1745,7 @@ mod tests {
             story_override: [None; 3],
             new_game: true,
         };
-        let mut app = App::new(event_loop.create_proxy(), options, Some(rom.to_vec()));
+        let mut app = App::new_headless(options, Some(rom.to_vec()));
         assert_eq!(
             app.current.as_ref().map(|(entry, _)| entry.id),
             Some(6405),
@@ -1705,6 +1762,219 @@ mod tests {
         assert!(
             app.state.flags.contains(&4414),
             "the first button raises 0x113e"
+        );
+    }
+
+    /// Stands the test hero on the collision's floor at `(x, z)`, probing from `from_y`
+    /// (the map's start helper probes from 3.0 and cannot reach the tower's upper floors).
+    /// This uses the real collision height, not a hard-coded pose.
+    fn stand_on(app: &mut App, x: f32, z: f32, from_y: f32) {
+        let y = app
+            .collision
+            .ground_height(x, z, from_y)
+            .unwrap_or_else(|| panic!("no ground at ({x}, {z}) probing from {from_y}"));
+        app.hero = Some(Hero::at(Vec3::new(x, y, z), 0.0));
+    }
+
+    #[test]
+    fn a_same_map_reload_reapplies_open_doors_to_the_collision() {
+        let Some(rom) = testrom::load() else { return };
+        let options = Options {
+            map: Some("X01M07".into()),
+            save: None,
+            time: None,
+            clock: None,
+            layout: Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: dq9_formats::cast::Story {
+                chapter: 1,
+                step: 1,
+                substep: 1,
+                daytime: true,
+                ..Default::default()
+            },
+            story_override: [None; 3],
+            new_game: false,
+        };
+        let mut app = App::new_headless(options, Some(rom.to_vec()));
+        assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(4107));
+        assert!(app.events.open_door(0, 2, true));
+        assert!(app.events.open_door(0, 3, true));
+        for _ in 0..160 {
+            app.run_steps(1);
+        }
+        let open: Vec<(i32, i32, i32)> = app
+            .events
+            .doors()
+            .iter()
+            .map(|door| (door.block, door.placement, door.angle_fx()))
+            .collect();
+        assert_eq!(open.len(), 2, "both library door leaves are open");
+        for (block, placement, angle) in &open {
+            assert_eq!(
+                app.door_angles.get(&(*block, *placement)),
+                Some(angle),
+                "the open door angle reached the collision"
+            );
+        }
+        // A story-driven reload of the same map rebuilds the collision with doors closed;
+        // the open doors must be turned again before the walkable grid is probed.
+        let before = app.collision.pieces().to_vec();
+        let spawn = app.hero.map(|hero| (hero.position(), hero.yaw()));
+        assert!(app.load_map("X01M07", false, spawn, None, false));
+        assert_eq!(
+            app.collision.pieces(),
+            before.as_slice(),
+            "the rebuilt collision must match the open-door one"
+        );
+        for (block, placement, angle) in open {
+            assert_eq!(
+                app.door_angles.get(&(block, placement)),
+                Some(&angle),
+                "the reload must re-apply door {block}/{placement}"
+            );
+        }
+    }
+
+    #[test]
+    fn event_21595_sets_quest490_and_takes_the_1_4_1_warp() {
+        let Some(rom) = testrom::load() else { return };
+        let options = Options {
+            map: Some("M01".into()),
+            save: None,
+            time: None,
+            clock: None,
+            layout: Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: Some(21595),
+            story: dq9_formats::cast::Story {
+                chapter: 1,
+                step: 3,
+                substep: 1,
+                daytime: true,
+                ..Default::default()
+            },
+            story_override: [None; 3],
+            new_game: false,
+        };
+        let mut app = App::new_headless(options, Some(rom.to_vec()));
+        for frame in 0..120_000 {
+            if frame % 20 == 0 {
+                app.talk.press(Button::Confirm);
+            }
+            app.run_steps(1);
+            if app.current.as_ref().map(|(entry, _)| entry.id) == Some(4105) {
+                break;
+            }
+        }
+        assert_eq!(
+            app.state.raw.get(&Raw::Quest490),
+            Some(&1),
+            "native 559 must set quest manager +0x490 to 1"
+        );
+        let track = &app.state.tracks[0];
+        assert_eq!(
+            (track.chapter, track.step, track.substep),
+            (1, 4, 1),
+            "the 0x1f(1) branch takes story 1.4.1"
+        );
+        assert_eq!(
+            app.current.as_ref().map(|(entry, _)| entry.id),
+            Some(4105),
+            "the 1.4.1 warp goes to X01M05"
+        );
+        assert_ne!(app.events.pending_start(), Some(21593));
+        assert!(
+            !app.events.started().contains(&21593),
+            "the fallback event 21593 must not start: {:?}",
+            app.events.started()
+        );
+    }
+
+    #[test]
+    fn trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03() {
+        let Some(rom) = testrom::load() else { return };
+        let options = Options {
+            map: Some("X01M01".into()),
+            save: None,
+            time: None,
+            clock: None,
+            layout: Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: dq9_formats::cast::Story {
+                chapter: 1,
+                step: 1,
+                substep: 1,
+                daytime: true,
+                ..Default::default()
+            },
+            story_override: [None; 3],
+            new_game: false,
+        };
+        let mut app = App::new_headless(options, Some(rom.to_vec()));
+        assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(4101));
+
+        // The ramp's low corridor, east of the gate (placement 16) and inside the S1 wall.
+        stand_on(&mut app, 1.0, 17.0, 12.0);
+        for _ in 0..80 {
+            app.walk_step(Vec3::new(-1.0, 0.0, 0.0));
+        }
+        let blocked = app.hero.unwrap().position();
+        assert!(
+            blocked.x > 0.5,
+            "the map's S1 barrier must block before the trigger: {blocked:?}"
+        );
+
+        // The real trigger, not a direct collision call: event 11 of room 4101, after 1170.
+        let events = app
+            .field
+            .as_mut()
+            .unwrap()
+            .event_ended(1170, &mut app.state);
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::Request(Request::SetPlacementHidden {
+                    block: 0,
+                    placement: 16,
+                    hidden: true
+                })
+            )),
+            "event 11 must hide placement (0, 16): {events:?}"
+        );
+        app.apply_events(events);
+        assert_eq!(app.state.tracks[0].substep, 2, "the story reaches 1.1.2");
+
+        // The gate is gone: the same west walk now crosses it.
+        for _ in 0..40 {
+            app.walk_step(Vec3::new(-1.0, 0.0, 0.0));
+        }
+        let through = app.hero.unwrap().position();
+        assert!(
+            through.x < 0.0,
+            "the hidden placement must no longer block: {through:?}"
+        );
+        // From the 1.1.2 pose, the pilot walks with the d-pad; it must reach X01M03 by the
+        // warp, with no placement other than this test's starting pose. The journal is the
+        // proof even if it goes on to another map afterwards.
+        stand_on(&mut app, 2.77, 18.19, 12.0);
+        app.play_auto(120_000, true);
+        let crossed = app.journal.steps.iter().any(|(_, step)| {
+            matches!(step, Step::Map { id, .. } if *id == 4103)
+                || matches!(step, Step::MapChange { to, .. } if *to == 4103)
+        });
+        assert!(
+            crossed,
+            "the pilot must walk from X01M01 to X01M03 through warp 9: {:?}",
+            app.hero.map(|h| h.position())
         );
     }
 }

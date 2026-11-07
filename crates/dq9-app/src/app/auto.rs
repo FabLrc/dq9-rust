@@ -121,8 +121,11 @@ struct Pilot {
     best_waypoint: f32,
     replans: u32,
     stuck: Option<String>,
-    /// Walkable grids by room (the collision does not change with the story).
+    /// Walkable grids by room (rebuilt when the collision changes: a story-driven placement
+    /// hide, native 574/575, or a door opening).
     grids: BTreeMap<u16, NavGrid>,
+    /// [`dq9_core::CollisionWorld::revision`] the grids were built with.
+    grid_revision: u64,
     /// Doorways already opened: `(class, number)`.
     opened: BTreeSet<(u8, u8)>,
     /// Fixed steps to let a door finish opening before choosing again.
@@ -635,7 +638,10 @@ impl App {
     /// player would get control after a scene (`Stop::Control`), or, with `pilot`, when the
     /// autopilot finds nothing that moves the story or cannot walk to it.
     pub fn play_auto(&mut self, max_steps: u64, pilot: bool) -> Stop {
-        let mut started = false;
+        // A loaded map is an already started game: a run from a save/map start (`--auto`
+        // without a prologue) must still pilot or report control. `NotStarted` is for a run
+        // where no map/ROM ever loaded.
+        let mut started = self.current.is_some();
         let mut bot = Pilot::default();
         self.checkpoints.clear();
         for _ in 0..max_steps {
@@ -771,11 +777,25 @@ impl App {
                 {
                     self.journal.steps.pop();
                 }
+                // The map and its triggers were built again: the collision may differ (a
+                // story-driven placement show or hide), so the room's grid is stale.
+                bot.grids.remove(&room);
+                bot.blocked.retain(|(at, _)| *at != room);
+                bot.grid_revision = self.collision.revision();
             }
             bot.built = Some((room, digest));
             if self.events.is_active() || self.events.pending_start().is_some() {
                 return true;
             }
+        }
+        // The map load and the triggers that follow it (event 20, event 11) may hide or show
+        // collision placements: the cached grids then keep a wall the game removed (or miss
+        // one it added). Drop them when the collision revision moved.
+        let revision = self.collision.revision();
+        if bot.grid_revision != revision {
+            bot.grids.clear();
+            bot.blocked.clear();
+            bot.grid_revision = revision;
         }
         let Some(hero) = self.hero else {
             return false;

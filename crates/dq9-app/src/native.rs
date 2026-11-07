@@ -325,7 +325,6 @@ pub fn main() -> Result<()> {
         let script = walk::parse_script(script)?;
         // The real application's fixed step, so a walk uses the same Hero/Field/door path as
         // the window (the old Walker dropped Request::OpenDoor and stayed blocked).
-        let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
         let options = Options {
             map: cli.map.clone(),
             save,
@@ -340,7 +339,7 @@ pub fn main() -> Result<()> {
             story_override: [None; 3],
             new_game: false,
         };
-        let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
+        let mut app = App::new_headless(options, Some(rom));
         app.walk_pose().context("cannot walk: no map loaded")?;
         if let Some((x, z)) = cli.start {
             app.place_hero(x, z)?;
@@ -367,7 +366,6 @@ pub fn main() -> Result<()> {
         return report::report(&rom, major, first..=last, &cli.story());
     }
     let event = cli.event_id(&rom)?;
-    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let options = Options {
         record_sound: cli.sound_wav.is_some() && cli.headless_steps.is_some(),
         trace_inputs: cli.trace_inputs.is_some(),
@@ -382,7 +380,18 @@ pub fn main() -> Result<()> {
         story_override: [cli.chapter, cli.step, cli.substep],
         new_game: cli.new_game,
     };
-    let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
+    // Headless runs have no window, GPU task or `UserEvent`: do not make them depend on
+    // winit accepting an event loop. The visible window keeps its real proxy.
+    let headless = cli.headless || cli.headless_steps.is_some();
+    let event_loop = if headless {
+        None
+    } else {
+        Some(EventLoop::<UserEvent>::with_user_event().build()?)
+    };
+    let mut app = match &event_loop {
+        Some(event_loop) => App::new(event_loop.create_proxy(), options, Some(rom)),
+        None => App::new_headless(options, Some(rom)),
+    };
     if let Some(path) = &cli.replay {
         let frames = read_inputs(path)?;
         for (bits, confirm) in &frames {
@@ -418,7 +427,9 @@ pub fn main() -> Result<()> {
     if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
         app.look_at(eye, target);
     }
-    event_loop.run_app(&mut app)?;
+    if let Some(event_loop) = event_loop {
+        event_loop.run_app(&mut app)?;
+    }
     Ok(())
 }
 
