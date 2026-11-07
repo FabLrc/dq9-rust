@@ -2267,6 +2267,391 @@ mod tests {
         assert!(cast_drawn(&app, 15), "the stablemaster stays drawn");
     }
 
+    /// Index of the first area whose entry, read by the field task on a copy, asks for
+    /// `wanted`. Probing copies proves which area is the map's added area 12 without
+    /// touching the application.
+    fn area_triggering(app: &App, wanted: u16) -> usize {
+        let field = app.field.as_ref().expect("a map is loaded");
+        for (index, point) in field.area_points().into_iter().enumerate() {
+            let mut probe = field.clone();
+            let mut state = app.state.clone();
+            let events = probe.step(
+                &Leader {
+                    position: point,
+                    yaw: 0.0,
+                    input: Vec3::ZERO,
+                },
+                &mut state,
+            );
+            if events
+                .iter()
+                .any(|event| matches!(event, Event::Request(Request::Event(id)) if *id == wanted))
+            {
+                return index;
+            }
+        }
+        panic!("no area of the map triggers event {wanted}");
+    }
+
+    /// A point of the collision floor inside area `index`: the game has the leader walk in;
+    /// the test only needs the pose the field task reads, but the pose must be a real floor
+    /// of the map, not the volume's centre.
+    fn floor_inside_area(app: &App, index: usize) -> Vec3 {
+        let field = app.field.as_ref().expect("a map is loaded");
+        let centre = field.area_points()[index];
+        const OFFSETS: [f32; 9] = [0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0];
+        for probe in [3.0, 2.0, 1.0, 0.5, 0.0, -0.5] {
+            for &dz in &OFFSETS {
+                for &dx in &OFFSETS {
+                    let (x, z) = (centre.x + dx, centre.z + dz);
+                    let Some(y) = app.collision.ground_height(x, z, probe) else {
+                        continue;
+                    };
+                    let at = Vec3::new(x, y, z);
+                    if field.area_contains(index, at) {
+                        return at;
+                    }
+                }
+            }
+        }
+        panic!("no collision floor inside area {index} around {centre:?}");
+    }
+
+    /// A standing point the game's partner search picks for `npc` (the autopilot's source,
+    /// `Talk::partners`), with the yaw that faces it.
+    fn talk_pose(app: &App, npc: u16) -> (Vec3, f32) {
+        let partner = app
+            .talk
+            .partners()
+            .into_iter()
+            .find(|partner| partner.npc == npc)
+            .unwrap_or_else(|| panic!("NPC {npc} has no talk spot on the loaded map"));
+        (partner.position, partner.yaw)
+    }
+
+    /// Stands at an actual talk spot and presses the action key, so the trigger event 0 runs
+    /// through `Talk::begin` as in the window.
+    fn talk_to(app: &mut App, npc: u16) {
+        let (position, yaw) = talk_pose(app, npc);
+        app.hero = Some(Hero::at(position, yaw));
+        app.talk.press(Button::Confirm);
+        app.run_steps(1);
+    }
+
+    /// `room 1104 1.2..1.2 event 6` / `room 1106 ... event 6`: the two task flags are the
+    /// story lock. With both, one step in the house's `0x72` exit fires event 6, which sets
+    /// the night (`0xb1(1,0)`), raises the house's game-0 flag (`0x66(0|1)`), advances the
+    /// track to 1.3.1 (`0x84(0,1,3,1)`) and selects 1350 or 1360 on arrival. The application
+    /// clock follows the night **before** 1100 is loaded (`App::apply_events` starts with
+    /// `sync_day_phase`). The `Field::step` call is the one `App::run_steps` makes at the
+    /// field's 30 Hz cadence; calling it directly lets the test read the `MapChange` and the
+    /// trigger state before `apply_events` loads 1100.
+    #[test]
+    fn house_exit_requires_both_task_flags_and_advances_to_1_3() {
+        let Some(rom) = testrom::load() else { return };
+        for (map, house, arrival, game_flag) in
+            [("1104", 1104u16, 1360u16, 1i32), ("1106", 1106, 1350, 0)]
+        {
+            let mut app = App::new_headless(map_options(map, (1, 2, 1, true)), Some(rom.to_vec()));
+            assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(house));
+            // A bare `--map` starts the day clock at night; the story is daytime, so pin the
+            // application clock as `house_exit_time_of_day...` does. What the trigger must
+            // change is the clock itself, not a time pinned by `--time`.
+            app.day = lighting::day_clock(None, Some(TimeOfDay::Day.index()), None);
+            app.time = app.day.phase().index();
+            assert_eq!((app.time, app.state.time_of_day), (2, 2));
+            app.state.tracks[0].flags[1].extend([3, 4, 5]);
+
+            let exit = app
+                .field
+                .as_ref()
+                .expect("the house is loaded")
+                .exits()
+                .into_iter()
+                .find(|exit| exit.warp.is_some() && exit.destination == Some(1100))
+                .expect("the house has its 0x72 exit to the village");
+            let events = app.field.as_mut().unwrap().step(
+                &Leader {
+                    position: exit.position,
+                    yaw: 0.0,
+                    input: Vec3::ZERO,
+                },
+                &mut app.state,
+            );
+            let change = events
+                .iter()
+                .find_map(|event| match event {
+                    Event::MapChange(change) => Some(*change),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{map}: the house exit must change map: {events:?}"));
+            assert_eq!(change.destination, 1100, "{map}");
+            assert!(
+                matches!(change.cause, Cause::Warp { .. }),
+                "{map}: the exit is the house's own 0x72 warp, got {:?}",
+                change.cause
+            );
+            assert_eq!(app.state.time_of_day, 0, "{map}: 0xb1(1, 0) sets the night");
+            let track = &app.state.tracks[0];
+            assert_eq!(
+                (track.chapter, track.step, track.substep),
+                (1, 3, 1),
+                "{map}: 0x84 advances to 1.3.1"
+            );
+            assert!(
+                track.flags[0].contains(&game_flag),
+                "{map}: 0x66 raises game-0 flag {game_flag}: {:?}",
+                track.flags[0]
+            );
+            assert!(
+                track.flags[1].is_empty(),
+                "{map}: 0x84 clears the step's game-1 flags: {:?}",
+                track.flags[1]
+            );
+            // The application lighting flips before the map load: this is the first half of
+            // `apply_events`, with 1100 still not loaded.
+            assert_eq!(app.day.phase(), TimeOfDay::Day);
+            app.sync_day_phase();
+            assert_eq!(
+                (app.time, app.day.phase()),
+                (TimeOfDay::Night.index(), TimeOfDay::Night)
+            );
+            assert_eq!(
+                map_loads(&app, 1100),
+                0,
+                "the lighting flipped before the load"
+            );
+            assert!(app.apply_events(events));
+            assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1100));
+            assert_eq!(map_loads(&app, house), 1, "{map} must not be reloaded");
+            assert_eq!(map_loads(&app, 1100), 1);
+            assert_eq!((app.time, app.state.time_of_day), (0, 0));
+            assert_eq!(app.day.phase(), TimeOfDay::Night);
+            assert_eq!(
+                app.events.pending_start(),
+                Some(arrival),
+                "{map}: event 3 of 1100 selects the 1.3 arrival scene"
+            );
+        }
+    }
+
+    /// Without game-1 flag 4 or 5, event 6 does not run: no `0xb1`, no `0x84`, no 1350/1360.
+    /// The `0x72` house exit is still the house's **own** warp, so the hero returns to 1100
+    /// anyway (`Field::step_warps` passes its destination as the fallback and `Field::collect`
+    /// uses it when event 6 has no warp request); the story lock is the track and the night,
+    /// not the map change. Game-1 flag 1 is set so the unrelated 1.2 arrival event 3 cannot
+    /// queue 21592 and muddy the check.
+    #[test]
+    fn house_exit_without_a_task_flag_returns_to_1100_without_advancing() {
+        let Some(rom) = testrom::load() else { return };
+        for map in ["1104", "1106"] {
+            for missing in [4i32, 5] {
+                let mut app =
+                    App::new_headless(map_options(map, (1, 2, 1, true)), Some(rom.to_vec()));
+                app.day = lighting::day_clock(None, Some(TimeOfDay::Day.index()), None);
+                app.time = app.day.phase().index();
+                {
+                    let flags = &mut app.state.tracks[0].flags[1];
+                    flags.insert(1);
+                    for flag in [3, 4, 5] {
+                        if flag != missing {
+                            flags.insert(flag);
+                        }
+                    }
+                }
+                let exit = app
+                    .field
+                    .as_ref()
+                    .expect("the house is loaded")
+                    .exits()
+                    .into_iter()
+                    .find(|exit| exit.warp.is_some() && exit.destination == Some(1100))
+                    .expect("the house has its 0x72 exit to the village");
+                let events = app.field.as_mut().unwrap().step(
+                    &Leader {
+                        position: exit.position,
+                        yaw: 0.0,
+                        input: Vec3::ZERO,
+                    },
+                    &mut app.state,
+                );
+                let change = events
+                    .iter()
+                    .find_map(|event| match event {
+                        Event::MapChange(change) => Some(*change),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{map} without flag {missing}: the 0x72 warp must remain: {events:?}"
+                        )
+                    });
+                assert_eq!(change.destination, 1100, "{map} without flag {missing}");
+                assert!(matches!(change.cause, Cause::Warp { .. }));
+                assert_eq!(
+                    (
+                        app.state.tracks[0].chapter,
+                        app.state.tracks[0].step,
+                        app.state.tracks[0].substep,
+                    ),
+                    (1, 2, 1),
+                    "{map} without flag {missing}: no 0x84"
+                );
+                assert_eq!(
+                    app.state.time_of_day,
+                    TimeOfDay::Day.index(),
+                    "{map} without flag {missing}: no 0xb1"
+                );
+                assert!(
+                    !app.state.tracks[0].flags[0].contains(&0)
+                        && !app.state.tracks[0].flags[0].contains(&1),
+                    "{map} without flag {missing}: no 0x66"
+                );
+                assert!(app.apply_events(events));
+                assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1100));
+                assert_eq!(map_loads(&app, 1100), 1);
+                assert_eq!(app.time, TimeOfDay::Day.index());
+                assert_eq!(app.day.phase(), TimeOfDay::Day);
+                assert_eq!(app.state.time_of_day, TimeOfDay::Day.index());
+                assert!(
+                    !matches!(app.events.pending_start(), Some(1350 | 1360)),
+                    "{map} without flag {missing}: no 1.3 arrival scene, pending {:?}",
+                    app.events.pending_start()
+                );
+            }
+        }
+    }
+
+    /// `room 1100 1.3..1.3 event 2` (added area 12) starts 1410, then `event 0` of NPC 94
+    /// starts the wandering soul scene 21595. Its normal end calls native 559, whose 1
+    /// selects the `0x1f(1)` branch: track 1.4.1 and the `0x85(4105, 21597)` entry. The
+    /// destination loads once, 21597 starts once, 21593 never does, and the night remains.
+    #[test]
+    fn village_area_12_plays_1410_then_npc_94_takes_the_1_4_1_return() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("1100", (1, 3, 1, false)), Some(rom.to_vec()));
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1100));
+        assert_eq!((app.time, app.state.time_of_day), (0, 0));
+        assert_eq!(app.day.phase(), TimeOfDay::Night);
+
+        // The load event added area 12 (`0x8f(12, 3,0,0, 0,-1,-4, 17)`); find it by the
+        // trigger its entry fires, then stand on a real floor point inside it.
+        let area = area_triggering(&app, 1410);
+        let spot = floor_inside_area(&app, area);
+        app.hero = Some(Hero::at(spot, 0.0));
+        app.run_steps(1);
+        assert!(
+            app.events.pending_start() == Some(1410) || app.events.started().contains(&1410),
+            "the area entry must queue 1410: pending {:?}, started {:?}",
+            app.events.pending_start(),
+            app.events.started()
+        );
+        play_pending_event(&mut app, 1410);
+        assert!(
+            app.state.tracks[0].flags[1].contains(&0),
+            "the end of 1410 raises game-1 flag 0"
+        );
+        assert_eq!(app.state.time_of_day, 0);
+        assert_eq!(app.day.phase(), TimeOfDay::Night);
+
+        // NPC 94 (`n007g`) event 0: `if 0x6(94) 0x5(1) then 0x77(21595) 0x72(22159)`.
+        talk_to(&mut app, 94);
+        assert_eq!(
+            app.events.pending_start(),
+            Some(21595),
+            "NPC 94's trigger queues 21595"
+        );
+        assert_eq!(app.state.time_of_day, 0);
+
+        // `play_pending_event` keeps going while something is pending, so it also plays the
+        // 21597 entry of the 1.4.1 map change and the count below proves it ran once.
+        play_pending_event(&mut app, 21595);
+        assert_eq!(
+            app.state.raw.get(&Raw::Quest490),
+            Some(&1),
+            "native 559 sets quest manager +0x490 to 1"
+        );
+        let track = &app.state.tracks[0];
+        assert_eq!(
+            (track.chapter, track.step, track.substep),
+            (1, 4, 1),
+            "the 0x1f(1) branch takes story 1.4.1"
+        );
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(4105));
+        assert_eq!(map_loads(&app, 4105), 1, "4105 loads once");
+        assert_eq!(map_loads(&app, 1100), 1, "1100 is not reloaded");
+        let started = app.events.started();
+        let count = |event: u16| started.iter().filter(|&&id| id == event).count();
+        assert_eq!(count(1410), 1, "{started:?}");
+        assert_eq!(count(21595), 1, "{started:?}");
+        assert_eq!(count(21597), 1, "the 0x85 entry starts once: {started:?}");
+        assert_eq!(count(21593), 0, "the fallback must not start: {started:?}");
+        assert!(!app.events.is_active());
+        assert_eq!(app.events.pending_start(), None);
+        assert_eq!(
+            (app.time, app.state.time_of_day),
+            (0, 0),
+            "the return stays at night"
+        );
+        assert_eq!(app.day.phase(), TimeOfDay::Night);
+    }
+
+    /// Action 0x7c is per map: the 1.3 arrival trigger (event 3) fired on the loaded map is
+    /// what `load_map` runs after a transition, minus the rebuild that clears the removal
+    /// list. Its presentation (1350 for game-0 flag 0, 1360 for flag 1) must not seed NPC
+    /// 210 again, and 211–215 are not part of the 1100 cast. A map change rebuilds the cast
+    /// and forgets the removals, the documented exception.
+    #[test]
+    fn the_1_3_arrival_scene_does_not_revive_removed_npcs() {
+        let Some(rom) = testrom::load() else { return };
+        for (flag, scene) in [(0i32, 1350u16), (1, 1360)] {
+            let mut app =
+                App::new_headless(map_options("1100", (1, 2, 1, true)), Some(rom.to_vec()));
+            assert!(cast_drawn(&app, 210), "NPC 210 stands in the village");
+            // Event 11 of 1390: the real end of the keepsake-ring scene.
+            let events = app
+                .field
+                .as_mut()
+                .unwrap()
+                .event_ended(1390, &mut app.state);
+            app.apply_events(events);
+            assert!(!cast_drawn(&app, 210), "1390 removes NPC 210");
+            assert!(app.state.tracks[0].flags[1].contains(&3));
+
+            // 1.3 arrival: the house's game-0 flag selects 1350 or 1360.
+            {
+                let track = &mut app.state.tracks[0];
+                (track.chapter, track.step, track.substep) = (1, 3, 1);
+                track.flags[0].insert(flag);
+            }
+            let events = app.field.as_mut().unwrap().enter(&mut app.state, true);
+            app.apply_events(events);
+            assert_eq!(
+                app.events.pending_start(),
+                Some(scene),
+                "event 3 selects the 1.3 arrival scene"
+            );
+            play_pending_event(&mut app, scene);
+            assert!(
+                !cast_drawn(&app, 210),
+                "the arrival presentation must keep NPC 210 hidden"
+            );
+            for npc in 211..=215 {
+                assert!(
+                    !cast_drawn(&app, npc),
+                    "NPC {npc} is not part of the 1100 cast"
+                );
+            }
+
+            // Only a map change forgets the removals.
+            assert!(app.load_map("1100", true, None, None, true));
+            assert!(
+                cast_drawn(&app, 210),
+                "a map change rebuilds the cast; 0x7c removals are per map"
+            );
+        }
+    }
+
     #[test]
     fn trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03() {
         let Some(rom) = testrom::load() else { return };

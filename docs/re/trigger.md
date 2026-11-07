@@ -605,6 +605,16 @@ drapeaux jeu 1 n° 4 (1330) **et** n° 5 (1340) ; le drapeau jeu 0 (0 ou 1 selon
 choisit la scène d'arrivée 1350 ou 1360. `0xb1(1, 0)` passe le moment de la journée à **0
 (nuit)**.
 
+La zone `0x72` reste une **sortie de carte ordinaire** : sans les drapeaux 4 et 5, le warp
+ramène quand même à 1100. `Field::step_warps` prépare la destination propre du warp et
+`Field::collect` l'utilise comme repli quand l'événement 6 ne rend aucune action `0x79`/`0x85` ;
+l'événement 6 ne fait que la remplacer. Le verrou 1.2 → 1.3 porte donc sur l'**avancement de
+piste** (`0x84`) et sur la **nuit** (`0xb1`), pas sur le changement de carte ni sur la scène
+d'arrivée : sans les deux drapeaux, le héros revient au village en 1.2.1, de jour, et aucune
+scène 1350/1360 n'est mise en file. Tests :
+`house_exit_requires_both_task_flags_and_advances_to_1_3` (1104 et 1106) et
+`house_exit_without_a_task_flag_returns_to_1100_without_advancing`.
+
 Scène **non obligatoire mais d'histoire** : le chien 95 (`n097a`, `20.29, -1.05, -0.67`) →
 `if 0x6(95) 0x5(2) 0x5(3) then 0x77(1320)` ; la fin de 1320 fait `0x68(2)` et avance en
 **1.2.2** (`0x84(0, 1, 2, 2)`). Aucun verrou de 1.2 → 1.3 ne teste la sous-étape : la scène
@@ -741,6 +751,10 @@ cargo test -p dq9-app house_exit_time_of_day_reaches_the_application_before_the_
 cargo test -p dq9-app a_pinned_time_of_day_wins_over_the_trigger -- --nocapture
 cargo test -p dq9-app removing_npc_210_hides_its_cast_instance -- --nocapture
 cargo test -p dq9-app stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden -- --nocapture
+cargo test -p dq9-app house_exit_requires_both_task_flags_and_advances_to_1_3 -- --nocapture
+cargo test -p dq9-app house_exit_without_a_task_flag_returns_to_1100_without_advancing -- --nocapture
+cargo test -p dq9-app village_area_12_plays_1410_then_npc_94_takes_the_1_4_1_return -- --nocapture
+cargo test -p dq9-app the_1_3_arrival_scene_does_not_revive_removed_npcs -- --nocapture
 ```
 
 ### Assertions de régression proposées
@@ -750,9 +764,16 @@ cargo test -p dq9-app stable_pickups_hide_each_pile_and_the_scene_keeps_them_hid
   `0x77(5000)` différé ; `Field::event_ended` rend
   `[SetPlacementHidden{block:0x34, placement:16, hidden:true},
   SetPlacementHidden{block:0xff, placement:7, hidden:false}, Event(5000)]`.
-- **Verrou de sortie** : état 1.2.x, drapeaux jeu 1 4 et 5 levés, meneur dans la zone `0x72`
-  de 1104 → un pas rend `MapChange{destination:1100, cause:Warp}`, `state.time_of_day == 0`
-  et la piste (1, 3, 1) ; avec un seul des deux drapeaux, aucun changement de carte.
+- **Verrou de sortie** (fait, `house_exit_requires_both_task_flags_and_advances_to_1_3`
+  pour 1104 et 1106, et `house_exit_without_a_task_flag_returns_to_1100_without_advancing`
+  pour l'absence de l'un des drapeaux) : état 1.2.1, drapeaux jeu 1 3–5 levés, meneur dans la
+  zone `0x72` de 1104/1106 → `Field::step` rend `MapChange{destination:1100, cause:Warp}`,
+  `state.time_of_day == 0`, la piste (1, 3, 1) et le drapeau jeu 0 de la maison (1 pour 1104,
+  0 pour 1106) ; `App::sync_day_phase` met `app.day`/`app.time` à la nuit **avant** le
+  chargement de 1100 et la scène d'arrivée (1360 ou 1350) est mise en file. Avec le drapeau
+  4 ou 5 absent, aucun `0xb1`/`0x84` : la piste reste (1, 2, 1), le moment de la journée
+  reste à 2 (jour) et aucune scène 1350/1360 n'est mise en file ; le warp `0x72` ramène
+  néanmoins à 1100 (repli du warp, voir « 1.2 : arrivée et tâches du village »).
 - **1330** : état 1.2.1 avec drapeau jeu 1 n° 3, événement 1 du PNJ 12, contexte 193,
   réponse 0 → `Event(1330)`, 22158 retiré, 22159 donné, drapeau 4 levé (et drapeau
   d'obtention 4283).
@@ -777,6 +798,23 @@ cargo test -p dq9-app stable_pickups_hide_each_pile_and_the_scene_keeps_them_hid
   de 1390 l'instance 210 n'est plus dessinée, les autres PNJ le restent ; les tas 211–215
   disparaissent chacun à leur ramassage, 1340 ne les fait pas revenir, et le palefrenier 15
   reste dessiné.
+- **1.3 : aire 12, 1410 et retour 1.4.1** (fait,
+  `village_area_12_plays_1410_then_npc_94_takes_the_1_4_1_return`) : à 1.3.1 de nuit,
+  l'aire 12 ajoutée par l'événement 20 est trouvée par le trigger qu'elle déclenche sur une
+  copie du champ, puis le meneur est posé sur un sol de collision à l'intérieur ; un pas de
+  `App` met 1410 en file, sa fin lève le drapeau jeu 1 n° 0. Le PNJ 94, par sa recherche de
+  partenaire réelle (`Talk::partners`/`Talk::begin`, pas un appel direct), met 21595 en file.
+  La fin normale de 21595 écrit `Raw::Quest490 == 1`, passe en 1.4.1, charge 4105 une fois et
+  met 21597 en file ; `play_pending_event` le joue, `started` le compte **une** fois, ne
+  contient pas 21593, et `app.time`/`state.time_of_day` restent à 0 (nuit).
+- **Scène d'arrivée 1.3 et PNJ retirés** (fait,
+  `the_1_3_arrival_scene_does_not_revive_removed_npcs`) : après le `RemoveNpc(210)` de 1390,
+  l'événement 3 de 1100 (1.3) est joué sur la carte déjà chargée — c'est ce que `load_map`
+  exécute après une transition, sans la reconstruction qui vide la liste des retraits. Il met
+  en file 1350 (drapeau jeu 0 n° 0) ou 1360 (n° 1) ; après la scène, 210 reste masqué et
+  211–215 ne sont pas dessinés sur 1100. Un changement de carte (`load_map` 1100) reconstruit
+  le cast et oublie les retraits : 210 est de nouveau dessiné, l'exception documentée de
+  `EventPlayer::map_loaded`.
 
 ## Exemples
 
