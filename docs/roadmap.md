@@ -15,10 +15,11 @@ livrés avec un prologue intégralement jouable.
 
 Run Orca `run_93299987d8b6`, cinq workers OMP
 `opencode-go/deepseek-v4.1-flash` (plafond : six). Les contrôles et l'intégration restent
-centralisés ; un lot Web est validé, les quatre autres continuent.
+centralisés. Les lots Web et comparateurs sont intégrés ; les trois autres continuent.
 
-- `v01-oracle7` : le message attribué à 1160 est celui de la scène répétable 1600 ;
-  les A répétés la relançaient. Le worker poursuit le trajet physique vers 1170/1.1.2.
+- `v01-oracle7` : 1170 puis 1.1.2 atteints dans l'original sans téléportation, pose
+  `(2,77 ; 11,25 ; 18,19)`. Le coordinateur a rejoué les 3 966 images et vérifié le
+  placement 16 caché. Le worker continue vers Angel Falls.
   Propriétaire de `melondsds_host.py` et `re/melonds-state.md`.
 - `v01-tower7` : le trigger de fin de 1170 masque le placement 16 (mur S1) par `0x95` ;
   cet effet n'était pas appliqué. Correction en cours, franchissement restant à vérifier.
@@ -26,14 +27,17 @@ centralisés ; un lot Web est validé, les quatre autres continuent.
   `re/movement.md`.
 - `v01-web7` : lot terminé, intégré et poussé dans `574d24c`, worktree fermé. Le même
   fichier ROM/sauvegarde peut être resélectionné. Vérification complète native/wasm et
-  essai visuel du candidat réussis ; redéploiement Pages demandé par le push.
+  essai visuel du candidat réussis ; Pages `42365931020` et CI `42365931007` réussis.
+  La resélection de la même sauvegarde a été contre-vérifiée sur la page déployée.
   Le remplacement d'une session avec légende active a également été vérifié sur Pages :
   sauvegarde dans l'église, déplacement, aucune ancienne légende visible.
 - `v01-village7` : chaîne réelle des scènes et tâches du village, contrats manquants ;
   propriétaire de `field.rs`, `trigger.rs` et `re/trigger.md`. Émet la visibilité des
   placements, appliquée côté application par le lot tour.
-- `v01-parity7` : comparaisons aux mêmes frontières et déplacement à images égales ;
-  propriétaire des comparateurs, de `tests/movement_rom.rs` et de `re/outils.md`.
+- `v01-parity7` : lot comparateurs intégré dans `69287f9`, worktree fermé. L'original
+  masculin sans butin et le runtime ont les mêmes progression, drapeaux, quêtes et position
+  au premier contrôle (tolérance de position 0,001). Cela ne valide pas les autres points :
+  la différence de cadence terrain 30/60 Hz laisse la comparaison par image ouverte.
 
 Chaque worker pousse ses constats documentés sur sa branche. Le code attend les contrôles
 du coordinateur avant commit et push. Les preuves restent sous `build/v01-20261107/`
@@ -55,9 +59,13 @@ du coordinateur avant commit et push. Les preuves restent sous `build/v01-202611
   `X01M01`. Le blocage précédemment attribué à 1160 était une erreur de pilotage : la
   réplique appartient à la scène répétable 1600 du compagnon ; les A répétés la relançaient.
   Un appui isolé puis l'attente ferment le message (contre-vérifié par le coordinateur,
-  `build/v01-20261107/oracle/coordinator-unblock.png`). L'état original après 1170/1.1.2
-  reste à produire ; les anciennes preuves demeurent sous `build/oracle-route/` et
-  `build/orca/route/`, les nouvelles sous `build/v01-20261107/oracle/` (ignorés).
+  `build/v01-20261107/oracle/coordinator-unblock.png`). La référence après 1170/1.1.2 est
+  maintenant obtenue : `coordinator-continuous-cp.jsonl` (image 3965, VBlank 58302),
+  `coordinator-continuous-state.bin` (après l'image suivante, VBlank 58303) et capture
+  `coordinator-continuous-112.png`. La progression change avant le retour du contrôle :
+  attendre encore environ 60–80 images avant de comparer un point de contrôle libre.
+  Les anciennes preuves demeurent sous `build/oracle-route/` et `build/orca/route/`,
+  les nouvelles sous `build/v01-20261107/oracle/` (ignorés).
 - Harnais oracle libretro (outil GPL externe, hors crates) : création du personnage et
   **premier contrôle original** reproductibles sans GUI, `dq9re state --ram` sur les images
   RAM de 4 Mio, catalogue `states index/find`, `state diff` et `state watch`. Le premier
@@ -98,11 +106,11 @@ leurs conclusions sont reprises dans `main` et les docs ; ne pas les réintégre
    Falls, quêtes, fin du prologue) avec le même harnais, puis les comparer au runtime par
    `state diff` et `compare-runs.ps1` aux mêmes points d'histoire. Ne pas réintégrer les
    anciennes branches d'outillage : elles sont déjà dans `main`.
-2. **Poursuivre la référence originale après 1600.** Ne plus traiter la réplique du
-   compagnon comme un blocage de 1160 : le pilotage relançait sa conversation répétable.
-   Le worker est sorti de `X01M07` vers `X01M01` sans téléportation et poursuit vers 1170.
-   Relever la pose et l'état après 1170, puis en 1.1.2 et à Angel Falls ; ne pas fabriquer
-   d'état ni modifier les coordonnées/drapeaux pour contourner un blocage.
+2. **Poursuivre la référence originale vers Angel Falls.** 1170 et 1.1.2 sont reproduits
+   sans téléportation ; le mur S1 (placement 16) est bien caché dans l'état original.
+   Le worker a également franchi la rampe vers `X01M03`, puis `X01M09`. Étendre la trace
+   continue et relever les véritables retours du contrôle, pas seulement la progression.
+   Ne pas fabriquer d'état ni modifier les coordonnées/drapeaux.
 3. **Résoudre l'accès à la tour `X01M01` → `X01M03`.** La grille 3D plafonne à y = 11,25 ;
    le passage haut n'est pas atteint. Une route vérifiée seulement en X/Z était fausse.
    La proposition de contourner la tour via 21591 est également rejetée : ce trigger n'est
