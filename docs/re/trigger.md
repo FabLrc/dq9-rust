@@ -635,6 +635,15 @@ choix, `event 1: if 0x6(99) 0xb(0) 0x10(0) 0x4(1) then 0x77(21593)` ; la fin de 
 `0x84(0, 1, 4, 1) 0x97(2) 0x85(4105, …)`. Les deux routes atteignent 1.4.1, mais l'original
 ne joue pas 21593.
 
+L'opérande de `0x85` n'est pas un point d'entrée de carte : c'est **l'événement à enchaîner
+sur la carte d'arrivée**. `0x85(4105, 1415380992)` vaut `0x85(4105, 21597)` et 21597 est
+exactement la scène d'ouverture de 1.4 (`evspt_lv5/ev21597`, « Aquila : I have important
+matters to discuss with Apus Major »). Même motif dans `M01` : 2200 → 2210, 2400 → 2410,
+2750 → 2760, 2760 → 2800. `Trig_RunDeferred` (cas 0x85) écrit cet opérande en `Save_Warp+0x10`,
+et `MapChange.entry` le transporte déjà, mais `dq9-app::change_map` l'ignore. Le runtime
+s'arrête donc sur la carte 4105 à 1.4.1 sans jouer 21597 ; c'est le seul chaînon manquant
+après la fin du prologue.
+
 ### Tâches d'histoire et quêtes numérotées
 
 - Les tâches 1330 et 1340 sont des **tâches d'histoire**, pas des quêtes numérotées : aucune
@@ -652,27 +661,35 @@ ne joue pas 21593.
 ### Écarts connus sur ce chemin
 
 1. **Native 559** (`ov_001::021609e4`) : écrit l'octet `+0x490` lu par la condition `0x1f`.
-   Sans elle, 21595 prend le repli 1.3.2 + 21593 au lieu du retour direct 1.4.1. Contrat
-   proposé : un `Event` du script (ou une commande de type `Raw`) écrit `Raw::Quest490` dans
-   l'état de l'application avant que `Field::event_ended(21595)` ne soit appelé ; fichiers
-   nécessaires : `dq9-core/src/script/natives.rs`, `dq9-core/src/cutscene.rs`,
-   `dq9-app/src/app.rs` (et `dq9-app/src/event.rs`, propriété de la tour). L'assertion doit
-   vérifier `Raw::Quest490 == 1` après la scène et le warp `4105` tiré par le trigger 11.
-2. **Moment de la journée du rendu** : `0xb1(1, 0)` met `state.time_of_day` à 0 avant le
+   Sans elle, 21595 prend le repli 1.3.2 + 21593 au lieu du retour direct 1.4.1. **Correctif
+   en cours** : `dq9-core` émet `Event::SetQuestSignal(u8)` (argument lu par `StbArg_Int`,
+   troncature `u8`) ; l'application doit écrire `Raw::Quest490` avant que
+   `Field::event_ended(21595)` ne lise la condition. Fichiers : `script/natives.rs`,
+   `script/event.rs`, `cutscene.rs` (bras de match exhaustif), `dq9-app/src/event.rs` et
+   `app.rs` (application). Assertion : `Raw::Quest490 == 1` après la scène, puis le trigger 11
+   rend le warp `4105` avec la piste (1, 4, 1), sans 21593.
+2. **Événement d'arrivée de `0x85`** (voir plus haut) : `MapChange.entry` porte 21597 mais
+   n'est pas consommé. Contrat : après le chargement d'une carte par un transport de trigger,
+   lancer l'événement `entry` une fois la carte chargée (même ordonnancement que la native
+   538 / la liste d'événements), sans le confondre avec un point d'entrée de spawn.
+   Assertion : fin de 21593 ou branche 1.4.1 de 21595 → `Event(21597)` puis carte 4105.
+3. **Moment de la journée du rendu** : `0xb1(1, 0)` met `state.time_of_day` à 0 avant le
    changement de carte, et `story_from_state` en dérive le cast nuit, mais `dq9-app` garde son
    propre `self.time`/`DayClock` pour l'éclairage (`load::load(..., self.time, ...)`) : la
    scène 1.3 est donc éclairée de jour. Contrat proposé : synchroniser `self.day`/`self.time`
    (sans recharger la carte, `set_time` recharge) quand `state.time_of_day` a changé entre
    deux lots d'événements, en ne touchant pas aux options `--time`/`--clock` explicites.
    Fichiers : `dq9-app/src/app.rs` (+ `lighting.rs` déjà fourni).
-3. **Retrait de PNJ (0x7c)** : `Request::RemoveNpc` n'enlève le PNJ que de la liste de
+4. **Retrait de PNJ (0x7c)** : `Request::RemoveNpc` n'enlève le PNJ que de la liste de
    conversation (`Talk::remove_npc`) ; l'instance du modèle reste dans la scène rendue. Les
    cinq tas de l'écurie et l'esprit 210 restent donc visibles après leur scène. Assertion
    proposée : après application de `RemoveNpc(210)` puis de 1390, l'instance du cast 210 est
    masquée (et idem pour 211–215 après 1340).
-4. `0x8d` (`Request::Other(141)`), `560` et `571` ne changent pas le déroulement observé :
-   les scènes 1.2–1.3 vont à leur terme (`dq9re script 1.2-3`) ; aucun correctif n'est
-   établi pour l'instant.
+5. `0x8d` (`Request::Other(141)`), `560` et `571` ne changent pas le déroulement observé. Les
+   11 scènes `data/event` des étapes 1.2–1.3 vont à leur terme (`dq9re script 1.2-3`) ; les
+   scènes `evspt_lv5` 21592, 21593 et 21595 se jouent aussi jusqu'au bout, mais isolément
+   (`--event`), car `stage_events`/`script` ne les incluent pas dans cette liste. Aucun
+   correctif n'est établi pour ces trois natives.
 
 ### Reproduction
 
@@ -709,6 +726,8 @@ dq9-app --rom $ROM --event 21595 --chapter 1 --step 3 --substep 1 --night --head
   316 levé et `RemoveNpc(211)`.
 - **559** : après exécution de 21595, `Raw::Quest490 == 1` et le trigger 11 rend le warp
   4105 avec la piste (1, 4, 1), sans 21593.
+- **Entrée `0x85`** : fin de 21593 (ou branche 1.4.1 de 21595) → la carte 4105 se charge puis
+  `Event(21597)` est lancé (aucun événement si `entry` est absent, comme pour les `0x72`).
 
 ## Exemples
 
