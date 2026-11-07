@@ -547,8 +547,12 @@ prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points
 parcours natif continu atteint Angel Falls 1100 et joue les scènes 21592/1380/1390/1370.
 Le pilote tourne ensuite entre la carte 1100 et M01M08 sans accomplir les tâches du village ;
 la validation manuelle de ces interactions et le parcours navigateur sur la version publiée
-restent à terminer. Le pas terrain à 30 Hz est en cours ; la comparaison stricte aux mêmes
-images et la parité complète des drapeaux ne sont pas déclarées acquises.
+restent à terminer. Le pas terrain à 30 Hz est intégré ; la comparaison stricte aux mêmes
+images est couverte par le test de cadence, mais la parité complète des drapeaux n'est pas
+déclarée acquise. **Navigateur** : la build finale `21e1e42` joue l'ouverture, le premier
+contrôle, 1140 et 1130, puis le hall surélevé ; elle n'a pas de session continue certifiée
+jusqu'à 4107, la tour ou Angel Falls. La v0.1 n'est donc **pas certifiée jouable de bout en
+bout dans le navigateur**, même si le binaire publié et le parcours natif sont fonctionnels.
 
 ## J4 — Combattre : **v0.2**
 

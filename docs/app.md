@@ -624,9 +624,9 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
 
 ## Vérification
 
-- Parcours navigateur sur Pages (7 novembre 2026, preuve partielle) : déploiement réussi
-  `42368823919`, commit `8d41723`, URL
-  `https://fablrc.github.io/dq9-rust/?newgame=1&release=8d41723`, ROM européenne locale
+- Parcours navigateur sur Pages (7 novembre 2026, preuve partielle, build finale) : déploiement
+  réussi `42384404646`, commit `21e1e42`, URL
+  `https://fablrc.github.io/dq9-rust/?newgame=1&release=21e1e42`, ROM européenne locale
   de 256 Mio, Chromium piloté, fenêtre 1280 × 900 (DPR 1,25). Après lecture de la ROM, le
   clavier est actif sur `dq9` ; l'ouverture visuelle atteint les événements `21500`, `21507`,
   `21520`, `21521`, `21522`, puis `21596` et le premier contrôle sur `X01M05` (4105).
@@ -637,12 +637,15 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   atteints visuellement et dans la console. Après la scène 1130, des pressions brèves au clavier
   et des captures ont confirmé le franchissement des escaliers jusqu'au chemin de pierre surélevé
   et l'exploration du hall ; le héros reste toutefois sur 4105, sans événement ni transition 4107,
-  même au bout du chemin devant la bannière. La capture d'extrémité est
-  `15-banner-endpoint-still-4105.webp` (SHA-256
-  `253cf6ee00a55be7fce1bf564912874bbb6649fb59b1e33d47666bf4a37b18fa`), avec les captures du
-  chemin surélevé et de l'aile est dans `build/v01-20261107/browser/` et
+  même au bout du chemin devant la bannière. Les captures finales `50` à `61` sont dans
+  `build/v01-20261107/browser/`, avec les captures du chemin surélevé et de l'aile est dans
   `browser-navigation-addendum.SHA256SUMS`. Aucune sauvegarde, téléportation ou injection d'état
-  interne ; portes, 4107, 1170, tour et 21510/1.2.1 restent à vérifier.
+  interne. Un rejeu accéléré des entrées natives dans la page finale a atteint 4105 et le dialogue
+  du PNJ 101, mais son horloge virtuelle désynchronise les entrées des pas fixes : il ne prouve
+  ni 4107, ni 1170, ni la tour, ni 1.2.1, et n'est pas utilisé comme certification.
+  **Limite finale** : le parcours navigateur complet jusqu'à Angel Falls et les tâches du
+  village n'est pas certifié ; 4107, 1170, la tour, 21510/1.2.1 et 1100 restent vérifiés par
+  le parcours natif et les tests ROM, pas par une session navigateur continue.
 - Chargement d'une sauvegarde après « Nouvelle partie » : scénario natif Windows exercé
   avec la ROM EU et une sauvegarde locale (`a_save_selected_after_a_new_game_loads_that_save`).
   `new_game` devient faux et `C01M09` (carte 109) remplace le prologue. Le test couvre un
