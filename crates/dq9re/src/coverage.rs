@@ -844,7 +844,13 @@ fn f() {} // port: FUN_02069ffc 0x0206974c..=0x02069fd4
     /// USA → Europe address conversion against our own findings.
     #[test]
     fn our_symbols_start_listed_functions() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        // Run-time CARGO_MANIFEST_DIR: a shared target directory can reuse a test binary
+        // compiled in another worktree, whose compile-time path may no longer exist.
+        let manifest = std::env::var_os("CARGO_MANIFEST_DIR").map_or_else(
+            || std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            std::path::PathBuf::from,
+        );
+        let root = manifest.join("../..");
         let functions = parse_functions(&read(&root.join("re/functions.txt")).unwrap()).unwrap();
         let starts: std::collections::HashSet<_> =
             functions.iter().map(|f| (f.module, f.addr)).collect();

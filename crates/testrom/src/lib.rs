@@ -12,7 +12,12 @@ fn find() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("DQ9_ROM") {
         return Some(PathBuf::from(path));
     }
-    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // `cargo test` sets CARGO_MANIFEST_DIR at run time (the tested crate, also under
+    // `crates/`). Prefer it to the compile-time value: a target directory shared between
+    // worktrees can reuse a binary compiled in another, possibly removed, checkout.
+    let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from);
+    let repo = manifest.join("../..");
     [repo.join("rom"), repo].into_iter().find_map(|dir| {
         fs::read_dir(dir)
             .ok()?
