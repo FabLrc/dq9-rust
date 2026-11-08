@@ -11,8 +11,10 @@
 #
 # Only files with one of `-Extensions` (default: savestates) that are older than `-Days` and
 # at least `-MinSizeMB` are candidates. `-Keep` matches the file name or its path relative to
-# `-Root` with PowerShell wildcards. The script never deletes `.sav`, `.nds`, `.json`,
-# `.jsonl` or images, and refuses a root that is the repository itself.
+# `-Root` with PowerShell wildcards. Files listed in any `build/evidence/<lot>/manifest.json`
+# of the repository (written by scripts/evidence.ps1) are always kept, whatever `-Root`.
+# The script never deletes `.sav`, `.nds`, `.json`, `.jsonl` or images, and refuses a root
+# that is the repository itself.
 param(
     [string] $Root = 'build',
     [int] $Days = 3,
@@ -27,6 +29,20 @@ $RootPath = (Resolve-Path (Join-Path $Repo $Root) -ErrorAction Stop).Path
 if ($RootPath -eq $Repo) { throw 'give a subdirectory such as build, not the repository root' }
 $Cutoff = (Get-Date).AddDays(-$Days)
 $MinBytes = [int64]($MinSizeMB * 1MB)
+# Evidence cited by the docs: every file listed in a lot manifest is protected.
+$Evidence = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$EvidenceRoot = Join-Path (Join-Path $Repo 'build') 'evidence'
+if (Test-Path -LiteralPath $EvidenceRoot -PathType Container) {
+    foreach ($LotDir in Get-ChildItem -LiteralPath $EvidenceRoot -Directory) {
+        $ManifestPath = Join-Path $LotDir.FullName 'manifest.json'
+        if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) { continue }
+        $Manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($Entry in @($Manifest.files)) {
+            $Path = Join-Path $LotDir.FullName ($Entry.path -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+            [void]$Evidence.Add([System.IO.Path]::GetFullPath($Path))
+        }
+    }
+}
 
 $Candidates = @(Get-ChildItem -LiteralPath $RootPath -Recurse -File -ErrorAction Stop |
     Where-Object {
@@ -37,7 +53,9 @@ $Candidates = @(Get-ChildItem -LiteralPath $RootPath -Recurse -File -ErrorAction
 
 $Doomed = [System.Collections.Generic.List[object]]::new()
 $Kept = 0
+$ByManifest = 0
 foreach ($File in $Candidates) {
+    if ($Evidence.Contains($File.FullName)) { $ByManifest++; continue }
     $Relative = $File.FullName.Substring($RootPath.Length).TrimStart('\', '/')
     $Protected = $false
     foreach ($Pattern in $Keep) {
@@ -49,8 +67,8 @@ foreach ($File in $Candidates) {
 $Freed = ($Doomed | Measure-Object -Property Length -Sum).Sum
 if ($null -eq $Freed) { $Freed = 0 }
 $Mode = if ($Apply) { 'delete' } else { 'dry run' }
-Write-Output ("prune {0}: root {1}, {2} candidate(s), {3} kept, {4} to remove, {5:N1} MiB ({6})" -f `
-    $Root, $RootPath, $Candidates.Count, $Kept, $Doomed.Count, ($Freed / 1MB), $Mode)
+Write-Output ("prune {0}: root {1}, {2} candidate(s), {3} kept, {4} protected by manifest, {5} to remove, {6:N1} MiB ({7})" -f `
+    $Root, $RootPath, $Candidates.Count, $Kept, $ByManifest, $Doomed.Count, ($Freed / 1MB), $Mode)
 $Doomed | Sort-Object Length -Descending | Select-Object -First 10 | ForEach-Object {
     Write-Output ("  {0,8:N1} MiB  {1}" -f ($_.Length / 1MB), $_.FullName.Substring($RootPath.Length + 1))
 }
