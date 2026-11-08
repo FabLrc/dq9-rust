@@ -334,6 +334,7 @@ options `--chapter/--step`.
 | arrivée dans une carte | triggers 20 puis 3 | `Field::enter` |
 | entrée dans une aire, porte, warp | triggers 2, 17, 6 | `Field::step` |
 | avancée de l'histoire sur place | `0x84` : triggers rechargés (aires de 0x8f oubliées, trigger 20 à nouveau) ; `0x8d` : distribution reconstruite | `Field::collect`, `App::reload_cast` |
+| fin d'une scène qui met la distribution de côté (liste d'événements, valeur 21, bit 0 ou 2) | distribution reconstruite avant le trigger 11, poses et retraits d'avant la scène rendus par l'instantané | `App::reload_cast`, `EventPlayer::cast_loaded` |
 | 0x76 hors conversation | fenêtre de dialogue de la réplique du trigger | `App::talk_to` |
 
 **Combats scriptés.** Il n'y a pas de combat avant J4 : `scenario::stand_in` les déclare gagnés

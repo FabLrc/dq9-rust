@@ -114,6 +114,19 @@ Les deux compteurs sont des quartets par PNJ dans deux tableaux de 128 octets
 réussie. **[Différence entre les deux inconnue : l'un est peut-être remis à zéro au
 chargement de la carte.]**
 
+Les deux tableaux sont au pointeur `gameres+0x44c4` (les ressources de jeu), et deux remises
+à zéro sont établies :
+
+- **Nouveau chapitre ou nouvelle étape** : `Track_Advance` (`0x020703d8`, actions 0x84,
+  0x94, 0xd6) appelle `0x0206ec04` (mise à zéro des 2 × 0x80 octets) dans les deux branches
+  où la piste change de chapitre (`Track_ClearFlags`) ou, au même chapitre, d'étape
+  (`Track_ClearStepFlags`), et seulement quand la progression avance. Une nouvelle
+  sous-étape seule ne remet rien à zéro. Les compteurs sont communs aux cinq pistes :
+  avancer n'importe laquelle les vide tous.
+- **Action 0x6a** (`Trig_RunAction` cas 6, `0x02061c14`) : `0x0206ecf8(table, PNJ)` sur
+  chacun des deux tableaux efface le quartet du PNJ `arg` (octet `PNJ / 2`, quartet haut
+  pour un numéro pair) ; un numéro ≥ 256 sort du tableau et part en erreur (`0x0209954c`).
+
 Emplacements observés : 0–3, 16–22 (groupe 0), 64–72 (test 4), 80–131 (groupe 1), 176–177,
 192–223 (groupe 2, valeurs exactes).
 
@@ -298,7 +311,9 @@ la prochaine attente (hypothèse d'après `+0x19c5`, qui force 16 caractères pa
 
 - `dq9_formats::message::leading_tags` : balises de tête (`Msg_ConsumeLeadingTags`).
 - `dq9_core::talk` : `nearest`, `TalkCounts` (compteurs `NpcTalkCount`, remis à zéro de
-  la carte à l'entrée d'une carte), `compile_message`/`layout`/`prepare` (les six passes avec
+  la carte à l'entrée d'une carte, tous par `Track_Advance` sur un nouveau chapitre ou une
+  nouvelle étape, ceux d'un PNJ par l'action 0x6a ; portés par `trigger::State::talk_counts`),
+  `compile_message`/`layout`/`prepare` (les six passes avec
   l'identité du héros — son nom et son sexe tirés de la sauvegarde, sinon « Hero » homme —
   et les conditions sexe/solo, puis mise en page), `Dialogue::step` (une touche par pas fixe
   de 60 Hz) et `Dialogue::view`.

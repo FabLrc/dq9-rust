@@ -441,6 +441,15 @@ fn counters_saturate_and_the_map_one_resets() {
     assert_eq!(counts.get(7), [15, 0]);
     counts.clear();
     assert_eq!(counts.get(7), [0, 0]);
+    // Action 0x6a: one NPC only; numbers past 255 are outside the game's tables.
+    counts.record(7);
+    counts.record(8);
+    counts.record(300);
+    counts.reset(7);
+    assert_eq!(counts.get(7), [0, 0]);
+    assert_eq!(counts.get(8), [1, 1]);
+    counts.reset(300);
+    assert_eq!(counts.get(300), [1, 1]);
 }
 
 #[test]

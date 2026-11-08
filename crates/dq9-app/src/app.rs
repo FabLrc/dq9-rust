@@ -521,7 +521,8 @@ impl App {
         // The map load builds its cast (`ov_017::0219e384` → `ov_017::021a2fa0`): a cast task
         // queued on the map that is left has nothing more to do.
         self.cast_reload = false;
-        self.talk.enter_map(loaded.npcs);
+        self.talk
+            .enter_map(loaded.npcs, &mut self.state.talk_counts);
         self.hero = Some(loaded.hero);
         self.hero_instance = Some(loaded.hero_instance);
         let s = &loaded.runtime.scene;
@@ -566,6 +567,14 @@ impl App {
         self.camera_home = self.camera.yaw;
         self.field_camera = FieldCamera::default();
         self.events.map_loaded(&self.camera);
+        // `Cast_LoadMap` ends with `0x0203e2d4`: a snapshot kept on this map gives its NPCs
+        // back, one kept elsewhere is dropped.
+        for npc in self
+            .events
+            .cast_loaded(&mut loaded.runtime, loaded.entry.id)
+        {
+            self.talk.remove_npc(npc);
+        }
         let flags = |flag: u16| self.state.flags.contains(&i32::from(flag));
         self.audio.set_map(rom, loaded.entry.id, self.time, &flags);
         self.journal.record(
@@ -676,11 +685,14 @@ impl App {
         }
     }
 
-    /// Task 0x30 of trigger action 0x8d (`ov_017::021c16cc`, run by the task queue
-    /// `ov_017::021a3544`): `ov_017::021a2fa0` tears the cast down (`ov_017::021a316c`) and
-    /// loads it again with `Cast_LoadMap` (`ov_017::021a2c14`) for the current story point,
-    /// on the same map: the hero, the map's placements, doors, collision and triggers stay.
-    /// The fade the task wraps around it (out over 15 frames, back in over 15) is not
+    /// `ov_017::021a2fa0`, the cast rebuild of task 0x30 (trigger action 0x8d,
+    /// `ov_017::021c16cc`, run by the task queue `ov_017::021a3544`) and of the end of an
+    /// event that kept the cast aside (`EventTask_Update`, `ov_017::021bc77c`): the cast is
+    /// torn down (`ov_017::021a316c`) and loaded again with `Cast_LoadMap`
+    /// (`ov_017::021a2c14`) for the current story point, on the same map, then the snapshot
+    /// an event start took on this map gives back its NPCs' poses and removals
+    /// (`0x0203e2d4`). The hero, the map's placements, doors, collision and triggers stay.
+    /// The fade task 0x30 wraps around it (out over 15 frames, back in over 15) is not
     /// modelled: the cast changes at once.
     fn reload_cast(&mut self) {
         let Some((entry, _)) = &self.current else {
@@ -706,10 +718,10 @@ impl App {
             npcs.len()
         ));
         self.talk.reload_npcs(npcs);
-        self.events.cast_rebuilt();
-        if let Some(runtime) = &mut self.runtime
-            && let Err(e) = runtime.face_camera(&self.camera)
-        {
+        for npc in self.events.cast_rebuilt(runtime, entry.id) {
+            self.talk.remove_npc(npc);
+        }
+        if let Err(e) = runtime.face_camera(&self.camera) {
             status(&format!("facing cast: {e}"));
         }
         self.upload();
@@ -923,6 +935,13 @@ impl App {
             }
             self.upload();
         }
+        // `ov_001::02154f24`: an event whose list record has bit 0 or 2 in its flags records
+        // the cast (`0x0203e0b0`) for the end of the event to give it back.
+        if place.is_some_and(|place| place.keeps_cast())
+            && let (Some((entry, _)), Some(scene)) = (&self.current, self.runtime.as_ref())
+        {
+            self.events.keep_cast(scene, entry.id);
+        }
     }
 
     /// One fixed step while an event runs: the player is locked out and the script drives
@@ -958,6 +977,17 @@ impl App {
                 Outcome::Started(id) => self.journal.record(self.tick, Step::EventStarted(id)),
                 Outcome::Ended(id) => {
                     self.journal.record(self.tick, Step::EventEnded(id));
+                    // `EventTask_Update` (`ov_017::021bc77c`) rebuilds the cast an event kept
+                    // aside (`ov_017::021a2fa0`, task `+0x90` or `+0x50 & 4`) before it fires
+                    // trigger event 11.
+                    if self
+                        .rom
+                        .as_deref()
+                        .and_then(|rom| crate::event::place(rom, id))
+                        .is_some_and(|place| place.keeps_cast())
+                    {
+                        self.reload_cast();
+                    }
                     // The game fires trigger event 11 when an event ends (`EventTask_Update`).
                     if let Some(field) = &mut self.field {
                         let events = field.event_ended(id, &mut self.state);
@@ -2922,6 +2952,84 @@ mod tests {
             "talking to Aquila raises game-0 flag 4"
         );
         assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(4104));
+    }
+
+    /// 21595 has flags 0x1 in its list record: its start records the NPC table
+    /// (`ov_001::02154f24` → `0x0203e0b0`) and `EventTask_Update` rebuilds the cast before
+    /// event 11 (`ov_017::021a2fa0` → `Cast_LoadMap` → `0x0203e2d4`). NPC 210, removed by the
+    /// real end of 1390 (action 0x7c) before the scene, stays removed through that rebuild,
+    /// and NPC 7, moved and turned before it, gets that pose back instead of the file's. The
+    /// scene is queued at 1.2.1, outside its 1.3 rules, so that event 11 neither warps nor
+    /// rebuilds again and the rebuild of the end is what the scene shows. A later 0x8d
+    /// rebuild starts from the placement script: the snapshot is consumed. Before the
+    /// snapshot the end of 21595 rebuilt nothing.
+    #[test]
+    fn the_end_of_21595_rebuilds_the_cast_with_the_poses_and_removals_kept_at_its_start() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("1100", (1, 2, 1, true)), Some(rom.to_vec()));
+        assert!(cast_drawn(&app, 95), "the dog stands in the village");
+        let events = app
+            .field
+            .as_mut()
+            .unwrap()
+            .event_ended(1390, &mut app.state);
+        app.apply_events(events);
+        assert!(!cast_drawn(&app, 210), "1390 removes NPC 210");
+        let instance = |app: &App, npc: u16| app.runtime.as_ref().unwrap().npc_instance(npc);
+        let world = |app: &App, npc: u16| {
+            let runtime = app.runtime.as_ref().unwrap();
+            runtime.scene.instances[runtime.npc_instance(npc).unwrap()].world
+        };
+        // NPC 7 (a model) somewhere else than the file puts it, as a walk would leave it.
+        let file = world(&app, 7);
+        let (scale, _, at) = file.to_scale_rotation_translation();
+        let moved = at + Vec3::new(0.5, 0.0, -0.25);
+        {
+            let runtime = app.runtime.as_mut().unwrap();
+            let index = runtime.npc_instance(7).unwrap();
+            runtime.scene.instances[index].world = glam::Mat4::from_scale_rotation_translation(
+                scale,
+                glam::Quat::from_rotation_y(1.0),
+                moved,
+            );
+        }
+        let before = instance(&app, 95);
+
+        app.events.queue(21595);
+        play_pending_event(&mut app, 21595);
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(1100));
+        assert_ne!(
+            instance(&app, 95),
+            before,
+            "the end of 21595 rebuilt the cast"
+        );
+        assert!(cast_drawn(&app, 95), "the dog is back");
+        assert!(
+            !cast_drawn(&app, 210),
+            "the snapshot keeps NPC 210 removed through the rebuild"
+        );
+        assert!(
+            app.talk.partners().iter().all(|p| p.npc != 210),
+            "a kept removal is not talkable either"
+        );
+        let (_, rotation, kept) = world(&app, 7).to_scale_rotation_translation();
+        assert!(
+            kept.distance(moved) < 1.0 / 128.0,
+            "NPC 7 stands where the scene found it: {kept} for {moved}"
+        );
+        let (yaw, _, _) = rotation.to_euler(glam::EulerRot::YXZ);
+        assert!((yaw - 1.0).abs() < 1e-3, "NPC 7 keeps its angle: {yaw}");
+        assert!(!app.cast_reload, "event 11 has no 1.2 rule for 21595");
+
+        // A later rebuild (action 0x8d) finds the snapshot consumed.
+        app.apply_events(vec![Event::Request(Request::ReloadCast)]);
+        app.run_steps(1);
+        assert!(!app.cast_reload);
+        assert!(
+            cast_drawn(&app, 210),
+            "a later rebuild starts from the placement script: NPC 210 stands again"
+        );
+        assert_eq!(world(&app, 7), file, "NPC 7 is back on the file's pose");
     }
 
     #[test]

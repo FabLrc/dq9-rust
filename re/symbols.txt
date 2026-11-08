@@ -191,8 +191,10 @@ ov_017::021a4700 Talk_AngleToTarget # signed fx32 angle between the hero's facin
 0x0206e2ec Quest_Bit3               # nibble bit 3
 0x0206e32c Quest_AllowedForGuest    # not a session guest, or quest > 0xad
 0x0206e434 Party_FlagEquippedItems  # member 0..3: flag 0xc76 + compendium of each equipped item (class < 8), unset ones only
+0x0206ec04 NpcTalkCount_ClearAll    # zeroes both 0x80-byte tables (gameres+0x44c4); Track_Advance on chapter/step change
 0x0206ec2c NpcTalkCount_Get         # nibble per NPC in a 128-byte array
 0x0206ec74 NpcTalkCount_Inc         # saturating at 15
+0x0206ecf8 NpcTalkCount_Clear       # clears one NPC's nibble in one table; Trig_RunAction case 6 (0x6a)
 ov_017::0218d2c4 Scenario_ChapterLetter   # "ABCDEFGHIJSTKLMNOPQ"[chapter-1]
 ov_017::021a476c Talk_FindPartner   # picks the NPC in front of the hero, sets the talk context
 ov_017::021a4cf0 Talk_Start         # fills the talk task: NPC, context (+0x124)
@@ -802,7 +804,8 @@ ov_017::021c16cc CastReloadTask_Update       # fade to black over 15 frames, wai
 0x0203d038 NpcTable_Build                   # one 0x20-byte entry per cast member: sprite / chara_sub model / enemy.gp2 monster
 0x0203de94 NpcTable_DrawEntries             # per NPC: skipped when +0x98 != 0 and no 0x10000 mark; calls 0208f87c [hypothesis: shadows]
 0x0203df88 NpcTable_FindById                # the NPC of member number n among the 32 entries (566 mode 4/5 use it)
-0x0203e2d4 NpcTable_RestorePositions        # positions kept for this map (+0x9e list)
+0x0203e0b0 NpcTable_TakeSnapshot            # event start: position >> 4, angle, member, removed bit 9 per NPC (+0x9e list)
+0x0203e2d4 NpcTable_ApplySnapshot           # Cast_LoadMap: gives a same-map snapshot back, consumes it on any map
 0x0203fcf0 NpcSprite_LoadSheet              # "data/ani/%s" when the name ends in 'r'
 0x020415a8 NpcModel_SetMotionIndex          # +0xc4, Object3D::MaybeSetBCFGAnimation
 0x020415c0 NpcModel_SetMotionName           # +0xcc, Object3D::MaybeSetRegularAnimation

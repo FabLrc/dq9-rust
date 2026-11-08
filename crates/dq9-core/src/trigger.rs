@@ -5,7 +5,7 @@
 //!
 //! port: 0x0205fb04, 0x020644a0, 0x02061c14, 0x02064540, 0x0206446c, 0x020649c0
 //! port: 0x0206f82c, 0x0206475c, 0x02064ba8, 0x020703d8, 0x0206e174, 0x0206e358
-//! port: 0x0206eb74, 0x0206eba8
+//! port: 0x0206eb74, 0x0206eba8, 0x0206ec04, 0x0206ecf8
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -225,6 +225,9 @@ pub struct State {
     pub saved_date: (u32, u32),
     pub raw: BTreeMap<Raw, u32>,
     pub signal: Cell<bool>,
+    /// Per-NPC conversation counters (the two tables at `gameres+0x44c4`): cleared by a new
+    /// chapter or step ([`State::advance`]) and, NPC by NPC, by action 0x6a.
+    pub talk_counts: crate::talk::TalkCounts,
 }
 
 impl World for State {
@@ -762,7 +765,9 @@ impl State {
     }
 
     /// `FUN_020703d8`: move track `track` forward to (chapter, step, substep); never back.
-    /// A new chapter clears both flag sets, a new step of the same chapter set 1.
+    /// A new chapter clears both flag sets, a new step of the same chapter set 1; either
+    /// also clears every conversation counter (`0x0206ec04`, both tables at
+    /// `gameres+0x44c4`). A new substep alone clears nothing.
     fn advance(&mut self, track: usize, chapter: u8, step: u8, substep: u8) {
         let Some(t) = self.tracks.get_mut(track) else {
             return;
@@ -773,8 +778,10 @@ impl State {
         }
         if t.chapter != chapter {
             t.flags = Default::default();
+            self.talk_counts.clear();
         } else if t.step != step {
             t.flags[1].clear();
+            self.talk_counts.clear();
         }
         (t.chapter, t.step, t.substep) = (chapter, step, substep);
     }
@@ -809,8 +816,8 @@ impl State {
 
 /// Runs one action as `Trig_RunAction` (`0x02061c14`, switch on `code - 100`) does on the
 /// modelled state. Effects on what [`State`] does not hold (map objects, NPCs, menus,
-/// sound, wireless synchronisation, talk counters, hit points) are skipped; the returned
-/// flow is the game's.
+/// sound, wireless synchronisation, hit points) are skipped; the returned flow is the
+/// game's.
 pub fn run_action<'a>(op: &Op<'a>, state: &mut State) -> Flow<'a> {
     let arg = i32::from(op.arg);
     let track = state.track;
@@ -830,6 +837,8 @@ pub fn run_action<'a>(op: &Op<'a>, state: &mut State) -> Flow<'a> {
                 .flags
                 .insert(i32::from(crate::state::SESSION_HOST_FLAG));
         }
+        // Case 6: both counters of NPC `arg` cleared (`0x0206ecf8` on each table).
+        0x6a => state.talk_counts.reset(op.arg),
         0x6e => {
             if op.arg < 4 {
                 state.time_of_day = u32::from(op.arg);
@@ -1436,6 +1445,55 @@ mod tests {
         // Other tracks are untouched.
         assert_eq!(s.tracks[0], Track::default());
         assert_eq!(track_of_room(201), 3);
+    }
+
+    /// A new step or chapter clears every conversation counter (`Track_Advance` calls
+    /// `0x0206ec04`); a new substep alone, or a move backwards, leaves them.
+    #[test]
+    fn a_new_step_clears_the_talk_counters() {
+        let mut s = w(0, 3);
+        s.tracks[0] = Track {
+            chapter: 4,
+            step: 2,
+            substep: 0,
+            ..Track::default()
+        };
+        let run = |data: &[u8], s: &mut State| {
+            let triggers = parse(&Table::parse(data).unwrap()).unwrap();
+            let fired = fire(&triggers, 0, s).unwrap().unwrap();
+            run_deferred(&fired.deferred, s)
+        };
+        let advance = |c, st, b| one(&[word(0x84, 0), c, st, b]);
+        s.talk_counts.record(7);
+        s.talk_counts.record(9);
+        // Same step, next substep: kept.
+        run(&advance(4, 2, 1), &mut s);
+        assert_eq!((s.tracks[0].step, s.tracks[0].substep), (2, 1));
+        assert_eq!(s.talk_counts.get(7), [1, 1]);
+        // Backwards: kept.
+        run(&advance(4, 1, 5), &mut s);
+        assert_eq!(s.talk_counts.get(9), [1, 1]);
+        // Next step: cleared.
+        run(&advance(4, 3, 0), &mut s);
+        assert_eq!(s.talk_counts.get(7), [0, 0]);
+        assert_eq!(s.talk_counts.get(9), [0, 0]);
+        // Next chapter: cleared too.
+        s.talk_counts.record(7);
+        run(&advance(5, 1, 0), &mut s);
+        assert_eq!(s.talk_counts.get(7), [0, 0]);
+    }
+
+    /// Action 0x6a clears both counters of one NPC (`Trig_RunAction` case 6).
+    #[test]
+    fn action_0x6a_clears_one_npc_s_talk_counters() {
+        let mut s = w(0, 3);
+        s.talk_counts.record(7);
+        s.talk_counts.record(9);
+        let data = one(&[word(0x6a, 7)]);
+        let triggers = parse(&Table::parse(&data).unwrap()).unwrap();
+        fire(&triggers, 0, &mut s).unwrap().unwrap();
+        assert_eq!(s.talk_counts.get(7), [0, 0]);
+        assert_eq!(s.talk_counts.get(9), [1, 1]);
     }
 
     /// Action 0x8d queues the cast rebuild when its argument is not 0 (`Trig_RunDeferred`,

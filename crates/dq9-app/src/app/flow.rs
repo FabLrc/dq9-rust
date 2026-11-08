@@ -23,7 +23,10 @@ impl App {
         let (Some(rom), Some((entry, _))) = (&self.rom, &self.current) else {
             return;
         };
-        if let Err(e) = self.talk.start(rom, &entry.code, &self.state, npc, context) {
+        if let Err(e) = self
+            .talk
+            .start(rom, &entry.code, &mut self.state, npc, context)
+        {
             status(&format!("talk: {e:#}"));
         }
     }

@@ -240,6 +240,21 @@ pub struct EventPlace {
     /// Position and angle of the record (values 12 to 15; all zero when the event has none,
     /// the script then places everyone itself) **[hypothèse]**: the hero's start.
     pub position: Option<([f32; 3], f32)>,
+    /// Record value 21 (0 when the record is shorter), which `EventRecord_Build`
+    /// (`0x02071218`) copies to the event task's `+0x50`.
+    pub flags: u16,
+}
+
+impl EventPlace {
+    /// The event takes the map's cast away while it plays and gives it back at its end: the
+    /// event start (`ov_001::02154f24`) records the NPCs (`0x0203e0b0`) and tears the cast
+    /// down (`ov_017::021a316c`) when `+0x50` has bit 0 or bit 2, and `EventTask_Update`
+    /// (`ov_017::021bc77c`) rebuilds it (`ov_017::021a2fa0`) before trigger event 11. Both
+    /// skip bit 0 while `TestFlags00(0x1000)` is set, a flag not modelled (taken as clear,
+    /// **[hypothèse]**).
+    pub fn keeps_cast(&self) -> bool {
+        self.flags & 0b101 != 0
+    }
 }
 
 /// The map and start of `event`, from the event lists.
@@ -265,9 +280,15 @@ pub fn place(files: &dyn Files, event: u16) -> Option<EventPlace> {
                 let at = [number(12), number(13), number(14)];
                 let angle = number(15);
                 let position = (at != [0.0; 3] || angle != 0.0).then_some((at, angle));
+                // A 16-bit field of the task: the game keeps the low half.
+                let flags = match r.values.get(21) {
+                    Some(&Value::Int(flags)) => flags as u16,
+                    _ => 0,
+                };
                 Some(EventPlace {
                     map: u16::try_from(map).ok()?,
                     position,
+                    flags,
                 })
             })
     })

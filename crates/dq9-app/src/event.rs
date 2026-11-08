@@ -26,7 +26,7 @@ use dq9_core::{CollisionWorld, Hero};
 use dq9_formats::lighting::LightingInfo;
 use dq9_render::camera::DS_ASPECT;
 use dq9_render::{AnimatedScene, Camera, Environment, TexelTint};
-use glam::{EulerRot, Mat4, Vec3};
+use glam::{EulerRot, Mat4, Quat, Vec3};
 use nds_rom::Rom;
 
 use crate::app::status;
@@ -294,6 +294,37 @@ struct ThreeBoneDrag {
     updates: u32,
 }
 
+/// One map NPC as the cast snapshot keeps it (`0x0203e0b0`: ten bytes per NPC table entry
+/// from `+0x9e`): position in 1/256 units (`fx >> 4`), 16-bit angle, member number and
+/// whether action 0x7c had removed it (bit 9, from the object's flag `0x8000`). The entry's
+/// motion count (bits 10–14), bit 15 and the table's `+0x1e4` mask (object flag `0x40000`)
+/// are not modelled.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct KeptNpc {
+    id: u16,
+    position: Vec3,
+    angle: f32,
+    removed: bool,
+}
+
+/// The NPC table's snapshot: the map it was taken on (`+0x1de`) and its entries (`+0x1e0`).
+#[derive(Debug, Clone, PartialEq)]
+struct KeptCast {
+    map: u16,
+    npcs: Vec<KeptNpc>,
+}
+
+/// A world coordinate as the snapshot keeps it: the fx32 value shifted right by 4 into 16
+/// bits (`0x0203e0b0`), read back shifted left by 4 (`0x0203e2d4`).
+fn kept_coordinate(v: f32) -> f32 {
+    f32::from(((v * 4096.0).round() as i32 >> 4) as i16) / 256.0
+}
+
+/// An angle in radians as the snapshot keeps it: 4096 units per radian in 16 bits.
+fn kept_angle(angle: f32) -> f32 {
+    f32::from((angle * 4096.0).round() as i32 as i16) / 4096.0
+}
+
 /// The event task and what it did to the scene.
 #[derive(Debug)]
 pub struct EventPlayer {
@@ -322,9 +353,12 @@ pub struct EventPlayer {
     /// The scene lighting the renderer's environment was last built from.
     applied_light: SceneLight,
     /// Map NPCs native 0x7c removed: their cast instance stays hidden through the following
-    /// script updates (a scene seeds every NPC of the cast). A map change forgets them with
-    /// the map.
+    /// script updates (a scene seeds every NPC of the cast). A map change or a cast rebuild
+    /// forgets them, except those the cast snapshot (`kept_cast`) gives back.
     removed_npcs: BTreeSet<u16>,
+    /// The cast snapshot an event start took (`0x0203e0b0`), restored by the next cast load
+    /// of the same map and consumed by any (`0x0203e2d4`).
+    kept_cast: Option<KeptCast>,
 }
 
 impl Default for EventPlayer {
@@ -375,6 +409,7 @@ impl EventPlayer {
             three_bone: None,
             applied_light: SceneLight::default(),
             removed_npcs: BTreeSet::new(),
+            kept_cast: None,
         }
     }
 
@@ -487,7 +522,8 @@ impl EventPlayer {
 
     /// Action 0x7c: NPC `npc` leaves the map (the object's flag `0x8000`). Its cast instance is
     /// hidden now and is not seeded or placed by the next scripts (`seed`, `present`,
-    /// `restore_npcs` skip it) until the map changes.
+    /// `restore_npcs` skip it) until the cast is built again without a snapshot that keeps
+    /// the removal ([`EventPlayer::cast_loaded`]).
     pub fn remove_npc(&mut self, scene: &mut AnimatedScene, npc: u16) {
         self.removed_npcs.insert(npc);
         match scene.npc_instance(npc) {
@@ -498,12 +534,98 @@ impl EventPlayer {
         }
     }
 
-    /// Trigger action 0x8d rebuilt the map's cast (`ov_017::021a316c` empties the 32 entries
-    /// of the NPC table, `0x0203cfc4`, before `Cast_LoadMap`): the flag `0x8000` action 0x7c
-    /// set lives in the old table, so the removals are forgotten; an NPC the placement
-    /// script still places stands again.
-    pub fn cast_rebuilt(&mut self) {
+    /// An event that keeps the cast aside starts (`ov_001::02154f24`, event-list flags bit 0
+    /// or bit 2): `0x0203e0b0` records every NPC of the table for the map `map` before
+    /// `ov_017::021a316c` tears the cast down. The teardown itself is not modelled: the map's
+    /// NPCs stay drawn while the event plays.
+    pub fn keep_cast(&mut self, scene: &AnimatedScene, map: u16) {
+        let ids: BTreeSet<u16> = scene
+            .scene
+            .instances
+            .iter()
+            .filter(|i| i.block == usize::MAX)
+            .filter_map(|i| u16::try_from(i.instance).ok())
+            .collect();
+        let mut npcs = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(instance) = scene.npc_instance(id) else {
+                continue;
+            };
+            let removed = self.removed_npcs.contains(&id);
+            let world = scene.scene.instances[instance].world;
+            let (position, angle) = if removed {
+                // A removed NPC's pose is not drawn again: the restore hides it.
+                (Vec3::ZERO, 0.0)
+            } else if !scene.scene.instances[instance].drawn() {
+                // Hidden otherwise, its pose cannot be read: the rebuild keeps the file's.
+                continue;
+            } else {
+                let (_, rotation, position) = world.to_scale_rotation_translation();
+                let angle = scene
+                    .npc_sprite_angle(id)
+                    .unwrap_or_else(|| rotation.to_euler(EulerRot::YXZ).0);
+                (position.map(kept_coordinate), kept_angle(angle))
+            };
+            npcs.push(KeptNpc {
+                id,
+                position,
+                angle,
+                removed,
+            });
+        }
+        self.kept_cast = Some(KeptCast { map, npcs });
+    }
+
+    /// The map's cast was torn down and built again on map `map` (`ov_017::021a2fa0`: trigger
+    /// action 0x8d or the end of an event that kept the cast aside). `ov_017::021a316c` empties
+    /// the 32 entries of the NPC table (`0x0203cfc4`) before `Cast_LoadMap`: the flag `0x8000`
+    /// action 0x7c set lives in the old table, so the removals are forgotten, then
+    /// [`EventPlayer::cast_loaded`] applies the snapshot. Returns the NPCs it removes again.
+    pub fn cast_rebuilt(&mut self, scene: &mut AnimatedScene, map: u16) -> Vec<u16> {
         self.removed_npcs.clear();
+        // The homes of a running event name the old cast's instances, now hidden.
+        self.bindings.homes.clear();
+        self.cast_loaded(scene, map)
+    }
+
+    /// `Cast_LoadMap` (`ov_017::021a2c14`) built the cast of map `map` from its placement
+    /// script; `0x0203e2d4` then applies the snapshot when it was taken on that map: each NPC
+    /// of the new cast with a kept member number goes back to its kept position and angle,
+    /// and a kept removal hides it again (flag `0x8000`). An NPC the new cast lacks is
+    /// skipped, one the snapshot lacks keeps the file's pose. The snapshot is consumed
+    /// whatever the map (`+0x1de = 0`). Returns the NPCs removed again.
+    pub fn cast_loaded(&mut self, scene: &mut AnimatedScene, map: u16) -> Vec<u16> {
+        let Some(kept) = self.kept_cast.take().filter(|kept| kept.map == map) else {
+            return Vec::new();
+        };
+        let mut removed = Vec::new();
+        for npc in kept.npcs {
+            let Some(instance) = scene.npc_instance(npc.id) else {
+                continue;
+            };
+            if npc.removed {
+                self.removed_npcs.insert(npc.id);
+                self.set_world(scene, instance, Mat4::from_scale(Vec3::ZERO));
+                removed.push(npc.id);
+                continue;
+            }
+            let world = if scene.npc_sprite_angle(npc.id).is_some() {
+                // Sprites are billboards: the angle picks the side they show.
+                scene.set_npc_angle(npc.id, npc.angle);
+                Mat4::from_translation(npc.position)
+            } else {
+                let (scale, _, _) = scene.scene.instances[instance]
+                    .world
+                    .to_scale_rotation_translation();
+                Mat4::from_scale_rotation_translation(
+                    scale,
+                    Quat::from_rotation_y(npc.angle),
+                    npc.position,
+                )
+            };
+            self.set_world(scene, instance, world);
+        }
+        removed
     }
 
     /// The event running now (`None` between scenes), for the checkpoints.

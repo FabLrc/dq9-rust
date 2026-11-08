@@ -87,3 +87,26 @@ fn prologue_events_know_their_map_and_the_stage_its_opening() {
     assert!((angle - 4.71).abs() < 1e-3);
     assert_eq!(load::place(&rom, 3), None);
 }
+
+/// Record value 21 is the event task's `+0x50` (`EventRecord_Build`, `0x02071218`): bit 2 on
+/// the opening scenes, bit 0 on 21510 and the 1.3 gift scene 21595, neither on the
+/// prologue's own scenes (0x40 or 0x140), so only the first ones keep the cast aside.
+#[test]
+fn event_records_say_which_scenes_keep_the_cast_aside() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    for (event, flags, keeps) in [
+        (21500, 0x4, true),
+        (21507, 0x4, true),
+        (21510, 0x1, true),
+        (21595, 0x1, true),
+        (21592, 0x0, false),
+        (1130, 0x40, false),
+        (1390, 0x40, false),
+        (1140, 0x140, false),
+    ] {
+        let place = load::place(&rom, event).unwrap();
+        assert_eq!(place.flags, flags, "record value 21 of event {event}");
+        assert_eq!(place.keeps_cast(), keeps, "event {event}");
+    }
+}

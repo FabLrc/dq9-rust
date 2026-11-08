@@ -32,14 +32,74 @@ Après l'assemblage de la carte (`map-archive.md`), `ov_017::021a2c14` (`Cast_Lo
 3. exécute chaque membre `npc.bin` avec `Cast_RunNpcBin` (`0x02064e3c`) ; sur les cartes dont
    le nom contient `R0` sauf `R05`, `0x02064e98` ajoute des visiteurs tirés du bloc de zone
    de la sauvegarde (**non modélisé**) ;
-4. construit la table des PNJ (`NpcTable_Build`, `0x0203d038`), puis restaure les positions
-   gardées pour cette carte (`0x0203e2d4`, liste `+0x9e` de la table, **non modélisé**) ;
+4. construit la table des PNJ (`NpcTable_Build`, `0x0203d038`), puis applique l'instantané
+   gardé pour cette carte (`0x0203e2d4`, § « L'instantané des PNJ ») ;
 5. pose sur le sol chaque PNJ sans drapeau `0x800` ni `0x1000` : `Zone3D_GroundHeight`
    (`0x02018fcc`) lance un rayon de `y + 1` à `y − 10` dans un carré de ±0,5 et rend la hauteur
    touchée + 0,1 (`0x199`). Sans collision de carte ici, `cast` rend la hauteur du fichier.
 
 La table des PNJ (`g_NpcTable`, `0x021075f4`, rendue par `0x0203cf5c`) : `+0xc` 32 pointeurs
 d'entrées, `+0x8c` nombre, `+0x90` liste de distribution, `+0x94` liste des placements.
+
+## L'instantané des PNJ (`0x0203e0b0`, `0x0203e2d4`)
+
+**Trouvé** en décompilant (Ghidra, adresses EU) l'appel de `Cast_LoadMap` à `0x0203e2d4`
+(`ov_017::021a2c14+672`, argument : le numéro de la carte courante) et son écrivain
+`0x0203e0b0`, appelé par `ov_001::02154f24` (`+184`, `+276`), `ov_017::021a1284`,
+`ov_017::021c0850`, `ov_017::021b1564` et `ov_011::02184cc0` (`xrefs`).
+
+Champs de la table des PNJ : `+0x1de` carte de l'instantané (0 : aucun), `+0x1e0` nombre
+d'entrées, `+0x1e4` masque par rang d'entrée, `+0x9e` entrées de 10 octets (5 `s16`) :
+
+| Mot | Écrit par `0x0203e0b0` | Relu par `0x0203e2d4` |
+|---|---|---|
+| 0–2 | position `fx32 >> 4` (sprite `+4`, sinon objet `+0x44`) | `<< 4`, recopiée au même endroit |
+| 3 | angle (`0x0203cdd0` du sprite, sinon objet `+0x54`) | `0x02040b2c`, `0x02040af0`, et `0x02033874` pour un objet de `+0x1c` |
+| 4, bits 0–8 | numéro de membre (`0x02040528`) | clé : l'entrée s'applique au PNJ de la nouvelle distribution qui a ce numéro |
+| 4, bit 9 | drapeau `0x8000` de l'objet (retiré par l'action 0x7c) | levé : remet `0x8000` |
+| 4, bits 10–14 | nombre `n` de nœuds non terminés (`+0xc == 0`) en tête de la file de mouvement (`0x02040538`, `+0x34`) | les `n` premiers nœuds redeviennent non terminés, les suivants terminés |
+| 4, bit 15 | état `(+10 & 0x3f) >> 3 == 3` du mouvement | remet cet état |
+
+Le bit `n` de `+0x1e4` reprend le drapeau `0x40000` de l'entrée de rang `n` ; la relecture
+le pose sur l'entrée de **même rang** de la nouvelle table. Quand `+0x1de` diffère de la carte,
+rien n'est restauré. Dans les deux cas `0x0203e2d4` finit par `+0x1de = 0`, `+0x1e4 = 0` :
+**tout chargement de distribution consomme l'instantané**, puis, si `GameState +0x7e7e` ≠ −1,
+il déplace l'objet de `0x0203df78` en `+0x7e78..+0x7e7c` et remet `+0x7e7e` à −1. Les
+positions restaurées repassent ensuite par la pose au sol (étape 5).
+
+**Début d'un événement** (`ov_001::02154f24`). Champ `+0x50` de la tâche d'événement : valeur
+21 de l'enregistrement de type 102 de la liste d'événements (`EventRecord_Build`,
+`0x02071218`, 16 bits ; bit 3 effacé quand `0x0202c540` rend non nul). Si `+0x50 & 1` et
+`TestFlags00(0x1000)` nul : instantané (`0x0203e0b0`), démontage de la distribution
+(`ov_017::021a316c`) et `+0x90` = taille de sa mémoire, rendue à l'événement. Sinon, si
+`+0x50 & 4` : instantané et démontage seuls. **Fin** (`EventTask_Update`,
+`ov_017::021bc77c`) : si `TestFlags00(0x1000)` est nul ou qu'aucun événement n'est enchaîné
+(`+0x11a`), `+0x90 ≠ 0` (mémoire recréée, puis `+0x90 = 0`) ou `+0x50 & 4` reconstruit la
+distribution (`ov_017::021a2fa0`) **avant** `Trig_Fire(0xb)`. Conséquence : la distribution
+revient comme l'événement l'a trouvée (positions, angles, retraits 0x7c conservés), au
+point d'histoire de la fin de l'événement ; une reconstruction ultérieure (action 0x8d, tâche
+0x30) trouve l'instantané consommé et repart de `place.bin`.
+
+Contrôle sur la ROM (`event_records_say_which_scenes_keep_the_cast_aside`) : la valeur 21
+vaut 0x4 pour 21500, 21507, 21520–21522, 0x1 pour 21510, 21593, 21595, 0x40 ou 0x140 pour les
+scènes 1130–1620 du prologue ; 29 enregistrements de `eventlist6.bin`, 1 de `evl_quest.bin`
+et 118 de `eventlist_lv5.bin` ont le bit 0 ou 2.
+
+**Modélisé** (`EventPlayer::keep_cast`, `cast_rebuilt`, `cast_loaded`, `App::reload_cast`) :
+l'instantané pris au début d'un événement dont le bit 0 ou 2 est levé (après le chargement de
+sa carte), la reconstruction en fin d'événement avant l'événement 11, la restauration des
+positions (au 1/256), des angles (au 1/4096) et des retraits sur la même carte, sa
+consommation par tout chargement de distribution (fin d'événement, 0x8d, chargement de
+carte). Test : `the_end_of_21595_rebuilds_the_cast_with_the_poses_and_removals_kept_at_its_start`.
+
+**Non modélisé** : le démontage du début (les PNJ de la carte restent dessinés pendant la
+scène) ; les bits 10–15 du mot 4 et le masque `0x40000` ; le saut `+0x7e7e` ; les autres
+écrivains (`ov_017::021a1284`, `ov_017::021c0850`, `ov_017::021b1564`,
+`ov_011::02184cc0`, rôle **[inconnu]**). **[hypothèse]** `TestFlags00(0x1000)` est nul : ce
+drapeau n'est pas modélisé, si bien que le bit 0 suffit toujours et que la reconstruction a
+lieu même avant un événement enchaîné (native 538). **[hypothèse]** un événement enchaîné
+relit son propre enregistrement (`+0x50`) : l'application décide de la reconstruction d'après
+l'événement qui finit.
 
 ## `<zone>npc.bin` : la distribution
 
@@ -380,5 +440,6 @@ le héros de l'emplacement courant (premier personnage du groupe).
   4096) et des modes 7–10 (déplacements : `ov_017`, non lu).
 - Le comportement des PNJ après le chargement (errance, chemins, regard vers le héros) et ce
   qui change ensuite leur mouvement (`stand`/`walk`).
-- Les visiteurs des cartes `R0*` (`0x02064e98`) et les positions restaurées (`0x0203e2d4`).
+- Les visiteurs des cartes `R0*` (`0x02064e98`) ; dans l'instantané des PNJ, les bits de
+  mouvement, le masque `0x40000`, le saut `+0x7e7e` et les écrivains hors événement.
 - Le format `.spr` (wiki Sprites) et l'angle de caméra que soustrait `0x0203cbe8`.

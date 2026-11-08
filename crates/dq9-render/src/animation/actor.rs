@@ -302,6 +302,15 @@ impl AnimatedScene {
         }
     }
 
+    /// The game's object angle (radians) a sprite NPC faces, as
+    /// [`set_npc_angle`](Self::set_npc_angle) sets it. `None` for a model NPC, whose instance
+    /// matrix carries the angle, or an unknown id.
+    pub fn npc_sprite_angle(&self, id: u16) -> Option<f32> {
+        let model = self.scene.instances.get(self.npc_instance(id)?)?.model;
+        let sprite = self.sprites.iter().find(|s| s.model == model)?;
+        Some(sprite.angle as f32 / 4096.0)
+    }
+
     fn set_model_tint(&mut self, model: usize, tint: Option<TexelTint>) {
         for material in &mut self.scene.models[model].materials {
             material.light.texel_tint = tint;

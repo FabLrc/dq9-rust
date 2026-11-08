@@ -177,13 +177,13 @@ pub struct Ended {
     pub answer: Option<u8>,
 }
 
-/// Conversations of the application: the NPCs of the map, the counters, the open dialogue.
+/// Conversations of the application: the NPCs of the map, the open dialogue. The counters
+/// live in the trigger state ([`State::talk_counts`]).
 #[derive(Debug, Default)]
 pub struct Talk {
     assets: Option<Assets>,
     gpu: Option<(wgpu::TextureFormat, Ui)>,
     npcs: Vec<Talkable>,
-    counts: TalkCounts,
     names: Names,
     /// The saved protagonist, once known; `None` keeps the documented default identity.
     identity: Option<HeroIdentity>,
@@ -264,9 +264,9 @@ impl Talk {
     }
 
     /// A map is loaded: its NPCs, and the map counters cleared.
-    pub fn enter_map(&mut self, npcs: Vec<Talkable>) {
+    pub fn enter_map(&mut self, npcs: Vec<Talkable>, counts: &mut TalkCounts) {
         self.npcs = npcs;
-        self.counts.enter_map();
+        counts.enter_map();
         self.active = None;
     }
 
@@ -489,7 +489,7 @@ impl Talk {
         &mut self,
         rom: &[u8],
         map_code: &str,
-        state: &State,
+        state: &mut State,
         npc: u16,
         context: u16,
     ) -> Result<()> {
@@ -513,7 +513,7 @@ impl Talk {
             step: i32::from(track.step),
             substep: i32::from(track.substep),
             context: i32::from(context),
-            talk_count: self.counts.get(npc),
+            talk_count: state.talk_counts.get(npc),
             daytime: state.time_of_day != 0,
             session: Session {
                 hero_alive: true,
@@ -532,7 +532,7 @@ impl Talk {
         status(&format!(
             "talk: {archive}/{member} record {line}, context {context}"
         ));
-        self.counts.record(npc);
+        state.talk_counts.record(npc);
         self.conversation = Some((npc, context));
         self.active = Some(Dialogue::new(script));
         self.caption_alpha = None;
@@ -828,7 +828,7 @@ mod script {
         talk: &mut Talk,
     ) -> Result<()> {
         let _ = loaded.field.enter(state, false);
-        talk.enter_map(loaded.npcs.clone());
+        talk.enter_map(loaded.npcs.clone(), &mut state.talk_counts);
         let mut run = |loaded: &mut LoadedMap, direction: Vec3, talk: &mut Talk| -> Result<()> {
             let talking = talk.is_active();
             if !talking && talk.confirm_pending() {
