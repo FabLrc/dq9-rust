@@ -1,7 +1,9 @@
 # Modèle de lot
 
 Copier ce fichier dans `build/lots/<lot>.md` (local, ignoré par git) et remplir chaque champ.
-La spec est la seule entrée du worker avec `docs/orchestration/regles-worker.md`. Le bloc
+La spec vit dans le checkout principal, pas dans le worktree du worker : celui-ci la lit en
+lecture seule par chemin absolu (`C:\Users\hiroc\Documents\ProjetsDev\dq9-online\build\lots\<lot>.md`,
+voir `prompt-dispatch.md`). La spec est la seule entrée du worker avec `docs/orchestration/regles-worker.md`. Le bloc
 ```owns est lu par `scripts/integrate.ps1` : tout fichier modifié hors de ces globs bloque
 l'intégration.
 

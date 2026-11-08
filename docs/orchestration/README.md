@@ -1,8 +1,8 @@
 # Orchestration — workflow du coordinateur
 
 Documents : ce fichier (coordinateur), `regles-worker.md` (règles communes des workers),
-`modele-lot.md` (spec d'un lot, copiée dans `build/lots/<lot>.md`). État courant :
-`docs/status.md` uniquement.
+`modele-lot.md` (spec d'un lot, copiée dans `build/lots/<lot>.md`), `prompt-dispatch.md`
+(prompt de lancement d'un worker). État courant : `docs/status.md` uniquement.
 
 ## Harness et modèles
 
@@ -17,6 +17,9 @@ d'OMP. Le modèle est choisi au lancement du worker et noté dans la spec du lot
 
 Escalade : Flash échoue deux fois ou dépasse son plafond → Sonnet ; Sonnet échoue → Opus,
 seulement avec justification. Aucun autre modèle.
+
+Agents OMP : `scout` n'a ni shell ni git (lecture de fichiers seulement) ; toute comparaison
+de branches, `git cherry`/`range-diff` ou commande de build va à un agent `task`.
 
 ## Rôles
 
@@ -44,7 +47,9 @@ RE → implémentation → contradicteur → intégration → lot final « cohé
 ## Cycle d'un lot
 
 1. Écrire `build/lots/<lot>.md` depuis `modele-lot.md` (modèle, SHA de base, ```owns, plafond).
-2. Dispatch Orca (worker OMP, modèle de la spec, branche `FabLrc/<jalon>-<lot>`).
+2. Dispatch Orca (worker OMP, modèle de la spec, branche `FabLrc/<jalon>-<lot>`) : prompt de
+   `prompt-dispatch.md` rempli, lancé par la commande `orca orchestration worker-start` donnée
+   dans ce fichier.
 3. Attendre `worker_done` ; lire rapport et preuves.
 4. Contrôles puis intégration depuis le checkout principal sur `main`, arbre propre :
 
@@ -61,6 +66,11 @@ RE → implémentation → contradicteur → intégration → lot final « cohé
    propre, `verify.ps1 -RequireRom` vert et worktree encore propre après. `-Apply` fait un
    `git merge --squash` + un commit `domaine: résumé`, sans push. `-Cleanup` retire les
    jonctions sans suivre leur cible, puis le worktree et la branche.
+
+   Ne jamais lancer `orca worktree rm` sur un worktree qui a encore des jonctions `rom`/`tools`
+   (elles mènent à la seule copie de la ROM) : d'abord `integrate.ps1 -Cleanup`, qui retire les
+   jonctions sans suivre leur cible. Un worktree sans jonction ni commit propre peut être retiré
+   par `orca worktree rm --worktree path:<chemin> --delete-branch`.
 5. Réécrire `docs/status.md` (< 60 lignes, réécrit, pas complété), commit, push.
 
 ## Scripts (interfaces du contrat)
