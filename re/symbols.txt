@@ -190,6 +190,7 @@ ov_017::021a4700 Talk_AngleToTarget # signed fx32 angle between the hero's facin
 0x0206e270 Quest_Bit2               # nibble bit 2
 0x0206e2ec Quest_Bit3               # nibble bit 3
 0x0206e32c Quest_AllowedForGuest    # not a session guest, or quest > 0xad
+0x0206e434 Party_FlagEquippedItems  # member 0..3: flag 0xc76 + compendium of each equipped item (class < 8), unset ones only
 0x0206ec2c NpcTalkCount_Get         # nibble per NPC in a 128-byte array
 0x0206ec74 NpcTalkCount_Inc         # saturating at 15
 ov_017::0218d2c4 Scenario_ChapterLetter   # "ABCDEFGHIJSTKLMNOPQ"[chapter-1]

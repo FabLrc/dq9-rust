@@ -433,6 +433,12 @@ Détail du format et table des objets : [`item.md`](item.md).
   585 → **3775**), les bas célestes (16215 → 765 → **3955**) et les souliers célestes (17120 →
   856 → **4046**). L'épée vient de la table de création `ov_009` `0x0218636c` ; les trois
   pièces de tenue, de `HeroLook::new_game`.
+  L'écrivain réel est `Party_FlagEquippedItems` (`func_0206e424`, EU `0x0206e434`,
+  trace `lr = 0x0206e524`) : il parcourt l'équipement d'un membre 0..3 (emplacements
+  `0x0206e564`) et pose `0xc76 + compendium` pour chaque objet de classe < 8 au compendium
+  non nul, pas `Item_FlagObtained` ; appelants `ov_017::0218b688` et `ov_017::021b688c`.
+  `State::obtain` ne couvre pas ce chemin (équipement d'un compagnon recruté) ; détail dans
+  `item.md`, § « Première acquisition à l'ouverture ».
 - **Butin d'événement** : le trigger `triggerX01.bin`, room 4105, événement 11 de `21596`
   (`0x68(set_track_flag) 0x64(set_flag 337) 0x72(give_item 22159) 0x6b(0)`) donne la
   benevolessence (22159 → 1093 → **4283**), observée à l'image 21142 ; le même trigger pose

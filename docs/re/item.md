@@ -72,6 +72,24 @@ L'épée vient de la table de création `ov_009` `0x0218636c` (fichier `0x20cc` 
 17120). Les trois pièces de tenue sont déjà dans `HeroLook::new_game`. L'auréole (12805,
 compendium 398 → 3588) n'est pas dans les drapeaux de `pro1` : ce n'est pas un objet obtenu.
 
+L'écrivain réel de ces quatre drapeaux n'est pas `Item_FlagObtained` mais
+`Party_FlagEquippedItems` (`func_0206e424`, EU `0x0206e434`) : une trace RAM (crochet sur
+`Flags_Set` écrivant `{lr, indice, valeur}` en `0x020e7300`, relu par `Save_BackupRead`) les
+attribue à `lr = 0x0206e524`. Décompilation (Ghidra) : pour un membre 0..3
+(`GetPartyMemberByIndex`), la fonction copie la liste d'emplacements d'équipement de
+`0x0206e564` (9 octets, terminée par une valeur négative) ; pour chaque emplacement
+(`membre + 0x194 + slot * 0x20`) dont la classe (`+8 & 0xf`) est < 8 et le compendium
+(`(+0xc & 0x7fffff) >> 12`) non nul, si `Flags_Test(+0x8c, 0xc76 + compendium)` est faux, elle
+fait `Flags_Set(+0x8c, 0xc76 + compendium, 1)` et compte ; le compte part ensuite à
+`func_020a04c8` [hypothèse : statistique/succès]. Même formule, chemin distinct, sans
+`Items_Give`. Appelants (xrefs) : `ov_017::0218b688` (appel `(x, 0)` selon la branche
+d'analyse) et `ov_017::021b688c` [hypothèse : boucle sur la liste du groupe
+`+0xf78`/`+0xf7c`]. `dq9-core` ne modélise pas ce chemin : `State::obtain`
+(`crates/dq9-core/src/trigger.rs`) ne couvre que les objets donnés ; le départ est rendu par
+`start_new_game` via la même règle, mais l'équipement d'un compagnon recruté ne posera pas
+ses drapeaux [hypothèse sur le moment exact où l'original appelle la fonction au
+recrutement].
+
 L'événement de fin de `21596` (`triggerX01.bin`, room 4105, événement 11) donne l'objet
 **22159** (benevolessence) par `0x72` : son compendium est 1093, d'où le drapeau **4283**, posé
 à l'image 21142 de la course originale.
