@@ -3,7 +3,7 @@
 Réécrit par le coordinateur à chaque intégration ; ne pas y ajouter de journal.
 Plan et jalons : [`roadmap.md`](roadmap.md) ; règles de travail : [`../AGENTS.md`](../AGENTS.md).
 
-## État au 8 novembre 2026 (`main` = `5b32cf1`)
+## État au 8 novembre 2026 (`main` après la reconstruction du cast 0x8d)
 
 - **v0.1 fonctionnelle en natif** : `cargo run -p dq9-app --release -- --new-game` joue
   l'ouverture, le prologue de l'Observatoire, le retour physique à Angel Falls (1100) et les
@@ -11,6 +11,10 @@ Plan et jalons : [`roadmap.md`](roadmap.md) ; règles de travail : [`../AGENTS.m
   1.4.1 couverts par des tests réels (`keepsake_ring_task_…`, `widow_task_…`,
   `stable_pickups_…`, `house_exit_requires_both_task_flags_…`,
   `village_area_12_plays_1410_…`). Combats substitués (« gagné »).
+- **Progression sur place** : les actions différées rechargent les triggers (événement 20) et
+  0x8d reconstruit le cast de la carte sans la recharger (`re/trigger.md`, § Rechargements) ;
+  le pilote ne recharge plus la carte, et son rejeu redonne ses 615 points de contrôle octet
+  pour octet jusqu'à `M01M08`.
 - **Cadence** : boucle fixe à 60 Hz ; héros, `Field::step` et pose du modèle à 30 Hz
   (images impaires, `Hero::step(ticks = 2)`, `7db7f41`, test
   `field_cadence_holds_the_pose_and_matches_the_original_every_vblank`).
@@ -22,12 +26,8 @@ Plan et jalons : [`roadmap.md`](roadmap.md) ; règles de travail : [`../AGENTS.m
 
 ## Lots actifs
 
-Aucun. Les branches `FabLrc/v01-*7` sont intégrées (`git cherry main <branche>`). Deux
-gardent des commits non équivalents par patch : `v01-return7` (versions antérieures de
-`re/movement.md`, remplacées dans `main`) et `v01-web7` (`d13c8fb`, durée de franchissement
-de porte, reportée dans `app.md`). `v01-init-flags` et `v01-height` sont historiques :
-conclusions reprises dans `main`, ne pas réintégrer. Ces branches uniques restent jusqu'à
-décision de l'utilisateur (`scripts/prune-branches.ps1` ne les supprime jamais).
+Aucun. Seule `main` reste, en local comme sur `origin` : les branches intégrées ont été
+supprimées, `v01-init-flags` après report de `Party_FlagEquippedItems` (`re/item.md`).
 
 ## Blocages et prochaines étapes
 
@@ -43,6 +43,9 @@ décision de l'utilisateur (`scripts/prune-branches.ps1` ne les supprime jamais)
 4. **Certification navigateur de bout en bout** : session continue sur Pages jusqu'à
    Angel Falls et les tâches du village, à la main (le pilote n'est pas un critère produit).
 5. **J4, combat** : le butin du combat 26 doit sortir de sa propre règle pour lever `4135`.
+6. **Reconstruction du cast** : le fondu de la tâche 0x30 (~30 images) n'est pas modélisé ;
+   ce que `021a2fa0` reconstruit en plus du cast (monstres, objets) est **[inconnu]** ; aucun
+   état original à 4104 en 1.2 ne confirme encore le PNJ 99 sans changement de carte.
 
 ## Preuves
 
