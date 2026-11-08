@@ -377,11 +377,13 @@ fn loaded_characters_have_the_size_of_the_map_and_clones_share_the_packages() {
             selector,
         });
     }
-    assert_eq!(
-        c.node(Target::Model(-1)).unwrap().pose.scale,
-        Vec3::splat(CHARACTER_SCALE)
-    );
-    assert_eq!(c.node(Target::Model(-2)).unwrap().pose.scale, Vec3::ONE);
+    // The selector only picks the allocator: every loaded model gets 0x10a.
+    for character in [-1, -2] {
+        assert_eq!(
+            c.node(Target::Model(character)).unwrap().pose.scale,
+            Vec3::splat(CHARACTER_SCALE)
+        );
+    }
     c.apply(&Event::CloneModel {
         source: -2,
         destination: -3,
@@ -490,6 +492,27 @@ fn a_character_id_loaded_again_is_a_new_object() {
     assert_eq!(node.pose.position, Vec3::ZERO);
     assert!(node.visible);
     assert_eq!(node.model.as_deref(), Some("chara_sub/s019f07.chr"));
+    // A monster (233) is a new object too, at the character size whatever the script set.
+    c.apply(&actor(4, A::Bind { slot: 4 }));
+    c.apply(&actor(
+        4,
+        A::SetScale {
+            scale: [1.5; 3],
+            duration: 0,
+        },
+    ));
+    run(&mut c, 1);
+    assert_eq!(
+        c.node(Target::Model(-4)).unwrap().pose.scale,
+        Vec3::splat(1.5)
+    );
+    c.apply(&Event::LoadMonster {
+        path: "enemy/z063a.mon".into(),
+        character: -4,
+    });
+    let node = c.node(Target::Model(-4)).unwrap();
+    assert_eq!(node.pose.scale, Vec3::splat(CHARACTER_SCALE));
+    assert_eq!(node.pose.position, Vec3::ZERO);
 }
 
 #[test]

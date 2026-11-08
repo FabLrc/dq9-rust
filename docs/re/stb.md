@@ -273,19 +273,26 @@ Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/
 - La caméra de l'ouverture (572, `eye`/`lookat`) est portée par un modèle sans polygone
   (`ev01000cc000.chr`, `ev01000c000.chr`, mouvement `cut_00`/`cut_01` d'une tranche du fichier
   `nsbca` du paquet de type 0) : l'œil et la cible sont les os de ce nom du modèle posé, dans le
-  repère de l'acteur. Avec l'échelle 0x10a/4096 du sélecteur 0, l'œil et la cible de `cut_01`
-  tombent à quelques unités des personnages que le script place un peu avant (œil
+  repère de l'acteur. À l'échelle 0x10a/4096 que reçoit tout modèle chargé, l'œil et la cible de
+  `cut_01` tombent à quelques unités des personnages que le script place un peu avant (œil
   (−11,75 ; 12,35 ; −14,58), cible (−27,40 ; 0,65 ; −9,20), personnages vers (−27 ; −0,3 ; −9)) ;
   avec l'échelle 1 ils seraient à 400 unités.
+- Tout modèle chargé par 200 (`0215b72c`), cloné par 228 (`0215ba64`) ou monstre chargé par
+  233 (`0215ca4c`) est un nouvel `Object3D` à `SetScale(0x10a, 0x10a, 0x10a)` : constantes
+  `0x10a` lues dans l'overlay 1 à `0215b9c0`, `0215bb38`, `0215ccd8`. Le troisième argument
+  ne sert qu'à choisir l'allocateur (`021658b8[sélecteur]`). La native 211 (`0215c330`)
+  multiplie ses trois flottants par 4096,0 (`0215c3e4`) et écrit l'échelle absolue
+  (`Object3D::SetScale`, `020374f0`, `+0x5c..+0x60`). Contrôle : l'ancienne règle « sélecteur 1
+  → échelle 1 » rendait en `ev21500` les villageois, chevaux, Aquila et monstres (`s058`, `s064`,
+  `s066`, `s067`, `s070`, `z063a`…) 15 fois trop grands et éloignait la caméra de son porteur
+  `ev01000cc000.chr` (bords du ciel étoilé visibles) ; avec 0x10a, `--event 21500` et
+  `--event 21520` sont cadrées (`build/evidence/cutscene-load-scale/`, avant `before_late.png`
+  `ad50fc44cb16`, après `after_late.png` `4a1e9b1c9077`, ciel `after.png` `7d25b277dc0d`).
 - Les messages d'une scène sont fermés tantôt par le joueur (le script boucle sur 405), tantôt par
   la native 401 après une durée (textes `<CEN>` des cinématiques, cadre retiré par 410).
 
 **Hypothèses** (marquées dans le code) :
 
-- Un modèle chargé par 200 avec le sélecteur 0 a l'échelle des personnages de la carte
-  (0x10a/4096, `NpcTable_Build`) ; avec le sélecteur 1 il a l'échelle 1, le script fixant la
-  sienne par 211. Le clone (228) a 0x10a. **[hypothèse]** : le sens du sélecteur est inconnu
-  (`stb-natives.md`, 200) ; elle s'accorde avec les caméras et les modèles attachés du prologue.
 - Les commandes d'un acteur sont groupées en six canaux (position, rotation, animation, échelle,
   alpha, rayon) ; les huit files du jeu n'ont pas été reliées une à une. Une commande instantanée
   ne prend pas de tick, l'acteur est au repos quand tous les canaux sont vides ; 210 ne bloque

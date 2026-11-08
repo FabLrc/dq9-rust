@@ -856,11 +856,13 @@ impl Cutscene {
                     None => self.props.doors.push(door),
                 }
             }
+            // Natives 200 (`0215b72c`) and 233 (`0215ca4c`) allocate and initialise a new
+            // `Object3D`, then `SetScale(0x10a, 0x10a, 0x10a)` whatever the third argument,
+            // which only picks the allocator (`021658b8`). Scripts resize them with 211.
             Event::LoadModel {
-                path,
-                character,
-                selector,
-            } => {
+                path, character, ..
+            }
+            | Event::LoadMonster { path, character } => {
                 self.models.insert(*character, path.clone());
                 let node = self.node_mut(Target::Model(*character));
                 node.model = Some(path.clone());
@@ -868,24 +870,11 @@ impl Cutscene {
                 // A new object: a character id that is loaded again starts from the origin,
                 // unattached and visible (the slot of an earlier model leaves nothing behind).
                 node.pose = Pose::default();
+                node.pose.scale = Vec3::splat(CHARACTER_SCALE);
                 node.attached = None;
                 node.visible = true;
                 node.animation = None;
                 node.tint = None;
-                // Selector 0 models are the size of the map's characters; those the scripts
-                // load with selector 1 are sized by the script (`SetScale`) **[hypothèse]**:
-                // it fits the camera rigs and the attached models of the prologue.
-                node.pose.scale = if *selector == 0 {
-                    Vec3::splat(CHARACTER_SCALE)
-                } else {
-                    Vec3::ONE
-                };
-            }
-            Event::LoadMonster { path, character } => {
-                self.models.insert(*character, path.clone());
-                let node = self.node_mut(Target::Model(*character));
-                node.model = Some(path.clone());
-                node.packages.clear();
             }
             Event::ReleaseModel { character } => {
                 self.models.remove(character);

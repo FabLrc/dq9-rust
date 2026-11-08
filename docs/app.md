@@ -264,8 +264,7 @@ puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la
 (ils remplacent la caméra du script) : utile pour inspecter un acteur.
 
 **Limites et hypothèses.** Voir aussi [`re/stb.md`](re/stb.md), § « Exécution » : liaison par défaut
-du membre déclaré `n` au créneau et à l'acteur `n`, taille par défaut des modèles chargés (0x10a
-avec le sélecteur 0, 1 avec le sélecteur 1), canaux des acteurs, sens du roulis, unité des
+du membre déclaré `n` au créneau et à l'acteur `n`, canaux des acteurs, sens du roulis, unité des
 durées de la caméra et de la lumière, pose de la caméra du terrain pour 328, bulle posée dans le
 monde. Le héros du jeu a des ailes et un halo (forme ailée) que le rendu ne dessine pas ; hors
 événement, les PNJ gardent leur mouvement initial ; les ombres des PNJ ne sont pas dessinées. Les
