@@ -498,6 +498,14 @@ impl EventPlayer {
         }
     }
 
+    /// Trigger action 0x8d rebuilt the map's cast (`ov_017::021a316c` empties the 32 entries
+    /// of the NPC table, `0x0203cfc4`, before `Cast_LoadMap`): the flag `0x8000` action 0x7c
+    /// set lives in the old table, so the removals are forgotten; an NPC the placement
+    /// script still places stands again.
+    pub fn cast_rebuilt(&mut self) {
+        self.removed_npcs.clear();
+    }
+
     /// The event running now (`None` between scenes), for the checkpoints.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn current(&self) -> Option<u16> {

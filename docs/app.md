@@ -306,12 +306,14 @@ drapeaux globaux restent inconnus (voir `docs/re/trigger.md`).
 
 `--trace-inputs` écrit le pavé et la touche action de chaque pas fixe (`frame`, `pad`
 `up/down/left/right`, `a`). `--replay` relit ce fichier sans pilote : chaque ligne alimente le
-pavé et la touche action d'un pas fixe. La trace du parcours ci-dessus (22 670 pas) rejouée
-donne **les mêmes 49 checkpoints, octet pour octet** (dont l'arrivée à 1.1.2 et les 1170
-scènes), ce qui est la preuve d'entrées reproductibles. Le pilote donne des directions du monde
-avec la caméra à l'angle 0 et `--replay` force le même cap : la trace prouve la preuve du
-pilote headless dans notre moteur, pas un rejeu avec une caméra manuelle arbitraire ni une
-manette melonDS.
+pavé et la touche action d'un pas fixe. La trace du parcours du pilote (40 432 pas, de la
+nouvelle partie à `M01M08` en 1.2.1 en passant par 1.1.2, `X01M04` et Angel Falls `M01`)
+rejouée donne **les mêmes 615 checkpoints, octet pour octet** (sha256 `c2b10c767640`,
+`build/cast-reload/`), ce qui est la preuve d'entrées reproductibles : le pilote ne recharge
+plus la carte quand l'histoire avance, il voit la distribution que reconstruit l'action `0x8d`
+du jeu, comme le rejeu et un joueur. Le pilote donne des directions du monde avec la caméra à
+l'angle 0 et `--replay` force le même cap : la trace prouve la preuve du pilote headless dans
+notre moteur, pas un rejeu avec une caméra manuelle arbitraire ni une manette melonDS.
 
 Sur le Web : bouton « Nouvelle partie » de la page (ou `?newgame=1`), après avoir choisi la ROM.
 
@@ -331,6 +333,7 @@ options `--chapter/--step`.
 | fin d'une conversation | trigger 1 (PNJ, contexte, réponse oui/non) | `Field::talk_ended` |
 | arrivée dans une carte | triggers 20 puis 3 | `Field::enter` |
 | entrée dans une aire, porte, warp | triggers 2, 17, 6 | `Field::step` |
+| avancée de l'histoire sur place | `0x84` : triggers rechargés (aires de 0x8f oubliées, trigger 20 à nouveau) ; `0x8d` : distribution reconstruite | `Field::collect`, `App::reload_cast` |
 | 0x76 hors conversation | fenêtre de dialogue de la réplique du trigger | `App::talk_to` |
 
 **Combats scriptés.** Il n'y a pas de combat avant J4 : `scenario::stand_in` les déclare gagnés
@@ -400,8 +403,13 @@ drapeaux, aires déjà prises), ou plafond de pas atteint. Limites connues :
 - Les combats ne se jouent pas (substitut) ; l'expérience, l'équipe et les objets ne sont pas
   modélisés, donc des triggers qui en dépendent (conditions `0x24`, `0x31`, `0x32`…) peuvent donner
   d'autres branches que le jeu réel : seule la tenue d'ouverture du héros est posée dans l'état.
-- `Other(141)` (fin de `21510`, `21595`, `21593`) et les natives sans effet (`stb.md`) sont
-  journalisés mais ne font rien.
+- `0x8d` (fin de `21510`, `21595`, `21593`, `1340`…) reconstruit la distribution de la carte
+  courante sans la recharger (`re/trigger.md`, § « Rechargements après les actions
+  différées ») ; son fondu n'est pas modélisé. Les natives sans effet (`stb.md`) sont
+  journalisées mais ne font rien.
+- Le pilote ne recharge plus la carte quand l'histoire avance : il voit ce qu'un joueur voit
+  (triggers rechargés par `0x84`, distribution par `0x8d`), et ce que le rejeu de sa trace
+  d'entrées refait à l'identique.
 - Le pilote rejoue parfois la même conversation (`2110`) tant que son déclencheur change un drapeau.
 - Les zones de type 1 de l'Observatoire sont inertes ; la connexion de hauteur manquante
   reste à établir (voir la limite ci-dessus).

@@ -270,6 +270,12 @@ impl Talk {
         self.active = None;
     }
 
+    /// Trigger action 0x8d built the map's cast again (`ov_017::021a2fa0`): its NPCs. The
+    /// counters stay: whether that task clears the map counters is unknown.
+    pub fn reload_npcs(&mut self, npcs: Vec<Talkable>) {
+        self.npcs = npcs;
+    }
+
     /// Action 0x7c: the NPC leaves the map (flag `0x8000` of its object): nobody to talk to.
     pub fn remove_npc(&mut self, npc: u16) {
         self.npcs.retain(|n| n.id != npc);

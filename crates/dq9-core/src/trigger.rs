@@ -763,13 +763,13 @@ impl State {
 
     /// `FUN_020703d8`: move track `track` forward to (chapter, step, substep); never back.
     /// A new chapter clears both flag sets, a new step of the same chapter set 1.
-    fn advance(&mut self, track: usize, chapter: u8, step: u8, substep: u8) -> bool {
+    fn advance(&mut self, track: usize, chapter: u8, step: u8, substep: u8) {
         let Some(t) = self.tracks.get_mut(track) else {
-            return false;
+            return;
         };
         let key = |c: u8, s: u8, b: u8| u32::from(c) * 10000 + u32::from(s) * 100 + u32::from(b);
         if key(t.chapter, t.step, t.substep) >= key(chapter, step, substep) {
-            return false;
+            return;
         }
         if t.chapter != chapter {
             t.flags = Default::default();
@@ -777,7 +777,6 @@ impl State {
             t.flags[1].clear();
         }
         (t.chapter, t.step, t.substep) = (chapter, step, substep);
-        true
     }
 
     /// Adds `count` copies of `item` and, on the first acquisition, sets its "item obtained"
@@ -1057,8 +1056,17 @@ pub enum Request {
         placement: u16,
         hidden: bool,
     },
-    /// Progress changed: the map's triggers are reloaded.
+    /// 0x84, 0x94, 0xd6 ran (`Trig_RunDeferred` sets its reload flag whether the track
+    /// moved or not): `Trig_LoadMap` (`0x0206462c`) reloads the triggers of the current
+    /// map at the track's story point, drops the areas actions 0x8f added (`+0x494`) and
+    /// fires event 20 again (`Trig_LoadTable`, `0x02064584`). The cast is not rebuilt.
     ReloadTriggers,
+    /// 0x8d with a non-zero argument (`Trig_RunDeferred` queues task 0x30, `+0x3b58` of
+    /// the game resources, when it is not queued yet): `ov_017::021c16cc` fades out, then
+    /// `ov_017::021a2fa0` tears the map's cast down and runs `Cast_LoadMap`
+    /// (`ov_017::021a2c14`) again for the current story point, and fades back in. The map,
+    /// the hero and the triggers stay.
+    ReloadCast,
     /// A deferred action whose effect is not modelled.
     Other(u16),
 }
@@ -1079,6 +1087,8 @@ pub fn run_deferred(deferred: &[Op], state: &mut State) -> Vec<Request> {
     let mut requests = Vec::new();
     let (mut warp, mut position, mut direction) = (None, None, None);
     let mut reload = false;
+    // 0x8d: the last argument of the list decides (`uVar5 = arg`, tested after the loop).
+    let mut cast = 0;
     for op in deferred {
         let arg = i32::from(op.arg);
         match op.code {
@@ -1105,9 +1115,11 @@ pub fn run_deferred(deferred: &[Op], state: &mut State) -> Vec<Request> {
                     _ => usize::from(op.arg)..usize::from(op.arg) + 1,
                 };
                 for t in tracks {
-                    reload |= state.advance(t, c, s, b);
+                    state.advance(t, c, s, b);
                 }
+                reload = true;
             }
+            0x8d => cast = op.arg,
             0x9c => {
                 state.take(i32::from(high(op, 0) as i16), 1);
                 state.obtain(i32::from(low(op, 0) as i16), 1);
@@ -1124,8 +1136,12 @@ pub fn run_deferred(deferred: &[Op], state: &mut State) -> Vec<Request> {
             direction,
         });
     }
+    // After the list, in the game's order: the trigger reload, then the cast task.
     if reload {
         requests.push(Request::ReloadTriggers);
+    }
+    if cast != 0 {
+        requests.push(Request::ReloadCast);
     }
     requests
 }
@@ -1414,12 +1430,30 @@ mod tests {
         // Same chapter, next step: set 1 cleared.
         assert_eq!(run(&advance(4, 3, 0), &mut s), [Request::ReloadTriggers]);
         assert_eq!(s.tracks[2].flags, [[7].into(), BTreeSet::new()]);
-        // Backwards: no change.
-        assert_eq!(run(&advance(4, 1, 0), &mut s), []);
+        // Backwards: no change, but the game reloads the triggers all the same.
+        assert_eq!(run(&advance(4, 1, 0), &mut s), [Request::ReloadTriggers]);
         assert_eq!(s.tracks[2].step, 3);
         // Other tracks are untouched.
         assert_eq!(s.tracks[0], Track::default());
         assert_eq!(track_of_room(201), 3);
+    }
+
+    /// Action 0x8d queues the cast rebuild when its argument is not 0 (`Trig_RunDeferred`,
+    /// tested after the loop), after the trigger reload of the same list.
+    #[test]
+    fn action_0x8d_asks_for_the_cast_rebuild_after_the_trigger_reload() {
+        let run = |data: &[u8]| {
+            let mut s = w(0, 3);
+            let triggers = parse(&Table::parse(data).unwrap()).unwrap();
+            let fired = fire(&triggers, 0, &mut s).unwrap().unwrap();
+            run_deferred(&fired.deferred, &mut s)
+        };
+        assert_eq!(run(&one(&[word(0x8d, 1)])), [Request::ReloadCast]);
+        assert_eq!(run(&one(&[word(0x8d, 0)])), []);
+        assert_eq!(
+            run(&one(&[word(0x8d, 1), word(0x84, 0), 1, 2, 1])),
+            [Request::ReloadTriggers, Request::ReloadCast]
+        );
     }
 
     /// Actions 0x95/0x96 (`Trig_RunAction` cases 0x31/0x32, `0x02061c14`) hide or show a map

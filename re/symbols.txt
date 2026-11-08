@@ -790,10 +790,15 @@ ov_017::0218fd34 Hero_PaletteOp              # same for the hero's 12 objects (C
 ov_017::0219b43c Balloon_Show                # sprite id from the kind (2,5,6,14,15,16 -> 2,3,4,0xc,0xd,0xe) at the actor's screen position + (-6|-12, -76)
 ov_017::0219b578 Balloon_Nudge               # +(a, b) pixels on ctx+0x3630's sprite
 ov_017::021a2c14 Cast_LoadMap               # data/scenario/<area>.npc: place.bin, npc.bin, NpcTable_Build, ground snap
+ov_017::021a2fa0 Cast_Rebuild                # clears the NPC table (021a316c, 0x0203cfc4) then Cast_LoadMap; also on map load (0219e384)
+ov_017::021a316c Cast_ClearNpcs              # clears the NPC table, first step of Cast_Rebuild
+ov_017::021c16a8 CastReloadTask_Init         # field task type 0x30 queued by trigger action 0x8d
+ov_017::021c16cc CastReloadTask_Update       # fade to black over 15 frames, wait, Cast_Rebuild, fade back
 0x02018fcc Zone3D_GroundHeight              # ray y+1..y-10 over the collision, hit + 0x199
 0x02019518 Zone3D_FindPlacement             # (zone, block entry, placement id): walks Zone3D+0x41c blocks, 0x70-byte placements
 0x0203cbe8 NpcSprite_FaceCamera             # stand_* by (NPC angle - camera angle), 8 sectors (0x020e7948); walk_* with 4 when +0x5c bit 0 or 3 (0x020e7928)
 0x0203cf5c NpcTable_Get                     # returns g_NpcTable
+0x0203cfc4 NpcTable_Reset                   # clears the entries, including the 0x8000 removed bit set by action 0x7c
 0x0203d038 NpcTable_Build                   # one 0x20-byte entry per cast member: sprite / chara_sub model / enemy.gp2 monster
 0x0203de94 NpcTable_DrawEntries             # per NPC: skipped when +0x98 != 0 and no 0x10000 mark; calls 0208f87c [hypothesis: shadows]
 0x0203df88 NpcTable_FindById                # the NPC of member number n among the 32 entries (566 mode 4/5 use it)

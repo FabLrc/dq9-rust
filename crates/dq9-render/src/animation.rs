@@ -135,6 +135,9 @@ pub struct AnimatedScene {
     actors: Vec<actor::ActorRig>,
     /// The model NPCs of the cast and the motions an event can make them play.
     npc_rigs: Vec<actor::NpcRig>,
+    /// Scene instances of the map's cast (`<area>.npc`), replaced by
+    /// [`AnimatedScene::rebuild_cast`].
+    cast: Vec<usize>,
     pub frame: u64,
 }
 
@@ -167,6 +170,7 @@ impl AnimatedScene {
             actors: Vec::new(),
             frame: 0,
             npc_rigs: Vec::new(),
+            cast: Vec::new(),
         };
         let ambl = Narc::parse(required(&file, &map.files.ambl)?)?;
         let tex_bytes = map
@@ -236,99 +240,138 @@ impl AnimatedScene {
                 )?;
             }
         }
-        let path = cast::archive_path(code);
-        if let Some(bytes) = file(&path) {
-            let cast = cast::load(bytes, map_id, story)?;
-            for npc in &cast.npcs {
-                match npc.appearance(|p| file(p).is_some()) {
-                    Appearance::None => {}
-                    Appearance::Sprite { sheet } => {
-                        out.sprite(&sheet, required(&file, &sheet)?, npc)?
-                    }
-                    appearance => {
-                        let (path, bytes) = match appearance {
-                            Appearance::Model { chr } => {
-                                let bytes = required(&file, &chr)?.to_vec();
-                                (chr, bytes)
-                            }
-                            Appearance::Monster { member: name } => {
-                                let enemies =
-                                    Gpc2::parse(required(&file, "data/pack_lv5/enemy.gp2")?)?;
-                                let entry = enemies
-                                    .entries
-                                    .iter()
-                                    .find(|e| e.name == name)
-                                    .ok_or(Error::Malformed("monster member missing"))?;
-                                let mon = enemies.member(entry)?;
-                                let monster = Narc::parse(&mon)?;
-                                let cchr = monster
-                                    .names
-                                    .files
-                                    .iter()
-                                    .find(|e| e.path.ends_with(".cchr"))
-                                    .ok_or(Error::Malformed("monster CCHR missing"))?;
-                                let raw = monster.file(cchr.id)?;
-                                let bytes = nds_rom::compress::decompress(raw)?;
-                                (name, bytes)
-                            }
-                            _ => unreachable!(),
-                        };
-                        let own = Chr::parse(&bytes)?;
-                        let extra_path = npc
-                            .placement
-                            .chr
-                            .map(|p| format!("data/{}", String::from_utf8_lossy(p)));
-                        let extra = extra_path
-                            .as_deref()
-                            .map(|p| required(&file, p).and_then(Chr::parse))
-                            .transpose()?;
-                        let clips = match cast::initial_motion(&npc.placement, &own, extra.as_ref())
-                        {
-                            Some((package, motion)) => {
-                                let chr = if package == 0 {
-                                    &own
-                                } else {
-                                    extra
-                                        .as_ref()
-                                        .ok_or(Error::Malformed("motion package missing"))?
-                                };
-                                let motions = chr.motions();
-                                let motion = &motions[motion];
-                                motion
-                                    .files
-                                    .iter()
-                                    .map(|(_, id)| {
-                                        let mut clip = Clip::new(
-                                            chr.narc.file(*id)?.to_vec(),
-                                            motion.motion.speed,
-                                            None,
-                                        )?;
-                                        // Per-motion characters loop before the last image,
-                                        // unlike plain map models (AdvanceAnimations_v1).
-                                        clip.range = Some((0, (i32::from(clip.frames) - 1) << 12));
-                                        Ok(clip)
-                                    })
-                                    .collect::<Result<Vec<_>>>()?
-                            }
-                            None => Vec::new(),
-                        };
-                        let model = own
-                            .model_data()?
-                            .ok_or(Error::Malformed("NPC archive without model"))?;
-                        // The named motions an event can start later (`play_npc`): the NPC's
-                        // own archive, then its extra package.
-                        let mut named = actor::collect_motions(&own).unwrap_or_default();
-                        if let Some(extra) = &extra {
-                            named.extend(actor::collect_motions(extra).unwrap_or_default());
-                        }
-                        out.character(&path, model, clips, named, npc)?;
-                    }
-                }
-            }
-        }
+        out.add_cast(map_id, code, story, &file)?;
         out.evaluate()?;
         out.face_camera(&Camera::default())?;
         Ok(out)
+    }
+
+    /// The cast task of trigger action 0x8d (`ov_017::021c16cc` → `ov_017::021a2fa0`): the
+    /// map's cast is torn down and `Cast_LoadMap` (`ov_017::021a2c14`) runs again for
+    /// `story`, on the same map. The old instances stay in the scene, hidden and without an
+    /// NPC id, so the indices the hero, the event actors and their bindings hold remain
+    /// valid; their animations stop. Upload the scene again afterwards.
+    pub fn rebuild_cast<'a>(
+        &mut self,
+        map_id: u16,
+        code: &[u8],
+        story: &Story,
+        file: impl Fn(&str) -> Option<&'a [u8]>,
+    ) -> Result<()> {
+        let mut old = HashSet::new();
+        for index in std::mem::take(&mut self.cast) {
+            let instance = &mut self.scene.instances[index];
+            old.insert(instance.model);
+            instance.world = Mat4::from_scale(Vec3::ZERO);
+            instance.home = instance.world;
+            instance.instance = usize::MAX;
+        }
+        self.npc_rigs.clear();
+        self.sprites.retain(|sprite| !old.contains(&sprite.model));
+        self.models.retain(|model| !old.contains(&model.model));
+        self.add_cast(map_id, code, story, &file)?;
+        self.evaluate()
+    }
+
+    /// Adds the cast of `map_id` at `story` from its area's `.npc` archive (none without
+    /// it): sprites, models and monsters.
+    fn add_cast<'a>(
+        &mut self,
+        map_id: u16,
+        code: &[u8],
+        story: &Story,
+        file: &impl Fn(&str) -> Option<&'a [u8]>,
+    ) -> Result<()> {
+        let path = cast::archive_path(code);
+        let Some(bytes) = file(&path) else {
+            return Ok(());
+        };
+        let cast = cast::load(bytes, map_id, story)?;
+        for npc in &cast.npcs {
+            match npc.appearance(|p| file(p).is_some()) {
+                Appearance::None => {}
+                Appearance::Sprite { sheet } => {
+                    self.sprite(&sheet, required(file, &sheet)?, npc)?
+                }
+                appearance => {
+                    let (path, bytes) = match appearance {
+                        Appearance::Model { chr } => {
+                            let bytes = required(file, &chr)?.to_vec();
+                            (chr, bytes)
+                        }
+                        Appearance::Monster { member: name } => {
+                            let enemies = Gpc2::parse(required(file, "data/pack_lv5/enemy.gp2")?)?;
+                            let entry = enemies
+                                .entries
+                                .iter()
+                                .find(|e| e.name == name)
+                                .ok_or(Error::Malformed("monster member missing"))?;
+                            let mon = enemies.member(entry)?;
+                            let monster = Narc::parse(&mon)?;
+                            let cchr = monster
+                                .names
+                                .files
+                                .iter()
+                                .find(|e| e.path.ends_with(".cchr"))
+                                .ok_or(Error::Malformed("monster CCHR missing"))?;
+                            let raw = monster.file(cchr.id)?;
+                            let bytes = nds_rom::compress::decompress(raw)?;
+                            (name, bytes)
+                        }
+                        _ => unreachable!(),
+                    };
+                    let own = Chr::parse(&bytes)?;
+                    let extra_path = npc
+                        .placement
+                        .chr
+                        .map(|p| format!("data/{}", String::from_utf8_lossy(p)));
+                    let extra = extra_path
+                        .as_deref()
+                        .map(|p| required(file, p).and_then(Chr::parse))
+                        .transpose()?;
+                    let clips = match cast::initial_motion(&npc.placement, &own, extra.as_ref()) {
+                        Some((package, motion)) => {
+                            let chr = if package == 0 {
+                                &own
+                            } else {
+                                extra
+                                    .as_ref()
+                                    .ok_or(Error::Malformed("motion package missing"))?
+                            };
+                            let motions = chr.motions();
+                            let motion = &motions[motion];
+                            motion
+                                .files
+                                .iter()
+                                .map(|(_, id)| {
+                                    let mut clip = Clip::new(
+                                        chr.narc.file(*id)?.to_vec(),
+                                        motion.motion.speed,
+                                        None,
+                                    )?;
+                                    // Per-motion characters loop before the last image,
+                                    // unlike plain map models (AdvanceAnimations_v1).
+                                    clip.range = Some((0, (i32::from(clip.frames) - 1) << 12));
+                                    Ok(clip)
+                                })
+                                .collect::<Result<Vec<_>>>()?
+                        }
+                        None => Vec::new(),
+                    };
+                    let model = own
+                        .model_data()?
+                        .ok_or(Error::Malformed("NPC archive without model"))?;
+                    // The named motions an event can start later (`play_npc`): the NPC's
+                    // own archive, then its extra package.
+                    let mut named = actor::collect_motions(&own).unwrap_or_default();
+                    if let Some(extra) = &extra {
+                        named.extend(actor::collect_motions(extra).unwrap_or_default());
+                    }
+                    self.character(&path, model, clips, named, npc)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn attach(
@@ -444,6 +487,7 @@ impl AnimatedScene {
             let scene_model = b.model(path, "model.nsbmd", model)?;
             let id = b.scene.models.len();
             b.scene.models.push(scene_model);
+            self.cast.push(b.scene.instances.len());
             b.scene.instances.push(SceneInstance {
                 model: id,
                 world,
@@ -699,7 +743,7 @@ struct SpriteSpec {
 
 impl AnimatedScene {
     fn sprite(&mut self, path: &str, bytes: &[u8], npc: &cast::Npc<'_>) -> Result<()> {
-        self.sprite_object(
+        let instance = self.sprite_object(
             path,
             bytes,
             SpriteSpec {
@@ -713,8 +757,9 @@ impl AnimatedScene {
                 fixed: None,
                 overlay: false,
             },
-        )
-        .map(|_| ())
+        )?;
+        self.cast.push(instance);
+        Ok(())
     }
 
     /// Adds the sprite sheet `bytes` (a `.spr`) to the scene as a billboard hidden until it is

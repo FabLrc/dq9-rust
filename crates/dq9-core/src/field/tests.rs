@@ -496,6 +496,65 @@ fn triggers_load_by_the_progress_of_the_rooms_track() {
     assert!(state.flags.contains(&5));
 }
 
+/// A progress change reloads the triggers (`Trig_LoadMap`): the areas event 20 added are
+/// dropped and event 20 runs again at the new story point; action 0x8d is left to the
+/// application as `Request::ReloadCast`, after the reload.
+#[test]
+fn a_progress_change_reruns_event_20_and_drops_the_added_areas() {
+    let mut first = record(
+        20,
+        vec![
+            word(9, 1100),
+            word(0x64, 501),
+            word(0x8f, 10),
+            Cell::F(2.0),
+            Cell::F(1.0),
+            Cell::F(2.0),
+            Cell::F(-2.0),
+            Cell::F(-1.0),
+            Cell::F(-2.0),
+            Cell::I(0),
+        ],
+    );
+    // Loaded in chapter 1 only.
+    first[3] = Cell::I(1);
+    let mut second = record(20, vec![word(9, 1100), word(0x64, 502)]);
+    second[1] = Cell::I(2);
+    second[2] = Cell::I(1);
+    let end = record(
+        11,
+        vec![
+            word(8, 7),
+            word(0x84, 0),
+            Cell::I(2),
+            Cell::I(1),
+            Cell::I(1),
+            word(0x8d, 1),
+        ],
+    );
+    let mut f = field(
+        &Regions::default(),
+        Some(trigger_file(&[first, second, end])),
+    );
+    let story = dq9_formats::cast::Story {
+        chapter: 1,
+        step: 1,
+        substep: 1,
+        ..Default::default()
+    };
+    let mut state = initial_state(&story);
+    assert!(f.enter(&mut state, false).is_empty());
+    assert!(state.flags.contains(&501));
+    assert_eq!(f.area_points().len(), 1, "event 20 added area 10");
+
+    let events = f.event_ended(7, &mut state);
+    assert_eq!(events, [Event::Request(Request::ReloadCast)]);
+    let track = &state.tracks[state.track];
+    assert_eq!((track.chapter, track.step, track.substep), (2, 1, 1));
+    assert!(state.flags.contains(&502), "event 20 runs again at 2.1");
+    assert!(f.area_points().is_empty(), "the reload drops area 10");
+}
+
 #[test]
 fn a_warp_box_changes_map_after_event_6() {
     let regions = Regions {

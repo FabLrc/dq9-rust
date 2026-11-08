@@ -327,15 +327,8 @@ pub fn load(
         .map(<[u8]>::to_vec);
     let field = Field::new(record.id, &assembled.regions, trigger_file)
         .with_context(|| format!("reading the trigger file of {key}"))?;
-    let npcs = match map::rom_file(&rom, &dq9_formats::cast::archive_path(record.code)) {
-        Some(bytes) => dq9_formats::cast::load(bytes, record.id, story)
-            .with_context(|| format!("reading the cast of {key}"))?
-            .npcs
-            .iter()
-            .map(Talkable::from_cast)
-            .collect(),
-        None => Vec::new(),
-    };
+    let npcs = talkables(&rom, record.id, record.code, story)
+        .with_context(|| format!("reading the cast of {key}"))?;
     let label = [record.region, record.label]
         .into_iter()
         .flatten()
@@ -358,4 +351,35 @@ pub fn load(
         lighting,
         npcs,
     })
+}
+
+/// The NPCs of map `id` (`code`) the hero can talk to at `story`.
+fn talkables(rom: &Rom<'_>, id: u16, code: &[u8], story: &Story) -> Result<Vec<Talkable>> {
+    Ok(
+        match map::rom_file(rom, &dq9_formats::cast::archive_path(code)) {
+            Some(bytes) => dq9_formats::cast::load(bytes, id, story)?
+                .npcs
+                .iter()
+                .map(Talkable::from_cast)
+                .collect(),
+            None => Vec::new(),
+        },
+    )
+}
+
+/// Trigger action 0x8d (`ov_017::021a2fa0`): the cast of map `id` (`code`), shown by
+/// `runtime`, is built again at `story` on the same map. Returns the NPCs to talk to.
+pub fn reload_cast(
+    rom: &[u8],
+    runtime: &mut AnimatedScene,
+    id: u16,
+    code: &str,
+    story: &Story,
+) -> Result<Vec<Talkable>> {
+    let rom = Rom::parse(rom).context("parsing the ROM")?;
+    runtime
+        .rebuild_cast(id, code.as_bytes(), story, |p| map::rom_file(&rom, p))
+        .with_context(|| format!("rebuilding the cast of {code}"))?;
+    talkables(&rom, id, code.as_bytes(), story)
+        .with_context(|| format!("reading the cast of {code}"))
 }

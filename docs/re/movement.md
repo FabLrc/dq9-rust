@@ -329,10 +329,10 @@ sous-arbre invisibles aux requêtes (sol, murs, `floors`, `resolve`), avec un co
 différées) que l'application traite sur la collision et sur les instances dessinées ; les
 natives 574/575 suivent le même chemin pour les placements de collision, y compris depuis le
 rapport `--events-report`, et le pilote jette sa grille de sol quand `revision()` change ou
-après un rechargement de carte dû à l'histoire. Les tests de collision couvrent cacher/montrer,
-le bloc qui ne correspond pas, le parent qui cache son descendant, le déplacement du sous-arbre
-et la rotation d'un parent déplacé ; les tests sur la ROM jouent la vraie demande de
-l'événement 11 puis la marche continue jusqu'à `X01M03`.
+quand il entre dans une carte (sa collision neuve repart de la révision 0). Les tests de
+collision couvrent cacher/montrer, le bloc qui ne correspond pas, le parent qui cache son
+descendant, le déplacement du sous-arbre et la rotation d'un parent déplacé ; les tests sur la
+ROM jouent la vraie demande de l'événement 11 puis la marche continue jusqu'à `X01M03`.
 
 Vérification : `fmt`, `clippy --all-targets`, les tests de l'espace de travail sur la vraie ROM
 et la compilation wasm sont verts (dont les 28 tests de l'application, exécutés avec la ROM

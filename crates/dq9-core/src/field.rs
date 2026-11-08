@@ -15,6 +15,7 @@
 //! port: 0x020321f0, 0x02031128, 0x02032158, 0x02094bac, 0x02064b08
 //! port: ov_017::0219814c, ov_017::02198e30
 
+use std::collections::VecDeque;
 use std::f32::consts::PI;
 
 use dq9_formats::map::{
@@ -478,10 +479,10 @@ impl Field {
         state.track = track_of_room(i32::from(self.room));
         let mut events = Vec::new();
         let loaded = self.fire(EVENT_LOADED, &[(3, u32::from(self.room))], state);
-        self.collect(loaded, None, &mut events);
+        self.collect(loaded, None, &mut events, state);
         if after_transition {
             let arrival = self.fire(EVENT_ARRIVAL, &[(3, u32::from(self.room))], state);
-            self.collect(arrival, None, &mut events);
+            self.collect(arrival, None, &mut events, state);
         }
         events
     }
@@ -505,7 +506,7 @@ impl Field {
     pub fn event_ended(&mut self, event: u16, state: &mut State) -> Vec<Event> {
         let mut events = Vec::new();
         let ended = self.fire(EVENT_END, &[(2, u32::from(event))], state);
-        self.collect(ended, None, &mut events);
+        self.collect(ended, None, &mut events, state);
         events
     }
 
@@ -527,7 +528,7 @@ impl Field {
         let words = [(0, u32::from(npc)), (5, u32::from(context))];
         let mut events = Vec::new();
         let ended = self.fire(EVENT_TALK_END, &words, state);
-        self.collect(ended, None, &mut events);
+        self.collect(ended, None, &mut events, state);
         events
     }
 
@@ -542,7 +543,7 @@ impl Field {
         };
         let mut events = Vec::new();
         let ended = self.fire(kind, &[(6, u32::from(battle))], state);
-        self.collect(ended, None, &mut events);
+        self.collect(ended, None, &mut events, state);
         events
     }
 
@@ -696,7 +697,7 @@ impl Field {
             // Already opened: forget it and start over.
             slot.flags &= !DOORWAY_USED;
             self.approach = 0;
-            self.collect(fired, None, events);
+            self.collect(fired, None, events, state);
             return false;
         }
         let own = slot.zone.warp.filter(|_| slot.flags & FLAG_WARP != 0);
@@ -708,7 +709,7 @@ impl Field {
             entry: None,
             cause,
         });
-        let changed = self.collect(fired, fallback, events);
+        let changed = self.collect(fired, fallback, events, state);
         if own.is_none() {
             // A doorway with no destination only opens (native 584, `0x02018b44`).
             events.push(Event::Request(Request::OpenDoor {
@@ -725,7 +726,7 @@ impl Field {
     pub fn door_opened(&mut self, state: &mut State) -> Vec<Event> {
         let mut events = Vec::new();
         let fired = self.fire(EVENT_ARRIVAL, &[(3, u32::from(self.room))], state);
-        self.collect(fired, None, &mut events);
+        self.collect(fired, None, &mut events, state);
         events
     }
 
@@ -737,12 +738,12 @@ impl Field {
             if let Some(left) = previous {
                 let number = u32::from(self.areas[left].zone.class);
                 let fired = self.fire(EVENT_LEAVE_AREA, &[(1, number)], state);
-                self.collect(fired, None, events);
+                self.collect(fired, None, events, state);
             }
             if let Some(entered) = now {
                 let number = u32::from(self.areas[entered].zone.class);
                 let fired = self.fire(EVENT_ENTER_AREA, &[(1, number)], state);
-                self.collect(fired, None, events);
+                self.collect(fired, None, events, state);
             }
         }
         self.area = now;
@@ -756,18 +757,18 @@ impl Field {
             (None, None) => {}
             (Some(left), None) => {
                 let fired = self.fire(EVENT_LEAVE_AREA, &[(1, u32::from(left))], state);
-                self.collect(fired, None, events);
+                self.collect(fired, None, events, state);
                 self.added_area = None;
             }
             (previous, Some(entered)) => {
                 if previous != Some(entered) {
                     if let Some(left) = previous {
                         let fired = self.fire(EVENT_LEAVE_AREA, &[(1, u32::from(left))], state);
-                        self.collect(fired, None, events);
+                        self.collect(fired, None, events, state);
                     }
                     self.entered_area = Some(entered);
                     let fired = self.fire(EVENT_ENTER_AREA, &[(1, u32::from(entered))], state);
-                    self.collect(fired, None, events);
+                    self.collect(fired, None, events, state);
                     self.added_area = Some(entered);
                 }
             }
@@ -799,7 +800,7 @@ impl Field {
                 kind: warp.kind,
             },
         };
-        self.collect(fired, Some(own), events);
+        self.collect(fired, Some(own), events, state);
     }
 
     /// The doorways in the game's list order as `(class, number, flags)`, flags with their
@@ -921,7 +922,7 @@ impl Field {
             Ok(None) => TalkTrigger::NoTrigger,
             Ok(Some(requests)) => {
                 let mut events = Vec::new();
-                self.collect(Ok(requests), None, &mut events);
+                self.collect(Ok(requests), None, &mut events, state);
                 TalkTrigger::Fired(events)
             }
             Err(Unsupported(code)) => TalkTrigger::Unsupported(code),
@@ -931,21 +932,34 @@ impl Field {
     /// Turns the outcome of a fired event into events. A warp request replaces `fallback`,
     /// the map change the region would make by itself; without a request `fallback` is
     /// returned as is. Returns whether a map change was pushed.
+    ///
+    /// A trigger reload (`Request::ReloadTriggers`) is carried out here, as
+    /// `Trig_RunDeferred` calls `Trig_LoadMap` (`0x0206462c`) itself: the areas actions
+    /// 0x8f added are dropped (`+0x494` cleared; `+0x491`, the area the leader stands in,
+    /// stays) and `Trig_LoadTable` (`0x02064584`) fires event 20 with the room in word 3;
+    /// what that event asks for comes next, before the rest of the list. The triggers
+    /// themselves are read at each event with the track's story point, so they need no
+    /// rebuild.
     fn collect(
         &mut self,
         fired: std::result::Result<Vec<Request>, Unsupported>,
         fallback: Option<MapChange>,
         events: &mut Vec<Event>,
+        state: &mut State,
     ) -> bool {
-        let requests = match fired {
-            Ok(requests) => requests,
+        /// Nested reloads one list may cause: a trigger of event 20 that advances the track
+        /// reloads again (rooms 7400 and 20034 do it once; their condition then fails).
+        const MAX_RELOADS: u8 = 8;
+        let mut requests = match fired {
+            Ok(requests) => VecDeque::from(requests),
             Err(Unsupported(code)) => {
                 events.push(Event::Unsupported(code));
-                Vec::new()
+                VecDeque::new()
             }
         };
+        let mut reloads = 0;
         let mut change = fallback;
-        for request in requests {
+        while let Some(request) = requests.pop_front() {
             match request {
                 Request::Warp {
                     room,
@@ -964,7 +978,18 @@ impl Field {
                         cause: Cause::Trigger,
                     });
                 }
-                // The trigger objects are rebuilt from the file at each event.
+                Request::ReloadTriggers if reloads < MAX_RELOADS => {
+                    reloads += 1;
+                    self.added.clear();
+                    match self.fire(EVENT_LOADED, &[(3, u32::from(self.room))], state) {
+                        Ok(loaded) => {
+                            for request in loaded.into_iter().rev() {
+                                requests.push_front(request);
+                            }
+                        }
+                        Err(Unsupported(code)) => events.push(Event::Unsupported(code)),
+                    }
+                }
                 Request::ReloadTriggers => {}
                 other => events.push(Event::Request(other)),
             }

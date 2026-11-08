@@ -221,6 +221,9 @@ pub struct App {
     events: EventPlayer,
     /// Set while an event loads its map: the map's own `Request::Event`s are not queued.
     quiet_events: bool,
+    /// Trigger action 0x8d queued the cast task (`Request::ReloadCast`): it runs once the
+    /// events queued before it are over, like the game's task queue.
+    cast_reload: bool,
     /// Placeholder of the bottom DS screen, created with the surface format.
     panel: Option<Panel>,
     /// What the story did since the start, and the fixed step it did it at.
@@ -314,6 +317,7 @@ impl App {
             talk: Talk::default(),
             events: EventPlayer::new(),
             quiet_events: false,
+            cast_reload: false,
             panel: None,
             journal: Journal::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -514,6 +518,9 @@ impl App {
             self.door_angles.insert((block, placement), angle);
         }
         self.field = Some(loaded.field);
+        // The map load builds its cast (`ov_017::0219e384` → `ov_017::021a2fa0`): a cast task
+        // queued on the map that is left has nothing more to do.
+        self.cast_reload = false;
         self.talk.enter_map(loaded.npcs);
         self.hero = Some(loaded.hero);
         self.hero_instance = Some(loaded.hero_instance);
@@ -634,6 +641,7 @@ impl App {
                 }
                 Event::Request(Request::Battle(number)) => self.run_battle(number),
                 Event::Request(Request::RemoveNpc(npc)) => self.remove_npc(npc),
+                Event::Request(Request::ReloadCast) => self.cast_reload = true,
                 Event::Request(Request::SetPlacementHidden {
                     block,
                     placement,
@@ -666,6 +674,45 @@ impl App {
         if let Some(scene) = self.runtime.as_mut() {
             self.events.remove_npc(scene, npc);
         }
+    }
+
+    /// Task 0x30 of trigger action 0x8d (`ov_017::021c16cc`, run by the task queue
+    /// `ov_017::021a3544`): `ov_017::021a2fa0` tears the cast down (`ov_017::021a316c`) and
+    /// loads it again with `Cast_LoadMap` (`ov_017::021a2c14`) for the current story point,
+    /// on the same map: the hero, the map's placements, doors, collision and triggers stay.
+    /// The fade the task wraps around it (out over 15 frames, back in over 15) is not
+    /// modelled: the cast changes at once.
+    fn reload_cast(&mut self) {
+        let Some((entry, _)) = &self.current else {
+            return;
+        };
+        let story = load::story_from_state(&self.options.story, &self.state, Some(entry.id));
+        let (Some(rom), Some(runtime)) = (self.rom.as_deref(), self.runtime.as_mut()) else {
+            return;
+        };
+        let npcs = match load::reload_cast(rom, runtime, entry.id, &entry.code, &story) {
+            Ok(npcs) => npcs,
+            Err(e) => {
+                status(&format!("{e:#}"));
+                return;
+            }
+        };
+        status(&format!(
+            "cast of {} rebuilt at {}.{}.{}: {} NPCs",
+            entry.id,
+            story.chapter,
+            story.step,
+            story.substep,
+            npcs.len()
+        ));
+        self.talk.reload_npcs(npcs);
+        self.events.cast_rebuilt();
+        if let Some(runtime) = &mut self.runtime
+            && let Err(e) = runtime.face_camera(&self.camera)
+        {
+            status(&format!("facing cast: {e}"));
+        }
+        self.upload();
     }
 
     /// Trigger actions 0x95/0x96 (`Trig_RunAction` cases 0x31/0x32): the placement `(block,
@@ -1043,6 +1090,13 @@ impl App {
                 }
                 continue;
             }
+            // The cast task of action 0x8d waits behind the events and the conversation
+            // queued before it, and holds the field for its step.
+            if self.cast_reload && !self.talk.is_active() {
+                self.cast_reload = false;
+                self.reload_cast();
+                continue;
+            }
             let mut events = Vec::new();
             if !self.talk.is_active() && self.talk.confirm_pending() {
                 if let (Some(rom), Some(hero), Some(field), Some((entry, _))) =
@@ -1328,8 +1382,10 @@ impl App {
         }
         self.run_steps(1);
         self.capture_journal(recorded);
-        // The pilot's control points are part of the proof: record them the same way.
-        let busy = self.events.is_active() || self.events.pending_start().is_some();
+        // The pilot's control points are part of the proof: record them the same way. The
+        // cast task of action 0x8d holds the field like an event.
+        let busy =
+            self.events.is_active() || self.events.pending_start().is_some() || self.cast_reload;
         if !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
             let map = self.current.as_ref().map_or(0, |(entry, _)| entry.id);
             let track = &self.state.tracks[self.state.track];
@@ -1950,7 +2006,7 @@ mod tests {
                 "the open door angle reached the collision"
             );
         }
-        // A story-driven reload of the same map rebuilds the collision with doors closed;
+        // A reload of the same map (`set_time`) rebuilds the collision with doors closed;
         // the open doors must be turned again before the walkable grid is probed.
         let before = app.collision.pieces().to_vec();
         let spawn = app.hero.map(|hero| (hero.position(), hero.yaw()));
@@ -2817,6 +2873,55 @@ mod tests {
                 "a map change rebuilds the cast; 0x7c removals are per map"
             );
         }
+    }
+
+    /// The end of 21510 on `X01M04` (`room 4104 1.1..1.1 event 11`: `0x84(0, 1, 2, 1)` then
+    /// `0x8d(1)`) rebuilds the map's cast at 1.2.1 without a map change (`Trig_RunDeferred`
+    /// queues task 0x30, `ov_017::021c16cc`, which calls `ov_017::021a2fa0`). Aquila (NPC
+    /// 99) is then drawn and talkable, and talking to him (`room 4104 1.2..1.3 event 0: if
+    /// 0x6(99) 0x3(4) then 0x76(99, …) 0x66(4)`) raises the track's game-0 flag 4. Before the
+    /// fix only the autopilot's own map reload showed him: a player had no NPC 99.
+    #[test]
+    fn the_end_of_21510_rebuilds_the_cast_and_npc_99_raises_game_0_flag_4() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(map_options("4104", (1, 1, 2, true)), Some(rom.to_vec()));
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(4104));
+        assert!(!cast_drawn(&app, 99), "Aquila is not on the 1.1 cast");
+        let loads = map_loads(&app, 4104);
+
+        let events = app
+            .field
+            .as_mut()
+            .unwrap()
+            .event_ended(21510, &mut app.state);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::Request(Request::ReloadCast))),
+            "event 11 of 21510 asks for the cast rebuild (0x8d): {events:?}"
+        );
+        assert!(!Field::changes_map(&events), "21510 ends on the same map");
+        app.apply_events(events);
+        // The rebuild is a task of the queue: it runs on the next step of the free field.
+        app.run_steps(1);
+        let track = app.state.track;
+        let story = &app.state.tracks[track];
+        assert_eq!((story.chapter, story.step, story.substep), (1, 2, 1));
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(4104));
+        assert_eq!(map_loads(&app, 4104), loads, "the map is not loaded again");
+        assert!(cast_drawn(&app, 99), "the 1.2.1 cast draws Aquila");
+        assert!(
+            !app.state.tracks[track].flags[0].contains(&4),
+            "game-0 flag 4 waits for the conversation"
+        );
+
+        talk_to(&mut app, 99);
+        finish_conversation(&mut app);
+        assert!(
+            app.state.tracks[track].flags[0].contains(&4),
+            "talking to Aquila raises game-0 flag 4"
+        );
+        assert_eq!(app.current.as_ref().map(|(entry, _)| entry.id), Some(4104));
     }
 
     #[test]

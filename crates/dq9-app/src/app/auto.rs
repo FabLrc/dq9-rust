@@ -121,8 +121,9 @@ struct Pilot {
     graph: BTreeMap<u16, Vec<u16>>,
     /// The rooms the hero was in.
     visited: BTreeSet<u16>,
-    /// The room and story digest the current map was built for.
-    built: Option<(u16, u64)>,
+    /// The room the walkable grids were last checked against: a map load builds a new
+    /// collision whose revision starts again.
+    built: Option<u16>,
     actions: u32,
     /// The goal being walked to, and the room and story it was chosen for.
     goal: Option<Goal>,
@@ -700,7 +701,10 @@ impl App {
             }
             self.run_steps(1);
             self.capture_journal(recorded);
-            let busy = self.events.is_active() || self.events.pending_start().is_some();
+            // The cast task of action 0x8d holds the field like an event: no control yet.
+            let busy = self.events.is_active()
+                || self.events.pending_start().is_some()
+                || self.cast_reload;
             started |= busy;
             if started && !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
                 let map = self.current.as_ref().map_or(0, |(e, _)| e.id);
@@ -804,31 +808,15 @@ impl App {
         if bot.actions >= MAX_ACTIONS {
             return false;
         }
-        // The cast and the triggers of the map follow the story: build it again when the story
-        // moved since (the game reloads its triggers on progress, `Request::ReloadTriggers`).
-        if bot.built != Some((room, digest)) {
-            if let Some(hero) = &self.hero {
-                let spawn = (hero.position(), hero.yaw());
-                self.quiet_events = true;
-                self.load_map(&room.to_string(), false, Some(spawn), None, false);
-                self.quiet_events = false;
-                // The same map again is not a step of the story.
-                if matches!(self.journal.steps.last(), Some((_, Step::Map { id, .. })) if *id == room)
-                {
-                    self.journal.steps.pop();
-                }
-                // The map and its triggers were built again: the collision may differ (a
-                // story-driven placement show or hide), so the room's grid is stale.
-                bot.grids.remove(&room);
-                bot.blocked.retain(|(at, _, _)| *at != room);
-                bot.grid_revision = self.collision.revision();
-            }
-            bot.built = Some((room, digest));
-            if self.events.is_active() || self.events.pending_start().is_some() {
-                return true;
-            }
+        // A map load (a new room) built its collision anew, with a revision that starts over:
+        // a grid cached on an earlier visit may keep a wall the triggers have since removed.
+        if bot.built != Some(room) {
+            bot.grids.remove(&room);
+            bot.blocked.retain(|(at, _, _)| *at != room);
+            bot.grid_revision = self.collision.revision();
+            bot.built = Some(room);
         }
-        // The map load and the triggers that follow it (event 20, event 11) may hide or show
+        // The triggers (event 20 on a load or a progress change, event 11) may hide or show
         // collision placements: the cached grids then keep a wall the game removed (or miss
         // one it added). Drop them when the collision revision moved.
         let revision = self.collision.revision();

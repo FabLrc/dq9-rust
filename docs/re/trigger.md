@@ -305,7 +305,7 @@ synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
 | 0x94 † / 0xd6 † | idem pour les cinq pistes / pour la piste `arg` | 2 / 12 |
 | 0x86 / 0x87 | lève / baisse le drapeau `arg` du jeu `haut` (3 scénario, 4 jeu 0, 5 jeu 1 de la piste) | 59 / 0 |
 | 0x8b / 0x8c | ajoute / retire l'opérande (32 bits) à l'or, plafond 9 999 999, plancher 0 | 13 / 0 |
-| 0x8d † | tâche `+0x3b58` si `arg` ≠ 0 **[sens inconnu]** | 236 |
+| 0x8d † | si `arg` ≠ 0 : met en file la tâche 0x30 (`+0x3b58`), qui **reconstruit la distribution de PNJ** de la carte courante (§ « Rechargements après les actions différées ») | 236 |
 | 0x8e | drapeau `0xbf1 + rang` de `arg` dans une table de 32 valeurs (`0x020e87d0`), rangs 17 à 31 seulement | 14 |
 | 0x8f | ajoute une aire (événements 2/5), voir « Zones » ; s'exécute au fil de la liste, sans être différée | 116 |
 | 0x90 | bits 11–13 de l'entrée de la quête `arg` = `haut` (quête dans l'état 2, pas invité) | 155 |
@@ -345,8 +345,73 @@ le résultat d'une opération sur les objets, non modélisée). Absents des donn
 
 Différées, dans l'ordre de la liste (`dq9_core::trigger::run_deferred`) : objets et progression sont
 appliqués à l'état, le reste est rendu sous forme de demandes (`Request::Talk`, `Event`,
-`Warp`, `RemoveNpc`). Une progression qui change recharge les triggers de la carte
-(`Request::ReloadTriggers`).
+`Warp`, `RemoveNpc`), puis `ReloadTriggers` et `ReloadCast` (paragraphe suivant).
+
+### Rechargements après les actions différées
+
+**Trouvé** en lisant `Trig_RunDeferred` (`0x0206f82c`) puis les fonctions qu'il appelle
+(Ghidra, adresses EU). Après la boucle sur la liste, dans cet ordre :
+
+1. **Triggers.** Les cas 0x84, 0x94 et 0xd6 lèvent un booléen après `Track_Advance`, **que la
+   piste ait avancé ou non** ; si `BackgroundLoader::GetNumQueuedTasks() < 1`, la fonction
+   appelle `Trig_LoadMap` (`0x0206462c`) sur la carte courante. Celle-ci met à zéro `+0x47c`
+   et `+0x494` de l'objet des triggers (`+0x494` est la tête de la liste des aires de 0x8f,
+   `Trig_AddArea`, `0x02064b08`), relit `trigger<carte>.bin` filtré par le chapitre et l'étape
+   de la sauvegarde (`Save_Chapter`, `Save_ScenarioStep`), puis `Trig_LoadTable`
+   (`0x02064584`) tire l'**événement 20** (mot 3 = salle) et exécute ses actions différées.
+   L'aire où se tient le meneur (`+0x491`) n'est pas touchée. Rien d'autre n'est reconstruit :
+   ni PNJ, ni placements, ni portes, ni héros.
+2. **Distribution.** Le cas 0x8d garde son argument (le dernier de la liste l'emporte) ; s'il
+   est non nul et que la tâche `+0x3b58` des ressources de jeu n'est pas déjà en file (octet
+   `+2`), `ov_017::021c16a8` l'initialise (type `0x30`) et `func_020469b4` la met dans la
+   file des tâches (`+0x36fc`), **derrière** un événement ou une conversation mis en file plus
+   tôt dans la même liste. Sa mise à jour `ov_017::021c16cc` (appelée par
+   `ov_017::021a3544`) : `SetBrightness(-16, 15)`, attente de la fin du fondu et des
+   chargements, puis `ov_017::021a2fa0`, puis retour à la luminosité 0 en 15 images si aucune
+   tâche d'événement n'est en file. `ov_017::021a2fa0` est la fonction que le chargement de
+   carte appelle aussi (`ov_017::0219e384`) : `ov_017::021a316c` détruit les allocateurs de la
+   distribution, les monstres de terrain `0x70..0x9f` et vide les 32 entrées de la table des
+   PNJ (`0x0203cfc4` : liste de distribution, chaînes de placement, entrées, nombre ; la liste
+   des positions gardées `+0x9e` reste), puis `Cast_LoadMap` (`ov_017::021a2c14`) relance
+   `place.bin` et `npc.bin` pour la carte courante et le point d'histoire courant. La carte, sa
+   collision, ses placements (cachés ou montrés), ses portes et le héros restent ; le drapeau
+   `0x8000` posé par 0x7c (`NpcTable_FindById`, `0x0203df88`) vivait dans l'ancienne table :
+   un PNJ retiré que le script de placement place encore revient.
+
+`EventTask_Update` (`ov_017::021bc77c`) appelle aussi `ov_017::021a2fa0` à la fin d'un
+événement qui a pris la mémoire de la distribution (`+0x90`) ou porte le bit `+0x50 & 4`,
+**avant** l'événement 11 : la distribution y est reconstruite à l'ancien point d'histoire,
+puis le `0x8d` de l'événement 11 la reconstruit au nouveau.
+
+Exemple : `room 4104 1.1..1.1 event 11: if 0x8(21510) then 0x73(22159) 0x84(0, 1, 2, 1)
+0xc5(2) 0x8d(1) 0x6a(139)`. À 1.1.2, `X01M04` n'a que la chose à examiner 199 ; à 1.2.1,
+`place.bin` place aussi Aquila (PNJ 99, `s019`, `cargo dq9re cast X01M04 --step 2`), à qui
+`room 4104 1.2..1.3 event 0: if 0x6(99) 0x3(4) then 0x76(99, …) 0x66(4)` fait parler et lever
+le drapeau 4 du jeu 0. Autre exemple : la fin de 1340 dans l'écurie (`0x8d(1)` après les
+cinq tas ramassés) ne place plus les tas 211–215 et remet le palefrenier 15 debout.
+
+Modèle (`dq9_core::field::Field`, `dq9-app`) :
+
+- `run_deferred` rend `Request::ReloadTriggers` pour tout 0x84/0x94/0xd6 et
+  `Request::ReloadCast` pour un 0x8d non nul, dans cet ordre, après le transport.
+  `Field::collect` exécute le rechargement des triggers lui-même : il vide les aires
+  ajoutées, tire l'événement 20 et traite ses demandes avant le reste de la liste. Les
+  triggers étant filtrés à chaque événement par la piste courante, la relecture du fichier
+  n'a pas d'autre effet ici. La file de chargement est supposée vide **[hypothèse]**.
+- L'application met la reconstruction de la distribution en attente et l'exécute au premier
+  pas où aucun événement ni aucune conversation n'est en cours (`App::reload_cast`) :
+  `AnimatedScene::rebuild_cast` remplace les instances de la distribution sans toucher à la
+  carte, la liste de conversation est remplacée et les retraits 0x7c sont oubliés. Le fondu
+  et sa durée (environ 30 images pendant lesquelles le champ attend) ne sont **pas
+  modélisés** : la distribution change en un pas. Ce que `021a2fa0` reconstruit en plus
+  (monstres de terrain, personnages `0xc9`–`0xce`, objets chargés par `ov_017::021a28a8`) et
+  si les compteurs de conversation « carte » sont remis à zéro restent **[inconnu]**.
+- Test : `the_end_of_21510_rebuilds_the_cast_and_npc_99_raises_game_0_flag_4` (échoue sans
+  la reconstruction : Aquila n'est pas dessiné) et
+  `a_progress_change_reruns_event_20_and_drops_the_added_areas`. Aucun état original à
+  `X01M04` en 1.2 n'était catalogué (`dq9re states` sur `build/v01-20261107/oracle`,
+  `build/orca/route`, `build/melonds*`) : la présence d'Aquila sans changement de carte n'est
+  pas comparée à melonDS.
 
 ## Drapeaux globaux posés à l'ouverture
 
@@ -726,15 +791,17 @@ carte. L'événement joue sur la carte déjà chargée, sans rechargement.
    `EventPlayer::remove_npc`, qui masque l'instance du cast (échelle nulle, l'objet porte le
    drapeau `0x8000`, `02013380`). L'identifiant retiré est retenu : `seed`, `present` et
    `restore_npcs` ne le replacent plus pendant les scènes suivantes ; un changement de carte
-   efface la liste avec la carte. Tests :
-   `removing_npc_210_hides_its_cast_instance` et
-   `stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden` (les cinq tas, 1340, et
-   aucun retour après la scène ; le palefrenier 15 reste dessiné).
-5. `0x8d` (`Request::Other(141)`), `560` et `571` ne changent pas le déroulement observé. Les
+   efface la liste avec la carte, comme la reconstruction de la distribution par `0x8d`.
+   Tests : `removing_npc_210_hides_its_cast_instance` et
+   `stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden` (les cinq tas, 1340 dont
+   le `0x8d(1)` reconstruit la distribution sans eux, et aucun retour après la scène ; le
+   palefrenier 15 reste dessiné).
+5. `560` et `571` ne changent pas le déroulement observé. `0x8d` reconstruit la distribution
+   (§ « Rechargements après les actions différées »). Les
    11 scènes `data/event` des étapes 1.2–1.3 vont à leur terme (`dq9re script 1.2-3`) ; les
    scènes `evspt_lv5` 21592, 21593 et 21595 se jouent aussi jusqu'au bout, mais isolément
    (`--event`), car `stage_events`/`script` ne les incluent pas dans cette liste. Aucun
-   correctif n'est établi pour ces trois natives.
+   correctif n'est établi pour ces deux natives.
 
 ### Reproduction
 
@@ -771,6 +838,7 @@ cargo test -p dq9-app house_exit_requires_both_task_flags_and_advances_to_1_3 --
 cargo test -p dq9-app house_exit_without_a_task_flag_returns_to_1100_without_advancing -- --nocapture
 cargo test -p dq9-app village_area_12_plays_1410_then_npc_94_takes_the_1_4_1_return -- --nocapture
 cargo test -p dq9-app the_1_3_arrival_scene_does_not_revive_removed_npcs -- --nocapture
+cargo test -p dq9-app the_end_of_21510_rebuilds_the_cast_and_npc_99_raises_game_0_flag_4 -- --nocapture
 ```
 
 ### Assertions de régression proposées
@@ -812,8 +880,12 @@ cargo test -p dq9-app the_1_3_arrival_scene_does_not_revive_removed_npcs -- --no
 - **Retrait de PNJ** (fait, `removing_npc_210_hides_its_cast_instance` et
   `stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden`) : après `RemoveNpc(210)`
   de 1390 l'instance 210 n'est plus dessinée, les autres PNJ le restent ; les tas 211–215
-  disparaissent chacun à leur ramassage, 1340 ne les fait pas revenir, et le palefrenier 15
-  reste dessiné.
+  disparaissent chacun à leur ramassage, 1340 ne les fait pas revenir (son `0x8d(1)`
+  reconstruit une distribution qui ne les place plus), et le palefrenier 15 reste dessiné.
+- **Distribution reconstruite par `0x8d`** (fait,
+  `the_end_of_21510_rebuilds_the_cast_and_npc_99_raises_game_0_flag_4`) : la fin de 21510
+  sur `X01M04` passe en 1.2.1 et rend `ReloadCast` sans changement de carte ; au pas suivant
+  Aquila (PNJ 99) est dessiné, lui parler lève le drapeau 4 du jeu 0.
 - **1.3 : aire 12, 1410 et retour 1.4.1** (fait,
   `village_area_12_plays_1410_then_npc_94_takes_the_1_4_1_return`) : à 1.3.1 de nuit,
   l'aire 12 ajoutée par l'événement 20 est trouvée par le trigger qu'elle déclenche sur une
