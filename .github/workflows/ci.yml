@@ -1,22 +1,31 @@
 name: CI
 
+# Every job calls scripts/verify.ps1, the single source of the verification commands, so CI
+# and the local loop run exactly the same cargo invocations. `shell: pwsh` (not `pwsh -File`)
+# lets `-Only fmt,clippy` reach the script as an array.
+
 on:
-  # Documentation and reference data do not change the binaries: skipping them keeps the
-  # Linux jobs from rerunning on doc-only commits, including the README block committed by
-  # `coverage` below (whose push by the workflow token would not trigger a run anyway).
+  # Documentation and reverse-engineering notes do not change the binaries: skipping them
+  # keeps the Linux jobs from rerunning on doc-only commits. `re/**` is not ignored as a
+  # whole: `re/functions.txt` feeds the `port:` markers that the coverage job checks.
   push:
     branches: [main]
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
-      - 're/**'
+      - 're/symbols.txt'
+      - 're/ghidra_scripts/**'
       - 'rom/**'
   pull_request:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
-      - 're/**'
+      - 're/symbols.txt'
+      - 're/ghidra_scripts/**'
       - 'rom/**'
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,8 +40,8 @@ jobs:
       # cpal's alsa-sys needs alsa.pc; the runner image does not ship it.
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets
+      - shell: pwsh
+        run: ./scripts/verify.ps1 -Only fmt,clippy
 
   test:
     runs-on: ubuntu-latest
@@ -43,7 +52,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - uses: Swatinem/rust-cache@v2
       # The ROM is never available in CI; real-ROM tests skip themselves.
-      - run: cargo test --workspace
+      - shell: pwsh
+        run: ./scripts/verify.ps1 -Only test
 
   wasm:
     runs-on: ubuntu-latest
@@ -52,25 +62,26 @@ jobs:
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       # Platform-independent crates and the app must keep building for the web target.
-      - run: cargo build -p nds-rom -p dq9-formats -p dq9-render -p dq9-app --target wasm32-unknown-unknown
+      - shell: pwsh
+        run: ./scripts/verify.ps1 -Only wasm
 
-  # Porting progress (`cargo dq9re coverage`, no ROM needed): checks the `port:` markers on
-  # every run, shows the result in the job summary and, on main, commits the README block.
+  # Porting progress (`cargo dq9re coverage`, no ROM needed): checks the `port:` markers,
+  # shows the result in the job summary and fails when the README block committed with the
+  # change is stale. CI never commits: the block is refreshed locally by verify.ps1.
   coverage:
     needs: [lint, test]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: cargo dq9re coverage --readme README.md >> "$GITHUB_STEP_SUMMARY"
-      - name: Commit the updated README
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - shell: pwsh
+        run: ./scripts/verify.ps1 -Only coverage | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+      - name: Check the README progress block
         run: |
-          git diff --quiet README.md && exit 0
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "docs: update porting progress" README.md
-          git push
+          if ! git diff --exit-code -- README.md; then
+            echo "::error file=README.md::bloc d'avancement périmé : lancer scripts/verify.ps1 en local et commiter README.md"
+            exit 1
+          fi
