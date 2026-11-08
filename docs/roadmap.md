@@ -5,178 +5,8 @@ jouable le plus tôt possible**, en s'appuyant au maximum sur le travail public 
 (`ressources-externes.md`). Chaque étape se termine par une doc dans `docs/re/`, une
 implémentation testée et un commit.
 
-## Point de reprise — reprise du 6 novembre 2026
-
-**La pause est levée ; la v0.1 n'est pas encore validée.** Les agents ont repris sur les
-outils d'oracle, de trace et de géométrie intégrés à `main`. Ne pas confondre les lots
-livrés avec un prologue intégralement jouable.
-
-### Lots actifs — 7 novembre 2026
-
-Run Orca `run_93299987d8b6`, deux workers actifs : OMP DeepSeek pour la référence
-originale et OMP DeepSeek pour le parcours navigateur. Aucun modèle OpenAI.
-
-- `v01-oracle7` : référence originale poursuivie ; propriétaire de
-  `melondsds_host.py` et `re/melonds-state.md`.
-- `v01-browser7` : parcours visuel au clavier sur la version publiée, captures et
-  frontières de scènes ; propriétaire de `app.md` et du texte du README.
-
-Lots clôturés et worktrees fermés : `v01-web7` (`574d24c`), `v01-parity7` (`69287f9`),
-`v01-tower7`/`v01-village7` (`8d41723`), `v01-return7` (`781b9d5`), `v01-transition7`
-(`6cbce07`), `v01-cadence7` (`0d2b57b`), `v01-village-accept7` (`fde950f`) et
-`v01-placement-fix7b` (`22243ef`). Tous intégrés dans `main` ; leurs preuves restent sous
-`build/v01-20261107/`.
-
-Chaque worker pousse ses constats documentés sur sa branche. Le code attend les contrôles
-du coordinateur avant commit et push. Les preuves restent sous `build/v01-20261107/`
-(ignoré), avec empreintes ; les worktrees sont fermés après préservation et intégration.
-
-### Intégré et publié
-
-- Dernier lot de jeu : **`21e1e42`**. CI Linux
-  [42384404713](https://github.com/FabLrc/dq9-rust/actions/runs/42384404713) et déploiement
-  [Pages 42384404646](https://github.com/FabLrc/dq9-rust/actions/runs/42384404646) réussis.
-- Le pas terrain suit à nouveau le jeu : `Hero::step(ticks = 2)`, `Field::step` et la pose
-  du modèle avancent aux images impaires de la boucle 60 Hz ; audio, portes, dialogues,
-  scènes, caméra et rendu restent à 60 Hz. Le test
-  `field_cadence_holds_the_pose_and_matches_the_original_every_vblank` reproduit les angles
-  et positions originaux image par image.
-- Une visibilité de placement masque désormais tout son sous-arbre dessiné (enfants compris)
-  avec restauration exacte des transformations ; un changement de carte efface tous les
-  index de scène de l'ancienne carte avant un événement enchaîné. Tests réels sur D04M02 et
-  sur les paires 20986 → 29413 / 9210 → 9220 / 9710 → 9713.
-- Le village 1.2 est verrouillé par les drapeaux de tâches 4 et 5 : sans eux, la sortie de
-  maison revient à 1100 sans avancer ; avec eux, l'éclairage passe à la nuit dans la même
-  image, 1350/1360 se joue, l'aire 12 lance 1410, puis 21595 donne 1.4.1 sur 4105 avec
-  21597 une seule fois et sans 21593. Quatre tests réels couvrent ce parcours.
-- Parcours natif complet observé : 1170 finit à 334,45 s, la rampe mène à `X01M03` à
-  336,40 s, Yggdrasil (21510) donne 1.2.1 à 391,12 s. Le pilote revient ensuite
-  physiquement par `4107 → 4105`, parle à la gardienne, déclenche 21591 et arrive à
-  **Angel Falls 1100**, puis joue 21592/1380/1390/1370 et s'arrête à 665,2 s sur `M01M08`.
-  Le retour de 1.2.1 utilise la pente est et la porte 0/3, sans téléportation. Preuves :
-  `build/v01-20261107/combined/full-cp.jsonl` et `full-inputs.jsonl`.
-- `Raw::Quest490 = 1` est posé par la native 559 avant le trigger de fin de 21595 ;
-  21595 va en 1.4.1 sur 4105 et 21597 est lancé **une fois** après le changement de carte.
-  L'éclairage suit le moment de la journée du champ sauf `--time`/`--clock` explicites.
-  Les PNJ retirés par `0x7c` disparaissent du rendu et restent absents jusqu'au changement
-  de carte. Tests réels : `event_21595...`, `only_a_trigger_warp...`,
-  `house_exit_time_of_day...`, `removing_npc_210...`, `stable_pickups...`.
-- Vérification combinée : fmt, clippy, 43 tests d'application sur ROM+sauvegarde, 170 tests
-  de `dq9-core`, tous les tests d'espace de travail et wasm verts.
-- Tâches du village 1.2 couvertes sur la vraie ROM : anneau de l'esprit
-  `keepsake_ring_task_gives_22158_raises_flag_3_and_removes_npc_210`, veuve
-  `widow_task_takes_22158_gives_22159_and_raises_flag_4` et absence de scène sans le
-  drapeau 3, écurie `stable_pickups...` jusqu'à 1340 et drapeau 5, verrou de sortie avec les
-  deux drapeaux, aire 12/1410/21595/1.4.1, et non-réapparition des PNJ retirés.
-- Comparaison au point de contrôle libre de 1.1.2 : l'original
-  `build/v01-20261107/oracle/control112-as-control.jsonl` (VBlank 58392, pose
-  `(2,77 ; 11,25 ; 18,19)`) et le runtime final concordent sur la carte, la piste
-  `1.1.2`, les quatre drapeaux d'étape, les quêtes et la position au centième. Seul
-  `4135`, butin aléatoire de la course féminine, manque au runtime ; aucun autre écart.
-  Le test de cadence couvre le déplacement image par image.
-- Les comparateurs consomment chaque point une seule fois et refusent zéro alignement.
-  Le butin aléatoire 4135/4212 reste visible dans les comparaisons des courses qui l'ont reçu ;
-  aucun drapeau n'a été forcé.
-- Référence originale reprise : premier contrôle, X01M05, X01M07 puis retour physique dans
-  `X01M01`. Le blocage précédemment attribué à 1160 était une erreur de pilotage : la
-  réplique appartient à la scène répétable 1600 du compagnon ; les A répétés la relançaient.
-  Un appui isolé puis l'attente ferment le message (contre-vérifié par le coordinateur,
-  `build/v01-20261107/oracle/coordinator-unblock.png`). La référence après 1170/1.1.2 est
-  maintenant obtenue : `coordinator-continuous-cp.jsonl` (image 3965, VBlank 58302),
-  `coordinator-continuous-state.bin` (après l'image suivante, VBlank 58303) et capture
-  `coordinator-continuous-112.png`. La progression change avant le retour du contrôle :
-  attendre encore environ 60–80 images avant de comparer un point de contrôle libre.
-  Les anciennes preuves demeurent sous `build/oracle-route/` et `build/orca/route/`,
-  les nouvelles sous `build/v01-20261107/oracle/` (ignorés).
-- Harnais oracle libretro (outil GPL externe, hors crates) : création du personnage et
-  **premier contrôle original** reproductibles sans GUI, `dq9re state --ram` sur les images
-  RAM de 4 Mio, catalogue `states index/find`, `state diff` et `state watch`. Le premier
-  contrôle donne carte 4105, area 4100, histoire 1.1.1, pose `fx32` identique à `bat6` et
-  17 des 18 drapeaux (4135 au lieu de 4212). Preuves et entrées conservées sous
-  `build/oracle-host/` (ignoré).
-- Outillage (6 novembre 2026) : `scripts/verify.ps1` (fmt, clippy, tests, wasm), filtres de
-  chemins CI/Pages vérifiés (un commit de documentation ne déclenche plus rien),
-  `scripts/decomp.ps1` (adresse EU → source USA) et cache Ghidra (9,3 s → 0,96 s),
-  `scripts/compare-runs.ps1` (alignement par point d'histoire), `scripts/prune-build.ps1`
-  (purge sûre des états), `dq9re state diff/watch` (delta d'états et provenance image par
-  image), `dq9re map --image/--reach` (rendu de collision et connectivité 3D réelle) et
-  règles de propriété/preuve dans `AGENTS.md`. Le traceur mémoire dispose
-  d'une piste vérifiée dans le code de DQIX Enhanced (`DQIX_WATCH`, outil GPL externe).
-  Détails : [`docs/app.md`](app.md#boucle-de-développement),
-  [`re/outils.md`](re/outils.md), [`re/map-archive.md`](re/map-archive.md), README.
-- Ouverture, dialogues, légendes temporisées, caméra de scène et échange des écrans intégrés.
-  Les deux vantaux de la bibliothèque de `X01M07` s'ouvrent et le héros les franchit :
-  vérification native **et sur la page publiée**, par entrées clavier, sans téléportation.
-- `--walk` utilise désormais le vrai pas fixe de l'application, plus un simulateur parallèle.
-  Une carte invalide fait échouer la commande au lieu d'afficher « no map » avec succès.
-- `e51a0bd` annule ensemble tâche, dialogue et état des portes lors d'un remplacement de
-  session. Le test Windows avec ROM et sauvegarde réelles couvre un prologue en attente,
-  puis actif avec légende ouverte, et 120 pas après chargement de `C01M09`. Clippy et wasm
-  passent. La contre-vérification **visuelle complète sur Pages** de cette dernière correction
-  reste à terminer : le défaut précédent, légende du prologue sur l'église, a été capturé.
-
-### Branches
-
-Les anciennes branches `FabLrc/impl-*` et `FabLrc/v01-field` sont intégrées à `main`.
-`FabLrc/v01-init-flags` (`06f074d`) et `FabLrc/v01-height` (`45ad216`) sont historiques :
-leurs conclusions sont reprises dans `main` et les docs ; ne pas les réintégrer.
-
-### Blocages et ordre de reprise
-
-1. **Poursuivre la comparaison à partir des références outillées.** La référence 1.1.2
-   existe ; produire Angel Falls, les tâches du village et la fin du prologue avec le même
-   harnais, puis comparer au runtime par
-   `state diff` et `compare-runs.ps1` aux mêmes points d'histoire. Ne pas réintégrer les
-   anciennes branches d'outillage : elles sont déjà dans `main`.
-2. **Poursuivre la référence originale vers Angel Falls.** 1170 et 1.1.2 sont reproduits
-   sans téléportation ; le mur S1 (placement 16) est bien caché dans l'état original.
-   Le worker a également franchi la rampe vers `X01M03`, puis `X01M09`. Étendre la trace
-   continue et relever les véritables retours du contrôle, pas seulement la progression.
-   Ne pas fabriquer d'état ni modifier les coordonnées/drapeaux.
-3. **Tâches du village et parité par image.** Le retour physique est résolu et le pilote
-   arrive à Angel Falls 1100 puis joue 21592/1380/1390/1370. Il tourne ensuite entre 1100 et
-   M01M08 sans accomplir les tâches du village (anneau, veuve, écurie) ; la jouabilité
-   manuelle de ces interactions doit être validée et le pilote n'est pas un critère produit.
-   Le pas terrain reste à porter à 30 Hz (`v01-cadence7`) pour la comparaison stricte par
-   image ; le pas actuel à 60 Hz n'a pas de dérive cumulative mais garde un écart maximal
-   d'un pas de terrain.
-4. **Drapeaux de l'ouverture : causes établies et branchées.** Le premier contrôle du
-   runtime pose désormais les 17 drapeaux `337, 1450..1454, 1461, 2721, 2751, 2774, 3191,
-   3775, 3955, 4046, 4283, 4410, 4414`, chacun par sa cause : équipement initial (épée de
-   cuivre + tenue céleste, `0xc76 + indice de compendium` lu dans `itemdt_*`), carte `S14M05`
-   (6405) chargée avant le prologue (2774), `0x72(22159)` et `0x6b` du trigger de fin de
-   `21596` (4283, 4410), touche tenue (`KeyManager::RefreshKeys`, 4414). Détail et preuves :
-   [`re/trigger.md`](re/trigger.md) et [`re/item.md`](re/item.md).
-   Le hook de scène est limité à la plage d'ouverture : les états originaux après
-   1130/1150/1160/1600 ne portent ni 1680 ni 1681, que le runtime posait à tort sur les
-   événements hors plage.
-   **Seul écart restant** : `4135` (herbe médicinale, item 22000) dans la course féminine ou
-   `4212` (slimedrop, 22087) dans `bat6`. Ce sont des **butins de combat aléatoires** : trois
-   courses aux entrées identiques sauf le sexe donnent l'un ou aucun, jamais tous les deux.
-   Le runtime substitue le combat 26 et ne tire pas de butin ; aucun drapeau n'est forcé.
-   Prochaine étape : un vrai combat (J4) pour que le butin sorte de sa propre règle.
-5. **Valider toute la v0.1** : prologue, quêtes du village, checkpoints strictement identiques
-   à l'original aux mêmes points, déplacement à nombre d'images contrôlé, puis parcours
-   sur la version GitHub Pages publiée. Aucun de ces critères finaux n'est déclaré acquis.
-
-### Preuves locales conservées, jamais à committer
-
-- `build/orca/pause-2026-11-06/manifest.json` donne les SHA et l'archive des anciens
-  worktrees : `field-scratch/`, `flags-scratch/`, `height-build/`. Les copies de projets
-  Ghidra et les liens redondants vers la ROM originale ont été exclus ; les preuves ont été
-  conservées par liens physiques avant suppression des worktrees.
-- `build/orca/walk/` contient la trace, les checkpoints, le rejeu et leurs empreintes.
-  Les variantes les plus récentes sont aussi dans l'archive `field-scratch/*_clean.*`.
-- Référence non instrumentée : `build/orca/oracle/bat6.ml1` ; session initiale conservée
-  dans `build/orca/oracle-session-1711efc/`. Captures de portes et du défaut de légende :
-  `build/orca/pages-door-crossing-17bef8c.png`, `build/orca/pages-stale-caption-17bef8c.png`.
-- Les journaux instrumentés, états et scripts de patch sont dans l'archive `flags-scratch/`
-  (`melonds-trace/`, `melonds-log4/`, `melonds-log9/`, `melonds-log11..13/`, `tmp/`).
-  Ils servent à la RE, **pas** de références de parité non modifiées. Une copie instrumentée
-  de ROM peut s'y trouver : ne jamais la committer ni la redistribuer.
-- Le cœur téléchargé reste sous `tools/build/melondsds_libretro.dll` ; les nouveaux états
-  libretro et PNG sont dans l'archive `height-build/melondsds/`. La ROM du joueur n'a pas
-  été déplacée ni modifiée.
+État courant, lots actifs et blocages : [`status.md`](status.md) (seule source, réécrite à
+chaque intégration). Ce fichier garde le plan, les jalons et ce qui est fait.
 
 ## Principes
 
@@ -228,7 +58,8 @@ remplacées par un équivalent documenté, et les tests différentiels passent.
   ([preuves](re/nitro-sdk.md)). **Le NitroSDK de l'ARM9 principal reste partiellement
   identifié** : la part Plateforme grandira à mesure qu'il sera reconnu.
 - La CI vérifie les marqueurs à chaque exécution, affiche le résultat dans le résumé du job
-  et, sur `main`, réécrit le bloc d'avancement du `README.md`.
+  et échoue si le bloc d'avancement du `README.md` est périmé (le mettre à jour en local par
+  `scripts/verify.ps1`).
 
 ### Carte des overlays
 
@@ -288,6 +119,12 @@ Les overlays 10, 28 et 32 (`pitfall`, `sub_hoge`, `sound`) sont à identifier.
       [`re/nitro-sdk.md`](re/nitro-sdk.md). Le classement global du SDK reste ouvert.
 - [x] Second lot de **36 primitives matérielles ARM9** (9 CP15, 27 G3X/affichage) classées
       Plateforme par comportement : Plateforme 2 718, Jeu 12 056 ([preuves](re/nitro-sdk.md)).
+- [x] Cadence du champ : boucle fixe à 60 Hz, héros et `Field::step` à 30 Hz
+      (`Hero::step(ticks = 2)` aux images impaires), égale à l'original VBlank par VBlank
+      sur `X01M05` ([`re/movement.md`](re/movement.md)).
+- [x] Point de contrôle libre 1.1.2 : carte, piste, drapeaux d'étape, quêtes et position
+      identiques à l'original ; seul écart, `4135`, butin aléatoire du combat 26
+      ([`re/melonds-state.md`](re/melonds-state.md), [`re/item.md`](re/item.md)).
 
 ## J0 — Accélérateurs
 
@@ -297,7 +134,7 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       `re/functions.txt` avant `re/symbols.txt` (nos noms priment) ; exceptions de tailles
       nulles et chevauchement explicites, pas de mode ARM/Thumb inventé.
 - [x] **`dq9re functions` / `dq9re coverage`** : liste des fonctions aux adresses
-      européennes, classement, marqueurs `port:`, avancement dans le README par la CI.
+      européennes, classement, marqueurs `port:`, bloc d'avancement du README vérifié par la CI.
 - [ ] **Classement du NitroSDK** de l'ARM9 principal : poursuivre au-delà des
       [86 routines vérifiées](re/nitro-sdk.md) (Plateforme 2 718), sans attribution par
       préfixe ni voisinage, pour affiner la catégorie Plateforme.
@@ -339,16 +176,16 @@ Petits chantiers qui rendent tous les suivants plus rapides.
       `step_flags {1}` identiques ; **17 drapeaux globaux manquaient** au runtime
       (`1450–1454,1461,2721,2751,2774,3191,3775,3955,4046,4212,4283,4410,4414`), `337` commun
       (preuves et limites dans [`re/melonds-state.md`](re/melonds-state.md), § « Oracle
-      différentiel »). Depuis, leurs causes sont branchées (§ « Blocages et ordre de reprise »,
-      point 4) : seuls `4135`/`4212`, butin de combat aléatoire, restent hors du runtime.
-      **Reste** : Angel Falls, quêtes du village et fin du prologue exigent
-      le chemin physique réel (les entrées du parcours seront rejouées dans melonDS ; le premier
-      PNJ de `X01M05` et ses coordonnées sont relevés dans `re/melonds-state.md`) ; le critère
-      J2 « même nombre d'images » demande un pas à pas exact (`pause`/`frame` mesuré à ~0,5
-      image par pression, pas encore suffisant).
-- [ ] Créer les crates prévues par `architecture.md` au premier besoin : `dq9-render` et
-      `dq9-app` faites (J1) ; reste `dq9-audio` ; l'état modélisé des triggers est passé de
-      `dq9-formats` à `dq9-core` (`dq9-core/src/trigger.rs` ; `dq9-formats::trigger` ne garde que le parsing).
+      différentiel »). Depuis, leurs causes sont branchées ([`re/trigger.md`](re/trigger.md),
+      [`re/item.md`](re/item.md)) : seuls `4135`/`4212`, butin de combat aléatoire, restent
+      hors du runtime.
+      **Reste** : références originales d'Angel Falls, des quêtes du village et de la fin du
+      prologue par le chemin physique réel ; le rejeu direct des pads natifs est falsifié, il
+      faut des positions monde ([`re/melonds-state.md`](re/melonds-state.md), § « Portes du
+      retour »). Le harnais libretro avance image par image (`melondsds_host.py`).
+- [x] Crates prévues par `architecture.md` créées : `dq9-core`, `dq9-render`, `dq9-audio`,
+      `dq9-app` ; l'état modélisé des triggers est passé de `dq9-formats` à `dq9-core`
+      (`dq9-core/src/trigger.rs` ; `dq9-formats::trigger` ne garde que le parsing).
 
 ## J1 — Voir le monde
 
@@ -385,8 +222,8 @@ Avancement :
 - [x] Rendu et application (`dq9-render`, `dq9-app`, [`app.md`](app.md)) : `dq9-app --map M01`
       affiche la carte texturée en natif (fenêtre ou `--screenshot` PNG) et dans un navigateur
       (wasm, ROM choisie dans la page) ; passes opaque/translucide, alpha, faces cachées,
-      matrices de texture, caméra libre à la projection du jeu (`0x0202df78`), 60 Hz fixe ;
-      les 738 jeux d'archives se construisent.
+      matrices de texture, caméra libre à la projection du jeu (`0x0202df78`), boucle fixe à
+      60 Hz ; les 738 jeux d'archives se construisent.
 - [x] Personnages réimplémentés au niveau des données (`dq9_formats::cast`, `chr`, `spr`,
       [`re/characters.md`](re/characters.md), `dq9re cast`, `dq9re chr`) : script de
       placement `place.bin` (20 types, chaînes et priorités), distribution `npc.bin`, corps
@@ -459,9 +296,10 @@ sortir fonctionne (`dq9-app --walk`, test `angel_falls_houses_open_and_close`).
 Comparaison à melonDS sur l'église de Stornway : sortie (warp `0x72`) et retour (porte de type
 2) concordent pour les cartes, les arrivées, les angles et le bord de franchissement, à ± 2
 images de pilotage près ([`re/map-archive.md`](re/map-archive.md)). Restent : la tâche de porte
-(animation, marche automatique, fondu), les zones des autres types, le
-parcours complet d'Angel Falls et la comparaison à nombre d'images égal : les états melonDS
-ne sont pas alignés en nombre d'images, le critère différentiel de J2 n'est pas validé.
+(animation, marche automatique, fondu), les zones des autres types et la comparaison à nombre
+d'images égal sur un parcours complet : le pas terrain à 30 Hz égale l'original VBlank par
+VBlank sur `X01M05` (`field_cadence_holds_the_pose_and_matches_the_original_every_vblank`),
+mais le critère différentiel de J2 n'est pas validé sur tout Angel Falls.
 
 Déplacement fidèle : porté dans `dq9-core` (`fx`, `movement`, `collision`, `camera`), constantes
 comparées à la ROM par `tests/movement_rom.rs` ; vitesse mesurée sous melonDS (une mesure, ± 1 image,
@@ -517,10 +355,10 @@ Avancement :
       native 538, le trigger 11, l'action `0x78` et le trigger 15, puis le joueur a la main à
       l'Observatoire (`--new-game --headless --auto`, 210 s de jeu). Le pilote **marche** :
       direction au pavé, `Hero::step`, collisions, portes (la double porte de `X01M07` est
-      poussée puis ouverte par la native 584), passe 1170, franchit la rampe vers `X01M03`
-      et atteint **1.2.1** après Yggdrasil (21510) sans téléportation. Le retour vers
-      `X01M05` bloque encore le pilote. **Reste** : le combat 26 (J4), le parcours continu
-      d'Angel Falls et la comparaison d'ordre, de durées et de drapeaux à melonDS ;
+      poussée puis ouverte par la native 584), passe 1170, franchit la rampe vers `X01M03`,
+      atteint **1.2.1** après Yggdrasil (21510), puis revient physiquement à Angel Falls 1100
+      sans téléportation ([`re/movement.md`](re/movement.md)). **Reste** : le combat 26 (J4)
+      et la comparaison d'ordre, de durées et de drapeaux à l'original au-delà de 1.1.2 ;
       le pilote est un outil de test, pas une fonction du jeu.
 - [ ] **Interpréteur `.stb`** : `dq9_core::script` traduit `Stb_Run` et ses auxiliaires
       (`ov_017::021d4980…021d6148`, marqueurs `port:`), joue les entrées 200, 100 et 300 d'un
@@ -554,15 +392,10 @@ Avancement :
 **v0.1** : nouvelle partie avec un héros par défaut (modèle animé fait en J1 ; reste le choix
 de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,
 dialogues, quêtes du village), sans combats. Critère : toute la suite d'événements du
-prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points. **État** : le
-parcours natif continu atteint Angel Falls 1100 et joue les scènes 21592/1380/1390/1370 ;
-les trois tâches 1.2 (anneau, veuve, écurie), leur verrou de sortie, l'aire 12, 21595 et le
-retour 1.4.1 sont couverts par des tests réels sur la ROM. Le pilote ne joue pas ces tâches
-seul, mais la fonctionnalité du jeu est établie. Le pas terrain à 30 Hz et le point de
-contrôle libre 1.1.2 sont vérifiés. **Navigateur** : la build finale `21e1e42` joue
-l'ouverture, le premier contrôle, 1140 et 1130, puis le hall surélevé ; elle n'a pas de
-session continue certifiée jusqu'à 4107, la tour ou Angel Falls. La v0.1 est
-**fonctionnellement complète, mais non certifiée de bout en bout dans le navigateur**.
+prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points. **État** :
+fonctionnellement complète en natif (tâches 1.2, verrou de sortie, aire 12, 21595 et retour
+1.4.1 couverts par des tests réels), non certifiée de bout en bout dans le navigateur ni
+comparée à l'original au-delà de 1.1.2 ([`status.md`](status.md)).
 
 ## J4 — Combattre : **v0.2**
 

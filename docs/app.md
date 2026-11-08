@@ -477,20 +477,39 @@ WebGPU quand le navigateur le propose, sinon WebGL 2. `crates/dq9-app/web/pkg/` 
 
 ## Boucle de développement
 
-`scripts/verify.ps1` enchaîne les contrôles de la CI dans le même ordre et s'arrête au premier
-échec :
+`scripts/verify.ps1` est la seule source des commandes de vérification : AGENTS.md, les docs
+et la CI l'appellent. Il enchaîne cinq étapes dans cet ordre et s'arrête au premier échec :
+`fmt` (`cargo fmt --all --check`), `clippy` (`cargo clippy --workspace --all-targets --
+-D warnings`), `test` (`cargo test --workspace`), `wasm` (compilation de `nds-rom`,
+`dq9-formats`, `dq9-core`, `dq9-render`, `dq9-audio` et `dq9-app` pour
+`wasm32-unknown-unknown`) et `coverage` (`cargo dq9re coverage --readme README.md`).
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast   # fmt + clippy
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1          # + tests du workspace + build wasm
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1                    # les cinq étapes
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast              # fmt + clippy
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only test,wasm    # sous-ensemble
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -RequireRom        # porte d'intégration
 ```
 
-`-Fast` ne lance que `cargo fmt --all --check` et `cargo clippy --workspace --all-targets --
--D warnings`, pour une passe courte pendant l'édition. Sans option, il ajoute
-`cargo test --workspace`, puis la compilation des crates portables et de `dq9-app` pour
-`wasm32-unknown-unknown`. Le résumé final donne la durée de chaque étape ; une seule passe
-complète avant `git push` suffit, la CI reprenant les mêmes commandes. En local, une ROM dans
-`rom/` fait aussi tourner les tests `tests/real_rom.rs`, que la CI ignore.
+`-Fast` sert de passe courte pendant l'édition. `-Only` prend des noms d'étapes (tableau ou
+chaîne séparée par des virgules) et les lance dans l'ordre canonique ; un nom inconnu est une
+erreur, et `-Only` exclut `-Fast`. Le résumé final donne la durée de chaque étape.
+
+En local, une ROM fait aussi tourner les tests `tests/real_rom.rs`, que la CI saute. La
+recherche est celle de `crates/testrom` : `DQ9_ROM`, sinon le `*.nds` de `rom/`, sinon celui
+de la racine. `-RequireRom` échoue avant toute étape si cette recherche ne trouve rien
+(ou un `DQ9_ROM` inexistant, ou plusieurs `*.nds` dans le même dossier) et affiche le chemin
+retenu : c'est la porte d'intégration d'un lot, qui garantit que les tests sur la ROM ont
+tourné.
+
+L'étape `coverage` réécrit en local le bloc d'avancement du README à partir des marqueurs
+`port:` ; le `README.md` mis à jour se commite avec le lot. La CI recalcule le bloc, l'affiche
+dans le résumé du job et échoue s'il diffère du README commité (bloc périmé) ; elle ne commite
+jamais.
+
+L'intégration d'une branche (`scripts/integrate.ps1`), le manifeste des preuves
+(`scripts/evidence.ps1`, protégé par `scripts/prune-build.ps1`) et le nettoyage des branches
+(`scripts/prune-branches.ps1`) sont décrits dans `docs/orchestration/README.md`.
 
 Les worktrees Orca n'ont pas à recompiler les mêmes crates : il suffit de partager la cible
 de Cargo.
@@ -503,6 +522,10 @@ $env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target"   # cmd : %LOCALAPPDATA%\
 Cargo verrouille une cible : deux worktrees qui compilent en même temps s'attendent au lieu de
 se marcher dessus, et le premier build remplit le cache pour les suivants. La cible partagée
 reste hors du dépôt (`build/` ne sert qu'aux sorties du projet : captures, ROM extraite).
+Une cible partagée peut réutiliser un binaire de test compilé dans un autre worktree, même
+supprimé : un chemin figé par `env!("CARGO_MANIFEST_DIR")` y désigne alors ce worktree. Les
+tests lisent donc `CARGO_MANIFEST_DIR` à l'exécution (`crates/testrom`), et
+`verify.ps1 -RequireRom` passe la ROM trouvée aux tests par `DQ9_ROM`.
 
 `sccache` est facultatif : il met les invocations de `rustc` en cache, utile quand la cible
 partagée est absente ou jetée (changement de branche, nettoyage), inutile quand elle est
@@ -661,8 +684,8 @@ suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect`
   à `dq9` et active le bouton. « Nouvelle partie » puis la même sauvegarde aussitôt (avant
   toute légende) : la console montre `event 21500 queued` puis `event 21500 starts`, suivis de
   `Sauvegarde lue localement` et `109 C01M09` ; l'église s'affiche sans légende ni scène du
-  prologue, et 1,5 s de flèche haut franchissent la porte (`map change 109 -> 100`) sans
-  qu'aucun `event 21500` ne réapparaisse. Cas légende active de la coordination : légende
+  prologue, et environ 3 s de flèche haut franchissent la porte (`map change 109 -> 100`)
+  sans qu'aucun `event 21500` ne réapparaisse. Cas légende active de la coordination : légende
   « Hello? Is there anybody there? » ouverte, sauvegarde chargée, église sans légende, puis
   120 images de flèche haut avec déplacement du héros. Entrée dans l'église ouvre la
   conversation du PNJ 25 (`C01Q0/025_en.bin`, « Hi! Welcome »). Captures et manifeste

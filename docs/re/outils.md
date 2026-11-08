@@ -226,6 +226,126 @@ pas une valeur vide), et un index de piste melonDS hors bornes est refusé. Le s
 même convention. `compare-runs.ps1` ne compare que `x`, `y`, `z` (`-HeroTolerance`), donc il
 n'est pas affecté ; une comparaison de yaw devra convertir l'un des deux.
 
+## Parité automatisée : `scripts/parity.ps1`
+
+Les preuves de parité ne sont plus de la prose : chaque parcours prouvé est une **référence**
+rejouée sur le runtime headless et comparée à l'original par `compare-runs.ps1`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/parity.ps1
+powershell -ExecutionPolicy Bypass -File scripts/parity.ps1 -References <fichier.json> -Rom <rom.nds>
+```
+
+Par défaut, `-References` vaut `build/evidence/parity/references.json` (local, ignoré : il
+désigne des checkpoints originaux, données du jeu) et la ROM suit la recherche de
+`crates/testrom` (`DQ9_ROM`, sinon le seul `*.nds` de `rom/`, sinon de la racine). Le script :
+
+1. vérifie chaque fichier (entrées runtime, checkpoints originaux) contre son sha256 **avant**
+   usage : fichier absent ou empreinte différente = échec de la référence ;
+2. compile `dq9-app` en release une seule fois ;
+3. rejoue chaque jeu d'entrées (`--rom … <args> --headless --replay <entrées> --checkpoints
+   <sortie>`), une seule fois par couple entrées + options ;
+4. retire de la copie du côté déclaré chaque drapeau global accepté, puis compare par
+   `compare-runs.ps1` (`-HeroTolerance` de la référence, `-Limit 100`).
+
+Il écrit seulement sous `build/parity/` : `run<N>-checkpoints.jsonl` et les journaux de
+`dq9-app`, et `<référence>/original.jsonl` / `runtime.jsonl` (les copies comparées) ; cargo
+écrit dans son répertoire cible. Sortie : une ligne `ok` ou `FAILED` par référence, puis ses
+écarts (lignes `DIFF` de `compare-runs.ps1`, empreinte, fichier manquant), et un bilan. Code
+0 si toutes les références passent, 1 sinon.
+
+Plus strict que `compare-runs.ps1` seul : un checkpoint original **non apparié** fait échouer
+la référence (elle prouverait moins qu'elle ne le dit), et un écart accepté **absent** de son
+côté est périmé et échoue aussi (le retirer de la référence).
+
+### Format de `references.json`
+
+```json
+{
+  "version": 1,
+  "references": [
+    {
+      "name": "control-1.1.2",
+      "description": "Contrôle libre après 1170 dans X01M01 (4101), histoire 1.1.2.",
+      "inputs":   { "path": "inputs/combined-final-inputs.jsonl", "sha256": "5394e04e…", "source": "…" },
+      "original": { "path": "original/control-1.1.2.jsonl", "sha256": "22554295…", "source": "…" },
+      "args": ["--new-game", "--mute"],
+      "heroTolerance": 0.01,
+      "accepted": [
+        { "flag": 4135, "only": "original", "reason": "butin aléatoire du combat 26…" }
+      ]
+    }
+  ]
+}
+```
+
+- `name` : `[A-Za-z0-9._-]+`, unique (nom du dossier de sortie).
+- `inputs` : fichier `--trace-inputs` du runtime ; `original` : checkpoints JSONL de
+  l'original (même format que `dq9re state --json`, avec un `kind` qui s'aligne sur celui du
+  runtime, en général `control`). `path` est relatif au dossier du fichier de références ;
+  `sha256` complet (64 hex) ; `source` décrit la provenance (texte libre, non lu).
+- `args` : options de lancement de `dq9-app` ; `--rom`, `--headless`, `--replay`,
+  `--checkpoints`, `--auto`, `--pilot`, `--trace-inputs` y sont refusées (le script les pose).
+- `heroTolerance` : écart toléré sur `x`/`y`/`z` du héros ; `0` ou absent = non comparé. Le
+  yaw n'est jamais comparé (conventions différentes, ci-dessus).
+- `accepted` : écarts acceptés, chacun **un** drapeau global présent d'un seul côté
+  (`only` : `original` ou `runtime`) et sa justification `reason` obligatoire. Le drapeau
+  n'est retiré que de ce côté et que des drapeaux globaux : toute autre différence échoue, et
+  le drapeau apparu de l'autre côté aussi. Aucune autre clé n'est admise (une faute de frappe
+  est une erreur, pas une option ignorée).
+
+### Références actuelles (8 novembre 2026)
+
+Lot `build/evidence/parity/` (`manifest.json` par `scripts/evidence.ps1 -Lot parity`) :
+
+| Fichier | sha256 | Provenance |
+|---|---|---|
+| `inputs/combined-final-inputs.jsonl` | `5394e04ed1cb` | `build/v01-20261107/combined/final-inputs.jsonl`, parcours natif combiné (40 432 pas, premier contrôle au pas 12625, contrôle 1.1.2 au pas 20068) |
+| `original/first-control-1.1.1-male.jsonl` | `1fe8b98dfbc6` | `dq9re state --ram build/oracle-host/ram_male.bin --json` + `kind: control` (course libretro masculine, sans butin) |
+| `original/control-1.1.2.jsonl` | `2255429503fd` | `build/v01-20261107/oracle/control112-as-control.jsonl` = `control112-cp.jsonl` (`d357eb188e0b`) avec `kind` renommé `control` |
+
+- `first-control-1.1.1-male` : premier contrôle (4105, 1.1.1), aucun écart accepté.
+- `control-1.1.2` : contrôle libre 1.1.2 (4101, VBlank 58392), écart accepté `4135` (herbe
+  médicinale, butin aléatoire du combat 26 de la course féminine ; le runtime substitue le
+  combat et ne tire pas de butin, aucun drapeau forcé : [`melonds-state.md`](melonds-state.md),
+  [`item.md`](item.md)).
+
+Sortie sur `5b32cf1` (arbre de travail modifié, ROM européenne) :
+
+```text
+ok      first-control-1.1.1-male  aligned 1/1 original checkpoint(s), runtime 615
+ok      control-1.1.2  aligned 1/1 original checkpoint(s), runtime 615; accepted: flag 4135 original only (1 checkpoint(s))
+parity: 2 reference(s), 2 ok, 0 failed
+```
+
+Falsification : sans l'entrée `4135`, `control-1.1.2` échoue sur
+`DIFF 4101:1.1.2 control global flags: original [… 4135 …], runtime […]` ; un original
+altéré échoue sur l'empreinte, puis, empreinte mise à jour, sur
+`DIFF 4101:1.1.2 control track 0 step flags: original [1,2,3], runtime [1,2,3,4]`.
+
+Données manquantes, non fabriquées : aucun checkpoint original n'existe au-delà de 1.1.2
+(Yggdrasil 1.2.1, Angel Falls, tâches du village, 1.4.1) ; ces points restent sans
+référence. `combined/full-inputs.jsonl`, cité comme preuve du parcours natif, ne repasse
+plus par 1.1.2 sur `5b32cf1` (25 checkpoints, aucun contrôle 1.1.2) : seule
+`final-inputs.jsonl` sert de référence. La course féminine du premier contrôle
+(`build/oracle-host/checkpoints.jsonl`) n'est pas reprise : son second point `after` n'a pas
+de second contrôle runtime à apparier et son seul écart (`4135`) est déjà couvert en 1.1.2.
+
+### Ajouter une référence
+
+**Règle** : chaque nouveau parcours prouvé contre l'original devient une référence de ce
+fichier ou un test `real_rom`, jamais seulement de la prose dans la roadmap ou les docs.
+
+1. Rejouer ou produire les entrées runtime (`--trace-inputs`) et les checkpoints originaux
+   (harnais libretro + `dq9re state --json`) au même point d'histoire, avec un `kind` qui
+   s'aligne (`control` pour une prise de contrôle).
+2. Copier les deux fichiers sous `build/evidence/parity/` (`inputs/`, `original/`), sans
+   modifier leur contenu ; noter toute transformation (renommage de `kind`) dans `source`.
+3. Ajouter l'entrée avec les sha256 (`Get-FileHash -Algorithm SHA256`) ; un écart accepté
+   exige une cause établie et documentée, jamais un drapeau forcé pour faire passer.
+4. Lancer `scripts/parity.ps1` (tout `ok`), puis `scripts/evidence.ps1 -Lot parity` pour le
+   manifeste ; citer les fichiers avec les 12 premiers caractères de leur sha256.
+
 ## Déplacement à nombre d'images égal
 
 Le champ se met à jour à 30 Hz ; `App::run_steps` fait désormais tourner le champ

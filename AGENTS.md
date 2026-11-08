@@ -1,7 +1,7 @@
 # AGENTS.md
 
-Contexte pour les agents qui travaillent sur ce dépôt. Lire aussi `README.md` (commandes),
-`docs/roadmap.md` (quoi faire ensuite) et `docs/architecture.md` (règles).
+Contexte pour les agents. Lire aussi `docs/status.md` (état courant : seul endroit où il
+figure), `docs/roadmap.md` (plan), `docs/architecture.md` (règles) et `README.md`.
 
 ## Le projet
 
@@ -9,9 +9,6 @@ Réimplémentation en Rust de *Dragon Quest IX* (Nintendo DS, ROM européenne `Y
 logique du jeu est réécrite d'après l'analyse du code ARM9, les ressources sont lues à
 l'exécution depuis la ROM du joueur. Ce n'est **pas** un émulateur : les bibliothèques
 Nintendo et le matériel DS sont remplacés, pas traduits. Cible : natif et Web (wasm).
-
-Avancement : jusqu'aux scripts d'événements, rien d'affiché encore ; prochain objectif la
-v0.1 jouable (jalons J0 à J3 de `docs/roadmap.md`).
 
 ## Où chercher avant d'analyser
 
@@ -30,10 +27,9 @@ Tout fait repris d'ailleurs est cité dans la doc et revérifié sur la ROM.
 
 ## Arborescence
 
-- `crates/nds-rom` : conteneur DS et codecs Nintendo. `crates/dq9-formats` : formats et
-  logique Level-5 (sans E/S). `crates/dq9-render` : rendu wgpu (sans E/S).
-  `crates/dq9-app` : application winit, natif et Web (`docs/app.md`). `crates/dq9re` : CLI
-  de RE. `crates/testrom` : localisation de la ROM pour les tests.
+- `crates/` : `nds-rom` (conteneur DS, codecs Nintendo), `dq9-formats` (formats Level-5),
+  `dq9-core` (logique de jeu déterministe), `dq9-render` (rendu wgpu), `dq9-audio` (son
+  SDAT), `dq9-app` (winit, natif et Web, `docs/app.md`), `dq9re` (CLI de RE), `testrom`.
 - `re/symbols.txt` : noms (source de vérité) ; `re/ghidra_scripts/` : scripts Java ;
   `scripts/*.ps1` : outils, import Ghidra, requêtes.
 - `docs/re/<sujet>.md` : une note par format ou sous-système.
@@ -42,29 +38,31 @@ Tout fait repris d'ailleurs est cité dans la doc et revérifié sur la ROM.
 ## Commandes
 
 ```powershell
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all
-cargo build -p nds-rom -p dq9-formats -p dq9-render -p dq9-app --target wasm32-unknown-unknown
+powershell -File scripts/verify.ps1              # fmt, clippy, test, wasm, coverage
+powershell -File scripts/verify.ps1 -Fast        # fmt + clippy
+powershell -File scripts/verify.ps1 -Only test,wasm
+powershell -File scripts/verify.ps1 -RequireRom  # échoue sans ROM (porte d'intégration)
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/m01.png
-cargo dq9re --help                                  # exploration de la ROM
-cargo dq9re coverage                                # avancement, vérifie les marqueurs port:
+cargo dq9re --help                                # exploration de la ROM
 powershell -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
 ```
 
+- `scripts/verify.ps1` est la **seule** source des commandes de vérification (CI comprise) ;
+  ne pas recopier ses commandes cargo ailleurs. L'étape `coverage` met à jour le bloc
+  d'avancement du README : le commiter avec le lot.
 - Les tests `tests/real_rom.rs` s'ignorent sans ROM ; la CI n'a jamais la ROM.
-- Une requête Ghidra verrouille `re/ghidra` : pour des requêtes en parallèle, une copie du
-  projet par requête, désignée par `DQ9_GHIDRA_PROJECT`. `ghidra-apply-symbols.ps1` exige que
-  l'interface Ghidra ait fermé le projet.
+- Ghidra verrouille `re/ghidra` : une copie par requête parallèle (`DQ9_GHIDRA_PROJECT`) ;
+  `ghidra-apply-symbols.ps1` exige le projet fermé dans l'interface.
 - Environnement Windows : hôte Rust `x86_64-pc-windows-gnu` avec MinGW-w64, scripts PowerShell.
 
 ## Règles de code
 
 - Rust édition 2024, `rustfmt` largeur 100, `unsafe` interdit, clippy sans avertissement.
-- `nds-rom`, `dq9-formats`, `dq9-render` et la future `dq9-core` : aucune E/S, compilent en
-  wasm. Seule `dq9-app` touche au système (fichiers, fenêtre).
+- `nds-rom`, `dq9-formats`, `dq9-core`, `dq9-render` et `dq9-audio` : aucune E/S, compilent
+  en wasm. Seule `dq9-app` touche au système (fichiers, fenêtre, son).
 - Données non fiables : un parseur renvoie une erreur, ne panique jamais.
-- `dq9-core` (à venir) : déterministe, pas fixes de 60 Hz, entrées explicites.
+- `dq9-core` : déterministe, entrées explicites ; boucle à 60 Hz et champ à 30 Hz comme la DS
+  (`docs/architecture.md`).
 - **Traçabilité** : chaque comportement réimplémenté cite sa fonction d'origine en
   commentaire (`ov_017::021ba810`, `0x020d91ec`). Quand une fonction du jeu est entièrement
   réimplémentée, l'ajouter à un marqueur `port:` du module (`//! port: 0x020d91ec,
@@ -79,39 +77,45 @@ powershell -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
 1. Noms dans `re/symbols.txt` (`<adresse> <nom> # commentaire`, triés par section).
 2. Note dans `docs/re/<sujet>.md` : comment c'est trouvé, preuves (adresses, contrôles sur
    toutes les données), faits et **[hypothèse]** / **[inconnu]** marqués comme tels.
-3. Implémentation + tests, puis mise à jour de `docs/roadmap.md` (section « Fait » et jalon).
+3. Implémentation + tests. L'état courant va dans `docs/status.md` (coordinateur) ;
+   `docs/roadmap.md` seulement quand un jalon ou une case change.
 
 ## Travail avec des agents
 
-Ces règles viennent d'une session où les reprises ont coûté plus que le code.
+Kit : `docs/orchestration/README.md` (coordinateur), `regles-worker.md` (workers),
+`modele-lot.md` (spec, instance locale `build/lots/<lot>.md`).
 
-- **Un propriétaire par fichier partagé et par lot.** `app.rs`, `field.rs`, `event.rs`,
-  `state.rs` de `dq9-core` et `trigger.rs` : annoncer le contrat avant de les modifier. Un
-  agent qui a besoin d'une modification hors de son périmètre envoie un `ask` précis, pas
-  un patch concurrent.
-- **Un lot = une branche, un commit cohérent, une preuve.** Le lot se termine par
-  `worker_done` avec SHA, commandes exécutées, résultat observé et limites. Un agent bloqué
-  sur une dépendance externe envoie un seul `ask` puis s'arrête ; il ne tourne pas en boucle
-  de statut.
+- **Harness OMP toujours** (workers Orca lancés avec OMP, sous-agents par `task` d'OMP).
+  Modèles : `opencode-go/deepseek-v4.1-flash` (DeepSeek V4.1 Flash via OpenCode Go, défaut :
+  mécanique, docs, scripts, tests sur contrat) ; `anthropic/claude-sonnet-5-5` (Sonnet 5.5
+  via Anthropic : RE, contradiction, conception, débogage, code à risque) ;
+  `anthropic/claude-opus-5-5` (Opus 5.5 via Anthropic, dernier recours). Escalade : Flash
+  échoue deux fois ou dépasse son plafond → Sonnet ; Sonnet échoue → Opus, justifié dans
+  `docs/status.md`. Aucun autre modèle.
+- **État dans `docs/status.md` seulement**, réécrit par le coordinateur seul ; les workers
+  n'écrivent ni status, ni roadmap, ni README (sauf le bloc d'avancement).
+- **Un propriétaire par fichier partagé.** `dq9-app/src/{app,event}.rs`,
+  `dq9-core/src/{field,state,trigger}.rs`, `Cargo.toml`, `re/symbols.txt` : dans le bloc
+  ```owns d'un seul lot à la fois. Hors périmètre ou bloqué : un seul `ask` précis puis arrêt ;
+  ni patch concurrent, ni boucle de statut.
+- **Un lot = une branche `FabLrc/<jalon>-<lot>`** (sans suffixe de vague), une spec, des
+  preuves, un commit squash par `scripts/integrate.ps1` (porte : périmètre, fichiers
+  interdits, `verify.ps1 -RequireRom`). Fin de vague : `scripts/prune-branches.ps1`.
 - **Pas de cause sans falsification.** Une route, une hauteur ou une transition ne se déduit
-  ni d'un parcours en X/Z seul, ni de l'égalité de quelques constantes ou placements avec la
-  décompilation. Il faut soit un état original, soit un test continu qui franchit le
-  passage. Sinon, marquer `[hypothèse]` et ne pas l'implémenter comme un fait.
-- **Un bogue visible impose un test visible.** Après une reproduction dans le navigateur ou
-  la fenêtre, ajouter un test natif qui assert l'état constaté (événement actif, légende
-  ouverte, position, carte) et sa disparition après la correction. Un test qui ne vérifie
-  que « la carte a changé » a laissé passer une légende du prologue sur une sauvegarde.
-- **Une passe de vérification par lot.** `cargo fmt --all --check`, clippy, tests et wasm :
-  une fois avant le push, pas après chaque édition. Ne pas relancer un défaut déjà signalé
-  par l'utilisateur pour le confirmer.
-- **Preuves locales, jamais commitées.** ROM, sauvegardes, états, captures et journaux
-  restent sous `build/` (ignoré) ; les comptes rendus citent le chemin et l'empreinte, pas
-  les données.
+  ni d'un parcours en X/Z seul, ni de constantes égales à la décompilation : il faut un état
+  original ou un test continu qui franchit le passage, sinon `[hypothèse]`. Un contradicteur
+  doit avoir tenté de réfuter une cause avant qu'elle soit consignée comme fait.
+- **Un parcours prouvé devient un contrôle permanent** : référence `scripts/parity.ps1` ou
+  test `real_rom`. Un bogue visible impose un test natif qui assert l'état constaté
+  (événement, légende, position, carte) et sa disparition après correction.
+- **Une vérification par lot** (`verify.ps1 -RequireRom`), pas après chaque édition. Ne pas
+  relancer un défaut signalé par l'utilisateur pour le confirmer.
+- **Preuves locales, jamais commitées** : `build/evidence/<lot>/` et son `manifest.json`
+  (`scripts/evidence.ps1`) ; les docs citent le chemin et 12 caractères du sha256.
 
 ## Langues et commits
 
-- Documentation en français ; identifiants, commentaires de code et messages de commit en
-  anglais.
+- Docs en français ; identifiants, commentaires de code et commits en anglais.
 - Commits : `domaine: résumé` (`formats:`, `docs:`, `chore:`…), un sujet par commit.
 
 ## Légal et licences
