@@ -271,9 +271,9 @@ sauvegarde (le premier est le meneur).
 action qui rend 0 ; les actions **différées** sont ajoutées à la liste `+0x30` du bloc de
 paramètres (`Trig_Defer`, `0x0206446c`) et ne sont exécutées par `Trig_RunDeferred` que si
 la liste est allée au bout. `dq9_core::trigger::run_action` reproduit le déroulement et les effets
-sur `State` (drapeaux, pistes, quêtes, journal, or, objets, moment de la journée) ; les
-effets sur ce que `State` ne contient pas (objets de carte, PNJ, menus, son,
-synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
+sur `State` (drapeaux, pistes, quêtes, journal, or, objets, moment de la journée, compteurs de
+conversation) ; les effets sur ce que `State` ne contient pas (objets de carte, PNJ, menus, son,
+synchronisation sans fil, PV) sont ignorés.
 
 `haut` / `bas` = moitiés de l'opérande 0 sauf mention.
 
@@ -305,7 +305,7 @@ synchronisation sans fil, compteurs de conversation, PV) sont ignorés.
 | 0x94 † / 0xd6 † | idem pour les cinq pistes / pour la piste `arg` | 2 / 12 |
 | 0x86 / 0x87 | lève / baisse le drapeau `arg` du jeu `haut` (3 scénario, 4 jeu 0, 5 jeu 1 de la piste) | 59 / 0 |
 | 0x8b / 0x8c | ajoute / retire l'opérande (32 bits) à l'or, plafond 9 999 999, plancher 0 | 13 / 0 |
-| 0x8d † | si `arg` ≠ 0 : met en file la tâche 0x30 (`+0x3b58`), qui **reconstruit la distribution de PNJ** de la carte courante (§ « Rechargements après les actions différées ») | 236 |
+| 0x8d † | si `arg` ≠ 0 : met en file la tâche 0x30 (`+0x3b58`), qui **reconstruit la distribution de PNJ** de la carte courante, après le rechargement des triggers et l'événement 20 (§ « Rechargements après les actions différées ») | 236 |
 | 0x8e | drapeau `0xbf1 + rang` de `arg` dans une table de 32 valeurs (`0x020e87d0`), rangs 17 à 31 seulement | 14 |
 | 0x8f | ajoute une aire (événements 2/5), voir « Zones » ; s'exécute au fil de la liste, sans être différée | 116 |
 | 0x90 | bits 11–13 de l'entrée de la quête `arg` = `haut` (quête dans l'état 2, pas invité) | 155 |
@@ -352,15 +352,25 @@ appliqués à l'état, le reste est rendu sous forme de demandes (`Request::Talk
 **Trouvé** en lisant `Trig_RunDeferred` (`0x0206f82c`) puis les fonctions qu'il appelle
 (Ghidra, adresses EU). Après la boucle sur la liste, dans cet ordre :
 
-1. **Triggers.** Les cas 0x84, 0x94 et 0xd6 lèvent un booléen après `Track_Advance`, **que la
-   piste ait avancé ou non** ; si `BackgroundLoader::GetNumQueuedTasks() < 1`, la fonction
-   appelle `Trig_LoadMap` (`0x0206462c`) sur la carte courante. Celle-ci met à zéro `+0x47c`
-   et `+0x494` de l'objet des triggers (`+0x494` est la tête de la liste des aires de 0x8f,
-   `Trig_AddArea`, `0x02064b08`), relit `trigger<carte>.bin` filtré par le chapitre et l'étape
-   de la sauvegarde (`Save_Chapter`, `Save_ScenarioStep`), puis `Trig_LoadTable`
-   (`0x02064584`) tire l'**événement 20** (mot 3 = salle) et exécute ses actions différées.
-   L'aire où se tient le meneur (`+0x491`) n'est pas touchée. Rien d'autre n'est reconstruit :
-   ni PNJ, ni placements, ni portes, ni héros.
+1. **Triggers.** Les cas 0x84, 0x94 et 0xd6 appellent `Track_Advance` (`0x020703d8`) puis
+   lèvent un booléen **sans condition**, que la piste ait avancé ou non. 0x84 ignore son
+   premier argument et agit sur la piste courante (`+0x332`) ; 0x94 avance les pistes 0 à 4 ;
+   0xd6 utilise `a[0]`. Quand chapitre ou étape changent, `Track_Advance` remet à zéro tous
+   les compteurs de conversation (`0x0206ec04`, `gameres+0x44c4`) ; voir `dialogue.md`.
+   Après la boucle, si `BackgroundLoader::GetNumQueuedTasks() < 1`, la fonction appelle
+   `Trig_LoadMap` (`0x0206462c`) sur la carte courante ; **sinon aucun rechargement n'a lieu
+   et rien ne le relance plus tard**. `Trig_LoadMap` met à zéro `+0x47c` (tête de la table
+   des triggers, `Trig_Register`, `0x0206440c`) et `+0x494` (seule liste des aires, celles
+   ajoutées par 0x8f, `Trig_AddArea`, `0x02064b08`), relit `trigger<carte>.bin` filtré par
+   le chapitre et l'étape de la sauvegarde (`Save_Chapter`, `Save_ScenarioStep`), puis
+   `Trig_LoadTable` (`0x02064584`) tire l'**événement 20** (mot 3 = salle) et exécute ses
+   actions différées, toujours dans `Trig_RunDeferred`, donc avant la mise en file de la
+   tâche 0x8d. L'aire où se tient le meneur (`+0x491`) n'est pas touchée. `Trig_LoadMap`
+   appelle ensuite `QuestLog_Get` (`0x02094d7c`) puis `0x02095588`, qui remet à zéro
+   l'allocateur `+0x164` et y recharge `data/scenario/questorder3.bin` (chaîne à
+   `0x020f1474`, analyse `0x0209563c` dans `0x02109404`), filtré par carte, chapitre, étape
+   et quêtes terminées : la liste des quêtes de la carte, **[non modélisé]** dans le runtime.
+   Ni PNJ, ni placements, ni portes, ni héros ne sont reconstruits ici.
 2. **Distribution.** Le cas 0x8d garde son argument (le dernier de la liste l'emporte) ; s'il
    est non nul et que la tâche `+0x3b58` des ressources de jeu n'est pas déjà en file (octet
    `+2`), `ov_017::021c16a8` l'initialise (type `0x30`) et `func_020469b4` la met dans la
@@ -369,19 +379,25 @@ appliqués à l'état, le reste est rendu sous forme de demandes (`Request::Talk
    `ov_017::021a3544`) : `SetBrightness(-16, 15)`, attente de la fin du fondu et des
    chargements, puis `ov_017::021a2fa0`, puis retour à la luminosité 0 en 15 images si aucune
    tâche d'événement n'est en file. `ov_017::021a2fa0` est la fonction que le chargement de
-   carte appelle aussi (`ov_017::0219e384`) : `ov_017::021a316c` détruit les allocateurs de la
+   carte appelle aussi (`ov_017::0219e384`), dans le même ordre : `Trig_LoadMap` puis
+   reconstruction de la distribution. `ov_017::021a316c` détruit les allocateurs de la
    distribution, les monstres de terrain `0x70..0x9f` et vide les 32 entrées de la table des
    PNJ (`0x0203cfc4` : liste de distribution, chaînes de placement, entrées, nombre ; la liste
    des positions gardées `+0x9e` reste), puis `Cast_LoadMap` (`ov_017::021a2c14`) relance
    `place.bin` et `npc.bin` pour la carte courante et le point d'histoire courant. La carte, sa
    collision, ses placements (cachés ou montrés), ses portes et le héros restent ; le drapeau
    `0x8000` posé par 0x7c (`NpcTable_FindById`, `0x0203df88`) vivait dans l'ancienne table :
-   un PNJ retiré que le script de placement place encore revient.
+   un PNJ retiré que le script de placement place encore revient. Ce que l'instantané des PNJ
+   (`0x0203e2d4` / `0x0203e0b0`) conserve est décrit dans `characters.md`.
 
 `EventTask_Update` (`ov_017::021bc77c`) appelle aussi `ov_017::021a2fa0` à la fin d'un
 événement qui a pris la mémoire de la distribution (`+0x90`) ou porte le bit `+0x50 & 4`,
 **avant** l'événement 11 : la distribution y est reconstruite à l'ancien point d'histoire,
-puis le `0x8d` de l'événement 11 la reconstruit au nouveau.
+puis le `0x8d` de l'événement 11 la reconstruit au nouveau. Dans ce cas l'écran de la tâche
+0x30 diffère : si `+0x3b58` est en file, `EventTask_Update` met l'écran au noir
+instantanément (pas de fondu de 15 images) ; le retour à la lumière n'a lieu que si aucune
+tâche d'événement (`+0x3734`) n'est en file, et l'événement `[9]` (changement d'heure) garde
+l'écran noir. **[non modélisé]** dans le runtime.
 
 Exemple : `room 4104 1.1..1.1 event 11: if 0x8(21510) then 0x73(22159) 0x84(0, 1, 2, 1)
 0xc5(2) 0x8d(1) 0x6a(139)`. À 1.1.2, `X01M04` n'a que la chose à examiner 199 ; à 1.2.1,
@@ -397,15 +413,18 @@ Modèle (`dq9_core::field::Field`, `dq9-app`) :
   `Field::collect` exécute le rechargement des triggers lui-même : il vide les aires
   ajoutées, tire l'événement 20 et traite ses demandes avant le reste de la liste. Les
   triggers étant filtrés à chaque événement par la piste courante, la relecture du fichier
-  n'a pas d'autre effet ici. La file de chargement est supposée vide **[hypothèse]**.
+  n'a pas d'autre effet ici. La file de chargement est supposée vide **[hypothèse]** (dans le
+  jeu, une file non vide supprime le rechargement). `questorder3.bin` n'est pas relu
+  **[non modélisé]**.
 - L'application met la reconstruction de la distribution en attente et l'exécute au premier
   pas où aucun événement ni aucune conversation n'est en cours (`App::reload_cast`) :
   `AnimatedScene::rebuild_cast` remplace les instances de la distribution sans toucher à la
   carte, la liste de conversation est remplacée et les retraits 0x7c sont oubliés. Le fondu
   et sa durée (environ 30 images pendant lesquelles le champ attend) ne sont **pas
   modélisés** : la distribution change en un pas. Ce que `021a2fa0` reconstruit en plus
-  (monstres de terrain, personnages `0xc9`–`0xce`, objets chargés par `ov_017::021a28a8`) et
-  si les compteurs de conversation « carte » sont remis à zéro restent **[inconnu]**.
+  (monstres de terrain, personnages `0xc9`–`0xce`, objets chargés par `ov_017::021a28a8`)
+  reste **[inconnu]** ; la remise à zéro des compteurs de conversation vient de
+  `Track_Advance` (point 1), pas de la reconstruction.
 - Test : `the_end_of_21510_rebuilds_the_cast_and_npc_99_raises_game_0_flag_4` (échoue sans
   la reconstruction : Aquila n'est pas dessiné) et
   `a_progress_change_reruns_event_20_and_drops_the_added_areas`. Aucun état original à

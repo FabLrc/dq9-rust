@@ -13,8 +13,10 @@ Plan et jalons : [`roadmap.md`](roadmap.md) ; règles de travail : [`../AGENTS.m
   `village_area_12_plays_1410_…`). Combats substitués (« gagné »).
 - **Progression sur place** : les actions différées rechargent les triggers (événement 20) et
   0x8d reconstruit le cast de la carte sans la recharger (`re/trigger.md`, § Rechargements) ;
-  le pilote ne recharge plus la carte, et son rejeu redonne ses 615 points de contrôle octet
-  pour octet jusqu'à `M01M08`.
+  une scène marquée dans sa liste d'événements rend en fin les poses et retraits d'avant elle
+  (instantané des PNJ, `re/characters.md`) ; un changement d'étape remet les compteurs de
+  conversation à zéro (`re/dialogue.md`). Le rejeu du pilote redonne ses 615 points de
+  contrôle octet pour octet jusqu'à `M01M08`.
 - **Cadence** : boucle fixe à 60 Hz ; héros, `Field::step` et pose du modèle à 30 Hz
   (images impaires, `Hero::step(ticks = 2)`, `7db7f41`, test
   `field_cadence_holds_the_pose_and_matches_the_original_every_vblank`).
@@ -43,9 +45,10 @@ supprimées, `v01-init-flags` après report de `Party_FlagEquippedItems` (`re/it
 4. **Certification navigateur de bout en bout** : session continue sur Pages jusqu'à
    Angel Falls et les tâches du village, à la main (le pilote n'est pas un critère produit).
 5. **J4, combat** : le butin du combat 26 doit sortir de sa propre règle pour lever `4135`.
-6. **Reconstruction du cast** : le fondu de la tâche 0x30 (~30 images) n'est pas modélisé ;
-   ce que `021a2fa0` reconstruit en plus du cast (monstres, objets) est **[inconnu]** ; aucun
-   état original à 4104 en 1.2 ne confirme encore le PNJ 99 sans changement de carte.
+6. **Distribution, non modélisé** : le fondu et l'écran noir de la tâche 0x30, le démontage du
+   cast pendant la scène, la liste `questorder3.bin`, ce que `021a2fa0` reconstruit en plus
+   (monstres, objets : **[inconnu]**) ; `TestFlags00(0x1000)` supposé nul. Aucun état original
+   à 4104 en 1.2 ne confirme encore le PNJ 99 sans changement de carte.
 
 ## Preuves
 
