@@ -30,6 +30,54 @@ pub struct Played {
     pub elsewhere: Option<u16>,
 }
 
+/// One fixed step of the headless playback, shared by [`play`] and the ROM tests: the pending
+/// event's scene is prepared, the script and the cutscene advance, the collision takes the
+/// placement changes and the scene animates. With `stop_elsewhere`, an event of the chain on
+/// another map is returned instead of being prepared.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn step_frame(
+    rom: &[u8],
+    player: &mut EventPlayer,
+    loaded: &mut LoadedMap,
+    hero: &mut Hero,
+    camera: &mut Camera,
+    talk: &mut Talk,
+    state: &State,
+    stop_elsewhere: bool,
+) -> Result<Option<u16>> {
+    {
+        let mut stage = Stage {
+            rom,
+            world: state,
+            scene: &mut loaded.runtime,
+            hero,
+            collision: &loaded.collision,
+            camera,
+            talk,
+        };
+        if let Some(next) = player.pending_start() {
+            if stop_elsewhere
+                && crate::event::place(rom, next).is_some_and(|p| p.map != loaded.entry.id)
+            {
+                return Ok(Some(next));
+            }
+            player.prepare(rom, next, &mut stage);
+        }
+        for outcome in player.step(&mut stage) {
+            // Nothing is heard here: a jingle is over as soon as it is asked for.
+            if matches!(outcome, Outcome::Sound(Sound::Jingle(_))) {
+                player.jingle_ended();
+            }
+        }
+    }
+    // Natives 574/575 changed placements the collision must follow, as in `App::step`.
+    let changes = player.take_collision_changes();
+    apply_collision_changes(&mut loaded.collision, changes);
+    talk.step();
+    loaded.runtime.step(camera)?;
+    Ok(None)
+}
+
 /// Plays the queued events of `player` on `loaded`'s map with the fixed steps of the window,
 /// for `steps` steps, or until they are over. The action key is pressed at the steps of
 /// `press` and every `press_every` steps, which reads the messages.
@@ -51,35 +99,10 @@ pub fn play(
         if press.contains(&frame) || press_every.is_some_and(|n| frame > 0 && frame % n == 0) {
             talk.press(Button::Confirm);
         }
-        {
-            let mut stage = Stage {
-                rom,
-                world: state,
-                scene: &mut loaded.runtime,
-                hero,
-                collision: &loaded.collision,
-                camera,
-                talk,
-            };
-            if let Some(next) = player.pending_start() {
-                if crate::event::place(rom, next).is_some_and(|p| p.map != loaded.entry.id) {
-                    played.elsewhere = Some(next);
-                    break;
-                }
-                player.prepare(rom, next, &mut stage);
-            }
-            for outcome in player.step(&mut stage) {
-                // Nothing is heard here: a jingle is over as soon as it is asked for.
-                if matches!(outcome, Outcome::Sound(Sound::Jingle(_))) {
-                    player.jingle_ended();
-                }
-            }
+        if let Some(next) = step_frame(rom, player, loaded, hero, camera, talk, state, true)? {
+            played.elsewhere = Some(next);
+            break;
         }
-        // Natives 574/575 changed placements the collision must follow, as in `App::step`.
-        let changes = player.take_collision_changes();
-        apply_collision_changes(&mut loaded.collision, changes);
-        talk.step();
-        loaded.runtime.step(camera)?;
         played.steps = frame + 1;
         if steps.is_none() && !player.is_active() {
             played.finished = true;
@@ -138,12 +161,7 @@ pub fn report(rom: &[u8], major: u32, minors: RangeInclusive<u32>, story: &Story
             continue;
         };
         let state = dq9_core::field::initial_state(story);
-        let spawn = place.position.map(|(p, angle)| {
-            (
-                glam::Vec3::from_array(p),
-                dq9_core::field::yaw_of_angle(angle),
-            )
-        });
+        let spawn = crate::event::spawn(&place);
         let loaded = load::load(
             rom,
             &place.map.to_string(),
@@ -195,12 +213,7 @@ pub fn report(rom: &[u8], major: u32, minors: RangeInclusive<u32>, story: &Story
             let Some(there) = crate::event::place(rom, next) else {
                 break;
             };
-            let spawn = there.position.map(|(p, angle)| {
-                (
-                    glam::Vec3::from_array(p),
-                    dq9_core::field::yaw_of_angle(angle),
-                )
-            });
+            let spawn = crate::event::spawn(&there);
             match load::load(
                 rom,
                 &there.map.to_string(),
@@ -266,12 +279,7 @@ mod tests {
         let Some(rom) = testrom::load() else { return };
         let story = Story::default();
         let place = crate::event::place(rom, 1330).unwrap();
-        let spawn = place.position.map(|(p, angle)| {
-            (
-                glam::Vec3::from_array(p),
-                dq9_core::field::yaw_of_angle(angle),
-            )
-        });
+        let spawn = crate::event::spawn(&place);
         let mut loaded = load::load(
             rom,
             &place.map.to_string(),
@@ -308,30 +316,17 @@ mod tests {
             if frame > 0 && frame % 100 == 0 {
                 talk.press(Button::Confirm);
             }
-            {
-                let mut stage = Stage {
-                    rom,
-                    world: &state,
-                    scene: &mut loaded.runtime,
-                    hero: &mut hero,
-                    collision: &loaded.collision,
-                    camera: &mut camera,
-                    talk: &mut talk,
-                };
-                if let Some(next) = player.pending_start() {
-                    player.prepare(rom, next, &mut stage);
-                }
-                for outcome in player.step(&mut stage) {
-                    // Nothing is heard here: a jingle is over as soon as it is asked for.
-                    if matches!(outcome, Outcome::Sound(Sound::Jingle(_))) {
-                        player.jingle_ended();
-                    }
-                }
-            }
-            let changes = player.take_collision_changes();
-            apply_collision_changes(&mut loaded.collision, changes);
-            talk.step();
-            loaded.runtime.step(&camera).unwrap();
+            step_frame(
+                rom,
+                &mut player,
+                &mut loaded,
+                &mut hero,
+                &mut camera,
+                &mut talk,
+                &state,
+                false,
+            )
+            .unwrap();
             for &(index, home) in &hidden {
                 let instance = &loaded.runtime.scene.instances[index];
                 assert_eq!(instance.home, home, "a show lost the home transform");
@@ -360,12 +355,7 @@ mod tests {
         let Some(rom) = testrom::load() else { return };
         let story = Story::default();
         let place = crate::event::place(rom, 1130).unwrap();
-        let spawn = place.position.map(|(p, angle)| {
-            (
-                glam::Vec3::from_array(p),
-                dq9_core::field::yaw_of_angle(angle),
-            )
-        });
+        let spawn = crate::event::spawn(&place);
         let mut loaded = load::load(
             rom,
             &place.map.to_string(),
