@@ -278,6 +278,7 @@ pub fn parse(table: &Table<'_>, maps: &[MapRecord<'_>]) -> Result<Regions> {
 mod tests {
     use super::*;
     use crate::table::Record;
+    use crate::test_util::table;
 
     fn maps() -> Vec<MapRecord<'static>> {
         vec![MapRecord {
@@ -291,13 +292,6 @@ mod tests {
             region: None,
             label: None,
         }]
-    }
-
-    fn table(records: Vec<Record<'static>>) -> Table<'static> {
-        Table {
-            records,
-            string_count: 0,
-        }
     }
 
     fn floats(values: &[f32]) -> Vec<Value<'static>> {

@@ -24,6 +24,9 @@ pub mod stb;
 pub mod table;
 pub mod trigger;
 
+#[cfg(test)]
+pub(crate) mod test_util;
+
 pub use font::{Font, FontId};
 pub use gpc2::Gpc2;
 pub use nds_rom::{Error, Result};

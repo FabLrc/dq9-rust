@@ -24,6 +24,11 @@ use crate::chr::Chr;
 use crate::map::{fix32_cos, fix32_sin};
 use crate::table::{Fields, Table, fx32};
 
+/// Progress weight `chapter × 1000 + step × 10 + substep` of a story point or a span end.
+fn weight(v: [i32; 3]) -> i32 {
+    v[2] + v[0] * 1000 + v[1] * 10
+}
+
 /// Story point and world state the placement script tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Story {
@@ -42,7 +47,11 @@ pub struct Story {
 impl Story {
     /// Progress weight `chapter × 1000 + step × 10 + substep`, as the spans compare it.
     pub fn now(&self) -> i32 {
-        i32::from(self.substep) + i32::from(self.chapter) * 1000 + i32::from(self.step) * 10
+        weight([
+            i32::from(self.chapter),
+            i32::from(self.step),
+            i32::from(self.substep),
+        ])
     }
 
     fn nibble(&self, quest: i32) -> u8 {
@@ -398,85 +407,10 @@ impl<'a> Run<'_, 'a> {
 
     fn record(&mut self, kind: u16, f: &Fields<'a>) {
         let n = f.count();
-        let story = self.story;
         match kind {
-            // Block (0x0206c020): [map, npc, x, y, z, angle, (motion)].
-            3 => {
-                self.counter = self.counter.wrapping_add(1);
-                let map = f.int(0);
-                if map != i32::from(self.map) {
-                    return;
-                }
-                let node = Placement::new(f.int(1) as u8, map as u16);
-                if n < 3 {
-                    self.remove(i32::from(node.npc));
-                    return;
-                }
-                self.place(node, f, 2, n);
-            }
-            // Point (0x0206c108): [chapter, step, substep, time, map, npc, x…].
-            4 => {
-                self.counter = self.counter.wrapping_add(1);
-                let point = [f.int(0), f.int(1), f.int(2)];
-                if point
-                    != [
-                        i32::from(story.chapter),
-                        i32::from(story.step),
-                        i32::from(story.substep),
-                    ]
-                {
-                    return;
-                }
-                let time = f.int(3);
-                if !story.time_matches(time) {
-                    return;
-                }
-                let (map, npc) = (f.int(4), f.int(5));
-                if map != i32::from(self.map) {
-                    self.remove(npc);
-                    return;
-                }
-                let mut node = Placement::new(npc as u8, map as u16);
-                node.from = point.map(|v| v as u8);
-                node.time = time as u8 & 3;
-                if n < 7 {
-                    self.remove(npc);
-                    return;
-                }
-                self.place(node, f, 6, n);
-            }
-            // Span (0x0206c2d0): [from ×3, to ×3, time, map, npc, x…].
-            5 => {
-                self.counter = self.counter.wrapping_add(1);
-                let weight = |a: i32, b: i32, c: i32| c + a * 1000 + b * 10;
-                let (from, to) = (
-                    [f.int(0), f.int(1), f.int(2)],
-                    [f.int(3), f.int(4), f.int(5)],
-                );
-                let now = story.now();
-                if !(weight(from[0], from[1], from[2]) <= now && now <= weight(to[0], to[1], to[2]))
-                {
-                    return;
-                }
-                let time = f.int(6);
-                if !story.time_matches(time) {
-                    return;
-                }
-                let (map, npc) = (f.int(7), f.int(8));
-                if map != i32::from(self.map) {
-                    self.remove(npc);
-                    return;
-                }
-                let mut node = Placement::new(npc as u8, map as u16);
-                node.from = from.map(|v| v as u8);
-                node.to = to.map(|v| v as u8);
-                node.time = time as u8 & 3;
-                if n < 10 {
-                    self.remove(npc);
-                    return;
-                }
-                self.place(node, f, 9, n);
-            }
+            3 => self.block(f, n),
+            4 => self.point(f, n),
+            5 => self.span(f, n),
             // Talk zone (0x0206c4f8): [npc, f1, f2, f3, f4, label].
             6 => {
                 let zone = TalkZone {
@@ -500,60 +434,8 @@ impl<'a> Run<'_, 'a> {
                     p.mode = 7;
                 }
             }
-            // Segment (0x0206c704): [npc, direction, distance] around the position.
-            8 => {
-                let heading = fx32(f.float(1)) as i16;
-                let distance = i64::from(fx32(f.float(2)));
-                if let Some(p) = self.current(f.int(0)) {
-                    p.mode = 8;
-                    p.heading = heading;
-                    let scale = |t: i32| ((distance * i64::from(t) + 0x800) >> 12) as i32;
-                    let dx = scale(fix32_sin(i32::from(heading)));
-                    let dz = scale(fix32_cos(i32::from(heading)));
-                    let [x, _, z] = p.position;
-                    let mut area = [
-                        x.wrapping_add(dx),
-                        z.wrapping_add(dz),
-                        x.wrapping_sub(dx),
-                        z.wrapping_sub(dz),
-                    ];
-                    if area[0] < area[2] {
-                        area.swap(0, 2);
-                    }
-                    if area[1] < area[3] {
-                        area.swap(1, 3);
-                    }
-                    p.area = area;
-                }
-            }
-            // Paths (0x0206c83c, 0x0206c948): [npc, x, y, z, …].
-            9 | 10 => {
-                if n == 0 || !(n - 1).is_multiple_of(3) {
-                    return;
-                }
-                let points: Vec<[i32; 3]> = (0..(n - 1) / 3)
-                    .map(|k| {
-                        let at = 1 + 3 * k;
-                        [
-                            fx32(f.float(at)),
-                            fx32(f.float(at + 1)),
-                            fx32(f.float(at + 2)),
-                        ]
-                    })
-                    .collect();
-                if points.is_empty() {
-                    return;
-                }
-                if let Some(p) = self.current(f.int(0)) {
-                    p.mode = kind as u8;
-                    if kind == 9 {
-                        // A byte store into the low half of `+0x22`.
-                        let low = (points.len() - 1) as u8;
-                        p.heading = (p.heading as u16 & 0xff00 | u16::from(low)) as i16;
-                    }
-                    p.path = points;
-                }
-            }
+            8 => self.segment(f),
+            9 | 10 => self.path(kind, f, n),
             // Flags (0x0206ca4c): [npc, flags…].
             11 => {
                 let bits = (1..n).fold(0u32, |acc, i| acc | f.int(i) as u32);
@@ -575,36 +457,7 @@ impl<'a> Run<'_, 'a> {
                     p.speed = v;
                 }
             }
-            // Quest (0x0206cbdc): [quest, condition, time, map, npc, x…].
-            14 => {
-                self.counter = self.counter.wrapping_add(1);
-                let (quest, cond, time, map, npc) =
-                    (f.int(0), f.int(1), f.int(2), f.int(3), f.int(4));
-                if i32::from(self.last_npc) != npc {
-                    self.last_npc = npc as i16;
-                    self.quest14 = -1;
-                    self.quest21 = -1;
-                }
-                if self.quest21 > 0 || self.superseded(i32::from(self.quest14), quest) {
-                    return;
-                }
-                if !story.quest_condition(quest, cond) || !story.time_matches(time) {
-                    return;
-                }
-                if map != i32::from(self.map) {
-                    self.remove(npc);
-                    return;
-                }
-                let mut node = Placement::new(npc as u8, map as u16);
-                node.quest = quest as i16;
-                node.time = time as u8 & 3;
-                if n < 6 {
-                    self.remove(npc);
-                } else {
-                    self.place(node, f, 5, n);
-                }
-                self.quest14 = quest as i16;
-            }
+            14 => self.by_quest(f, n),
             // Seated (0x0206d3e4): [npc, angle].
             15 => {
                 let v = fx32(f.float(1));
@@ -660,6 +513,178 @@ impl<'a> Run<'_, 'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    // Block (0x0206c020): [map, npc, x, y, z, angle, (motion)].
+    fn block(&mut self, f: &Fields<'a>, n: usize) {
+        self.counter = self.counter.wrapping_add(1);
+        let map = f.int(0);
+        if map != i32::from(self.map) {
+            return;
+        }
+        let node = Placement::new(f.int(1) as u8, map as u16);
+        if n < 3 {
+            self.remove(i32::from(node.npc));
+            return;
+        }
+        self.place(node, f, 2, n);
+    }
+
+    // Point (0x0206c108): [chapter, step, substep, time, map, npc, x…].
+    fn point(&mut self, f: &Fields<'a>, n: usize) {
+        let story = self.story;
+        self.counter = self.counter.wrapping_add(1);
+        let point = [f.int(0), f.int(1), f.int(2)];
+        if point
+            != [
+                i32::from(story.chapter),
+                i32::from(story.step),
+                i32::from(story.substep),
+            ]
+        {
+            return;
+        }
+        let time = f.int(3);
+        if !story.time_matches(time) {
+            return;
+        }
+        let (map, npc) = (f.int(4), f.int(5));
+        if map != i32::from(self.map) {
+            self.remove(npc);
+            return;
+        }
+        let mut node = Placement::new(npc as u8, map as u16);
+        node.from = point.map(|v| v as u8);
+        node.time = time as u8 & 3;
+        if n < 7 {
+            self.remove(npc);
+            return;
+        }
+        self.place(node, f, 6, n);
+    }
+
+    // Span (0x0206c2d0): [from ×3, to ×3, time, map, npc, x…].
+    fn span(&mut self, f: &Fields<'a>, n: usize) {
+        let story = self.story;
+        self.counter = self.counter.wrapping_add(1);
+        let (from, to) = (
+            [f.int(0), f.int(1), f.int(2)],
+            [f.int(3), f.int(4), f.int(5)],
+        );
+        let now = story.now();
+        if !(weight(from) <= now && now <= weight(to)) {
+            return;
+        }
+        let time = f.int(6);
+        if !story.time_matches(time) {
+            return;
+        }
+        let (map, npc) = (f.int(7), f.int(8));
+        if map != i32::from(self.map) {
+            self.remove(npc);
+            return;
+        }
+        let mut node = Placement::new(npc as u8, map as u16);
+        node.from = from.map(|v| v as u8);
+        node.to = to.map(|v| v as u8);
+        node.time = time as u8 & 3;
+        if n < 10 {
+            self.remove(npc);
+            return;
+        }
+        self.place(node, f, 9, n);
+    }
+
+    // Segment (0x0206c704): [npc, direction, distance] around the position.
+    fn segment(&mut self, f: &Fields<'a>) {
+        let heading = fx32(f.float(1)) as i16;
+        let distance = i64::from(fx32(f.float(2)));
+        if let Some(p) = self.current(f.int(0)) {
+            p.mode = 8;
+            p.heading = heading;
+            let scale = |t: i32| ((distance * i64::from(t) + 0x800) >> 12) as i32;
+            let dx = scale(fix32_sin(i32::from(heading)));
+            let dz = scale(fix32_cos(i32::from(heading)));
+            let [x, _, z] = p.position;
+            let mut area = [
+                x.wrapping_add(dx),
+                z.wrapping_add(dz),
+                x.wrapping_sub(dx),
+                z.wrapping_sub(dz),
+            ];
+            if area[0] < area[2] {
+                area.swap(0, 2);
+            }
+            if area[1] < area[3] {
+                area.swap(1, 3);
+            }
+            p.area = area;
+        }
+    }
+
+    // Paths (0x0206c83c, 0x0206c948): [npc, x, y, z, …].
+    fn path(&mut self, kind: u16, f: &Fields<'a>, n: usize) {
+        if n == 0 || !(n - 1).is_multiple_of(3) {
+            return;
+        }
+        let points: Vec<[i32; 3]> = (0..(n - 1) / 3)
+            .map(|k| {
+                let at = 1 + 3 * k;
+                [
+                    fx32(f.float(at)),
+                    fx32(f.float(at + 1)),
+                    fx32(f.float(at + 2)),
+                ]
+            })
+            .collect();
+        if points.is_empty() {
+            return;
+        }
+        if let Some(p) = self.current(f.int(0)) {
+            p.mode = kind as u8;
+            if kind == 9 {
+                // A byte store into the low half of `+0x22`.
+                let low = (points.len() - 1) as u8;
+                p.heading = (p.heading as u16 & 0xff00 | u16::from(low)) as i16;
+            }
+            p.path = points;
+        }
+    }
+
+    // Quest (0x0206cbdc): [quest, condition, time, map, npc, x…].
+    fn by_quest(&mut self, f: &Fields<'a>, n: usize) {
+        let story = self.story;
+        self.counter = self.counter.wrapping_add(1);
+        let (quest, cond, time, map, npc) = (f.int(0), f.int(1), f.int(2), f.int(3), f.int(4));
+        self.reset_quests(npc);
+        if self.quest21 > 0 || self.superseded(i32::from(self.quest14), quest) {
+            return;
+        }
+        if !story.quest_condition(quest, cond) || !story.time_matches(time) {
+            return;
+        }
+        if map != i32::from(self.map) {
+            self.remove(npc);
+            return;
+        }
+        let mut node = Placement::new(npc as u8, map as u16);
+        node.quest = quest as i16;
+        node.time = time as u8 & 3;
+        if n < 6 {
+            self.remove(npc);
+        } else {
+            self.place(node, f, 5, n);
+        }
+        self.quest14 = quest as i16;
+    }
+
+    /// Records 14 and 21: a new NPC resets the quests the previous ones completed.
+    fn reset_quests(&mut self, npc: i32) {
+        if i32::from(self.last_npc) != npc {
+            self.last_npc = npc as i16;
+            self.quest14 = -1;
+            self.quest21 = -1;
         }
     }
 
@@ -728,18 +753,13 @@ impl<'a> Run<'_, 'a> {
         let from = [f.int(2), f.int(3), f.int(4)];
         let to = [f.int(5), f.int(6), f.int(7)];
         let (time, map, npc) = (f.int(8), f.int(9), f.int(10));
-        if i32::from(self.last_npc) != npc {
-            self.last_npc = npc as i16;
-            self.quest14 = -1;
-            self.quest21 = -1;
-        }
+        self.reset_quests(npc);
         if self.superseded(i32::from(self.quest21), quest) {
             return;
         }
         if !self.story.quest_condition(quest, cond) {
             return;
         }
-        let weight = |v: [i32; 3]| v[2] + v[0] * 1000 + v[1] * 10;
         let now = self.story.now();
         if !(weight(from) <= now && now <= weight(to)) || !self.story.time_matches(time) {
             return;

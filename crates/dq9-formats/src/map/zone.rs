@@ -153,6 +153,7 @@ impl ZoneInfo {
 mod tests {
     use super::*;
     use crate::table::{Record, Value};
+    use crate::test_util::table;
 
     fn map(id: u32, lighting: Option<&'static [u8]>, angle: f32) -> Record<'static> {
         let mut values = vec![Value::Int(0); 22];
@@ -164,13 +165,6 @@ mod tests {
         Record {
             kind: KIND_MAP,
             values,
-        }
-    }
-
-    fn table(records: Vec<Record<'static>>) -> Table<'static> {
-        Table {
-            records,
-            string_count: 0,
         }
     }
 

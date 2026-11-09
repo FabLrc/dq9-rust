@@ -156,6 +156,7 @@ impl<'a> MapList<'a> {
 mod tests {
     use super::*;
     use crate::table::Record;
+    use crate::test_util::table;
 
     fn map(values: Vec<Value<'static>>) -> Record<'static> {
         Record {
@@ -174,13 +175,6 @@ mod tests {
         v[4] = Value::Str(Some(code));
         f(&mut v);
         v
-    }
-
-    fn table(records: Vec<Record<'static>>) -> Table<'static> {
-        Table {
-            records,
-            string_count: 0,
-        }
     }
 
     #[test]

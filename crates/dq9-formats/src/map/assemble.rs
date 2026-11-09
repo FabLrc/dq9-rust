@@ -466,55 +466,17 @@ fn part_of(p: &Placement, manifest: &Manifest, parts: &[Part]) -> Option<usize> 
 mod tests {
     use super::*;
     use crate::map::OCEAN;
+    use crate::table::{Record, Value};
+    use crate::test_util::{encode_table, narc};
+    use Value::{Float as F, Int as I};
 
-    enum V {
-        I(u32),
-        F(f32),
-        S(&'static str),
+    /// A string field.
+    fn s(x: &'static str) -> Value<'static> {
+        Value::Str(Some(x.as_bytes()))
     }
-    use V::{F, I, S};
 
-    /// A record table (`table.md`).
-    fn table(records: &[(u16, Vec<V>)]) -> Vec<u8> {
-        let (mut body, mut pool) = (Vec::new(), Vec::new());
-        for (kind, values) in records {
-            body.extend(kind.to_le_bytes());
-            body.push(values.len() as u8);
-            let mut types = vec![0u8; values.len().div_ceil(4)];
-            for (i, v) in values.iter().enumerate() {
-                let t = match v {
-                    S(_) => 0,
-                    I(_) => 1,
-                    F(_) => 2,
-                };
-                types[i / 4] |= t << (2 * (i % 4));
-            }
-            body.extend(types);
-            body.resize(body.len().next_multiple_of(4), 0xff);
-            for v in values {
-                let raw = match *v {
-                    S(s) => {
-                        let at = pool.len() as u32;
-                        pool.extend(s.as_bytes());
-                        pool.push(0);
-                        at
-                    }
-                    I(i) => i,
-                    F(f) => f.to_bits(),
-                };
-                body.extend(raw.to_le_bytes());
-            }
-        }
-        let pool_at = (0x10 + body.len()).next_multiple_of(16);
-        let mut out = Vec::new();
-        for word in [records.len(), pool_at, pool.len(), 0] {
-            out.extend((word as u32).to_le_bytes());
-        }
-        out.extend(body);
-        out.resize(pool_at, 0xff);
-        out.extend(pool);
-        out.resize(out.len().next_multiple_of(16), 0);
-        out
+    fn rec(kind: u16, values: Vec<Value<'static>>) -> Record<'static> {
+        Record { kind, values }
     }
 
     /// LZ10 stream of literals only.
@@ -527,36 +489,7 @@ mod tests {
         out
     }
 
-    /// A NARC with named members.
-    fn narc(members: &[(&str, Vec<u8>)]) -> Vec<u8> {
-        let mut btaf = (members.len() as u32).to_le_bytes().to_vec();
-        let mut image = Vec::new();
-        let mut names = Vec::new();
-        for (name, data) in members {
-            btaf.extend((image.len() as u32).to_le_bytes());
-            image.extend(data);
-            btaf.extend((image.len() as u32).to_le_bytes());
-            names.push(name.len() as u8);
-            names.extend(name.as_bytes());
-        }
-        names.push(0);
-        let btnf = [8u32.to_le_bytes(), [0, 0, 1, 0]].concat();
-        let btnf = [btnf, names].concat();
-        let mut out = b"NARC".to_vec();
-        out.extend(0xFFFEu16.to_le_bytes());
-        out.extend(0x0100u16.to_le_bytes());
-        out.extend(0u32.to_le_bytes());
-        out.extend(16u16.to_le_bytes());
-        out.extend(3u16.to_le_bytes());
-        for (magic, body) in [(b"BTAF", &btaf), (b"BTNF", &btnf), (b"GMIF", &image)] {
-            out.extend(magic);
-            out.extend(((body.len() + 8) as u32).to_le_bytes());
-            out.extend(body);
-        }
-        out
-    }
-
-    fn placement(instance: u32, resource: u32, parent: u32, x: f32, flags: u32) -> (u16, Vec<V>) {
+    fn placement(instance: u32, resource: u32, parent: u32, x: f32, flags: u32) -> Record<'static> {
         let mut v = vec![
             I(instance),
             I(resource),
@@ -564,42 +497,42 @@ mod tests {
             F(0.0),
             F(0.0),
             I(parent),
-            S(""),
+            s(""),
         ];
         v.extend([F(1.0), F(1.0), F(1.0), F(0.0), F(0.0), F(0.0), I(flags)]);
-        (0x6f, v)
+        rec(0x6f, v)
     }
 
     #[test]
     fn ocean_assembles_like_the_game() {
-        let mut map_values: Vec<V> = (0..22).map(|_| I(0)).collect();
+        let mut map_values: Vec<Value<'static>> = (0..22).map(|_| I(0)).collect();
         map_values[0] = I(u32::from(OCEAN));
-        map_values[4] = S("O00");
-        map_values[11] = S("Q01");
-        let map_list = table(&[(0x67, map_values)]);
+        map_values[4] = s("O00");
+        map_values[11] = s("Q01");
+        let map_list = encode_table(&[rec(0x67, map_values)]);
         let ambl = narc(&[
             ("O00T1.nsbtx", vec![]),
             (
                 "O00.bmbl",
-                lz(&table(&[
-                    (0x64, vec![I(2)]),
-                    (0x65, vec![I(0), F(1.0), F(0.0), F(0.0), S("O00b")]),
-                    (0x65, vec![I(1), F(0.0), F(0.0), F(0.0), S("O00a")]),
+                lz(&encode_table(&[
+                    rec(0x64, vec![I(2)]),
+                    rec(0x65, vec![I(0), F(1.0), F(0.0), F(0.0), s("O00b")]),
+                    rec(0x65, vec![I(1), F(0.0), F(0.0), F(0.0), s("O00a")]),
                 ])),
             ),
-            ("O00.dat", lz(&table(&[(0x6d, vec![S("FX")])]))),
+            ("O00.dat", lz(&encode_table(&[rec(0x6d, vec![s("FX")])]))),
             ("O00T2.nsbtx", vec![]),
         ]);
         let b = narc(&[
             (
                 "O00b.bmdj",
-                lz(&table(&[
-                    (0x70, vec![S("T2")]),
-                    (0x6a, vec![I(3)]),
-                    (0x6c, vec![I(0), S("O00M0001.imd"), I(0x05), I(1)]),
-                    (0x6c, vec![I(1), S("O00A0000.imd")]),
-                    (0x6c, vec![I(2), S("o00m0002.imd"), I(0x12)]),
-                    (0x6d, vec![I(4)]),
+                lz(&encode_table(&[
+                    rec(0x70, vec![s("T2")]),
+                    rec(0x6a, vec![I(3)]),
+                    rec(0x6c, vec![I(0), s("O00M0001.imd"), I(0x05), I(1)]),
+                    rec(0x6c, vec![I(1), s("O00A0000.imd")]),
+                    rec(0x6c, vec![I(2), s("o00m0002.imd"), I(0x12)]),
+                    rec(0x6d, vec![I(4)]),
                     placement(0, 0, u32::MAX, 1.0, 63),
                     placement(1, 1, 0, 0.5, 63),
                     placement(2, 2, 0, 0.5, 47),
@@ -612,10 +545,10 @@ mod tests {
             ("O00M0002.nsbma", vec![]),
             ("O00M0002.bcfg", vec![]),
         ]);
-        let one_block = lz(&table(&[
-            (0x6a, vec![I(1)]),
-            (0x6c, vec![I(0), S("O00M0003.imd")]),
-            (0x6d, vec![I(1)]),
+        let one_block = lz(&encode_table(&[
+            rec(0x6a, vec![I(1)]),
+            rec(0x6c, vec![I(0), s("O00M0003.imd")]),
+            rec(0x6d, vec![I(1)]),
             placement(0, 0, u32::MAX, 0.0, 63),
         ]));
         let a = narc(&[
@@ -700,7 +633,7 @@ mod tests {
 
     #[test]
     fn a_missing_ambl_stops_the_chain() {
-        let map_list = table(&[]);
+        let map_list = encode_table(&[]);
         let map_list = Table::parse(&map_list).unwrap();
         let maps = MapList::parse(&map_list).unwrap();
         let record = MapRecord {
