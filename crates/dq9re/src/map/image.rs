@@ -19,9 +19,10 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, bail};
 use dq9_core::collision::{CollisionWorld, Piece};
-use dq9_formats::map::{Collision, Regions, ZONE_AREA, ZONE_DOORWAY};
+use dq9_formats::map::{Collision, Regions, Warp, ZONE_AREA, ZONE_DOORWAY, Zone};
 use glam::Vec3;
 
+use super::glyphs::{draw_label, draw_text};
 use super::reach::Reach;
 
 /// Normal `y` above which a triangle is a floor (the limit of `CollisionWorld::resolve`,
@@ -175,8 +176,32 @@ impl Face {
     }
 }
 
+/// Visits the pixels of the line from `(x0, y0)` to `(x1, y1)`, both ends included, in
+/// Bresenham's step order; the callback decides what to do at each pixel.
+fn bresenham(x0: i32, y0: i32, x1: i32, y1: i32, mut f: impl FnMut(i32, i32)) {
+    let (dx, dy) = ((x1 - x0).abs(), (y1 - y0).abs());
+    let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
+    let (mut x, mut y) = (x0, y0);
+    let mut error = dx - dy;
+    loop {
+        f(x, y);
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2 = 2 * error;
+        if e2 > -dy {
+            error -= dy;
+            x += sx;
+        }
+        if e2 < dx {
+            error += dx;
+            y += sy;
+        }
+    }
+}
+
 /// A small canvas of RGB pixels.
-struct Canvas {
+pub(super) struct Canvas {
     width: usize,
     height: usize,
     pixels: Vec<[u8; 3]>,
@@ -191,7 +216,7 @@ impl Canvas {
         }
     }
 
-    fn set(&mut self, x: i32, y: i32, color: [u8; 3]) {
+    pub(super) fn set(&mut self, x: i32, y: i32, color: [u8; 3]) {
         if x < 0 || y < 0 {
             return;
         }
@@ -216,7 +241,7 @@ impl Canvas {
         });
     }
 
-    fn rect(&mut self, x: i32, y: i32, width: i32, height: i32, color: [u8; 3]) {
+    pub(super) fn rect(&mut self, x: i32, y: i32, width: i32, height: i32, color: [u8; 3]) {
         for dy in 0..height {
             for dx in 0..width {
                 self.set(x + dx, y + dy, color);
@@ -236,25 +261,7 @@ impl Canvas {
     }
 
     fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: [u8; 3]) {
-        let (dx, dy) = ((x1 - x0).abs(), (y1 - y0).abs());
-        let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
-        let (mut x, mut y) = (x0, y0);
-        let mut error = dx - dy;
-        loop {
-            self.set(x, y, color);
-            if x == x1 && y == y1 {
-                break;
-            }
-            let e2 = 2 * error;
-            if e2 > -dy {
-                error -= dy;
-                x += sx;
-            }
-            if e2 < dx {
-                error += dx;
-                y += sy;
-            }
-        }
+        bresenham(x0, y0, x1, y1, |x, y| self.set(x, y, color));
     }
 
     fn thick_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: [u8; 3]) {
@@ -280,156 +287,6 @@ impl Canvas {
             .with_context(|| format!("writing {}", path.display()))?;
         Ok(())
     }
-}
-
-/// Five-by-seven bitmap rows of `c`, top row first, bit 4 at the left.
-fn glyph(c: char) -> Option<[u8; 7]> {
-    Some(match c {
-        'A' => [
-            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'B' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
-        ],
-        'C' => [
-            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
-        ],
-        'D' => [
-            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
-        ],
-        'E' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
-        ],
-        'F' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'G' => [
-            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111,
-        ],
-        'H' => [
-            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'I' => [
-            0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
-        ],
-        'J' => [
-            0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100,
-        ],
-        'K' => [
-            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
-        ],
-        'L' => [
-            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
-        ],
-        'M' => [
-            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
-        ],
-        'N' => [
-            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
-        ],
-        'O' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'P' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'Q' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
-        ],
-        'R' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
-        ],
-        'S' => [
-            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        'T' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'U' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'V' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
-        ],
-        'W' => [
-            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001,
-        ],
-        'X' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
-        ],
-        'Y' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'Z' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
-        ],
-        '0' => [
-            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
-        ],
-        '1' => [
-            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
-        ],
-        '2' => [
-            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
-        ],
-        '3' => [
-            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        '4' => [
-            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
-        ],
-        '5' => [
-            0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110,
-        ],
-        '6' => [
-            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
-        ],
-        '7' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
-        ],
-        '8' => [
-            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
-        ],
-        '9' => [
-            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100,
-        ],
-        '.' => [0, 0, 0, 0, 0, 0b00100, 0b00100],
-        '-' => [0, 0, 0, 0b11111, 0, 0, 0],
-        ':' => [0, 0b00100, 0b00100, 0, 0b00100, 0b00100, 0],
-        '/' => [
-            0b00001, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b10000,
-        ],
-        '>' => [
-            0b01000, 0b00100, 0b00010, 0b00001, 0b00010, 0b00100, 0b01000,
-        ],
-        ' ' => [0; 7],
-        _ => return None,
-    })
-}
-
-fn text_width(text: &str) -> i32 {
-    text.chars().count() as i32 * 6
-}
-
-fn draw_text(canvas: &mut Canvas, x: i32, y: i32, text: &str, color: [u8; 3]) {
-    for (index, c) in text.chars().enumerate() {
-        let Some(rows) = glyph(c) else { continue };
-        let left = x + index as i32 * 6;
-        for (row, bits) in rows.iter().enumerate() {
-            for bit in 0..5 {
-                if bits & (1 << (4 - bit)) != 0 {
-                    canvas.set(left + bit, y + row as i32, color);
-                }
-            }
-        }
-    }
-}
-
-/// Text on a dark backing rectangle, for destinations and the legend.
-fn draw_label(canvas: &mut Canvas, x: i32, y: i32, text: &str, color: [u8; 3]) {
-    let width = text_width(text);
-    canvas.rect(x - 2, y - 2, width + 4, 11, [20, 20, 24]);
-    draw_text(canvas, x, y, text, color);
 }
 
 fn marker(canvas: &mut Canvas, (x, y): (i32, i32), color: [u8; 3]) {
@@ -462,8 +319,44 @@ fn circle_points(cx: f32, cz: f32, radius: f32) -> Vec<(f32, f32)> {
         .collect()
 }
 
-/// Draws `regions` outlines and their destinations; returns the estimated size in world
-/// units added around the collision bounds.
+/// Corners of the box of a `0x72` warp, in world units.
+fn warp_outline(warp: &Warp) -> [(f32, f32); 4] {
+    let v = &warp.volume;
+    let center = [v.center[0] as f32 / 4096.0, v.center[2] as f32 / 4096.0];
+    let half = [
+        (v.high[0] - v.low[0]) as f32 / 8192.0,
+        (v.high[2] - v.low[2]) as f32 / 8192.0,
+    ];
+    box_corners(
+        center[0],
+        center[1],
+        half[0],
+        half[1],
+        v.angle as f32 / 4096.0,
+    )
+}
+
+/// Outline of the volume of a `0x73` zone, in world units: a circle for a thin volume, its
+/// four corners otherwise.
+fn zone_outline(zone: &Zone) -> Vec<(f32, f32)> {
+    let v = &zone.volume;
+    let center = [v.center[0] as f32 / 4096.0, v.center[2] as f32 / 4096.0];
+    let half = [v.size[0] as f32 / 8192.0, v.size[2] as f32 / 8192.0];
+    if v.size[2] < 0x1000 {
+        circle_points(center[0], center[1], half[0].max(0.25))
+    } else {
+        box_corners(
+            center[0],
+            center[1],
+            half[0],
+            half[1],
+            v.angle as f32 / 4096.0,
+        )
+        .to_vec()
+    }
+}
+
+/// Draws `regions` outlines and their destinations.
 fn draw_regions(
     canvas: &mut Canvas,
     bounds: &Bounds,
@@ -493,19 +386,8 @@ fn draw_regions(
     for warp in &regions.warps {
         let v = &warp.volume;
         let center = [v.center[0] as f32 / 4096.0, v.center[2] as f32 / 4096.0];
-        let half = [
-            (v.high[0] - v.low[0]) as f32 / 8192.0,
-            (v.high[2] - v.low[2]) as f32 / 8192.0,
-        ];
         let color = [232, 44, 210];
-        let corners = box_corners(
-            center[0],
-            center[1],
-            half[0],
-            half[1],
-            v.angle as f32 / 4096.0,
-        );
-        outline(canvas, &corners, color);
+        outline(canvas, &warp_outline(warp), color);
         if let Some(code) = codes.get(&warp.destination) {
             draw_label_at(canvas, (center[0], center[1]), &format!(">{code}"), color);
         }
@@ -518,21 +400,7 @@ fn draw_regions(
             ZONE_AREA => [40, 190, 220],
             _ => [160, 160, 170],
         };
-        let half = [v.size[0] as f32 / 8192.0, v.size[2] as f32 / 8192.0];
-        if v.size[2] < 0x1000 {
-            let radius = half[0].max(0.25);
-            let points = circle_points(center[0], center[1], radius);
-            outline(canvas, &points, color);
-        } else {
-            let corners = box_corners(
-                center[0],
-                center[1],
-                half[0],
-                half[1],
-                v.angle as f32 / 4096.0,
-            );
-            outline(canvas, &corners, color);
-        }
+        outline(canvas, &zone_outline(zone), color);
         if let Some(warp) = &zone.warp
             && let Some(code) = codes.get(&warp.destination)
         {
@@ -576,18 +444,9 @@ fn draw_legend(canvas: &mut Canvas, min_y: f32, max_y: f32) {
     draw_text(canvas, bar_x, bar_y + height + 6, "HEIGHT", [30, 30, 30]);
 }
 
-/// Renders `world` to `path` and returns its size and height range in world units.
-pub(crate) fn render(
-    world: &CollisionWorld,
-    regions: &Regions,
-    codes: &HashMap<u16, String>,
-    markers: Markers<'_>,
-    scale: u32,
-    path: &Path,
-) -> Result<Rendered> {
-    if scale == 0 {
-        bail!("--scale must be at least 1 pixel per world unit");
-    }
+/// World bounds of the view: the collision, the markers and every region outline, with one
+/// world unit of margin on every side so markers and outlines near the edge fit.
+fn view_bounds(world: &CollisionWorld, regions: &Regions, markers: &Markers<'_>) -> Result<Bounds> {
     let Some(mut bounds) = world_bounds(world) else {
         bail!("the map has no collision geometry to draw");
     };
@@ -600,41 +459,13 @@ pub(crate) fn render(
         bounds.include(point[0], point[2]);
     }
     for warp in &regions.warps {
-        let v = &warp.volume;
-        let center = [v.center[0] as f32 / 4096.0, v.center[2] as f32 / 4096.0];
-        let half = [
-            (v.high[0] - v.low[0]) as f32 / 8192.0,
-            (v.high[2] - v.low[2]) as f32 / 8192.0,
-        ];
-        for (x, z) in box_corners(
-            center[0],
-            center[1],
-            half[0],
-            half[1],
-            v.angle as f32 / 4096.0,
-        ) {
+        for (x, z) in warp_outline(warp) {
             bounds.include(x, z);
         }
     }
     for zone in &regions.zones {
-        let v = &zone.volume;
-        let center = [v.center[0] as f32 / 4096.0, v.center[2] as f32 / 4096.0];
-        let radius = v.size[0] as f32 / 8192.0;
-        let half = [radius, v.size[2] as f32 / 8192.0];
-        if v.size[2] < 0x1000 {
-            for (x, z) in circle_points(center[0], center[1], radius.max(0.25)) {
-                bounds.include(x, z);
-            }
-        } else {
-            for (x, z) in box_corners(
-                center[0],
-                center[1],
-                half[0],
-                half[1],
-                v.angle as f32 / 4096.0,
-            ) {
-                bounds.include(x, z);
-            }
+        for (x, z) in zone_outline(zone) {
+            bounds.include(x, z);
         }
     }
     // One world unit of margin on every side, so markers and outlines near the edge fit.
@@ -642,16 +473,11 @@ pub(crate) fn render(
     bounds.max_x += 1.0;
     bounds.min_z -= 1.0;
     bounds.max_z += 1.0;
-    let width = ((bounds.max_x - bounds.min_x) * scale as f32).ceil() as u32;
-    let height = ((bounds.max_z - bounds.min_z) * scale as f32).ceil() as u32;
-    if width == 0 || height == 0 {
-        bail!("the map's collision geometry has an empty footprint");
-    }
-    if width > 10_000 || height > 10_000 || u64::from(width) * u64::from(height) > 64_000_000 {
-        bail!("{width}x{height} pixels is too large; lower --scale (was {scale}) or its bounds");
-    }
+    Ok(bounds)
+}
 
-    let mut canvas = Canvas::new(width as usize, height as usize);
+/// Projects every triangle to the canvas; also returns the height range of the floors.
+fn project_faces(world: &CollisionWorld, bounds: &Bounds, scale: u32) -> (Vec<Face>, f32, f32) {
     let mut faces = Vec::new();
     let mut min_y = f32::INFINITY;
     let mut max_y = f32::NEG_INFINITY;
@@ -684,11 +510,13 @@ pub(crate) fn render(
         min_y = 0.0;
         max_y = 0.0;
     }
-    let span = max_y - min_y;
-    let flat = span < 1e-5;
-    let span = span.max(1e-6);
+    (faces, min_y, max_y)
+}
+
+/// Fills every face, the highest surface along `y` winning; returns the depth buffer used.
+fn rasterize(canvas: &mut Canvas, faces: &[Face], min_y: f32, span: f32, flat: bool) -> Vec<f32> {
     let mut depth = vec![f32::NEG_INFINITY; canvas.width * canvas.height];
-    for face in &faces {
+    for face in faces {
         let area = face.area();
         if area.abs() < 1e-9 {
             continue;
@@ -729,92 +557,110 @@ pub(crate) fn render(
             }
         }
     }
-    // Vertical wall faces project to a line: stroke every wall edge above the surface
-    // already drawn there, so walls stay visible in a top view.
+    depth
+}
+
+/// Vertical wall faces project to a line: strokes every wall edge above the surface already
+/// drawn there, so walls stay visible in a top view.
+fn stroke_walls(canvas: &mut Canvas, faces: &[Face], depth: &[f32]) {
     for face in faces.iter().filter(|face| !face.floor) {
         let edges = [(0, 1), (1, 2), (2, 0)];
         for (i, j) in edges {
             let a = face.p[i];
             let b = face.p[j];
-            let (mut x0, mut y0) = (a.0.round() as i32, a.1.round() as i32);
+            let (x0, y0) = (a.0.round() as i32, a.1.round() as i32);
             let (x1, y1) = (b.0.round() as i32, b.1.round() as i32);
-            let (dx, dy) = ((x1 - x0).abs(), (y1 - y0).abs());
-            let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
-            let mut error = dx - dy;
-            loop {
-                if x0 >= 0
-                    && y0 >= 0
-                    && (x0 as usize) < canvas.width
-                    && (y0 as usize) < canvas.height
-                {
-                    let index = y0 as usize * canvas.width + x0 as usize;
+            bresenham(x0, y0, x1, y1, |x, y| {
+                if x >= 0 && y >= 0 && (x as usize) < canvas.width && (y as usize) < canvas.height {
+                    let index = y as usize * canvas.width + x as usize;
                     if face.top >= depth[index] - 0.01 {
                         canvas.pixels[index] = wall_color();
                     }
                 }
-                if x0 == x1 && y0 == y1 {
-                    break;
-                }
-                let e2 = 2 * error;
-                if e2 > -dy {
-                    error -= dy;
-                    x0 += sx;
-                }
-                if e2 < dx {
-                    error += dx;
-                    y0 += sy;
-                }
-            }
+            });
         }
     }
+}
 
-    if let Some(reach) = markers.reach {
-        for cell in &reach.cells {
-            let (x, y) = bounds.project(cell.x, cell.z, scale);
-            // Keep the top view honest: a lower cell under a higher floor is not visible.
-            let (cx, cy) = (x.round() as i32, y.round() as i32);
-            if cx >= 0 && cy >= 0 && (cx as usize) < canvas.width && (cy as usize) < canvas.height {
-                let index = cy as usize * canvas.width + cx as usize;
-                if depth[index] > cell.y + 0.2 {
-                    continue;
-                }
+/// Tints the reachable cells, keeping the top view honest: a lower cell under a higher floor
+/// is not visible.
+fn tint_reach(canvas: &mut Canvas, bounds: &Bounds, scale: u32, reach: &Reach, depth: &[f32]) {
+    for cell in &reach.cells {
+        let (x, y) = bounds.project(cell.x, cell.z, scale);
+        let (cx, cy) = (x.round() as i32, y.round() as i32);
+        if cx >= 0 && cy >= 0 && (cx as usize) < canvas.width && (cy as usize) < canvas.height {
+            let index = cy as usize * canvas.width + cx as usize;
+            if depth[index] > cell.y + 0.2 {
+                continue;
             }
-            let half = 0.25 * f64::from(scale);
-            let left = (x - half).round() as i32;
-            let top = (y - half).round() as i32;
-            let size = (2.0 * half).round() as i32;
-            for dy in 0..size {
-                for dx in 0..size {
-                    canvas.blend(left + dx, top + dy, [0, 220, 255], 0.35);
-                }
+        }
+        let half = 0.25 * f64::from(scale);
+        let left = (x - half).round() as i32;
+        let top = (y - half).round() as i32;
+        let size = (2.0 * half).round() as i32;
+        for dy in 0..size {
+            for dx in 0..size {
+                canvas.blend(left + dx, top + dy, [0, 220, 255], 0.35);
             }
         }
     }
-    draw_regions(&mut canvas, &bounds, scale, regions, codes);
+}
+
+/// Marks the map's own start record, the `--to` target and the hero point.
+fn draw_markers(canvas: &mut Canvas, bounds: &Bounds, scale: u32, markers: &Markers<'_>) {
     if let Some(start) = markers.start {
         let (x, y) = bounds.project(start[0], start[2], scale);
         marker(
-            &mut canvas,
+            canvas,
             (x.round() as i32, y.round() as i32),
             [250, 250, 250],
         );
     }
     if let Some(target) = markers.target {
         let (x, y) = bounds.project(target[0], target[2], scale);
-        cross(
-            &mut canvas,
-            (x.round() as i32, y.round() as i32),
-            [230, 40, 40],
-        );
+        cross(canvas, (x.round() as i32, y.round() as i32), [230, 40, 40]);
     }
     if let Some(hero) = markers.hero {
         let (x, y) = bounds.project(hero[0], hero[2], scale);
-        marker(
-            &mut canvas,
-            (x.round() as i32, y.round() as i32),
-            [230, 40, 40],
-        );
+        marker(canvas, (x.round() as i32, y.round() as i32), [230, 40, 40]);
     }
+}
+
+/// Renders `world` to `path` and returns its size and height range in world units.
+pub(crate) fn render(
+    world: &CollisionWorld,
+    regions: &Regions,
+    codes: &HashMap<u16, String>,
+    markers: Markers<'_>,
+    scale: u32,
+    path: &Path,
+) -> Result<Rendered> {
+    if scale == 0 {
+        bail!("--scale must be at least 1 pixel per world unit");
+    }
+    let bounds = view_bounds(world, regions, &markers)?;
+    let width = ((bounds.max_x - bounds.min_x) * scale as f32).ceil() as u32;
+    let height = ((bounds.max_z - bounds.min_z) * scale as f32).ceil() as u32;
+    if width == 0 || height == 0 {
+        bail!("the map's collision geometry has an empty footprint");
+    }
+    if width > 10_000 || height > 10_000 || u64::from(width) * u64::from(height) > 64_000_000 {
+        bail!("{width}x{height} pixels is too large; lower --scale (was {scale}) or its bounds");
+    }
+
+    let mut canvas = Canvas::new(width as usize, height as usize);
+    let (faces, min_y, max_y) = project_faces(world, &bounds, scale);
+    let span = max_y - min_y;
+    let flat = span < 1e-5;
+    let span = span.max(1e-6);
+    let depth = rasterize(&mut canvas, &faces, min_y, span, flat);
+    stroke_walls(&mut canvas, &faces, &depth);
+
+    if let Some(reach) = markers.reach {
+        tint_reach(&mut canvas, &bounds, scale, reach, &depth);
+    }
+    draw_regions(&mut canvas, &bounds, scale, regions, codes);
+    draw_markers(&mut canvas, &bounds, scale, &markers);
     draw_legend(&mut canvas, min_y, max_y);
     canvas.save(path)?;
     Ok(Rendered {

@@ -1,6 +1,7 @@
 //! `dq9re map`: the files a map loads and how the game assembles them, optionally checked
 //! against the map loaded in a melonDS state, drawn from above, and flooded for reachability.
 
+mod glyphs;
 mod image;
 mod reach;
 
