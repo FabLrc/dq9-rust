@@ -62,11 +62,15 @@ RE → implementation → challenger → integration → final "docs consistency
    orca orchestration worker-release --dispatch <dispatch id>
    ```
 
-   Order matters (wave v2-1): `-Cleanup` **right after** `-Apply`, before releasing the worker
-   and before applying the next batch. `worker-release` unregisters the Orca worktree, after
-   which `-Cleanup` fails at `worktree remove` (exit 255) and leaves the `tools` junction and
-   the branch behind; and once another batch has touched a shared file (`lib.rs`), the
-   "integrated" check fails because `main` no longer equals the branch on that file.
+   Observed in wave v2-1 with Orca workers (`new-top-level` worktrees): `-Cleanup` removes the
+   `tools` junction, then `git worktree remove` (never forced) fails with exit 255 while the
+   worker is still open (cause **[unknown]**: the worker's open terminal or its untracked
+   `build/evidence/`). `worker-release` then removes the worktree on the Orca side. Finish by
+   hand: `git branch -D FabLrc/<batch>` and delete `%LOCALAPPDATA%\dq9-target-<batch>`.
+   Run `-Cleanup` **before** `worker-release` (the junction must be gone before Orca deletes
+   the directory) and before applying the next batch: once another batch has touched a shared
+   file (`lib.rs`), the "integrated" check fails because `main` no longer equals the branch on
+   that file.
 
    The checks verify: branch contains `main` (otherwise rebase), changed files within
    ```owns (except the `README.md` progress block, always accepted), no forbidden file
