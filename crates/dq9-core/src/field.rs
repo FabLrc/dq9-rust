@@ -22,18 +22,19 @@ use dq9_formats::map::{
     FLAG_SIDE, FLAG_WARP, Regions, Warp, WarpVolume, ZONE_AREA, ZONE_DOORWAY, Zone, ZoneVolume,
     fix32_cos, fix32_sin, reduce_angle,
 };
-use dq9_formats::table::{Table, Value};
+use dq9_formats::table::Table;
 use dq9_formats::trigger::{Op, Trigger};
 use glam::Vec3;
 use nds_rom::Result;
 
+use crate::fx;
 use crate::trigger::{
-    Flow, Raw, Request, State, TRACKS, Unsupported, degrees_to_angle, first_match, high,
+    Flow, Raw, Request, State, TRACKS, Unsupported, degrees_to_angle, first_match, fixed, high,
     run_action, run_deferred, track_of_room,
 };
 
 /// One turn as `fx32` (`0x6488`).
-const TWO_PI: i32 = 0x6488;
+const TWO_PI: i32 = fx::TWO_PI;
 /// Events of `docs/re/trigger.md`.
 const EVENT_TALK: i32 = 0;
 const EVENT_TALK_END: i32 = 1;
@@ -80,7 +81,7 @@ pub fn angle_of_yaw(yaw: f32) -> f32 {
 
 /// `(a * a + 0x800) >> 12`, the handlers' fixed-point square.
 fn square(a: i32) -> i32 {
-    ((i64::from(a) * i64::from(a) + 0x800) >> 12) as i32
+    fx::mul(a, a)
 }
 
 /// `func_02031118` (`0x02031128`): whether `p` is inside the box `[high x y z, low x y z]`,
@@ -159,16 +160,7 @@ impl Slot {
         if self.bits & OFF != 0 {
             return false;
         }
-        let v = &self.zone.volume;
-        let half = v.size.map(|s| s >> 1);
-        let high = [0, 1, 2].map(|i| v.center[i].wrapping_add(half[i]));
-        let low = [0, 1, 2].map(|i| v.center[i].wrapping_sub(half[i]));
-        let inside = if v.size[2] < 1 {
-            in_cylinder(p, v.center, v.size[0], v.size[1])
-        } else {
-            let b = [high[0], high[1], high[2], low[0], low[1], low[2]];
-            in_rotated_box(p, &b, i32::from(v.angle), v.center, v.radius_sq)
-        };
+        let inside = zone_volume_holds(&self.zone.volume, p);
         let mut holds = inside;
         if inside {
             if self.bits & ONCE != 0 {
@@ -195,12 +187,6 @@ struct AddedArea {
     radius_sq: i32,
     /// Upper then lower corner.
     bounds: [i32; 6],
-}
-
-/// Float operand as the compiler stores positions: times 4096, rounded half away from zero.
-fn fixed(value: &Value<'_>) -> i32 {
-    let f = value.float() * 4096.0;
-    (if f >= 0.0 { f + 0.5 } else { f - 0.5 }) as i32
 }
 
 impl AddedArea {
@@ -233,24 +219,35 @@ impl AddedArea {
     }
 }
 
-/// Whether `position` is inside the box of a `0x72` warp (`ov_017::0219ca88`'s test).
-pub fn warp_contains(warp: &Warp, position: Vec3) -> bool {
-    let v = &warp.volume;
+/// Whether `p` is inside the box of a `0x72` warp (`ov_017::0219ca88`'s test).
+fn warp_volume_holds(v: &WarpVolume, p: Fx3) -> bool {
     let b = [
         v.high[0], v.high[1], v.high[2], v.low[0], v.low[1], v.low[2],
     ];
-    in_rotated_box(
-        to_fx(position),
-        &b,
-        i32::from(v.angle),
-        v.center,
-        v.radius_sq,
-    )
+    in_rotated_box(p, &b, i32::from(v.angle), v.center, v.radius_sq)
+}
+
+/// Whether `p` is inside the volume of a zone: a cylinder when its depth is below 1, else
+/// a rotated box (`0x02094bac`, without the once-only bits).
+fn zone_volume_holds(v: &ZoneVolume, p: Fx3) -> bool {
+    if v.size[2] < 1 {
+        return in_cylinder(p, v.center, v.size[0], v.size[1]);
+    }
+    let half = v.size.map(|s| s >> 1);
+    let high = [0, 1, 2].map(|i| v.center[i].wrapping_add(half[i]));
+    let low = [0, 1, 2].map(|i| v.center[i].wrapping_sub(half[i]));
+    let b = [high[0], high[1], high[2], low[0], low[1], low[2]];
+    in_rotated_box(p, &b, i32::from(v.angle), v.center, v.radius_sq)
+}
+
+/// Whether `position` is inside the box of a `0x72` warp (`ov_017::0219ca88`'s test).
+pub fn warp_contains(warp: &Warp, position: Vec3) -> bool {
+    warp_volume_holds(&warp.volume, to_fx(position))
 }
 
 /// Whether `position` is inside a zone, without its once-only bits (`0x02094bac`).
 pub fn zone_contains(zone: &Zone, position: Vec3) -> bool {
-    Slot::new(zone).holds(to_fx(position))
+    zone_volume_holds(&zone.volume, to_fx(position))
 }
 
 /// The leader: position, facing and requested direction.
@@ -334,31 +331,11 @@ pub struct Exit {
 /// what makes the warp or doorway fire (`ov_017::0219ca88`, `ov_017::02197a64`).
 pub fn exit_contains(exit: &Exit, position: Vec3) -> bool {
     let p = to_fx(position);
-    if let Some(v) = exit.warp {
-        return in_rotated_box(
-            p,
-            &[
-                v.high[0], v.high[1], v.high[2], v.low[0], v.low[1], v.low[2],
-            ],
-            i32::from(v.angle),
-            v.center,
-            v.radius_sq,
-        );
+    if let Some(v) = &exit.warp {
+        return warp_volume_holds(v, p);
     }
-    if let Some(v) = exit.door {
-        if v.size[2] < 1 {
-            return in_cylinder(p, v.center, v.size[0], v.size[1]);
-        }
-        let half = v.size.map(|s| s >> 1);
-        let high = [0, 1, 2].map(|i| v.center[i].wrapping_add(half[i]));
-        let low = [0, 1, 2].map(|i| v.center[i].wrapping_sub(half[i]));
-        return in_rotated_box(
-            p,
-            &[high[0], high[1], high[2], low[0], low[1], low[2]],
-            i32::from(v.angle),
-            v.center,
-            v.radius_sq,
-        );
+    if let Some(v) = &exit.door {
+        return zone_volume_holds(v, p);
     }
     false
 }
@@ -779,13 +756,12 @@ impl Field {
     /// runs first with the room. The game animates the approach of kind 1 doors and tests
     /// a leader state this model lacks (`func_02039820`): the change is immediate here.
     fn step_warps(&mut self, p: Fx3, state: &mut State, events: &mut Vec<Event>) {
-        let Some((index, warp)) = self.warps.iter().enumerate().find(|(_, w)| {
-            let v = &w.volume;
-            let b = [
-                v.high[0], v.high[1], v.high[2], v.low[0], v.low[1], v.low[2],
-            ];
-            in_rotated_box(p, &b, i32::from(v.angle), v.center, v.radius_sq)
-        }) else {
+        let Some((index, warp)) = self
+            .warps
+            .iter()
+            .enumerate()
+            .find(|(_, w)| warp_volume_holds(&w.volume, p))
+        else {
             return;
         };
         let warp = warp.clone();

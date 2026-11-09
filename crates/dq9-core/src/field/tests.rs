@@ -1,5 +1,6 @@
 use super::*;
 use dq9_formats::map::{WarpVolume, ZoneVolume, ZoneWarp};
+use dq9_formats::table::Value;
 
 fn fx(v: f32) -> i32 {
     (v * 4096.0) as i32
