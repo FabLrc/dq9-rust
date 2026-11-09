@@ -3,9 +3,9 @@
 //! state.
 //!
 //! Per-frame hooks for animations: [`Renderer::update_vertices`] re-uploads a model's posed
-//! vertices (same topology), [`Renderer::set_material_texture`] rebinds a material (pattern
-//! animations) and [`Renderer::set_material_uv_transform`] sets its texture matrix (SRT
-//! animations).
+//! vertices (same topology), [`Renderer::update_draws`] refreshes its translucent sort centres,
+//! [`Renderer::update_material`] updates a material (pattern and SRT animations) and
+//! [`Renderer::update_instance_world`] moves one instance.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -15,6 +15,7 @@ use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
+use crate::gpu::{fullscreen_pipeline, load_pass, uniform_entry};
 use crate::lighting::{EnvUniform, Environment, gradient};
 use crate::scene::{
     Cull, PolygonMode, Scene, SceneDraw, SceneMaterial, SceneTexture, Shade, TexelTint, Wrap,
@@ -100,6 +101,9 @@ struct GpuModel {
     indices: wgpu::Buffer,
     materials: Vec<GpuMaterial>,
     draws: Vec<SceneDraw>,
+    /// Pipeline key of each draw for the opaque and translucent passes; see
+    /// `Renderer::ensure_pipelines`.
+    keys: Vec<[Option<PipelineKey>; 2]>,
     /// Range of the instance buffer showing this model.
     instances: Range<u32>,
 }
@@ -134,6 +138,8 @@ pub struct Renderer {
     white: wgpu::TextureView,
     samplers: HashMap<[Wrap; 2], wgpu::Sampler>,
     models: Vec<GpuModel>,
+    /// Translucent draws of the current frame, sorted back to front.
+    translucent_draws: Vec<(f32, usize, usize, u32)>,
     instance_buffer: Option<wgpu::Buffer>,
     /// World matrix of each instance, in instance buffer order.
     instance_worlds: Vec<Mat4>,
@@ -280,16 +286,7 @@ fn edge_pipeline(
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("edge"),
         entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            uniform_entry(0, wgpu::ShaderStages::FRAGMENT),
             texture_entry(1, wgpu::TextureSampleType::Uint),
             texture_entry(2, wgpu::TextureSampleType::Depth),
         ],
@@ -300,36 +297,18 @@ fn edge_pipeline(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("edge"),
-        bind_group_layouts: &[Some(&layout)],
-        immediate_size: 0,
-    });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("edge"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: color_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
+    let pipeline = fullscreen_pipeline(
+        device,
+        "edge",
+        &shader,
+        &[Some(&layout)],
+        None,
+        &[Some(wgpu::ColorTargetState {
+            format: color_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })],
+    );
     (buffer, layout, pipeline)
 }
 
@@ -344,16 +323,7 @@ fn background_pipeline(
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("background"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
+        entries: &[uniform_entry(0, wgpu::ShaderStages::FRAGMENT)],
     });
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("background"),
@@ -369,49 +339,31 @@ fn background_pipeline(
             resource: buffer.as_entire_binding(),
         }],
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("background"),
-        bind_group_layouts: &[Some(&layout)],
-        immediate_size: 0,
-    });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("background"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(wgpu::DepthStencilState {
+    let pipeline = fullscreen_pipeline(
+        device,
+        "background",
+        &shader,
+        &[Some(&layout)],
+        Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(false),
             depth_compare: Some(wgpu::CompareFunction::Always),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[
-                Some(wgpu::ColorTargetState {
-                    format: color_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-                Some(wgpu::ColorTargetState {
-                    format: ID_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-            ],
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
+        &[
+            Some(wgpu::ColorTargetState {
+                format: color_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            }),
+            Some(wgpu::ColorTargetState {
+                format: ID_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            }),
+        ],
+    );
     (buffer, group, pipeline)
 }
 
@@ -428,16 +380,6 @@ impl Renderer {
             label: Some("dq9 map shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
-        let uniform_entry = |binding, visibility| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera"),
             entries: &[
@@ -535,6 +477,7 @@ impl Renderer {
             white,
             samplers: HashMap::new(),
             models: Vec::new(),
+            translucent_draws: Vec::new(),
             instance_buffer: None,
             instance_worlds: Vec::new(),
             instance_slots: Vec::new(),
@@ -605,6 +548,7 @@ impl Renderer {
                 indices,
                 materials,
                 draws: model.draws.clone(),
+                keys: Vec::new(),
                 instances,
             });
         }
@@ -799,10 +743,6 @@ impl Renderer {
         })
     }
 
-    /// Number of models and textures uploaded.
-    pub fn counts(&self) -> (usize, usize) {
-        (self.models.len(), self.textures.len())
-    }
     /// Updates one world matrix in the instance buffer without rebuilding other GPU resources.
     pub fn update_instance_world(
         &mut self,
@@ -847,65 +787,18 @@ impl Renderer {
         true
     }
 
-    /// Binds texture `texture` (index in [`Scene::textures`], `None`: untextured) to a
-    /// material.
-    pub fn set_material_texture(
-        &mut self,
-        device: &wgpu::Device,
-        model: usize,
-        material: usize,
-        texture: Option<usize>,
-    ) {
-        let Some(gm) = self
-            .models
-            .get(model)
-            .and_then(|m| m.materials.get(material))
-        else {
-            return;
-        };
-        let mut m = gm.material.clone();
-        m.texture = texture;
-        let uniform = gm.uniform.clone();
-        let group = self.material_group(device, &m, &uniform);
-        let gm = &mut self.models[model].materials[material];
-        gm.material = m;
-        gm.bind_group = group;
-        self.ensure_pipelines(device, model);
-    }
-
-    /// Creates the pipelines the draws of `model` need.
+    /// Creates the pipelines the draws of `model` need and stores their keys.
+    ///
+    /// Invariant: every path that mutates a material calls this method (`new` and
+    /// `update_material`), so `render` reads the keys instead of recomputing them.
     fn ensure_pipelines(&mut self, device: &wgpu::Device, model: usize) {
-        for d in 0..self.models[model].draws.len() {
-            for pass in PASSES {
-                if let Some(key) = self.key(model, d, pass) {
-                    self.pipeline(device, key);
-                }
-            }
+        let keys: Vec<[Option<PipelineKey>; 2]> = (0..self.models[model].draws.len())
+            .map(|d| PASSES.map(|pass| self.key(model, d, pass)))
+            .collect();
+        for key in keys.iter().flatten().flatten() {
+            self.pipeline(device, *key);
         }
-    }
-
-    /// Sets a material's texture coordinate transform (rows of a 2×3 affine matrix applied
-    /// to normalised coordinates).
-    pub fn set_material_uv_transform(
-        &mut self,
-        queue: &wgpu::Queue,
-        model: usize,
-        material: usize,
-        transform: [[f32; 3]; 2],
-    ) {
-        let Some(gm) = self
-            .models
-            .get_mut(model)
-            .and_then(|m| m.materials.get_mut(material))
-        else {
-            return;
-        };
-        gm.material.uv_transform = transform;
-        queue.write_buffer(
-            &gm.uniform,
-            0,
-            bytemuck::bytes_of(&material_uniform(&gm.material)),
-        );
+        self.models[model].keys = keys;
     }
 
     /// Updates animated material state, including alpha/pass changes. Unchanged bindings
@@ -1029,10 +922,11 @@ impl Renderer {
         };
         // Translucent draws, back to front by the view depth of their centres.
         let view = camera.view();
-        let mut translucent: Vec<(f32, usize, usize, u32)> = Vec::new();
+        let mut translucent = std::mem::take(&mut self.translucent_draws);
+        translucent.clear();
         for (mi, model) in self.models.iter().enumerate() {
             for (di, draw) in model.draws.iter().enumerate() {
-                if self.key(mi, di, Pass::Translucent).is_none() {
+                if model.keys[di][1].is_none() {
                     continue;
                 }
                 for slot in model.instances.clone() {
@@ -1043,13 +937,7 @@ impl Renderer {
             }
         }
         translucent.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let keys: Vec<Vec<[Option<PipelineKey>; 2]>> = (0..self.models.len())
-            .map(|m| {
-                (0..self.models[m].draws.len())
-                    .map(|d| PASSES.map(|pass| self.key(m, d, pass)))
-                    .collect()
-            })
-            .collect();
+        self.translucent_draws = translucent;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("map"),
             color_attachments: &[
@@ -1103,14 +991,16 @@ impl Renderer {
         pass.set_vertex_buffer(1, instances.slice(..));
         // Opaque polygons, then the "depth equal" ones (decals) over them.
         for decals in [false, true] {
-            for (mi, model) in self.models.iter().enumerate() {
+            for model in &self.models {
                 if model.instances.is_empty() {
                     continue;
                 }
                 pass.set_vertex_buffer(0, model.vertices.slice(..));
                 pass.set_index_buffer(model.indices.slice(..), wgpu::IndexFormat::Uint32);
                 for (di, draw) in model.draws.iter().enumerate() {
-                    let Some(key) = keys[mi][di][0] else { continue };
+                    let Some(key) = model.keys[di][0] else {
+                        continue;
+                    };
                     if key.depth_equal != decals {
                         continue;
                     }
@@ -1120,11 +1010,13 @@ impl Renderer {
                 }
             }
         }
-        for (_, mi, di, slot) in translucent {
+        for &(_, mi, di, slot) in &self.translucent_draws {
             let model = &self.models[mi];
             let draw = &model.draws[di];
             let gm = &model.materials[draw.material];
-            let Some(key) = keys[mi][di][1] else { continue };
+            let Some(key) = model.keys[di][1] else {
+                continue;
+            };
             pass.set_pipeline(&self.pipelines[&key]);
             pass.set_vertex_buffer(0, model.vertices.slice(..));
             pass.set_index_buffer(model.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -1169,22 +1061,7 @@ impl Renderer {
                     },
                 ],
             });
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("edges"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            let mut pass = load_pass(encoder, "edges", target);
             pass.set_scissor_rect(viewport.x, viewport.y, viewport.width, viewport.height);
             pass.set_pipeline(&self.edge_pipeline);
             pass.set_bind_group(0, &group, &[]);
@@ -1192,21 +1069,10 @@ impl Renderer {
         }
     }
 
-    /// Renders one frame offscreen and reads it back as RGBA8 rows (top to bottom). Blocks on
-    /// the GPU: native targets only (on the web, mapping completes from the event loop).
-    pub fn render_to_rgba(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        size: (u32, u32),
-        viewport: Viewport,
-        camera: &Camera,
-    ) -> Result<Vec<u8>, wgpu::BufferAsyncError> {
-        self.render_to_rgba_with(device, queue, size, viewport, camera, |_, _| {})
-    }
-
-    /// [`Renderer::render_to_rgba`] with `overlay` drawing over the finished frame (the
-    /// interface of [`crate::ui`]) before the read-back.
+    /// Renders one frame offscreen and reads it back as RGBA8 rows (top to bottom), with
+    /// `overlay` drawing over the finished frame (the interface of [`crate::ui`]) before the
+    /// read-back. Blocks on the GPU: native targets only (on the web, mapping completes from
+    /// the event loop).
     pub fn render_to_rgba_with(
         &mut self,
         device: &wgpu::Device,

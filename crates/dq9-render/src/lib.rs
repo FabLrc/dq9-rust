@@ -11,6 +11,7 @@
 
 pub mod animation;
 pub mod camera;
+mod gpu;
 mod hero;
 pub mod lighting;
 pub mod panel;
