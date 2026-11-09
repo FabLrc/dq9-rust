@@ -3,6 +3,7 @@
 //!
 //! port: 0x02030744, 0x02030784, 0x020307e0, 0x02030b1c, 0x02030b8c
 
+use nds_rom::bytes::u32_at;
 use nds_rom::{Error, Result};
 
 /// Offset value meaning "no string".
@@ -139,16 +140,6 @@ pub struct Table<'a> {
     pub records: Vec<Record<'a>>,
     /// Number of distinct strings in the pool (header word 3).
     pub string_count: u32,
-}
-
-fn u32_at(data: &[u8], offset: usize) -> Result<u32> {
-    data.get(offset..offset + 4)
-        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .ok_or(Error::OutOfBounds {
-            offset,
-            len: 4,
-            size: data.len(),
-        })
 }
 
 impl<'a> Table<'a> {

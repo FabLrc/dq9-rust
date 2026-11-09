@@ -68,13 +68,7 @@ pub struct Font<'a> {
 }
 
 fn u32_at(data: &[u8], offset: usize) -> Result<usize> {
-    data.get(offset..offset + 4)
-        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
-        .ok_or(Error::OutOfBounds {
-            offset,
-            len: 4,
-            size: data.len(),
-        })
+    Ok(nds_rom::bytes::u32_at(data, offset)? as usize)
 }
 
 fn expect_version(data: &[u8], version: &[u8; 4], what: &'static str) -> Result<()> {

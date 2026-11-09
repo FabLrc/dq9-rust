@@ -4,7 +4,7 @@
 //! every target the game port runs on (including `wasm32-unknown-unknown`). Malformed input
 //! yields [`Error`]; nothing here panics on untrusted data.
 
-mod bytes;
+pub mod bytes;
 pub mod compress;
 mod error;
 pub mod fnt;

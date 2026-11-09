@@ -4,6 +4,7 @@
 
 use std::ops::Range;
 
+use nds_rom::bytes::{u16_at, u32_at};
 use nds_rom::{Error, Result};
 
 const HEADER_SIZE: usize = 0x3c;
@@ -215,26 +216,8 @@ fn usize_at(value: u32) -> Result<usize> {
     usize::try_from(value).map_err(|_| Error::Malformed("COL2 value exceeds address space"))
 }
 
-fn u16_at(bytes: &[u8], at: usize) -> Result<u16> {
-    let data = bytes.get(at..at + 2).ok_or(Error::OutOfBounds {
-        offset: at,
-        len: 2,
-        size: bytes.len(),
-    })?;
-    Ok(u16::from_le_bytes([data[0], data[1]]))
-}
-
 fn i16_at(bytes: &[u8], at: usize) -> Result<i16> {
     Ok(u16_at(bytes, at)? as i16)
-}
-
-fn u32_at(bytes: &[u8], at: usize) -> Result<u32> {
-    let data = bytes.get(at..at + 4).ok_or(Error::OutOfBounds {
-        offset: at,
-        len: 4,
-        size: bytes.len(),
-    })?;
-    Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
 }
 
 #[cfg(test)]

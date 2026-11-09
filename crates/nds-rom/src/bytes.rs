@@ -2,7 +2,12 @@
 
 use crate::{Error, Result};
 
-pub(crate) fn slice(data: &[u8], offset: usize, len: usize) -> Result<&[u8]> {
+/// `len` bytes at `offset`.
+///
+/// # Errors
+/// [`Error::OutOfBounds`] when `offset + len` overflows `usize` or runs past `data`. Never
+/// panics.
+pub fn slice(data: &[u8], offset: usize, len: usize) -> Result<&[u8]> {
     offset
         .checked_add(len)
         .and_then(|end| data.get(offset..end))
@@ -13,21 +18,41 @@ pub(crate) fn slice(data: &[u8], offset: usize, len: usize) -> Result<&[u8]> {
         })
 }
 
-pub(crate) fn u8_at(data: &[u8], offset: usize) -> Result<u8> {
+/// The byte at `offset`.
+///
+/// # Errors
+/// [`Error::OutOfBounds`] when `offset + 1` overflows `usize` or runs past `data`. Never
+/// panics.
+pub fn u8_at(data: &[u8], offset: usize) -> Result<u8> {
     Ok(slice(data, offset, 1)?[0])
 }
 
-pub(crate) fn u16_at(data: &[u8], offset: usize) -> Result<u16> {
+/// The little-endian `u16` at `offset`.
+///
+/// # Errors
+/// [`Error::OutOfBounds`] when `offset + 2` overflows `usize` or runs past `data`. Never
+/// panics.
+pub fn u16_at(data: &[u8], offset: usize) -> Result<u16> {
     let b = slice(data, offset, 2)?;
     Ok(u16::from_le_bytes([b[0], b[1]]))
 }
 
-pub(crate) fn u32_at(data: &[u8], offset: usize) -> Result<u32> {
+/// The little-endian `u32` at `offset`.
+///
+/// # Errors
+/// [`Error::OutOfBounds`] when `offset + 4` overflows `usize` or runs past `data`. Never
+/// panics.
+pub fn u32_at(data: &[u8], offset: usize) -> Result<u32> {
     let b = slice(data, offset, 4)?;
     Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
-pub(crate) fn magic_at(data: &[u8], offset: usize) -> Result<[u8; 4]> {
+/// The four bytes at `offset`, to compare with a file's magic.
+///
+/// # Errors
+/// [`Error::OutOfBounds`] when `offset + 4` overflows `usize` or runs past `data`. Never
+/// panics.
+pub fn magic_at(data: &[u8], offset: usize) -> Result<[u8; 4]> {
     let b = slice(data, offset, 4)?;
     Ok([b[0], b[1], b[2], b[3]])
 }

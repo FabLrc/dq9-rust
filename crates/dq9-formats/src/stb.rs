@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use nds_rom::bytes::u32_at;
 use nds_rom::{Error, Result};
 
 const MAGIC: &[u8; 4] = b"SB2\0";
@@ -339,16 +340,6 @@ pub struct Script<'a> {
     pub functions: BTreeMap<usize, Function>,
 }
 
-fn word(data: &[u8], offset: usize) -> Result<u32> {
-    data.get(offset..offset + 4)
-        .map(|b| u32::from_le_bytes(b.try_into().expect("4 bytes")))
-        .ok_or(Error::OutOfBounds {
-            offset,
-            len: 4,
-            size: data.len(),
-        })
-}
-
 impl<'a> Script<'a> {
     pub fn parse(data: &'a [u8]) -> Result<Self> {
         if data.get(..4) != Some(MAGIC) {
@@ -357,15 +348,15 @@ impl<'a> Script<'a> {
             found[..n].copy_from_slice(&data[..n]);
             return Err(Error::BadMagic { what: "SB2", found });
         }
-        let header = |i: usize| word(data, i * 4);
+        let header = |i: usize| u32_at(data, i * 4);
         let code_base = header(2)? as usize;
         let default_entry = header(1)? as usize;
         let (table, count) = (header(3)? as usize, header(4)? as usize);
         let entries = (0..count)
             .map(|i| {
                 Ok((
-                    word(data, table + 8 * i)? as i32,
-                    word(data, table + 8 * i + 4)? as usize,
+                    u32_at(data, table + 8 * i)? as i32,
+                    u32_at(data, table + 8 * i + 4)? as usize,
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -395,7 +386,7 @@ impl<'a> Script<'a> {
     }
 
     fn decode_function(&self, record: usize) -> Result<Function> {
-        let code = word(self.data, record)? as usize;
+        let code = u32_at(self.data, record)? as usize;
         if self.code_base + code != record + RECORD_SIZE {
             return Err(Error::Malformed("stb: code does not follow its record"));
         }
@@ -404,7 +395,7 @@ impl<'a> Script<'a> {
         let mut targets = BTreeSet::new();
         while let Some(mut pc) = pending.pop() {
             while !seen.contains_key(&pc) {
-                let [op, a, b] = [0, 4, 8].map(|i| word(self.data, pc + i));
+                let [op, a, b] = [0, 4, 8].map(|i| u32_at(self.data, pc + i));
                 let instr = Instr::decode(op?, a?, b?, self.code_base)?;
                 seen.insert(pc, instr);
                 match instr {
@@ -430,8 +421,8 @@ impl<'a> Script<'a> {
         }
         Ok(Function {
             record,
-            frame: word(self.data, record + 8)?,
-            params: word(self.data, record + 12)?,
+            frame: u32_at(self.data, record + 8)?,
+            params: u32_at(self.data, record + 12)?,
             code: seen.into_iter().collect(),
         })
     }
