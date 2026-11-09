@@ -397,26 +397,64 @@ functionally complete natively (tasks 1.2, exit lock, area 12, 21595 and return
 1.4.1 covered by real tests), not certified end to end in the browser nor
 compared with the original beyond 1.1.2 ([`status.md`](status.md)).
 
-## J4 — Fighting: **v0.2**
+## J4 — Fighting through chapter 2: **v0.2**
 
-| Task | Reuse |
+**Target**: from `--new-game` to the end of event **2750** (stage 2.1, map 1110, Erinn's
+room: "Some days later, the landslide is cleared and the mountain pass is opened again";
+French text "…part pour Ablithia"), the last scene before the Stornway road opens (2760 and
+later are out of scope). **Everything before it plays without a stand-in**, battles included:
+the prologue's battle 26, the roaming monsters of the Angel Falls Region (`F01`), the Mountain
+Pass (`S01M01`) and the Hexagon (`D01`, 7100–7105), and the Hexagoon (`eventbattle.bin`
+index 2), won or lost (`str_ol` 12/13 tell both branches).
+
+Chapter 2 content (`cargo dq9re stage-events 2.1`): events 2110–2750 on `M01` and its houses,
+`S01M01` (2300–2350), the Hexagon (2500–2555, 22510) and back; 15 natives without an
+implementation in the headless run (`cargo dq9re script 2.1 --quiet`: 102, 103, 223, 417,
+509, 540, 547, 550, 556, 560, 571, 573, 577, 581, 582).
+
+| Workstream | Reuse |
 |---|---|
-| tables: monsters, actions, items, spells, levels, articles | wiki Monsters, Actions, Items, Spell-Table, Level-Tables, Articles |
-| AT/BT/CT random generators (constants known) | dqix-functions glossary, `src/Util/Random.cpp` |
-| monsters visible on the field, spawning and encounter | wiki Encounters; DeSmuME scripts (spawn nodes) |
-| flow: commands, order, AI, damage, criticals, tension, statuses, end and experience | `src/Combat/` of the decompilation (formulas already in C++), wiki Battle-Resolution, Battle-AI, Battle-Commands; overlays 0, 24, 25, 26 |
-| presentation: arena, animations, messages, interface | wiki Battle-Stages, Battle-Presentation, Battle-Text |
-| scripted battles (bosses) | wiki Event-Battles |
+| **Battle data**: monsters (`mon_list`, `mon_btldata.nat`, `mon_data`), actions (`actdt_a/b`, `actdamage`, `actname.nat`), `spelltable.bin`, equipment battle parameters (`itembtlprm.nat`), encounters (`encfld.bin`, `encbtl.bin`, `fld_mondata.bin`), battle text (`str_btl`, `str_bres`, `actmsg`) | wiki Monsters, Actions, Spell-Table, Equipment-Battle-Parameters, Encounters, Battle-Text; `dq9_formats::table`, `item` |
+| **Battle rules** (`dq9-core`): generators, monster HP, per-action draw order, critical, evasion, block, accuracy, base and final damage, statuses met in chapter 2, turn order, monster ways (AI), flee, surprise round, end (experience, gold, drops, level-up, skill points), wipe-out | wiki Battle-Resolution, Battle-AI, Battle-Commands, Monsters; `src/Combat/` and `src/Util/Random.cpp` of the decompilation; [BattleEmulator](https://github.com/DQIX/BattleEmulator) (MIT) as oracle |
+| **Party and progression**: hero record (vocation, level, experience, HP/MP, stats, equipment, skill points), bag, gold, from a new game and from a save; level tables | wiki Party, Level-Tables, Items; `dq9_formats::save` |
+| **Battle presentation**: stage from the ground under the encounter, fighters' models and motions, grid, battle camera, action scripts used by the chapter's monsters, windows and command menus, messages, music and `se_btl` effects, transition (native 547) | wiki Battle-Stages, Battle-Presentation, Battle-Action-Scripts, Battle-Text; overlays 0, 24, 25, 26 |
+| **Roaming monsters**: field models (`<code>_f.mon`), spawning per zone, wandering and chasing, contact, surprise roll, return to the field | wiki Encounters; DeSmuME spawn-node scripts (facts only) |
+| **Field menu and facilities**: Items, Spells, Equipment, Attributes; Angel Falls inn, shop and church (revival, cure; Confession saves in v0.3); chests, pots, barrels and "examine"; wipe-out return | wiki Inns-and-Churches, Treasure, Items (`shopdata1.bin`); overlays 2, 3, 4, 5, 11 |
+| **Chapter 2 story**: the 15 natives above on screen, events 2110–2750 with no visible gap, physical route from 1.4.1 to 2750, both Hexagoon branches | `re/stb-natives.md`, `re/trigger.md`; wiki Engine-Functions, Event-Battles |
 
-Criterion: results identical to BattleEmulator on its reference battles (same seed,
-same inputs). **v0.2**: up to the game's first boss.
+Progress:
+
+- [ ] Battle data readers and `dq9re` inspection (`j4-battle-data`).
+- [ ] Party state: new game equal to the original at first control, save restore
+      (`j4-party-state`).
+- [ ] Battle rules kernel: generators and the resolution of one action, identical to
+      BattleEmulator (`j4-battle-kernel`).
+- [ ] Chapter 2 cutscenes: the 15 natives, `--events-report 2.1` with no visible gap up to 2750
+      (`v2-ch2-cutscenes`).
+- [ ] Battle flow: turns, commands, monster ways, statuses, end of battle and level-up.
+- [ ] Battle scene: stage, fighters, camera, transition; then windows, menus and messages.
+- [ ] Roaming monsters and encounters on `F01`, `S01M01`, `D01`.
+- [ ] Field menu, Angel Falls facilities, chests and examine, wipe-out.
+- [ ] Chapter 2 route 1.4.1 → 2750 in a real test, Hexagoon won and lost; battle 26 played.
+- [ ] Browser: continuous session from a new game to 2750.
+
+Order (waves of at most four batches): data, party state, battle kernel and chapter 2
+cutscenes first; then flow, scene, roaming monsters and the chapter 2 route; then windows and
+menus, facilities and the stand-in's removal; last the Hexagoon, the end-to-end test, the
+browser and docs consistency.
+
+**v0.2** criterion: a new game played by hand reaches the end of 2750 natively and in the
+browser, with every battle fought; a headless run with a fixed seed reaches it in a real test;
+the resolution of an action is identical to BattleEmulator on its reference battles (same
+seed, same inputs); flags identical to melonDS wherever an original reference exists.
+Out of scope, kept for v0.3: title screen, character creation (the default hero stays),
+saving and loading.
 
 ## J5 — Progressing: **v0.3**
 
-- Title screen, character creation, loading/saving in DS format (J0).
-- Menus: items, equipment (changing models), spells, status, tactics, skills
-  (overlays 2, 4, 5, 11, 13).
-- Facilities: shops, inn, church, bank (overlay 3; wiki Inns-and-Churches,
+- Title screen, character creation, loading/saving in DS format (J0); church Confession.
+- Menus beyond what chapter 2 needs: tactics, skills (overlays 2, 4, 5, 11, 13).
+- Facilities beyond Angel Falls: bank, other shops (overlay 3; wiki Inns-and-Churches,
   Items `shopdata1.bin`).
 - Party, recruiting at Quester's Rest, vocations (wiki Party, Vocation-Skill-Trees,
   Skill-Panels).

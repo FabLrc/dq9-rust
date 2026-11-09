@@ -26,13 +26,20 @@ Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`]
   hall; no continuous session up to 4107, the tower or Angel Falls (`app.md`,
   § Verification).
 
-## Last wave: r1 refactoring (`efa8bec`..`eb70d4f`), no active batch
+## Active wave: v2-1 (v0.2 foundations), base after `d14820c`
 
-14 behaviour-preserving batches (13 Flash, `r1-trigger-field` on Sonnet, no Opus): large
-modules split (`app.rs` 3187→1576 lines, `event.rs` 2360→1143, `cutscene.rs` 2110→1030,
-`trigger`, `talk`, `sdat`, `melonds`, `player`, `auto`, dq9re map), duplicates merged, dead
-`Renderer` methods and per-frame allocations removed; every batch passed `verify.ps1 -RequireRom`,
-parity 2/2, M01 capture identical, coverage unchanged (fixes: `orchestration/README.md`).
+v0.2 target (`roadmap.md`, J4): new game → end of event 2750 (landslide cleared), every battle
+fought. Batches (at most four, one Cargo target each):
+
+| Batch | Model | Owns (shared files) |
+|---|---|---|
+| `j4-battle-data` | Flash | `dq9-formats` battle tables, `dq9re` battle commands |
+| `j4-party-state` | Flash | `dq9-core/src/state.rs`, level tables, party module |
+| `j4-battle-kernel` | Sonnet (rule design, float-exact port) | `dq9-core/src/battle/**` |
+| `v2-ch2-cutscenes` | Sonnet (native RE) | `dq9-app/src/event.rs` + `event/**`, `re/symbols.txt` |
+
+Previous wave r1 (refactoring, `efa8bec`..`eb70d4f`): 14 behaviour-preserving batches, all
+integrated (`orchestration/README.md`).
 
 ## Blockers and next steps
 
