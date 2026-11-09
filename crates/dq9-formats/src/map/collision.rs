@@ -29,6 +29,20 @@ pub struct GroundRecord {
     pub unknown: [u16; 2],
 }
 
+/// The stage a ground record names: `func_0204bd7c` reads the record's first halfword as three
+/// five-bit digits `a` (bits 0–4), `b` (5–9) and `c` (10–14) and returns `30000 + 100a + 10b +
+/// c`, a map id of `maplist9.bin` (`docs/re/encounter.md`).
+pub const fn stage_of_digits(digits: u16) -> u16 {
+    ((digits & 0x3e0) >> 5) * 10 + (digits & 0x1f) * 100 + 30000 + ((digits & 0x7c00) >> 10)
+}
+
+impl GroundRecord {
+    /// The battle stage this record names ([`stage_of_digits`]).
+    pub const fn stage(&self) -> u16 {
+        stage_of_digits(self.map_digits)
+    }
+}
+
 /// Parsed map collision geometry and its validated spatial index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Collision {
@@ -47,6 +61,57 @@ pub struct Collision {
 }
 
 impl Collision {
+    /// The ground record of a triangle: the high seven bits of its attribute word (byte `0x1b`
+    /// is `record index << 1 | temporary mark`, `docs/re/collision.md`).
+    pub fn record_of(&self, triangle: &Triangle) -> Option<&GroundRecord> {
+        self.ground_records
+            .get((triangle.attributes >> 25) as usize)
+    }
+
+    /// The ground record under `position` (`fx32`, in this mesh's frame): among the floor
+    /// triangles (normal `y` above `0x800`) whose footprint holds `(x, z)`, the highest one whose
+    /// plane lies between `reach_below` under `position.y` and `reach_above` over it, the
+    /// window the character's ground ray covers (`ov_017::02192b48`: `0x1800` above, `0xa000`
+    /// below). The game keeps that triangle's record at `Character+0x114`; which of several
+    /// stacked floors it keeps is **[hypothesis]** (the highest, like the ground height).
+    pub fn ground_record_at(
+        &self,
+        position: [i32; 3],
+        reach_above: i32,
+        reach_below: i32,
+    ) -> Option<&GroundRecord> {
+        let shift = self.shift;
+        let (px, py, pz) = (
+            i64::from(position[0]),
+            i64::from(position[1]),
+            i64::from(position[2]),
+        );
+        let mut best: Option<(i64, &Triangle)> = None;
+        for triangle in &self.triangles {
+            if i32::from(triangle.normal[1]) <= 0x800 {
+                continue;
+            }
+            let v = triangle
+                .vertices
+                .map(|v| v.map(|c| i64::from(i32::from(c) << shift)));
+            let edge = |a: [i64; 3], b: [i64; 3]| {
+                (b[0] - a[0]) * (pz - a[2]) - (b[2] - a[2]) * (px - a[0])
+            };
+            let (e0, e1, e2) = (edge(v[0], v[1]), edge(v[1], v[2]), edge(v[2], v[0]));
+            if !((e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0)) {
+                continue;
+            }
+            let n = triangle.normal.map(i64::from);
+            let y = v[0][1] - (n[0] * (px - v[0][0]) + n[2] * (pz - v[0][2])) / n[1];
+            if y > py + i64::from(reach_above) || y < py - i64::from(reach_below) {
+                continue;
+            }
+            if best.is_none_or(|(top, _)| y > top) {
+                best = Some((y, triangle));
+            }
+        }
+        best.and_then(|(_, triangle)| self.record_of(triangle))
+    }
     /// Parse a complete EU `.col2` file, rejecting truncated or inconsistent tables.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < HEADER_SIZE {

@@ -19,16 +19,16 @@ the game grabs the keyboard automatically. ROM and save files stay local: nothin
 The demo is public, experimental and needs a recent browser with WebGPU or WebGL 2.
 
 <!-- coverage:start -->
-[![Ported](https://img.shields.io/badge/ported-2.2%25%20of%20functions-orange)](docs/roadmap.md)
+[![Ported](https://img.shields.io/badge/ported-2.3%25%20of%20functions-orange)](docs/roadmap.md)
 
-**Progress: 2.2%** of game functions ported (275 / 12,056), 2.8% of the code (72 KB / 2,505 KB).
+**Progress: 2.3%** of game functions ported (286 / 12,056), 2.9% of the code (75 KB / 2,505 KB).
 Computed by `cargo dq9re coverage` from the `port:` markers in the code (definition in `docs/roadmap.md`).
 
 <details><summary>Per-module detail</summary>
 
 | Module | Functions ported | Code ported |
 |---|---:|---:|
-| ARM9 | 245 / 5,464 (4.4%) | 62 KB / 826 KB (7.4%) |
+| ARM9 | 255 / 5,464 (4.6%) | 65 KB / 826 KB (7.8%) |
 | ITCM | 0 / 34 (0.0%) | 0 KB / 6 KB (0.0%) |
 | ov_000 | 0 / 826 (0.0%) | 0 KB / 190 KB (0.0%) |
 | ov_001 | 1 / 515 (0.1%) | 1 KB / 70 KB (0.0%) |
@@ -46,7 +46,7 @@ Computed by `cargo dq9re coverage` from the `port:` markers in the code (definit
 | ov_014 | 0 / 69 (0.0%) | 0 KB / 21 KB (0.0%) |
 | ov_015 | 0 / 103 (0.0%) | 0 KB / 34 KB (0.0%) |
 | ov_016 | 0 / 87 (0.0%) | 0 KB / 22 KB (0.0%) |
-| ov_017 | 29 / 1,194 (2.4%) | 10 KB / 301 KB (3.1%) |
+| ov_017 | 30 / 1,194 (2.5%) | 10 KB / 301 KB (3.2%) |
 | ov_020 | 0 / 18 (0.0%) | 0 KB / 9 KB (0.0%) |
 | ov_021 | 0 / 5 (0.0%) | 0 KB / 2 KB (0.0%) |
 | ov_023 | 0 / 827 (0.0%) | 0 KB / 147 KB (0.0%) |
