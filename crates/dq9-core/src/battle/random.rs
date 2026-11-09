@@ -64,6 +64,12 @@ impl Random {
     pub fn next_float_between(&mut self, min: f32, max: f32) -> f32 {
         (max - min) * self.next_float01() + min
     }
+
+    /// `NextRandomBetween` (`src/Util/Random.cpp`): `NextRandomMax((max − min) + 1) + min`, one
+    /// draw (none when the span is not above 0).
+    pub fn next_between(&mut self, min: i32, max: i32) -> i32 {
+        self.next_max(max - min + 1) + min
+    }
 }
 
 /// A source of the float draws the damage formulas take, so that a caller can count them.

@@ -1,8 +1,10 @@
 # Battle kernel: generators, draw order, damage
 
 Implementation: `crates/dq9-core/src/battle.rs` and `battle/` (`random`, `model`, `damage`,
-`resolve`, `monster`). Tests: `battle/tests.rs` (unit) and `tests/battle_oracle.rs` (differential,
-fixtures `tests/data/battle_oracle_{primitives,actions}.txt`).
+`resolve`, `monster` for the kernel; `setup`, `round`, `ai`, `end` for the whole battle, see "The
+battle's flow"). Tests: `battle/tests.rs` and `battle/flow_tests.rs` (unit), `tests/battle_oracle.rs`
+(differential, fixtures `tests/data/battle_oracle_{primitives,actions}.txt`) and
+`tests/battle_rom.rs` (whole battles on the ROM).
 
 Sources, in the order of `AGENTS.md`: the USA decompilation (DQIX/dqix-decomp, commit
 `b5c617aa3113a57baba07465ede3be7a0be5328f`, Unlicense: `src/Util/Random.cpp`,
@@ -192,11 +194,176 @@ asserts the count is at most the number of Woosh criticals. Which is right in pl
 integer step in a damage handler; Woosh's EU record has handler 0, so the resistance reading is
 the one the code supports; a state of the original at a Woosh critical would settle it).
 
+## The battle's flow (batch `j4-battle-flow`)
+
+Implementation: `battle/{setup, round, ai, end}.rs`. Tests: `battle/flow_tests.rs` (synthetic) and
+`tests/battle_rom.rs` (whole battles on the ROM, seeded). Ghidra evidence under
+`build/evidence/j4-battle-flow/` (local): `ghidra-process-turn.txt`, `ghidra-turn-helpers.txt`,
+`ghidra-exec-helpers.txt`, `ghidra-ai-arm9.txt`, `ghidra-ai-targets.txt`, `ghidra-retarget.txt`,
+`ghidra-party-target.txt`, `ghidra-flee.txt`, `ghidra-victory.txt`, `ghidra-resolve-action.txt`,
+`ghidra-reset-status.txt`, `ghidra-prio.txt`. EU addresses; overlay ones are the USA's. The wiki pages
+*Battle-Resolution*, *Battle-AI*, *Battle-Weight-Tables*, *Event-Battles* gave the structure (USA
+readings); everything below marked **read** was checked in the European decompilation.
+
+### Setup (`setup.rs`)
+
+- **Fighter of a monster** from `mon_btldata`: HP drawn by `init_monster_hp` on the **world's**
+  generator, one draw per monster in the order they stand (group by group: **[hypothesis]** for the
+  order), table HP for a set battle (no draw); MP, attack, defence, agility; evasion and block
+  grades through `GRADE_RATES`; resistances; metal from `mon_data` bit 12.
+- **Action of the kernel** from the action tables, the range looked up in the action's own half
+  (`Skill`): amount a blow (range 0, multiplier 1.0) or a range record, scaling `Some` when
+  `+0x18` bits 16–17 are 2 and bit 14 or 15 names the number, `scales_accuracy` when they are 1.
+  `tests/battle_rom.rs` checks that the adapter gives the numbers the oracle's hand-decoded actions
+  carry (Attack, Crack, Heal).
+- **Read in code** (facts): `+0x08` bits 8–9 are the **side an action aims at** (1 the opponents,
+  2 its own; `func_ov000_02154a04` branches on it; the "metal" reading of the formats crate is the
+  same field); `+0x0C` / `+0x0E` (u16) are the targeting handler of an AI mode 1 / mode 2 monster
+  (`func_ov024_021f66cc`); `+0x1C` bits 14–18 are the **hit code** (`func_ov000_0215fbe0`);
+  `+0x2C` bits 14–19 the **turn class** (`func_ov000_0215f1ac`).
+- **Monster record `+0x10`** (read): bits 3–4 the **AI mode** (`func_ov000_02159d94`), 5–7 the way
+  rule, 8–10 the **extra-actions class** (`func_ov000_0215f57c`), 13–15 evasion grade, 16–18 block
+  grade, 20–25 the once-a-battle mask, bit 26 "remembers its attackers" (`func_ov000_02154f30`).
+- `ResetBattleStatus` (`0x020891dc`, read) zeroes the way counts (`+0x38`) and the extra-actions flag
+  (`+0x3c` bit 0): they start at 0.
+- A set battle (`eventbattle.bin` record, `scenario::battle`) is `BattleSetup::set_battle`; an
+  encounter is `BattleSetup::encounter` from `(monster, count)` groups (at most 3 groups; the
+  groups are built by the encounter batch). `fld_mondata`'s "run margin" is **not** read by the
+  battle's flight (below): it belongs to the field (**[hypothesis]**).
+
+### One round (`round.rs`; `ProcessCombatTurn`, `ov_000::0215d63c`, read)
+
+Draws on the battle generator unless said, in this order:
+
+1. **Flight** at the command phase (below), world generator.
+2. **Initiative**: the standing party in slot order, then the monsters group by group
+   (`func_ov000_02153e40`); each scored `(float)agility × NextRandomFloatBetween(0.51f, 1.0f)` on the
+   buffed agility held to 999 (`0.51f` = `0x3f028f5c` at `0x0215e40c`). In the **first round**
+   (`[battle + 0xe20] == 0`): surprise 2 (monsters) skips every party member and, for each monster
+   after the first scored, draws `NextRandomMax(100)` first and skips it above `0x42`; surprise 1
+   (party) skips every monster; skipped combatants are not scored and draw nothing. Sorted highest
+   first by `func_020749ac` (a non-stable quicksort): **[hypothesis]** that ties break by order.
+3. **Commands**, in that order, all before any action: a monster chooses its way and targets
+   (below), then `func_ov000_0215f57c` draws `NextRandomMax(2)` **always** and returns
+   `[0, coin, 1, 2, b, …][class]` extra actions (table bytes `0, 0, 1, 2` at `0x02182a6c`; `b` is the
+   flag the function sets on its first call), each extra one a new way choice. A monster of AI mode 2
+   chooses at its turn instead, and spends MP: refused (`Unsupported::AiMode`), as is mode 3.
+   A party member's command is the player's: **[hypothesis]** the hero's tactic is Follow Orders, so
+   `func_ov024_021f8f20` (the tactics AI, which draws) does nothing for them.
+4. **Turn classes** (`func_ov000_0215f1ac`, read; classes from `0x02182aac` = 10, 5, 1 and `0x02182a5c`
+   = 32): a party action with `+0x10` bit 19 and a weapon with bit 6 first; then classes 10, 5, 1
+   each stably moved to the front (so 1 leads), then class 32 stably to the back. Plain Attack and
+   the spells are class 0.
+5. **Execution**, record by record; a combatant fallen before its turn does not act:
+   `NextRandomMax(100)` (`func_ov000_0215833c`: the actor's status roll, drawn whatever its
+   state); the targets are settled (`func_ov000_0215440c` for a monster: the chosen ones still
+   standing, a group or everyone reach rebuilt from the whole side, none left → a fresh default
+   pick; `func_ov000_021540fc` for a party member: the chosen target, re-chosen by
+   `func_ov000_02153aa4` with `NextRandomMax` when it has fallen); `func_ov000_0215fbe0`'s **two
+   draws** and its hit table (`0x02182a85`: `0 0 0 [3..4] 2 4 0 7 3 0 1 [6..8]` by hit code;
+   anything above 0 strikes several times at random targets: refused); then `resolve_action`;
+   then `func_ov000_02157d3c`: the party down is a defeat (`[battle + 0x8e14] = 2`), the monsters
+   down a victory (1), the defeat first; while the battle goes on, `func_ov000_0215858c` draws
+   `NextRandomMax(100)` for the actor (its status tick; every other draw in it is gated by a status).
+6. The round counter goes up. **[unknown]** whether the round's end draws (status ticks at the end
+   of the round, `func_ov000_0215e6e8`): none is modelled.
+
+Not followed, **[unknown]**: what `func_ov000_0215b278`, `0215ae80`, `0215b5a0`, `0215ab88`,
+`0215b198`, `0215bbbc`, `0215bf5c`, `0215c2d0`, `0215c4cc` (called after each action) draw through
+nested calls: the direct calls were searched and none draws; `func_ov000_0215704c` (the monster's
+"charmed by its target" roll, status byte `+0x53`) draws only when that byte is not 0, assumed 0;
+`func_ov000_0215fc60` (a battle kind, `[battle + 0x81fe]` = 800 or 801) is assumed 0.
+
+### Monster AI (`ai.rs`)
+
+- **Way rule** by `+0x10` bits 5–7 (`func_0208a91c`, table at `0x020f10b0`): 0, 1, 2, 4 the weight tables
+  (`0x020e8cba`, `NextRandomMax(256) + 1` walked down six weights, the way tried, then down to the
+  first, then up: `func_0208a370`); 3 in turn (count, `(count + 1) mod 6`, six tries); 5 a pair
+  with a draw's low bit (`NextRandom`, three tries); 6 the first way then a draw among the rest
+  (`NextRandomMax(5)`, even `NextRandomMax(1)` draws); 7 (group count) refused. None usable →
+  action 2 (the second plain Attack) through the default pick. All read.
+- **Usable** (`func_0208a03c`, read, AI modes 0 and 1): action `0xE1` is not usable in the
+  monsters' surprise round; a way in the once-a-battle mask is not usable when its **group** has used
+  it; otherwise the way's targeting handler decides, and a usable way marks itself used for the
+  group (any way, kind `0x22` excepted). The MP test applies in mode 2 only (`+0x3c` bit 3 is
+  cleared by the reset).
+- **Targeting handler** (`func_ov024_021f66cc`): the table is indexed by `+0x0C` in mode 1 and
+  `+0x0E` in mode 2, and by 0 in mode 0 (and above `0xa0`). Modelled: **0**, the default pick
+  (`func_ov000_02154a04`: reach 1 the actor; aimed at the opponents reach 2 and 5 one of the standing
+  party by the weighted pick, 3 and 4 all of them; aimed at its own side reach 2 a standing monster
+  by `NextRandomMax`, 4 its group, 3 all; then `func_ov000_0215fbe0`), and **112**, Flee (usable only
+  when the mean attack + defence of the whole party, the fallen included, summed in a `short`, is at
+  least three times the monster's own: `func_ov024_021f418c`). Any other handler is
+  `Unsupported::TargetHandler`.
+- **Weighted pick** (`func_ov000_02154f30`, read): weight 2 per front-line standing member, 1 per
+  back-line one; `NextRandomMax(total) + 1` walked down; a second draw `NextRandomMax(count)` only
+  if the walk ends unspent. A monster with the "remembers" bit adds 2 and 1 for the last two who
+  struck it: what writes those is not read, so it is refused against several candidates.
+
+### Flight (`Battle::try_flee`; `func_ov000_0215f7a8`, read; the command overlay is
+`ov_026::021dd3dc`)
+
+In order: the setup is a set battle → refused for good (`BattleError::FleeForbidden`, before any draw);
+the first round with surprise 1 → away, no draw; no monster standing → away; the party's mean
+attack + defence at least three times the monsters' mean (integer means over the standing) → away,
+no draw; otherwise `max over the fleeing members of (int)(deftness × 0.05f) + 10`, held up to
+`[25, 50, 75, 100, 65535][attempt]` (`0x02182c04`; the attempt counter `[battle + 0x8e1c]` goes up
+on every such call), and `NextRandomMax(100) < percentage` on the **world's** generator.
+Success ends the battle (`Fled`, no round). **[hypothesis]**: a failed flight costs the fleeing
+members their turn and the round goes on (the flight state `ov_026::021d8ba0` state 0xb shows the
+failure; what follows was not read). **[unknown]** the list `func_ov000_0215ed34` checks against
+`0x26..0x28` (members that forbid flight).
+
+### End (`end.rs`)
+
+Experience and gold accrue per monster beaten (`func_ov000_02155184`), once each; the victory
+routine turns the sums into the totals `(uint)((float)sum × [battle + 0x8e3c])` (gold `0x8e40`):
+both multipliers taken as 1.0 (**[hypothesis]**). Drops (`func_ov023_021f454c`): once per **kind**
+(monster number in a group) in the order first beaten, rare then ordinary only if the rare did not
+land, `func_02032380(oneIn) == 0` = `(int)(oneIn × ((rand() − 1) / 32767.0)) == 0` in `double`
+(`0x020323d0` holds the divisor's high word), `oneIn` = 1, 8, 16, 32, 64, 128, 256, 0 (`0x021fd888`; 0
+draws nothing), at most eight kept; the C library's `rand` is the caller's `CRand` (nothing in the
+battle seeds it). Not modelled: the four extra passes of the item-finding trait (`0xa4`), the
+grotto and treasure-map branch, the group flags that force a drop. Sharing the experience is
+`func_ov023_021f4098` (`Party::award`'s).
+
+### Chapter 2 coverage (`tests/battle_rom.rs`, `chapter_two_coverage_…`)
+
+Monsters of `encfld`/`encbtl` for `F01` (20001) and the Hexagon floors (7102–7104), set battle 2
+(Hexagoon, monster 300) and 26 (prologue: monsters 290 slime, 292 cruelcumber). All are AI mode 0
+or 1 and a way rule the model has. Action by action, the kernel's verdict and the AI's:
+
+| action | kind | monsters | kernel | targeting (mode 1 handler) |
+|---|---|---|---|---|
+| 1, 2 Attack | 1 | all | resolved | default pick |
+| 9 Frizz | 1 | 7 firespirit | resolved | default pick (mode 0) |
+| 546 | 1 | 300 Hexagoon | resolved | default pick (mode 0) |
+| 225 Flee | 0 | 1, 4, 20, 23, 30, 32, 43, 56, 57, 63, 290, 292 | `ActionNumber(0xE1)` | handler 112 modelled |
+| 236 medicinal herb | 2 | 23 | resolved | handler 66: `TargetHandler(66)` |
+| 41 Buff | 4 | 23 | `Kind(4)` | handler 18 |
+| 45 Accelerate | 5 | 20 | `Kind(5)` | handler 26 |
+| 59 Dazzle | 19 | 32 | `Kind(19)` | handler 54 |
+| 323 | 19 | 63 | `Kind(19)` | handler 54 |
+| 243 Weird Dance | 57 | 43 | `Kind(57)` | handler 117 |
+| 344 | 12 | 43 | `Kind(12)` | handler 116 |
+| 364, 366 | 0 | 56, 43 | `Kind(0)` | default pick |
+
+So a battle against slimes, cruelcumbers, sacksquatches, teeny sanguini, dracky, spirits, the
+firespirit, the Hexagoon and the prologue's two is played whole as long as no monster
+**chooses** a way in the lower half of the table; the Flee way is refused by the kernel only when
+its handler lets it through (the party at least 3× as strong): a hero that strong beats them
+anyway. Inputs of `j4-battle-actions`: Flee `0xE1` (a monster leaving the battle, with the `fled`
+flag), kinds 0 (364, 366: what they do), 4, 5, 19 (statuses and stat changes), 12, 57 and their
+handlers 18, 26, 54, 66, 116, 117; the party's Defend (guard level); items.
+
 ## Open points
 
-- **[unknown]** what the two draws before every action in the oracle are; the kernel starts after
-  them. A real action of the game spends the die, critical, … as above; the two are the oracle's
-  own bookkeeping or an unexplained pair.
+- **[hypothesis]** the two draws BattleEmulator spends before every action are `func_ov000_0215fbe0`
+  (`NextRandomBetween(3, 4)` then `NextRandomBetween(6, 8)`, drawn on **every** call whatever the hit
+  code), which `ResolveAction`'s head calls once target settling is done (`func_ov000_0215440c` for a
+  monster, `func_ov000_021540fc` for a party member). The call is read in the European decompilation;
+  that these are the oracle's two is not checked (the oracle models no targeting). The kernel still
+  starts after them; `Battle` draws them.
 - **[unknown]** what follows the wake roll in the original: the monster's provocation draws
   (`func_ov024_021eb08c`), `func_ov000_0215b5a0`'s hit rise, the tail of `ResolveAction`
   (`0x021ed48c`–`0x021ed564` tension spend). `ActionOutcome::generator_state` is exact up to the
@@ -211,8 +378,8 @@ the one the code supports; a state of the original at a Woosh critical would set
   plain Attack): which field of the action holds it.
 - **[unknown]** the accuracy roll's statuses and traits (dazzle's die of 8, the trait's die of 4)
   and the metal-body early miss: refused rather than modelled.
-- The combo counter is an input (`combo_count`); stepping and resetting it
-  (`func_ov024_021ea584`, `func_ov000_0215cd80`) is the caller's.
+- **[hypothesis]** the combo counter's stepping (`Battle::step_combo`) is the wiki's reading of
+  `func_ov024_021ea584` and `func_ov000_0215cd80`: not checked against the code here.
 
 ## Symbols to add
 
@@ -235,6 +402,28 @@ ov_000::02156f98 RollEvasion
 ov_024::021da55c DispatchDamageHandler
 ov_024::021e6a90 CalculateFinalDamage
 ov_024::021eb5d0 ResolveAction
+ov_000::02153aa4 RechooseMonsterInGroup   # picks another standing monster of the group (NextRandomMax)
+ov_000::02153c24 RechooseGroup            # a group with none standing -> a drawn one that has
+ov_000::0215440c SettleMonsterTargets      # alive stored targets, else DefaultPick; then RollHitCount
+ov_000::021540fc SettlePartyTargets        # by side and reach; then RollHitCount
+ov_000::02154a04 PickDefaultTargets        # by side and reach; weighted pick for reach 2/5; then RollHitCount
+ov_000::02154f30 WeightedPartyPick         # front line 2, back line 1; NextRandomMax(total)+1
+ov_000::02155184 RegisterDefeatedMonster   # exp/gold sums, kind list
+ov_000::0215833c RollActorStatusWake       # NextRandomMax(100) per action before ResolveAction
+ov_000::0215858c TickActorStatus           # NextRandomMax(100) per action after it, battle going on
+ov_000::02157d3c CheckBattleEnd            # [battle+0x8e14]: 2 party down, 1 monsters down
+ov_000::0215f1ac ReorderTurnRecords        # turn classes 10, 5, 1 to the front, 32 to the back
+ov_000::0215f57c GetExtraActionCount       # NextRandomMax(2) always; table [0,coin,1,2,...] by record bits 8-10
+ov_000::0215f7a8 TryPartyFlee              # world generator
+ov_000::0215fbe0 RollHitCount              # two draws every call: Between(3,4), Between(6,8)
+ov_024::021f66cc DispatchTargetHandler     # action +0x0c (AI mode 1) / +0x0e (mode 2)
+ov_024::021f418c TargetHandlerFlee         # handler 112
+ov_023::021edf54 BattleVictory
+ov_023::021f454c RollDrops
+0x0208a04c IsWayUsable                     # func_0208a03c
+0x0208a380 ChooseWayByWeights              # func_0208a370
+0x0208a92c ChooseMonsterWay                # func_0208a91c: rule by record +0x10 bits 5-7
+0x02032380 RollOneIn                       # func_02032370: rand() based
 ```
 
 (`ov_024::021e7bc0 GetAttackBaseDamage` and the `NextRandom*`/`CalculateCritRate`/
@@ -246,3 +435,7 @@ Fully translated and cited: `NextRandom`, `NextRandomMax`, `NextRandomFloat01`,
 `NextRandomFloatBetween` (`battle/random.rs`), `RoundUp`, `CalculatePhysicalDamage`,
 `CalculateCritRate` (`battle/damage.rs`). Not marked: `ResolveAction`, `CalculateFinalDamage`,
 `GetAttackBaseDamage`, `InitMonsterBattleStatus` and the rolls (partial, status-free subsets).
+
+The battle's flow (`setup`, `round`, `ai`, `end`) marks nothing either: `ProcessCombatTurn`,
+the way rules, the targeting handlers, `TryPartyFlee` and the victory routine are translated for a
+battle without status, tension, guard, co-op action or grotto, so none is fully reimplemented.

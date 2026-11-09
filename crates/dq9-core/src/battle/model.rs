@@ -349,6 +349,30 @@ pub enum Unsupported {
     Guard,
     /// A range with a scaling number but `lo >= hi`, or `party_max < party_min`.
     Range,
+    /// An AI mode (record `+0x10` bits 3–4) other than 0 and 1: mode 2 chooses at the turn and
+    /// spends MP, 3 is not established.
+    AiMode(u8),
+    /// A way selector (record `+0x10` bits 5–7) whose rule is not modelled (7, the group's
+    /// count).
+    WaySelector(u8),
+    /// A targeting handler (`func_ov024_021f66cc`'s table) that is not modelled.
+    TargetHandler(u16),
+    /// A hit code (`+0x1C` bits 14–18) that makes an action strike several times or at random
+    /// targets.
+    HitCode(u8),
+    /// A monster that acts more than once a round.
+    ExtraActions(u8),
+    /// The Defend command (the guard level).
+    Defend,
+    /// A reach the party's targeting does not cover.
+    PartyReach(u8),
+    /// A monster that remembers who struck it, against several targets.
+    TargetMemory,
+    /// A chaining action against several targets (one combo counter per target).
+    ComboMultiTarget,
+    /// A party action that goes before the others (record `+0x10` bit 19 with a weapon that
+    /// grants it).
+    TurnOrder,
 }
 
 impl fmt::Display for Unsupported {
@@ -373,6 +397,16 @@ impl fmt::Display for Unsupported {
             Self::Tension => write!(f, "tension is not modelled"),
             Self::Guard => write!(f, "a guard level is not modelled"),
             Self::Range => write!(f, "inconsistent amount range"),
+            Self::AiMode(m) => write!(f, "AI mode {m} is not modelled"),
+            Self::WaySelector(s) => write!(f, "way selector {s} is not modelled"),
+            Self::TargetHandler(h) => write!(f, "targeting handler {h} is not modelled"),
+            Self::HitCode(h) => write!(f, "hit code {h} (several hits) is not modelled"),
+            Self::ExtraActions(n) => write!(f, "a monster acting {n} extra times is not modelled"),
+            Self::Defend => write!(f, "Defend (the guard level) is not modelled"),
+            Self::PartyReach(r) => write!(f, "party reach {r} is not modelled"),
+            Self::TargetMemory => write!(f, "a monster's memory of its attackers is not modelled"),
+            Self::ComboMultiTarget => write!(f, "a combo against several targets is not modelled"),
+            Self::TurnOrder => write!(f, "an action that acts first is not modelled"),
         }
     }
 }
