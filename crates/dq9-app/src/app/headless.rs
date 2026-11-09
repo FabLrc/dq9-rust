@@ -68,8 +68,10 @@ impl App {
         self.capture_journal(recorded);
         // The pilot's control points are part of the proof: record them the same way. The
         // cast task of action 0x8d holds the field like an event.
-        let busy =
-            self.events.is_active() || self.events.pending_start().is_some() || self.cast_reload;
+        let busy = self.events.is_active()
+            || self.events.pending_start().is_some()
+            || self.cast_reload
+            || self.battle_is_active();
         if !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
             let map = self.current.as_ref().map_or(0, |(entry, _)| entry.id);
             let track = &self.state.tracks[self.state.track];
@@ -201,7 +203,9 @@ impl App {
                 self.talk.press(Button::Confirm);
             }
             self.run_steps(1);
-            let busy = self.events.is_active() || self.events.pending_start().is_some();
+            let busy = self.events.is_active()
+                || self.events.pending_start().is_some()
+                || self.battle_is_active();
             started |= busy;
             if started && !busy {
                 status(&format!("events over after {step} steps"));

@@ -36,7 +36,7 @@ use self::scan::{LazyRom, field_sprite, icon_sprite, monster_archive, scan};
 mod camera;
 mod guest;
 mod placement;
-mod scan;
+pub(crate) mod scan;
 
 /// Language of the event texts.
 const LANGUAGE: &str = "en";
@@ -62,6 +62,11 @@ pub enum Outcome {
     /// Native 584 opened a door with its own effect: the application looks up the map's
     /// doorway sound (`Field::door_sound`) and plays base effect 200 + low quartet.
     DoorSound { block: i32, placement: i32 },
+    /// Native 547: the scripted battle's transition (both screens to black and the battle
+    /// music); the fight itself is asked for by a trigger (`Request::Battle`) or the
+    /// application's own `run_battle` (`docs/re/stb-natives.md`, § 547; wiki *Engine
+    /// functions*). The script keeps running: the transition overlaps the scene.
+    BattleTransition,
 }
 
 /// Applies the collision side of placement changes the scripts made (natives 574/575),
@@ -533,10 +538,13 @@ impl EventPlayer {
         &self.coverage
     }
 
-    /// Natives called without an effect, with their call counts.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn unimplemented(&self) -> &BTreeMap<i32, u32> {
-        self.director.unimplemented()
+    /// Natives called without an effect, with their call counts. 547 is not one: the
+    /// application executes its transition ([`Outcome::BattleTransition`]), even though the
+    /// director still counts the call it could not interpret.
+    pub fn unimplemented(&self) -> BTreeMap<i32, u32> {
+        let mut map = self.director.unimplemented().clone();
+        map.remove(&547);
+        map
     }
 
     /// Gets the scene ready for `event` (see the module documentation): adds the models the
@@ -813,6 +821,15 @@ impl EventPlayer {
 
     fn handle(&mut self, event: Event, stage: &mut Stage, outcomes: &mut Vec<Outcome>) {
         self.coverage.events += 1;
+        // Native 547: the battle's transition. The script's arguments are not carried by
+        // `Event::Unimplemented` (the director reports the id only), so the application runs
+        // the transition itself: it blacks both screens and starts the battle track; the
+        // fight comes from the trigger `120` (`Request::Battle`) or from `App::run_battle`.
+        // Counting it as executed is what the application really does (`App::battle_transition`).
+        if let Event::Unimplemented { id: 547 } = event {
+            outcomes.push(Outcome::BattleTransition);
+            return;
+        }
         // The files are in memory already (the models were added before the script ran).
         if matches!(event, Event::Preload(_)) {
             self.director.signal(Signal::Preloaded);
@@ -920,7 +937,7 @@ impl EventPlayer {
             "events {:?} over: not executed {:?}, natives without effect {:?}",
             self.started,
             self.coverage.missing,
-            self.director.unimplemented()
+            self.unimplemented()
         ));
     }
 

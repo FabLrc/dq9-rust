@@ -125,6 +125,32 @@ struct Cli {
         conflicts_with_all = ["event", "stage", "map", "save", "walk", "events_report", "screenshot"]
     )]
     new_game: bool,
+    /// Shows a set battle of `data/event/eventbattle.bin` (`--battle 2`: the Hexagoon) on the
+    /// record's stage with its monsters, instead of a map (`docs/app.md`, § Battle scene).
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "event", "stage", "map", "save", "walk", "events_report", "new_game", "battle_stage"
+        ]
+    )]
+    battle: Option<u16>,
+    /// Shows a battle on this stage map (a map id such as `30116`, "F01 - Field").
+    #[arg(
+        long,
+        requires = "monsters",
+        conflicts_with_all = [
+            "event", "stage", "map", "save", "walk", "events_report", "new_game", "battle"
+        ]
+    )]
+    battle_stage: Option<u16>,
+    /// Monsters of `--battle-stage`, `number[xcount]` comma-separated (`1x3,7x1`).
+    #[arg(
+        long,
+        requires = "battle_stage",
+        value_delimiter = ',',
+        value_parser = parse_monsters
+    )]
+    monsters: Option<Vec<(u16, u16)>>,
     /// Run the game logic without a window (with `--new-game`, `--event` or `--stage`); needs
     /// `--auto` or `--headless-steps`.
     #[arg(long)]
@@ -181,6 +207,24 @@ impl Cli {
             None => bail!("no opening scene at story stage {major}.{minor}"),
         }
     }
+
+    /// The battle the options ask for: a set battle (`--battle N`), or a stage and its
+    /// monsters (`--battle-stage`/`--monsters`).
+    fn battle_request(&self) -> Option<crate::battle::Request> {
+        if let Some(record) = self.battle {
+            return Some(crate::battle::Request {
+                record: Some(record),
+                ..Default::default()
+            });
+        }
+        let stage = self.battle_stage?;
+        Some(crate::battle::Request {
+            record: None,
+            stage,
+            monsters: self.monsters.clone().unwrap_or_default(),
+            track: None,
+        })
+    }
 }
 
 /// `MAJOR.MINOR-MINOR`: a story stage and the last of its steps.
@@ -201,6 +245,24 @@ fn parse_stage(s: &str) -> Result<(u32, u32), String> {
         major.parse().map_err(|e| format!("{major:?}: {e}"))?,
         minor.parse().map_err(|e| format!("{minor:?}: {e}"))?,
     ))
+}
+
+/// `number[xcount]` of `--monsters`: the monster number of `mon_data`, and how many of it
+/// stand on the stage (one without `x`).
+fn parse_monsters(s: &str) -> Result<(u16, u16), String> {
+    let (number, count) = s.split_once('x').unwrap_or((s, "1"));
+    let number = number
+        .trim()
+        .parse()
+        .map_err(|e| format!("{number:?}: {e}"))?;
+    let count: u16 = count
+        .trim()
+        .parse()
+        .map_err(|e| format!("{count:?}: {e}"))?;
+    if count == 0 {
+        return Err("a count of zero".into());
+    }
+    Ok((number, count))
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -339,6 +401,7 @@ pub fn main() -> Result<()> {
             story: cli.story(),
             story_override: [None; 3],
             new_game: false,
+            battle: None,
         };
         let mut app = App::new_headless(options, Some(rom));
         app.walk_pose().context("cannot walk: no map loaded")?;
@@ -380,6 +443,7 @@ pub fn main() -> Result<()> {
         story: cli.story(),
         story_override: [cli.chapter, cli.step, cli.substep],
         new_game: cli.new_game,
+        battle: cli.battle_request(),
     };
     // Headless runs have no window, GPU task or `UserEvent`: do not make them depend on
     // winit accepting an event loop. The visible window keeps its real proxy.
@@ -408,6 +472,12 @@ pub fn main() -> Result<()> {
     if cli.auto {
         let stop = app.play_auto(u64::from(cli.headless_steps.unwrap_or(200_000)), cli.pilot);
         print!("{}", app.auto_report(&stop));
+        if let Some(battle) = app.last_battle() {
+            println!(
+                "battle scene built: stage {} ({} fighters)",
+                battle.stage, battle.fighters
+            );
+        }
         if let Some(path) = &cli.checkpoints {
             std::fs::write(path, app.checkpoints_jsonl())
                 .with_context(|| format!("writing {}", path.display()))?;
@@ -420,6 +490,12 @@ pub fn main() -> Result<()> {
     }
     if cli.headless || cli.headless_steps.is_some() {
         app.play_headless(cli.headless_steps.unwrap_or(200_000), cli.press_every);
+        if let Some(battle) = app.last_battle() {
+            println!(
+                "battle scene built: stage {} ({} fighters)",
+                battle.stage, battle.fighters
+            );
+        }
         if let (Some(path), Some((rate, samples))) = (&cli.sound_wav, app.take_recording()) {
             write_sound(path, rate, &samples)?;
         }
@@ -671,11 +747,7 @@ fn write_png(
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir)?;
     }
-    let file = File::create(out).with_context(|| format!("creating {}", out.display()))?;
-    let mut encoder = png::Encoder::new(BufWriter::new(file), w, h);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.write_header()?.write_image_data(&rgba)?;
+    save_png(out, cli.size, &rgba)?;
     println!(
         "camera: eye {:.2},{:.2},{:.2} target {:.2},{:.2},{:.2}",
         camera.eye().x,
@@ -689,8 +761,132 @@ fn write_png(
     Ok(())
 }
 
+/// Writes RGBA8 rows as a PNG, creating the directory.
+fn save_png(out: &Path, (w, h): (u32, u32), rgba: &[u8]) -> Result<()> {
+    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
+    let file = File::create(out).with_context(|| format!("creating {}", out.display()))?;
+    let mut encoder = png::Encoder::new(BufWriter::new(file), w, h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header()?.write_image_data(rgba)?;
+    Ok(())
+}
+
+/// Renders one frame of a battle scene offscreen and writes it as PNG: what the window shows
+/// after the transition, without one (`--battle 2 --screenshot …`, `docs/app.md`,
+/// § "Battle scene").
+fn battle_screenshot(
+    cli: &Cli,
+    rom: &[u8],
+    request: crate::battle::Request,
+    out: &Path,
+) -> Result<()> {
+    let clock = lighting::day_clock(None, cli.time, cli.clock);
+    let time = clock.phase().index();
+    let resolved = request.resolve(rom)?;
+    let mut scene = crate::battle::BattleScene::build(
+        rom,
+        &resolved,
+        time,
+        clock,
+        &cli.story(),
+        &dq9_formats::hero::HeroLook::new_game(),
+    )?;
+    println!(
+        "battle{}: stage {} {} ({}), {:?} / {:?}, {} fighters, {} triangles",
+        resolved
+            .number
+            .map_or_else(String::new, |n| format!(" {n}")),
+        scene.stage(),
+        scene.entry().code,
+        scene.label(),
+        scene.shot(),
+        scene.formation(),
+        scene.fighters().len(),
+        scene.runtime().scene.triangle_count()
+    );
+    for placed in scene.fighters() {
+        let Some(fighter) = scene.fighter(placed.fighter) else {
+            continue;
+        };
+        let screen = scene
+            .fighter_screen_pos(fighter.fighter)
+            .map(|at| format!(" screen ({:.0}, {:.0})", at.x, at.y))
+            .unwrap_or_default();
+        println!(
+            "  {:?} {} at ({:.3}, {:.3}, {:.3}) heading {:.3}{screen}",
+            fighter.fighter,
+            fighter
+                .number
+                .map_or_else(|| "hero".to_owned(), |n| format!("monster {n}")),
+            fighter.position.x,
+            fighter.position.y,
+            fighter.position.z,
+            fighter.heading
+        );
+    }
+    for _ in 0..cli.frame {
+        scene.step()?;
+    }
+    let mut camera = *scene.camera();
+    if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
+        camera.look_at(eye, target);
+    }
+    let (device, queue) = pollster::block_on(async {
+        let instance = gpu::instance().await;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .context("no GPU adapter")?;
+        let info = adapter.get_info();
+        println!("adapter: {} ({:?})", info.name, info.backend);
+        gpu::device(&adapter).await
+    })?;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let mut renderer = Renderer::new(&device, &queue, format, &scene.runtime().scene);
+    renderer.environment = scene.environment.clone();
+    if let Some(fog) = cli.fog {
+        renderer.environment.fog = Some(fog);
+    }
+    let shown = screens::screens(cli.layout, cli.size.0, cli.size.1);
+    let field = shown.field(false);
+    let panel = Panel::new(&device, format);
+    let rgba = renderer
+        .render_to_rgba_with(
+            &device,
+            &queue,
+            cli.size,
+            field,
+            &camera,
+            |encoder, view| {
+                if let Some(overlay) = shown.overlay(false) {
+                    panel.draw(encoder, view, overlay);
+                }
+            },
+        )
+        .context("reading the frame back")?;
+    save_png(out, cli.size, &rgba)?;
+    println!(
+        "camera: eye {:.2},{:.2},{:.2} target {:.2},{:.2},{:.2} half-angle {:.1}°",
+        camera.eye().x,
+        camera.eye().y,
+        camera.eye().z,
+        camera.target.x,
+        camera.target.y,
+        camera.target.z,
+        camera.fovy.to_degrees() * 0.5
+    );
+    println!("wrote {}", out.display());
+    Ok(())
+}
+
 /// Renders one frame of the map offscreen and writes it as PNG.
 fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<()> {
+    if let Some(request) = cli.battle_request() {
+        return battle_screenshot(cli, rom, request, out);
+    }
     let mut prepared = prepare(cli, rom, save)?;
     let (device, queue) = pollster::block_on(async {
         let instance = gpu::instance().await;

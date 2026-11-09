@@ -34,6 +34,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::audio::Audio;
+use crate::battle::{self, BattleScene};
 use crate::event::{EventPlayer, Outcome, Stage, apply_collision_changes};
 use crate::gpu::Gpu;
 use crate::lighting;
@@ -48,6 +49,81 @@ pub(crate) mod headless;
 
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
+
+/// Fixed steps of a battle transition (native 547): the swirl narrows the view for 15, then
+/// both screens go to black over the next 20 (`SetMainBrightness(−16, 20)`).
+const BATTLE_ENTER_AT: u32 = 15;
+const BATTLE_ENTER_DONE: u32 = 35;
+/// Steps the scene is shown before the stand-in settles it (there is no battle logic yet).
+const BATTLE_HOLD: u32 = 90;
+/// Steps the scripted transition holds black when no battle follows it.
+const BATTLE_TRANSITION_HOLD: u32 = 90;
+/// Steps from the black to the field coming back (state 4, `SetMainBrightness(0, 30)` is the
+/// field's own; the fade is 15 here) and the total of the leave.
+const BATTLE_LEAVE_AT: u32 = 15;
+const BATTLE_LEAVE_DONE: u32 = 45;
+
+/// The black cover's alpha during the 15 → 35 step fade of the transition.
+fn fade_in(ticks: u32) -> f32 {
+    if ticks <= BATTLE_ENTER_AT {
+        0.0
+    } else {
+        ((ticks - BATTLE_ENTER_AT) as f32 / (BATTLE_ENTER_DONE - BATTLE_ENTER_AT) as f32).min(1.0)
+    }
+}
+
+/// A battle phase (`docs/app.md`, § "Battle scene"): native 547's transition, the scene,
+/// and the way back to the field.
+#[derive(Debug)]
+enum BattleChange {
+    /// Native 547 with no battle asked for (yet): both screens to black, the battle track on.
+    Transition { ticks: u32 },
+    /// The scene is being built; the screens are black when it appears.
+    Entering {
+        ticks: u32,
+        request: battle::Resolved,
+        auto_leave: bool,
+    },
+    /// The scene is shown; the animations run.
+    Fighting {
+        ticks: u32,
+        request: battle::Resolved,
+        auto_leave: bool,
+    },
+    /// Both screens to black, the field back, then up.
+    Leaving {
+        ticks: u32,
+        request: battle::Resolved,
+        restored: bool,
+    },
+}
+
+/// A battle scene a headless run built: no fixed step is spent showing it (the stand-in
+/// settles it at once), so the headless timeline stays the story's and recorded input traces
+/// replay identically. The window and the Web show the transition itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShownBattle {
+    pub stage: u16,
+    pub fighters: usize,
+}
+
+/// What the field was and what it must be again when the battle is over (native 844: the
+/// map's placements are kept as the scene left them across the battle). The map, its cast,
+/// its doors, its collision and the party's pose are put back unchanged.
+#[derive(Debug)]
+struct SavedField {
+    current: Option<(MapEntry, String)>,
+    runtime: Option<AnimatedScene>,
+    collision: CollisionWorld,
+    field: Option<Field>,
+    hero: Option<Hero>,
+    hero_instance: Option<usize>,
+    environment: dq9_render::Environment,
+    lighting: Option<dq9_formats::lighting::LightingInfo>,
+    framed: Option<[glam::Vec3; 2]>,
+    camera: Camera,
+    camera_home: f32,
+}
 
 /// Events delivered to the loop from outside (async GPU setup, ROM/save picked on the web).
 #[derive(Debug)]
@@ -96,6 +172,9 @@ pub struct Options {
     pub story_override: [Option<u8>; 3],
     /// Start a new game: the first scene of the story (`docs/app.md`, § New game).
     pub new_game: bool,
+    /// Show a battle scene from the start (`--battle`, `?battle=`): an `eventbattle.bin`
+    /// record or an explicit stage and its monsters.
+    pub battle: Option<crate::battle::Request>,
 }
 
 /// Reads the item id → compendium index tables (`data/prm/itemdt_<category>.gp2`,
@@ -229,6 +308,17 @@ pub struct App {
     hero_instance: Option<usize>,
     /// The protagonist's look (the save's hero, else a new game's), kept across maps.
     look: HeroLook,
+    /// The battle scene while a battle runs; the field's scene is set aside in
+    /// [`saved_field`](Self::saved_field).
+    battle: Option<BattleScene>,
+    /// The battle transition or scene phase; `None` at the field.
+    battle_change: Option<BattleChange>,
+    /// The field's state across a battle (native 844).
+    saved_field: Option<SavedField>,
+    /// Alpha of the black cover of the transition, 0 to 1.
+    battle_cover: f32,
+    /// The last battle a headless run built and settled at once ([`ShownBattle`]).
+    last_battle: Option<ShownBattle>,
     renderer: Option<Renderer>,
     audio: Audio,
     /// Lighting, fog and background of the loaded map at the selected time of day.
@@ -317,6 +407,11 @@ impl App {
             tick: 0,
             hero_instance: None,
             look: HeroLook::new_game(),
+            battle: None,
+            battle_change: None,
+            saved_field: None,
+            battle_cover: 0.0,
+            last_battle: None,
             renderer: None,
             audio,
             environment: dq9_render::Environment::default(),
@@ -369,6 +464,14 @@ impl App {
         self.rom = Some(rom);
         self.state = field::initial_state(&self.options.story);
         self.state.compendium = self.item_table.clone();
+        if let Some(request) = self.options.battle.clone() {
+            // A battle preview (`--battle`, `?battle=`): no field behind it, and no
+            // automatic return to one.
+            self.day = lighting::day_clock(None, self.options.time, self.options.clock);
+            self.time = self.day.phase().index();
+            self.start_battle(request, false, true);
+            return;
+        }
         if self.options.new_game {
             self.start_new_game();
             return;
@@ -408,6 +511,7 @@ impl App {
         self.options.new_game = false;
         self.options.map = None;
         self.options.event = None;
+        self.options.battle = None;
         self.options.save = Some(save);
         self.talk.set_identity(None);
         if let Some(rom) = self.rom.take() {
@@ -436,6 +540,9 @@ impl App {
 
     /// Shows the current map at another time of day.
     fn set_time(&mut self, phase: TimeOfDay) {
+        if self.battle_is_active() {
+            return;
+        }
         self.day.set_phase(phase);
         self.time = phase.index();
         if let Some((entry, _)) = &self.current {
@@ -774,17 +881,24 @@ impl App {
     }
 
     fn upload(&mut self) {
-        let (Some(gpu), Some(runtime)) = (&self.gpu, &self.runtime) else {
+        let Some(gpu) = &self.gpu else {
             return;
+        };
+        let (scene, environment) = match (&self.battle, &self.runtime) {
+            (Some(battle), _) => (&battle.runtime().scene, battle.environment.clone()),
+            (None, Some(runtime)) => (&runtime.scene, self.environment.clone()),
+            (None, None) => return,
         };
         self.renderer = Some(Renderer::new(
             &gpu.device,
             &gpu.queue,
             gpu.config.format,
-            &runtime.scene,
+            scene,
         ));
         if let Some(renderer) = &mut self.renderer {
-            renderer.environment = self.environment.clone();
+            renderer.environment = environment;
+            renderer.environment.cover =
+                (self.battle_cover > 0.0).then_some([0.0, 0.0, 0.0, self.battle_cover]);
         }
     }
 
@@ -803,6 +917,9 @@ impl App {
     }
 
     fn cycle_map(&mut self, delta: isize) {
+        if self.battle_is_active() {
+            return;
+        }
         if self.maps.is_empty() {
             return;
         }
@@ -986,6 +1103,7 @@ impl App {
                 Outcome::DoorSound { block, placement } => {
                     self.play_door_sound(block, placement);
                 }
+                Outcome::BattleTransition => self.battle_transition(),
                 Outcome::Finished => {}
             }
         }
@@ -1083,6 +1201,13 @@ impl App {
                 self.input_trace.push((0, self.talk.confirm_pending()));
             }
             self.step_sound();
+            if self.battle_is_active() {
+                // The field waits for the transition and the battle (`func_ov017_021b6f18`
+                // runs the transition ahead of the encounter); the player has no control.
+                self.tick += 1;
+                self.step_battle();
+                continue;
+            }
             self.step_doors();
             self.tick += 1;
             // The DS game updates its field once per two VBlanks (`GameState+0x3c4` delta 2,
@@ -1343,6 +1468,11 @@ impl App {
 
     fn redraw(&mut self) {
         self.update();
+        if self.battle().is_some() {
+            let camera = self.draw_battle();
+            self.present_frame(&camera, false, false);
+            return;
+        }
         if let (Some(runtime), Some(gpu), Some(renderer)) =
             (&mut self.runtime, &self.gpu, &mut self.renderer)
             && let Err(e) = runtime
@@ -1380,6 +1510,15 @@ impl App {
                 status("hero instance is unavailable");
             }
         }
+        let camera = self.camera;
+        let swapped = self.events.screen_swapped();
+        self.present_frame(&camera, swapped, true);
+    }
+
+    /// Presents one frame of the active scene: the 3D screen, the panel that fills the freed
+    /// screen, and the message window when the field draws one. `swapped` is the script's
+    /// screen swap (natives 109/110); the battle keeps the default layout.
+    fn present_frame(&mut self, camera: &Camera, swapped: bool, messages: bool) {
         let (Some(gpu), Some(renderer)) = (&mut self.gpu, &mut self.renderer) else {
             return;
         };
@@ -1401,7 +1540,6 @@ impl App {
         let screens = screens::screens(self.options.layout, w, h);
         // 109/110 (`POWCNT1` bit 15): the field and the message window move to the other DS
         // screen; the panel fills the one they leave.
-        let swapped = self.events.screen_swapped();
         let field = screens.field(swapped);
         let panel = self
             .panel
@@ -1417,21 +1555,375 @@ impl App {
             &mut encoder,
             (&view, (w, h)),
             field,
-            &self.camera,
+            camera,
         );
         if let Some(overlay) = screens.overlay(swapped) {
             panel.draw(&mut encoder, &view, overlay);
         }
-        self.talk.draw(
-            &gpu.device,
-            &gpu.queue,
-            gpu.config.format,
-            &mut encoder,
-            &view,
-            field,
-        );
+        if messages {
+            self.talk.draw(
+                &gpu.device,
+                &gpu.queue,
+                gpu.config.format,
+                &mut encoder,
+                &view,
+                field,
+            );
+        }
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(frame);
+    }
+}
+
+impl App {
+    /// The battle scene, when one is shown (tests and the next wave's UI).
+    pub fn battle(&self) -> Option<&BattleScene> {
+        self.battle.as_ref()
+    }
+
+    /// Whether a battle transition or scene holds the game.
+    pub fn battle_is_active(&self) -> bool {
+        self.battle_change.is_some()
+    }
+
+    /// The last battle a headless run built and settled at once (window and Web runs do not
+    /// set it: they show the scene).
+    pub fn last_battle(&self) -> Option<ShownBattle> {
+        self.last_battle
+    }
+
+    /// Native 547 executed by the event player: the scripted battle's transition. The fight
+    /// itself is a trigger's `Request::Battle` (or [`App::run_battle`]); the transition blacks
+    /// both screens and starts the battle track, and gives the field back after
+    /// [`BATTLE_TRANSITION_HOLD`] steps when no battle follows.
+    pub(crate) fn battle_transition(&mut self) {
+        if self.proxy.is_none() {
+            // Headless: no fixed step is spent on a presentation (the recorded traces replay
+            // exactly, `scripts/parity.ps1`).
+            status("battle transition (native 547): headless, no step spent");
+            return;
+        }
+        if self.battle_change.is_some() && self.battle.is_none() {
+            return;
+        }
+        if self.battle_change.is_some() {
+            return;
+        }
+        let Some(rom) = self.rom.as_deref() else {
+            return;
+        };
+        self.audio.set_sequence(rom, Some(battle::BATTLE_TRACK));
+        status("battle transition (native 547): the screens go to black");
+        self.battle_change = Some(BattleChange::Transition { ticks: 0 });
+    }
+
+    /// Starts a battle: the record (or the explicit stage and monsters) is read now, then the
+    /// transition builds the scene once both screens are black. `auto_leave` settles it after
+    /// [`BATTLE_HOLD`] steps (the stand-in of J4); `immediate` skips a transition that has no
+    /// field to fade from.
+    pub(crate) fn start_battle(
+        &mut self,
+        request: battle::Request,
+        auto_leave: bool,
+        immediate: bool,
+    ) {
+        let Some(rom) = self.rom.as_deref() else {
+            return;
+        };
+        let resolved = match request.resolve(rom) {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                status(&format!("battle: {e:#}"));
+                return;
+            }
+        };
+        self.audio.set_sequence(rom, Some(resolved.track));
+        status(&format!(
+            "battle{}: stage {}, monsters {:?}, track {}",
+            resolved
+                .number
+                .map_or_else(String::new, |n| format!(" {n}")),
+            resolved.stage,
+            resolved.monsters,
+            resolved.track
+        ));
+        if self.proxy.is_none() {
+            // Headless: the scene is built (and checked) but no fixed step is spent showing
+            // it, so the story's timeline is exactly the one recorded traces describe. The
+            // stand-in then settles it as before.
+            if self.enter_battle(&resolved) {
+                self.last_battle = self.battle.as_ref().map(|scene| ShownBattle {
+                    stage: scene.stage(),
+                    fighters: scene.fighters().len(),
+                });
+                self.restore_field();
+            }
+            self.set_battle_cover(0.0);
+            self.settle_battle(&resolved);
+            return;
+        }
+        let ticks = if immediate { BATTLE_ENTER_DONE } else { 0 };
+        self.battle_change = Some(BattleChange::Entering {
+            ticks,
+            request: resolved,
+            auto_leave,
+        });
+    }
+
+    /// One fixed step of the battle phase. Called before the field when a transition or a
+    /// battle runs: the player has no control and the field's tasks wait.
+    fn step_battle(&mut self) {
+        let Some(mut change) = self.battle_change.take() else {
+            return;
+        };
+        let mut finished = false;
+        match &mut change {
+            BattleChange::Transition { ticks } => {
+                *ticks += 1;
+                let alpha = fade_in(*ticks);
+                self.set_battle_cover(alpha);
+                if *ticks >= BATTLE_TRANSITION_HOLD + 20 {
+                    // No battle followed: the field comes back.
+                    self.set_battle_cover(0.0);
+                    if let Some(map) = self.current.as_ref().map(|(entry, _)| entry.id) {
+                        self.restore_field_music(map);
+                    }
+                    finished = true;
+                }
+            }
+            BattleChange::Entering {
+                ticks,
+                request,
+                auto_leave,
+            } => {
+                *ticks += 1;
+                self.set_battle_cover(fade_in(*ticks));
+                if *ticks >= BATTLE_ENTER_DONE {
+                    let request = request.clone();
+                    let auto_leave = *auto_leave;
+                    if self.enter_battle(&request) {
+                        change = BattleChange::Fighting {
+                            ticks: 0,
+                            request,
+                            auto_leave,
+                        };
+                    } else {
+                        // No scene: the story does not stop on it (the stand-in of J4).
+                        self.set_battle_cover(0.0);
+                        self.settle_battle(&request);
+                        finished = true;
+                    }
+                }
+            }
+            BattleChange::Fighting {
+                ticks,
+                request,
+                auto_leave,
+            } => {
+                let _ = request;
+                if let Some(scene) = &mut self.battle
+                    && let Err(e) = scene.step()
+                {
+                    status(&format!("battle animation: {e:#}"));
+                }
+                // The screens come up over 15 frames (`0x021d9d18`).
+                let alpha = (1.0 - *ticks as f32 / 15.0).max(0.0);
+                *ticks += 1;
+                self.set_battle_cover(alpha);
+                if *auto_leave && *ticks >= BATTLE_HOLD {
+                    let request = request.clone();
+                    change = BattleChange::Leaving {
+                        ticks: 0,
+                        request,
+                        restored: false,
+                    };
+                }
+            }
+            BattleChange::Leaving {
+                ticks,
+                request,
+                restored,
+            } => {
+                *ticks += 1;
+                if *ticks < BATTLE_LEAVE_AT {
+                    self.set_battle_cover(fade_in(*ticks));
+                } else {
+                    if !*restored {
+                        self.restore_field();
+                        *restored = true;
+                    }
+                    let alpha = 1.0
+                        - (*ticks - BATTLE_LEAVE_AT) as f32
+                            / (BATTLE_LEAVE_DONE - BATTLE_LEAVE_AT) as f32;
+                    self.set_battle_cover(alpha.max(0.0));
+                }
+                if *ticks >= BATTLE_LEAVE_DONE {
+                    self.set_battle_cover(0.0);
+                    let request = request.clone();
+                    self.settle_battle(&request);
+                    finished = true;
+                }
+            }
+        }
+        if !finished {
+            self.battle_change = Some(change);
+        }
+    }
+
+    /// The black cover of the transition: both screens (`SetMainBrightness`/`SetSubBrightness`).
+    /// The renderer applies it to the 3D screen it draws; the panel covers the other one.
+    fn set_battle_cover(&mut self, alpha: f32) {
+        self.battle_cover = alpha.clamp(0.0, 1.0);
+        let cover = (self.battle_cover > 0.0).then_some([0.0, 0.0, 0.0, self.battle_cover]);
+        if self.battle.is_some() {
+            if let Some(renderer) = &mut self.renderer {
+                renderer.environment.cover = cover;
+            }
+        } else {
+            self.environment.cover = cover;
+            if let Some(renderer) = &mut self.renderer {
+                renderer.environment.cover = cover;
+            }
+        }
+    }
+
+    /// Builds the scene of `request` and swaps it in for the field's.
+    fn enter_battle(&mut self, request: &battle::Resolved) -> bool {
+        let Some(rom) = self.rom.as_deref() else {
+            return false;
+        };
+        let story = load::story_from_state(&self.options.story, &self.state, Some(request.stage));
+        let built = BattleScene::build(rom, request, self.time, self.day, &story, &self.look);
+        let scene = match built {
+            Ok(scene) => scene,
+            Err(e) => {
+                status(&format!("battle: {e:#}"));
+                return false;
+            }
+        };
+        status(&format!(
+            "battle {} on stage {} {}: {} fighters, {} triangles",
+            request.number.map_or_else(|| "-".into(), |n| n.to_string()),
+            request.stage,
+            scene.label(),
+            scene.fighters().len(),
+            scene.runtime().scene.triangle_count()
+        ));
+        self.save_field();
+        let entry = scene.entry().clone();
+        let label = scene.label().to_owned();
+        self.lighting_info = scene.lighting().cloned();
+        self.current = Some((entry, label));
+        self.runtime = None;
+        self.battle = Some(scene);
+        self.upload();
+        self.update_title();
+        true
+    }
+
+    /// Sets the field aside: native 844 records the placements so that the battle leaves them
+    /// as they were. The scene, the collision, the doors and the party's pose are put back
+    /// unchanged when the battle is over.
+    fn save_field(&mut self) {
+        let mut environment = self.environment.clone();
+        environment.cover = None;
+        self.saved_field = Some(SavedField {
+            current: self.current.take(),
+            runtime: self.runtime.take(),
+            collision: std::mem::take(&mut self.collision),
+            field: self.field.take(),
+            hero: self.hero,
+            hero_instance: self.hero_instance,
+            environment,
+            lighting: self.lighting_info.take(),
+            framed: self.framed,
+            camera: self.camera,
+            camera_home: self.camera_home,
+        });
+    }
+
+    /// Gives the field back after the battle: the same map, cast, doors, collision and party
+    /// pose (`0x02017a94` restores the placements 844 recorded; nothing here moved them).
+    fn restore_field(&mut self) {
+        self.battle = None;
+        let Some(saved) = self.saved_field.take() else {
+            return;
+        };
+        self.current = saved.current;
+        self.runtime = saved.runtime;
+        self.collision = saved.collision;
+        self.field = saved.field;
+        self.hero = saved.hero;
+        self.hero_instance = saved.hero_instance;
+        self.environment = saved.environment;
+        self.lighting_info = saved.lighting;
+        self.framed = saved.framed;
+        self.camera = saved.camera;
+        self.camera_home = saved.camera_home;
+        if let Some((entry, _)) = &self.current {
+            let map = entry.id;
+            self.restore_field_music(map);
+        }
+        self.upload();
+        self.update_title();
+    }
+
+    /// The field's tune again (`func_0209c530`), from the map and the story's flags.
+    fn restore_field_music(&mut self, map: u16) {
+        let Some(rom) = self.rom.as_deref() else {
+            return;
+        };
+        let flags = |flag: u16| self.state.flags.contains(&i32::from(flag));
+        self.audio.set_map(rom, map, self.time, &flags);
+    }
+
+    /// The stand-in outcome of J4: the battle is recorded and trigger event 15 fires, exactly
+    /// as `scenario::stand_in` did before the scene existed.
+    fn settle_battle(&mut self, request: &battle::Resolved) {
+        let Some(number) = request.number else {
+            return;
+        };
+        let won = dq9_core::scenario::stand_in(number);
+        status(&format!(
+            "battle {number}: {won} (stand-in), stage {}",
+            request.stage
+        ));
+        self.journal.record(
+            self.tick,
+            Step::Battle {
+                number,
+                record: request.record.clone(),
+                won,
+            },
+        );
+        if let Some(field) = &mut self.field {
+            let events = field.battle_ended(number, won, &mut self.state);
+            self.apply_events(events);
+        }
+    }
+
+    /// Draws the battle scene once: the animations at the battle camera, its light and the
+    /// transition's cover.
+    fn draw_battle(&mut self) -> Camera {
+        let Some(camera) = self.battle.as_ref().map(|scene| *scene.camera()) else {
+            return self.camera;
+        };
+        let cover = (self.battle_cover > 0.0).then_some([0.0, 0.0, 0.0, self.battle_cover]);
+        let (Some(gpu), Some(renderer), Some(battle)) =
+            (&self.gpu, &mut self.renderer, &mut self.battle)
+        else {
+            return camera;
+        };
+        let runtime = battle.runtime_mut();
+        if let Err(e) = runtime
+            .face_camera(&camera)
+            .and_then(|()| runtime.upload(renderer, &gpu.device, &gpu.queue))
+        {
+            status(&format!("battle upload: {e:#}"));
+        }
+        renderer.environment = battle.environment.clone();
+        renderer.environment.cover = cover;
+        camera
     }
 }
 

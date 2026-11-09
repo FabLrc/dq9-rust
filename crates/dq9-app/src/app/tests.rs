@@ -24,6 +24,7 @@ fn map_options(map: &str, story: (u8, u8, u8, bool)) -> Options {
         },
         story_override: [None; 3],
         new_game: false,
+        battle: None,
     }
 }
 
@@ -94,6 +95,7 @@ fn a_save_selected_after_a_new_game_loads_that_save() {
         },
         story_override: [None; 3],
         new_game: true,
+        battle: None,
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     assert!(app.options.new_game);
@@ -156,6 +158,7 @@ fn a_new_game_raises_the_opening_flags() {
         },
         story_override: [None; 3],
         new_game: true,
+        battle: None,
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     assert_eq!(
@@ -210,6 +213,7 @@ fn a_same_map_reload_reapplies_open_doors_to_the_collision() {
         },
         story_override: [None; 3],
         new_game: false,
+        battle: None,
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(4107));
@@ -273,6 +277,7 @@ fn event_21595_sets_quest490_and_takes_the_1_4_1_warp() {
         },
         story_override: [None; 3],
         new_game: false,
+        battle: None,
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     for frame in 0..120_000 {
@@ -1246,6 +1251,7 @@ fn trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03() {
         },
         story_override: [None; 3],
         new_game: false,
+        battle: None,
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(4101));
@@ -1375,4 +1381,211 @@ fn field_cadence_holds_the_pose_and_matches_the_original_every_vblank() {
     }
     assert_eq!(held_angle, 12868, "the turn clamps on the target");
     assert!(!app.events.is_active());
+}
+
+/// The battle set-up puts the party on `+z` and the monsters on `−z`, on the 9 by 9 grid
+/// (`ov_000::02164d74`, `ov_000::0216f74c`), and the camera keeps its eye within 17 and under
+/// 5 (`ov_000::0216f2b8`).
+#[test]
+fn a_three_slime_battle_places_the_fighters_on_the_grid() {
+    use crate::battle::{Fighter, Formation, Shot, Side};
+
+    let Some(rom) = testrom::load() else { return };
+    let clock = DayClock::new(0.0, true);
+    let request = crate::battle::Request {
+        record: None,
+        stage: crate::battle::DEFAULT_STAGE,
+        monsters: vec![(1, 3)],
+        track: None,
+    };
+    let resolved = request.resolve(rom).unwrap();
+    let mut scene = BattleScene::build(
+        rom,
+        &resolved,
+        clock.phase().index(),
+        clock,
+        &dq9_formats::cast::Story::default(),
+        &HeroLook::new_game(),
+    )
+    .unwrap();
+    assert_eq!(scene.stage(), 30116);
+    assert_eq!(scene.formation(), Formation::Grid);
+
+    // One hero: slot 58 (column 4, row 6) → (0, 4.5), facing π.
+    let hero = *scene.fighter(Fighter::party(0)).unwrap();
+    assert!(hero.position.x.abs() < 1e-3, "{:?}", hero.position);
+    assert!((hero.position.z - 4.5).abs() < 1e-3, "{:?}", hero.position);
+    assert!((hero.heading - std::f32::consts::PI).abs() < 1e-6);
+    // Three slimes: slots 29, 22, 32, facing 0.
+    let expected = [(-3.897, -2.25), (0.0, -4.5), (3.897, -2.25)];
+    for (index, (x, z)) in expected.into_iter().enumerate() {
+        let monster = *scene.fighter(Fighter::monster(index)).unwrap();
+        assert!(
+            (monster.position.x - x).abs() < 1e-3,
+            "{:?}",
+            monster.position
+        );
+        assert!(
+            (monster.position.z - z).abs() < 1e-3,
+            "{:?}",
+            monster.position
+        );
+        assert_eq!(monster.heading, 0.0);
+        assert_eq!(monster.number, Some(1));
+    }
+    assert_eq!(scene.fighters().len(), 4);
+
+    // The eye never reaches further than 17 nor higher than 5; the wide opening frames from
+    // 22°, so the clamp bites on the normal side shot (15°).
+    let eye = scene.camera().eye();
+    let offset = eye - scene.camera().target;
+    let reach = glam::Vec2::new(offset.x, offset.z).length();
+    assert!(reach <= 17.0 + 1e-3, "the eye reaches {reach}");
+    assert!(eye.y <= 5.0 + 1e-3, "the eye is {:.3} high", eye.y);
+    assert!(
+        (scene.camera().fovy.to_degrees() - 44.0).abs() < 1e-3,
+        "the opening is the wide shot"
+    );
+    // The normal side shot and the monsters' side turn the framing round.
+    scene.set_shot(Shot::Side(Side::Monsters));
+    let offset = scene.camera().eye() - scene.camera().target;
+    let reach = glam::Vec2::new(offset.x, offset.z).length();
+    assert!(
+        (reach - 17.0).abs() < 1e-3,
+        "the eye is clamped at 17: {reach}"
+    );
+    assert!(scene.camera().eye().z < 0.0);
+    assert!((scene.camera().fovy.to_degrees() - 30.0).abs() < 1e-3);
+
+    // The idle of a slime is `stand`; the defeat fade hides it and takes its screen position.
+    assert!(scene.play(Fighter::monster(0), "stand"));
+    let at = scene.fighter_screen_pos(Fighter::party(0)).unwrap();
+    assert!(
+        (0.0..=256.0).contains(&at.x) && (0.0..=192.0).contains(&at.y),
+        "{at:?}"
+    );
+    assert!(scene.remove(Fighter::monster(1)));
+    assert!(scene.fighter_screen_pos(Fighter::monster(1)).is_none());
+}
+
+/// `eventbattle.bin` index 2 is the Hexagoon alone (monster 300): its set battle loads the
+/// stage the record names with the hero facing it.
+#[test]
+fn the_hexagoon_set_battle_stands_on_its_stage() {
+    use crate::battle::{Fighter, Side};
+
+    let Some(rom) = testrom::load() else { return };
+    let request = crate::battle::Request {
+        record: Some(2),
+        ..Default::default()
+    };
+    let resolved = request.resolve(rom).unwrap();
+    assert_eq!(resolved.number, Some(2));
+    assert_eq!(resolved.monsters, vec![(300, 1)]);
+    assert_ne!(resolved.stage, 0);
+    let clock = DayClock::new(0.0, true);
+    let mut scene = BattleScene::build(
+        rom,
+        &resolved,
+        clock.phase().index(),
+        clock,
+        &dq9_formats::cast::Story::default(),
+        &HeroLook::new_game(),
+    )
+    .unwrap();
+    assert_eq!(scene.stage(), resolved.stage);
+    assert_eq!(scene.entry().id, resolved.stage);
+    assert_eq!(scene.fighters().len(), 2);
+    let monster = *scene.fighter(Fighter::monster(0)).unwrap();
+    assert_eq!(monster.number, Some(300));
+    assert!(monster.position.x.abs() < 1e-3 && (monster.position.z + 4.5).abs() < 1e-3);
+    let hero = *scene.fighter(Fighter::party(0)).unwrap();
+    assert!((hero.position.z - 4.5).abs() < 1e-3);
+    // The hexagoon's model archive has its idle.
+    assert!(scene.play(Fighter::monster(0), "stand"));
+    assert!(
+        scene.camera().eye().z > 0.0,
+        "the opening looks from the party's side"
+    );
+    let at = scene.fighter_screen_pos(Fighter::monster(0)).unwrap();
+    assert!(
+        (0.0..=256.0).contains(&at.x) && (0.0..=192.0).contains(&at.y),
+        "{at:?}"
+    );
+    let _ = Side::Party;
+}
+
+/// Scripted battle 26 (`0x78(26)` after `21507`) shows its scene — stage 30116, monsters 290,
+/// 292, 290 — and gives the field back at the same map and pose.
+#[test]
+fn scripted_battle_26_enters_and_leaves_the_scene_and_gives_the_field_back() {
+    let Some(rom) = testrom::load() else { return };
+    let options = Options {
+        map: None,
+        save: None,
+        time: None,
+        clock: None,
+        layout: Layout::default(),
+        mute: true,
+        record_sound: false,
+        trace_inputs: false,
+        event: None,
+        story: dq9_formats::cast::Story {
+            chapter: 1,
+            step: 1,
+            substep: 1,
+            daytime: true,
+            ..Default::default()
+        },
+        story_override: [None; 3],
+        new_game: true,
+        battle: None,
+    };
+    let mut app = App::new_headless(options, Some(rom.to_vec()));
+    let mut before: Option<(u16, Vec3)> = None;
+    let mut settled = false;
+    for frame in 0..40_000 {
+        if frame % 20 == 0 {
+            app.talk.press(Button::Confirm);
+        }
+        let previous = app
+            .current
+            .as_ref()
+            .zip(app.hero)
+            .map(|((entry, _), hero)| (entry.id, hero.position()));
+        if previous.is_some() {
+            before = previous;
+        }
+        app.run_steps(1);
+        if app.journal.steps.iter().any(|(_, step)| {
+            matches!(
+                step,
+                Step::Battle {
+                    number: 26,
+                    record: Some(_),
+                    won: true
+                }
+            )
+        }) {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "battle 26 must be settled by the stand-in");
+    // The headless run builds the scene and settles it at once (no fixed step is spent on
+    // it), so the timeline is the story's; the window shows the transition itself.
+    let shown = app.last_battle().expect("battle 26's scene was built");
+    assert_eq!(shown.stage, 30116, "battle 26 is fought on the field stage");
+    assert_eq!(shown.fighters, 4, "the hero and three monsters");
+    let (map, pose) = before.expect("the field before the battle");
+    let now = app.current.as_ref().map(|(entry, _)| entry.id).unwrap();
+    assert_eq!(now, map, "the battle gives the same map back");
+    let hero = app.hero.expect("the hero is back");
+    assert!(
+        (hero.position() - pose).length() < 1e-3,
+        "{:?} vs {pose:?}",
+        hero.position()
+    );
+    assert!(!app.battle_is_active());
+    assert!(!app.events.is_active() || app.events.pending_start().is_some());
 }

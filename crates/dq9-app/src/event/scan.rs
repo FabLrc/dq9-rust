@@ -180,6 +180,12 @@ pub(super) fn monster_archive(files: &LazyRom, path: &str) -> Option<Vec<u8>> {
     nds_rom::compress::decompress(monster.file(cchr.id).ok()?).ok()
 }
 
+/// [`monster_archive`] on the whole ROM image: the battle scene reads a monster's body
+/// without an event (`crate::battle`).
+pub(crate) fn monster_archive_bytes(rom: &[u8], path: &str) -> Option<Vec<u8>> {
+    monster_archive(&LazyRom::new(rom), path)
+}
+
 /// The sheet of a sprite the field draws by itself (`fieldSpriteFiles`, `docs/re/stb-natives.md`).
 pub(super) fn field_sprite(id: i32) -> Option<&'static str> {
     Some(match id {

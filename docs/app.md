@@ -216,7 +216,8 @@ model lacks the name:
 [`re/stb-natives.md`](re/stb-natives.md#effects-executed-on-screen-j3)). **Collision
 placements** (574/575) are no longer excluded: the report counts them since the "remaining
 cutscenes" batch. Before the J3-effects work: **22 partial cutscenes out of 30** (18 report
-rows); after: **2 partial cutscenes** (1 row).
+rows); after: **2 partial cutscenes** (1 row). The battle scene batch executes native 547
+(§ "Battle scene"): **no partial cutscene remains**, the 26 report rows are complete.
 
 | Cutscene(s) | Maps | Result | What is missing |
 |---|---|---|---|
@@ -225,14 +226,15 @@ rows); after: **2 partial cutscenes** (1 row).
 | 21591, 21592, 21593, 21594, 21595, 21597 | `X01M05`, `M01`, `X01M04` | complete | — |
 | 1330 | `M01M06` | complete | — |
 | 21510 | `X01M04` | complete | — |
-| 21500 + 21507 | `M01M12` | partial | collision placement ×7 (walls/floor not modified), door sound ×1 (index not read), motion absent ×1, 547 (battle transition, J4), 571 (no reader) |
+| 21500 + 21507 | `M01M12` | complete | — (571 ×2: no reader; one motion absent from its model) |
 
 The prologue chain plays end to end without intervention: `21500 → 21507` (native 538),
 then trigger 11 of `M01` launches scripted battle 26 (action `0x78`), whose victory (trigger
 15) launches `21520 → 21521 → 21522 → 21596` (natives 538), see "New game" below.
 
 **Result on chapter 2** (`--events-report 2.1-1`, 50 report rows: **47 complete, 3 partial**; the
-prologue report above is unchanged). The report plays each scene at **its own story point**
+prologue report above is unchanged by it and complete since 547 executes). The report plays
+each scene at **its own story point**
 (`report::story_of`): the chapter and step of the trigger rule that starts it, and the first
 sub-step at which the NPC that rule talks to stands on the map; before this the 2.1.1 cast of
 the base point made every NPC motion of 2.2 to 2.6 "absent" (the NPC was not in the cast). The
@@ -249,7 +251,7 @@ does not hold (the game's load fails too).
 | 2600 + 2610 | `M01M02` | complete | — |
 | 2750, 2760, 2800 | `M01M10`, `M01` | complete | — (2750: native 103/102 fade the 3D screen to black under the captions; the candidate package `event/ev03060s011.chr` is not in the ROM) |
 | 22590, 22591, 22592, 22594 | `M01`, `S01M01`, `M01M10` | complete | — |
-| 2535 + 22510 | `D01M05` | partial | 547 (battle transition, J4); 574 on placements `(0, 28)` and `(0, 30)`, which **no map of area 7100 holds** (`dq9re map D01 … D01M05`: ids stop at 19), so the game's "record for a later load" has nothing to apply to |
+| 2535 + 22510 | `D01M05` | partial | 574 on placements `(0, 28)` and `(0, 30)`, which **no map of area 7100 holds** (`dq9re map D01 … D01M05`: ids stop at 19), so the game's "record for a later load" has nothing to apply to; 571 (no reader) |
 | 2700 + 22593 | `M01` | partial | 417 (`W+0x19c0`, `W+0x195d`: the message routine clears `W+0x40` while it is set; effect **[unknown]**) |
 
 (Rows after 2750: 2810 to 2940, 22500 and 22595 are complete except 2900 + 2910, partial on 573,
@@ -309,7 +311,100 @@ models are not yet compared with melonDS. For 584, the sound and the sliding/rev
 branches are not read (the zone's low nibble is the only source of the index);
 for 552, byte `+0x265` of 839 is not driven, 839 not appearing in the
 prologue cutscenes (only `ev28920`). 571 remains unidentified: bit `0x10` with no reader, no established
-visible effect.
+visible effect. **547** (the scripted battle's transition) is executed since the battle scene
+batch: the screens go to black and the battle track starts, and the battle request that follows
+(`0x78`, or `Request::Battle` of a trigger) shows the scene (§ "Battle scene"); its arguments
+are not carried by `Event::Unimplemented`, so the transition plays with the ordinary track
+(`0x17`) and the record's track comes with the request.
+
+## Battle scene
+
+A battle is fought on a **stage**: an ordinary map of the map list (`B01M16`, "F01 - Field",
+id 30116; `B02M15`, "D01 - Hexagoon", 30215…), assembled and lit like a field. The fight is
+centred on the stage's origin, the party on `+z` facing π and the monsters on `−z` facing 0,
+and starts everyone on the grid (`ov_000::02164d74`). `crates/dq9-app/src/battle.rs`
+(`BattleScene`) builds it, `app.rs` shows it through the transition and gives the field back
+afterwards. Facts from the wiki *Battle-Stages* and *Monsters*, rechecked on our ROM where the
+tests could.
+
+```powershell
+# The Hexagoon's set battle (eventbattle.bin index 2: monster 300, stage 30215).
+cargo run -p dq9-app --release -- --battle 2 --screenshot build/evidence/j4-battle-scene/hexagoon.png
+# Three slimes on the field stage 30116.
+cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
+    --screenshot build/evidence/j4-battle-scene/slimes-f01.png
+# In the window: --battle 2, or ?battle=2 on the Web (`?battle-stage=30116&monsters=1x3`).
+```
+
+- **Stage.** `BattleScene::build` loads it with the field loader (map archives, textures, its
+  own `.bats`), then keeps only the scene: the stage has no cast, no collision and no triggers
+  worth stepping. A stage the record does not name, or id 0, is 30116, as
+  `func_ov000_02166880` falls back. `--battle N` reads the record's stage, monsters and track
+  (`dq9_core::scenario::battle`); `--battle-stage` takes an explicit stage and `--monsters`
+  `number[xcount]` pairs.
+- **Lighting.** The stage's `.bats` slot is taken **once**, at entry, from the day clock
+  (`LightingManager+0x98` at the request, wiki *Battle-Stages*): the environment is computed
+  once and never blended. The slot the record carries is not in `eventbattle.bin` (**[unknown]**).
+- **Grid.** Slot *s* → column *s* mod 9, row *s* div 9; x = 2.598 × column − 10.392 (+1.299 on
+  an odd row), z = 2.25 × row − 9 (`ov_000::0216f74c`). The slots by side size come from the
+  tables at `0x02183108` (party) and `0x02183118` (monsters): one hero → 58 (0, 4.5), three
+  monsters → 29, 22, 32 (−3.897, −2.25), (0, −4.5), (3.897, −2.25). Every fighter stands
+  `0xcc` (0.05) above the stage. A set with more than eight monsters (the tables stop at
+  eight; the ROM's records ask at most eight) gets free slots after them **[hypothesis]**.
+- **Formation.** A battle starts on the grid; the row (`0x02167e6c`) is only used by a few
+  action scripts, so `set_formation(Formation::Row)` asks for it: party at z 2.5, 1.5 apart and
+  centred; monsters at z −2.5 by their width (radius ×4, gap 0.7, narrowed as `0x02167b5c`
+  does). The turn of the party's ends (±0.2) and the five narrowed monster kinds are
+  **[hypothesis]**: the angle table and the kind list were not read.
+- **Models and motions.** The party is the hero model (`AnimatedScene::add_hero`), playing
+  `stand`; a monster is the first `.cchr` of its `<code>.mon` member of
+  `data/pack_lv5/enemy.gp2` (`LoadMonsterCharacter`, native 233), drawn at `0x10a` and playing
+  its idle `stand` (`appear` then `run` when the archive lacks it). The monster's `+0x12` battle
+  size and its death fade are not modelled (the size only drives the camera's close-ups,
+  **[unknown]** here).
+- **Camera.** `Shot::Opening` is the opening (`func_ov000_0216118c`): the wide side shot
+  (22° half-angle), from the party's side; `Shot::Side(side)` is the 15° framing of
+  `func_ov000_0216d600`. Distance is the larger of width × cos ÷ (sin × 2.2) and
+  depth × cos ÷ (sin × 1.5), less 2.5 (at least 6.5, 3 wide), looking at (0, depth/2 clamped
+  1.2–2, 0). `func_ov000_0216f2b8` then keeps the eye at most 17 from the target and at most 5
+  high. Which sign "side 1" is, the opening's eased approach (0.95 a frame) and the fixed
+  per-monster-kind shots of `data_ov026_021de87c` are **[unknown]/[hypothesis]**: the first
+  is taken as the party's side.
+- **API for the next wave**: `play(fighter, motion)`, `remove(fighter)` (defeat fade),
+  `set_shot(shot)`, `fighter_screen_pos(fighter)` (the fighter's body on the 256×192 top
+  screen, for damage numbers).
+- **Transition** (native 547, `ov_001::02163ccc`). A scripted battle (`Request::Battle`, action
+  `0x78`) or 547 starts it: the battle track (`eventbattle.bin` `+0x24`, else sequence `0x17`)
+  plays at once, both screens go to black over 20 frames from the 15th, the scene is built
+  while black and comes up over 15 (`0x021d9d18`). The fight itself is the J4 **stand-in**
+  (`scenario::stand_in`, won); after 90 steps it fades out, restores the field and fires
+  trigger event 15. 547 without a following battle gives the field back after 110 steps. The
+  swirl's model (`ev999991500.chr`), its roll and field of view, and the encounter transition
+  of a roaming monster are **[hypothesis]/not modelled** (J4 roaming batch).
+- **Headless** (`--headless`, `--auto`, `--replay`, tests): the scene is built and checked,
+  then settled in the **same fixed step** (`App::last_battle` records its stage and fighter
+  count). No step is spent on a presentation: the headless timeline is the story's, so the
+  recorded input traces replay identically (`scripts/parity.ps1`), as they did with the old
+  stand-in. The window and the Web show the transition and hold it.
+- **Back to the field.** Native 844's rule is modelled by keeping the field scene aside
+  (`App::save_field`): the same map, cast, doors, collision, party pose and lighting come back
+  unchanged, so the placements are as the scene left them. The map is not reloaded: no entry
+  trigger fires.
+- **Events.** 547 no longer counts as "not executed": `EventPlayer` turns it into
+  `Outcome::BattleTransition`, which the application executes. The script keeps running during
+  the transition in the report playback (no field to freeze there); in the window the field
+  waits for it, like the game's task order.
+
+`--screenshot` prints each fighter's placed position and heading, and the camera it used
+(`camera: eye … target … half-angle …`). Captures (`build/evidence/j4-battle-scene/`):
+`hexagoon.png` (`dd025965b166`: the Hexagoon on `B02M15`, the hero facing it),
+`slimes-f01.png` (`3e1ba9308ed1`: three slimes on `B01M16`, the middle one hidden behind the
+hero), `battle26.png` (`c7ed26e23bcb`: battle 26's record, monsters 290/292/290) and
+`report-2.1.txt` (`fe41a9bcc437`, `--events-report 2.1-1`: no 547 left).
+Real-ROM tests in `app/tests.rs` assert the grid of a
+three-slime scene and of the Hexagoon's set battle, the eye clamp, `fighter_screen_pos`, and
+that scripted battle 26 enters the scene from `--new-game` and gives the same map and pose
+back.
 
 ## New game (`--new-game`) and automatic run
 
@@ -373,10 +468,12 @@ current trigger progress (`current_story`: track, flags, quests), not for the
 | end of a cutscene that sets the cast aside (event list, value 21, bit 0 or 2) | cast rebuilt before trigger 11, pre-cutscene poses and removals restored by the snapshot | `App::reload_cast`, `EventPlayer::cast_loaded` |
 | 0x76 outside a conversation | dialogue window of the trigger's line | `App::talk_to` |
 
-**Scripted battles.** There is no battle before J4: `scenario::stand_in` declares them won
-immediately, which the log states explicitly ("stand-in, no battle system yet"). The
-victory fires trigger 15, as `BattleTask_Update` would (`re/trigger.md`, § Scripted
-battles).
+**Scripted battles.** The battle itself is not fought (J4): `scenario::stand_in` declares it
+won, which the log states explicitly ("stand-in, no battle system yet"). Since the battle
+scene batch, action `0x78` (and native 547 in a cutscene) shows the **battle scene** first —
+the stage, the monsters and the party on the grid, under the battle camera (§ "Battle scene")
+— then the stand-in settles it and trigger 15 starts what follows. The monsters, experience
+and items are still not read, so a battle leaves no trace in the party yet.
 
 **Result** (`--new-game --headless --auto`, EU ROM, English text; game time at 60 Hz):
 

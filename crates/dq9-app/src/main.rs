@@ -6,6 +6,7 @@
 
 mod app;
 mod audio;
+mod battle;
 mod event;
 mod gpu;
 mod lighting;

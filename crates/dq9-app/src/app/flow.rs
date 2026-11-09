@@ -2,7 +2,7 @@
 //! event task and the field do not already chain (scripted battles). The mechanisms are the
 //! game's (`dq9_core::scenario`, `docs/re/trigger.md`, § Scripted battles).
 
-use dq9_core::scenario::{self, Step};
+use dq9_core::scenario;
 use dq9_core::state::GameState;
 use dq9_core::trigger::Member;
 
@@ -52,6 +52,13 @@ impl App {
     /// default hero), then the first scene of story stage 1.1 (`stage_opening`, `ev21500`),
     /// which loads its own map; what follows is chained by the triggers.
     pub(super) fn start_new_game(&mut self) {
+        // A battle preview gives way to the new game.
+        self.battle = None;
+        self.battle_change = None;
+        self.saved_field = None;
+        self.battle_cover = 0.0;
+        self.last_battle = None;
+        self.options.battle = None;
         let Some(rom) = self.rom.as_deref() else {
             return;
         };
@@ -128,30 +135,31 @@ impl App {
         self.events.queue(opening);
     }
 
-    /// Action 0x78: a scripted battle. There is no battle system yet (J4): the party wins at
-    /// once ([`scenario::stand_in`]) and the end of the battle fires trigger event 15, which
-    /// starts the scene that follows it.
+    /// Action 0x78: a scripted battle. The scene is shown through the transition (native
+    /// 547's black screens and the record's track), then the J4 stand-in settles it as won
+    /// ([`scenario::stand_in`]) and the end of the battle fires trigger event 15, which starts
+    /// the scene that follows it.
     pub(super) fn run_battle(&mut self, number: u16) {
         let record = self.rom.as_deref().and_then(|rom| {
             let rom = nds_rom::Rom::parse(rom).ok()?;
             scenario::battle(&rom, number)
         });
-        let won = scenario::stand_in(number);
-        status(&format!(
-            "scripted battle {number} {record:?}: not played (no battle system), counted as {}",
-            if won { "won" } else { "lost" }
-        ));
-        self.journal.record(
-            self.tick,
-            Step::Battle {
-                number,
-                record,
-                won,
-            },
-        );
-        if let Some(field) = &mut self.field {
-            let events = field.battle_ended(number, won, &mut self.state);
-            self.apply_events(events);
+        if record.is_none() {
+            status(&format!(
+                "scripted battle {number}: no eventbattle.bin record"
+            ));
         }
+        // The record's stage and monsters; a record that names no stage falls back to the
+        // ground's (30116, the field).
+        self.start_battle(
+            crate::battle::Request {
+                record: Some(number),
+                stage: 0,
+                monsters: Vec::new(),
+                track: None,
+            },
+            true,
+            false,
+        );
     }
 }

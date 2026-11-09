@@ -264,7 +264,8 @@ impl App {
             // The cast task of action 0x8d holds the field like an event: no control yet.
             let busy = self.events.is_active()
                 || self.events.pending_start().is_some()
-                || self.cast_reload;
+                || self.cast_reload
+                || self.battle_is_active();
             started |= busy;
             if started && !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
                 let map = self.current.as_ref().map_or(0, |(e, _)| e.id);

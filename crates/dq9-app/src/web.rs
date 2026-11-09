@@ -143,7 +143,8 @@ pub fn canvas_size() -> Option<(u32, u32)> {
 }
 
 /// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
-/// `layout` (`stacked`, `side` or `top`) and `mute` from the page's query string.
+/// `layout` (`stacked`, `side` or `top`), `mute`, `battle` (an `eventbattle.bin` index),
+/// `battle-stage` and `monsters` (`1x3`) from the page's query string.
 fn options() -> Options {
     let mut options = Options {
         map: None,
@@ -156,6 +157,7 @@ fn options() -> Options {
         event: None,
         layout: Layout::default(),
         new_game: false,
+        battle: None,
         story_override: [None; 3],
         story: dq9_formats::cast::Story {
             chapter: 1,
@@ -197,10 +199,43 @@ fn options() -> Options {
             "night" => options.story.daytime = value == "0",
             "event" => options.event = value.parse().ok(),
             "newgame" => options.new_game = value != "0",
+            "battle" => {
+                if let Ok(record) = value.parse() {
+                    options.battle = Some(crate::battle::Request {
+                        record: Some(record),
+                        ..Default::default()
+                    });
+                }
+            }
+            "battle-stage" => {
+                if let Ok(stage) = value.parse() {
+                    let mut request = options.battle.take().unwrap_or_default();
+                    request.record = None;
+                    request.stage = stage;
+                    options.battle = Some(request);
+                }
+            }
+            "monsters" => {
+                if let (Some(request), Some(monsters)) =
+                    (&mut options.battle, parse_monsters(value))
+                {
+                    request.monsters = monsters;
+                }
+            }
             _ => {}
         }
     }
     options
+}
+
+/// `number[xcount]` comma-separated of the page's `monsters` parameter.
+fn parse_monsters(text: &str) -> Option<Vec<(u16, u16)>> {
+    let mut out = Vec::new();
+    for part in text.split(',').filter(|p| !p.is_empty()) {
+        let (number, count) = part.split_once('x').unwrap_or((part, "1"));
+        out.push((number.parse().ok()?, count.parse().ok()?));
+    }
+    Some(out)
 }
 
 /// Sends the bytes of each file picked in `#rom` to the event loop. The input and the new game

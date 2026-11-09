@@ -280,6 +280,16 @@ impl Audio {
         self.start_music(rom, sequence, FADE_SECONDS);
     }
 
+    /// Starts `sequence` (`None`: silence) at once, not by a map's choice: the battle track of
+    /// native 547 or of a `Request::Battle` (`func_0209c480`, wiki *Battle-Stages*).
+    pub fn set_sequence(&mut self, rom: &[u8], sequence: Option<u8>) {
+        self.wanted = sequence;
+        if self.playing.map(|(s, _)| s) == sequence {
+            return;
+        }
+        self.start_music(rom, sequence, FADE_SECONDS);
+    }
+
     /// Replaces the music by `sequence` (`None`: silence), the old one fading over `fade`
     /// seconds.
     fn start_music(&mut self, rom: &[u8], sequence: Option<u8>, fade: f32) {

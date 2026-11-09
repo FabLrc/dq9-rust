@@ -21,7 +21,7 @@ The demo is public, experimental and needs a recent browser with WebGPU or WebGL
 <!-- coverage:start -->
 [![Ported](https://img.shields.io/badge/ported-2.3%25%20of%20functions-orange)](docs/roadmap.md)
 
-**Progress: 2.3%** of game functions ported (286 / 12,056), 2.9% of the code (75 KB / 2,505 KB).
+**Progress: 2.3%** of game functions ported (287 / 12,056), 2.9% of the code (75 KB / 2,505 KB).
 Computed by `cargo dq9re coverage` from the `port:` markers in the code (definition in `docs/roadmap.md`).
 
 <details><summary>Per-module detail</summary>
@@ -30,7 +30,7 @@ Computed by `cargo dq9re coverage` from the `port:` markers in the code (definit
 |---|---:|---:|
 | ARM9 | 255 / 5,464 (4.6%) | 65 KB / 826 KB (7.8%) |
 | ITCM | 0 / 34 (0.0%) | 0 KB / 6 KB (0.0%) |
-| ov_000 | 0 / 826 (0.0%) | 0 KB / 190 KB (0.0%) |
+| ov_000 | 1 / 826 (0.1%) | 1 KB / 190 KB (0.1%) |
 | ov_001 | 1 / 515 (0.1%) | 1 KB / 70 KB (0.0%) |
 | ov_002 | 0 / 213 (0.0%) | 0 KB / 101 KB (0.0%) |
 | ov_003 | 0 / 510 (0.0%) | 0 KB / 176 KB (0.0%) |
