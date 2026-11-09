@@ -310,8 +310,9 @@ events, NPCs keep their initial motion; NPC shadows are not drawn. The
 models are not yet compared with melonDS. For 584, the sound and the sliding/reverse
 branches are not read (the zone's low nibble is the only source of the index);
 for 552, byte `+0x265` of 839 is not driven, 839 not appearing in the
-prologue cutscenes (only `ev28920`). 571 remains unidentified: bit `0x10` with no reader, no established
-visible effect. **547** (the scripted battle's transition) is executed since the battle scene
+prologue cutscenes (only `ev28920`). 571 sets the shadow flag (bit `0x10`, read by
+`Character_DrawShadow`), which has no visible effect while NPC shadows are not drawn. **547**
+(the scripted battle's transition) is executed since the battle scene
 batch: the screens go to black and the battle track starts, and the battle request that follows
 (`0x78`, or `Request::Battle` of a trigger) shows the scene (§ "Battle scene"); its arguments
 are not carried by `Event::Unimplemented`, so the transition plays with the ordinary track

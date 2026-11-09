@@ -63,8 +63,9 @@ Computed by `cargo dq9re coverage` from the `port:` markers in the code (definit
 
 ## Status
 
-**v0.1 works natively and is partly certified in the browser**; details, limits and next steps
-in [`docs/status.md`](docs/status.md).
+**v0.1 works natively and is partly certified in the browser; v0.2 (chapter 2 up to the
+landslide cleared, every battle fought) is in progress**; details, limits and next steps in
+[`docs/status.md`](docs/status.md).
 `cargo run -p dq9-app --release -- --new-game` runs the opening, chains the prologue, the
 Observatory and the return to Angel Falls, then the village scenes. `--map M01`, or a save
 passed with `--save`, opens Angel Falls directly.
@@ -75,15 +76,20 @@ What works:
 - animated NPCs and an animated hero;
 - movement ported in fixed-point, with collisions and the L/R camera;
 - doors, houses and scripted warps, conversations in the game's message window;
-- scripted cutscenes: `.stb` interpreter, characters, camera, fades, effects, night;
+- scripted cutscenes: `.stb` interpreter, characters, camera, fades, effects, night; the
+  chapter 2 scenes play (`--events-report 2.1-1`: 47 of 50 complete);
 - village tasks 1.2: ring, widow, stable, exit lock, return 1.4.1;
 - music, sound effects and jingles;
-- starting from a DS save (`--save`).
+- starting from a DS save (`--save`); the game state restores the party, bag and gold;
+- a battle scene on its stage (`--battle 2`, `--battle-stage 30116 --monsters 1x3`), and in
+  `dq9-core` a headless battle engine checked against BattleEmulator, party levels and
+  rewards, battle messages in five languages, roaming-monster rules.
 
 Still missing:
 
-- battles: the first scripted battle is counted as won;
-- a few cutscene effects;
+- battles in play: the engine is not wired to the scene yet, scripted battles are counted as
+  won and no roaming monster is drawn;
+- battle windows and menus, the field menu, shops, inn and church;
 - end-to-end browser certification and comparison with the original over the whole route
   (see [`docs/status.md`](docs/status.md)).
 

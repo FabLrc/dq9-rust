@@ -209,7 +209,7 @@ save (the first is the leader).
 | 0x25 / 0x26 | quest bit in the log's `+0x84` array set / cleared **[meaning unknown]** |
 | 0x27 / 0x28, 0x43 / 0x44 | flag `arg + 0x776`, `arg + 0x1136` |
 | 0x29 | the leader is (`arg` ≠ 0) / is not (`arg` = 0) in a conversation zone of the NPC of word 0 (NPC rectangles, strict bounds, like `Talk_NearestNpc`); false if the NPC is not on the map |
-| 0x2A | hero's vocation (`+0x150 → +0x950`) == `arg` (0 Minstrel, 1 Warrior… 12 Ranger, `str_sta` menu order) |
+| 0x2A | hero's vocation (`+0x150 → +0x950`) == `arg` (0 Guardian, 1 Warrior… 6 Minstrel… 12 Ranger: the level tables' order; a new game's hero is 6 in `pro1.ml1`, [party.md](party.md)) |
 | 0x2B | bits 19–29 of save `+0x56a0` == `arg` **[meaning unknown]** |
 | 0x2D / 0x2E | six 10-bit fields of the hero (`+0xc`, `+0x10`, `+0x14`): field `arg` is the largest / exceeds (or not) by a limit the field of `+4` **[meaning unknown]** |
 | 0x2F | number of the leader's slots (11 × 32 bytes at `+0x194`) whose bit 18 of word `+8` is set, compared to the operand |

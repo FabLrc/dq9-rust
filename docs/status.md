@@ -3,82 +3,59 @@
 Rewritten by the coordinator at each integration; do not add a log here.
 Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 9, 2026 (`main` at `c28d318`, v0.2 waves v2-1 integrated, v2-2 active)
+## Status as of November 9, 2026 (`main` after waves v2-1 and v2-2; orchestration paused)
 
-- **v0.1 functional natively**: `cargo run -p dq9-app --release -- --new-game` plays
-  the opening, the Observatory prologue, the physical return to Angel Falls (1100) and the
-  village cutscenes; tasks 1.2 (ring, widow, stable), exit lock, area 12 and return
-  1.4.1 covered by real tests (`keepsake_ring_task_…`, `widow_task_…`,
-  `stable_pickups_…`, `house_exit_requires_both_task_flags_…`,
-  `village_area_12_plays_1410_…`). Battles substituted ("won").
-- **In-place progression**: deferred actions reload triggers (event 20) and
-  0x8d rebuilds the map cast without reloading it (`re/trigger.md`, § Reloads);
-  a cutscene marked in its event list renders at its end the poses and removals from before it
-  (NPC snapshot, `re/characters.md`); a stage change resets conversation counters
-  to zero (`re/dialogue.md`). The driver replay reproduces its 615 checkpoints
-  byte for byte up to `M01M08`.
-- **Cadence**: fixed 60 Hz loop; hero, `Field::step` and model pose at 30 Hz
-  (odd frames, `Hero::step(ticks = 2)`, `7db7f41`, test
-  `field_cadence_holds_the_pose_and_matches_the_original_every_vblank` in `app/tests.rs`).
-- **Measured parity**: first player control and free checkpoint 1.1.2 identical to
-  the original except `4135`, random loot from battle 26 (accepted deviation, `re/item.md`).
-- **Browser** (Pages, build `21e1e42`): opening, first player control, 1140, 1130 and raised
-  hall; no continuous session up to 4107, the tower or Angel Falls (`app.md`,
-  § Verification).
+- **v0.1 functional natively**: `--new-game` plays the opening, the Observatory prologue, the
+  physical return to Angel Falls and the village tasks 1.2 to the return 1.4.1, covered by
+  real tests. The driver replay reproduces its 615 checkpoints; parity 2/2 (first control and
+  1.1.2 equal to the original except `4135`, battle 26 loot).
+- **Cadence**: fixed 60 Hz loop; hero, `Field::step` and model pose at 30 Hz.
+- **Browser** (Pages, build `21e1e42`): opening to the raised hall; no continuous session
+  further (`app.md`, § Verification).
 
 ## v0.2 (J4): new game → end of event 2750 (landslide cleared), every battle fought
 
-Integrated (wave v2-1, all `verify.ps1 -RequireRom` green):
+Integrated, each with `verify.ps1 -RequireRom` green (details in the `docs/re` notes):
 
-- `j4-party-state` (Flash, `613f29c`): level tables (`dq9_formats::level`), `party::Party`
-  in `GameState`; new game equal to `pro1.ml1` on every compared field but the typed name.
-  `pro11.ml1` already holds battle 26's rewards (experience 7, gold 13, item 22087): it is not
-  "before battle 26" (`re/party.md`).
-- `j4-battle-data` (Flash, `68df94f`): `dq9_formats::battle` (monsters, actions, spells,
-  `itembtlprm`, encounters), `dq9re monster|action|encounters`; `S01M01`, `D01M01`, `D01M05`
-  have no roamers (`re/battle-data.md`).
-- `j4-battle-kernel` (Sonnet, `6b5223f`): `dq9_core::battle` resolves one action; 306 action
-  and 2400 primitive vectors equal to BattleEmulator / the decompilation; Woosh critical
-  deviation where BattleEmulator truncates early (`re/battle.md`).
-- `v2-ch2-cutscenes` (Sonnet, `a48ff86`): `--events-report 2.1-1` 47 complete, 3 partial
-  (was 8 complete). The report now plays each scene at its own story point; cast mode 10 is
-  the party guest (Ivor, `attnpc.gp2`, actions `0xcd`/`0xcc`); natives 102/103 (screen
-  cover), 540, 223, 577 drawn; 509, 550, 556, 571 documented without rendered effect.
-  Open in range: 417 (2700+22593), placements (0, 28)/(0, 30) of 2535+22510; prologue report
-  and `M01` capture unchanged.
-
-Active (one Cargo target each, run `run_5fc3a0162f54`):
-
-| Batch | Model | Owns (shared files) |
+| Batch | Model | Result |
 |---|---|---|
-| `j4-battle-flow` | Sonnet (state machine design) | `dq9-core/src/battle/**` |
-| `j4-roaming` | Sonnet (open RE, challenger on zone/spawn) | `dq9-core/src/encounter*`, `lib.rs` |
-| `j4-party-progress` | Flash | `dq9-core/src/party*` |
-| `j4-battle-text` | Flash | `dq9-formats` `battle/text*`, `message.rs`, `dq9re/src/main.rs` |
-| `j4-battle-scene` | Flash | `dq9-app` (`app.rs`, `event*`, `battle*`), `dq9-render/**` |
+| `j4-party-state` | Flash | level tables, `party::Party` in `GameState`; new game equal to `pro1.ml1` (`pro11.ml1` already holds battle 26's rewards) — `re/party.md` |
+| `j4-battle-data` | Flash | `dq9_formats::battle`, `dq9re monster/action/encounters`; no roamers on `S01M01`, `D01M01`, `D01M05` — `re/battle-data.md` |
+| `j4-battle-kernel` | Sonnet | one action resolved like the game; 306 action vectors equal to BattleEmulator (Woosh critical: BattleEmulator truncates early) — `re/battle.md` |
+| `v2-ch2-cutscenes` | Sonnet | `--events-report 2.1-1` 47/50 complete (was 8); party guest Ivor (cast mode 10), screen cover 102/103 — `re/stb-natives.md` |
+| `j4-battle-text` | Flash | battle messages and name inflection in five languages, `dq9re battle-text`; French `str_bres` 6 embeds English lines in the ROM — `re/battle-text.md` |
+| `j4-battle-flow` | Sonnet | whole battles headless from ROM records (rounds, monster ways, flight on the world generator, drops on C `rand`); slimes won, Hexagoon lost at level 1 — `re/battle.md` |
+| `j4-party-progress` | Flash | party fighters from equipment (`itemdt` stats reader), `Party::award`; reproduces `bat6.ml1` — `re/party.md`, `re/item.md` |
+| `j4-roaming` | Sonnet | `dq9_core::encounter`: spawn, zone by the hour, roamer states, contact (126°), surprise, company, stage from the ground — `re/encounter.md` |
+| `j4-battle-scene` | Flash | battle scene (stage, grid, side camera, 547 transition), `--battle N`, `--battle-stage ID --monsters n[xc]`; prologue report 26/26 — `app.md` § "Battle scene" |
 
-Next: `j4-battle-actions` (statuses and damage handlers of the chapter 2 monsters, after the
-flow), battle windows and messages, roaming monsters on screen, stand-in removal, field menu
-and facilities.
+Names of the battle and roaming functions are in `re/symbols.txt`.
 
-## Blockers and next steps
+What a player sees today: the chapter 2 scenes and the battle scene of scripted battles; the
+fight itself is still the stand-in ("won"), no roaming monster is drawn, no menu or facility.
 
-1. **Original reference beyond `X01M09`**: the low return `X01M01` → `X01M05` is
-   not obtained in the original (**[unknown]**) and direct replay of native pads is
-   falsified (`re/melonds-state.md`, § Return doors). World positions or waypoints
-   are needed, not pads.
-2. **Parity beyond 1.1.2**: produce with the harness the references for Angel Falls,
-   the village tasks and the end of the prologue, then replay them through
-   `scripts/parity.ps1`.
-3. **Door cadence**: `Field::step` at 30 Hz (event 17 in 8 VBlanks) remains
-   **[hypothesis]**; melonDS measurement of 4 vs 8 VBlanks still to do (`re/movement.md`).
-4. **End-to-end browser certification**: continuous session on Pages up to
-   Angel Falls and the village tasks, by hand (the driver is not a product criterion).
-5. **J4, battle**: battle 26 loot must come from its own rule to clear `4135`.
-6. **Cast, not modeled**: the fade and black screen of task 0x30, the teardown of the
-   cast during the cutscene, the `questorder3.bin` list, what `021a2fa0` rebuilds in addition
-   (monsters, objects: **[unknown]**); `TestFlags00(0x1000)` assumed zero. No original state
-   at 4104 in 1.2 yet confirms NPC 99 without a map change.
+## Blockers and next steps (orchestration paused at the user's request)
+
+1. **Battle in play**: wire `dq9_core::battle` and `Party::award` to the scene with command and
+   message windows, remove `scenario::stand_in`; `j4-battle-actions` for the statuses, damage
+   handlers and special actions the chapter 2 monsters use (list in `re/battle.md`).
+2. **Roaming monsters**: draw them, start encounters; zone choice and spawn rule stay
+   **[hypothesis]** until a melonDS field state (`demo.sav`, `C01` → `F02`/`F38`) checks them,
+   then a challenger; the list of other roamers pulled into a fight is **[unknown]**.
+3. **Chapter 2 cutscenes**: native 417 (2700+22593) and placements (0, 28)/(0, 30) of
+   2535+22510.
+4. **Field menu and Angel Falls facilities**, chests and examine, wipe-out; then the chapter 2
+   route test 1.4.1 → 2750 with the Hexagoon won and lost, and the browser session.
+5. **Parity beyond 1.1.2** and the original reference beyond `X01M09` (`re/melonds-state.md`,
+   § Return doors); door cadence 4 vs 8 VBlanks (`re/movement.md`).
+6. **`4135`**: battle 26 loot now has a rule (`RollDrops`, C `rand`); it clears once the battle
+   is wired with the original's generator state.
+7. **Cast, not modelled**: task 0x30 fade, cast teardown during a cutscene, `questorder3.bin`,
+   what `021a2fa0` rebuilds besides NPCs (**[unknown]**).
+8. **Orchestration**: `integrate.ps1 -Cleanup` fails at `git worktree remove` on Orca
+   worktrees (cause **[unknown]**); procedure in `orchestration/README.md`. A worker that
+   commits the README progress block conflicts on rebase: drop or regenerate it
+   (`verify.ps1 -Only coverage`).
 
 ## Evidence and comparison
 

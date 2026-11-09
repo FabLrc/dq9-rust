@@ -352,9 +352,11 @@ movements 545/546; palette (238); camera return (328) — details and evidence i
   events; `screens::field/overlay` and `app.rs` (window and capture) put the field and the
   window on the other screen.
 
-**Not executed** (reported by `--events-report`): native 547 (battle transition, outside v0.1);
-the door sound (584); 560, 571, 815, 581, 582 and 809 have no established visible effect or
-no drawn object.
+**Not executed** (reported by `--events-report`): 560, 815, 581, 582 and 809 have no
+established visible effect or no drawn object; 571 sets the shadow flag (`Object3D` bit `0x10`,
+read by `Character_DrawShadow`) and the engine draws no blob shadow. Native 547 (battle
+transition) is executed by the battle scene (`app.md`, § "Battle scene"); the door sound (584)
+is played.
 
 ## Prologue chaining (`dq9-core::scenario`)
 
@@ -365,8 +367,8 @@ What chains the cutscenes is established (EU ROM, Ghidra, `cargo dq9re triggers`
   action `0x78(26)` is **a scripted battle**, not an unknown task (`trigger.md`, § Scripted
   battles: `Trig_RunDeferred` case `0x78` fills the battle task `+0x3718`, number 26 in
   `eventbattle.bin`). Victory fires trigger 15 (`12 : 26`), which starts `ev21520`
-  (`triggerM01.bin` and `triggerF.bin`). There is no battle before J4: the application
-  declares it won (`scenario::stand_in`).
+  (`triggerM01.bin` and `triggerF.bin`). The application shows the battle scene, then the
+  J4 stand-in declares it won (`scenario::stand_in`) until `dq9_core::battle` is wired.
 - `ev21520 → 21521 → 21522 → 21596`: natives 538; map changes (`F01M01`, `X01`,
   `X01M01`, `X01M05`) requested by the scripts from the event list
   record. At the end of `21596`, trigger 11 of `X01M05` raises flag 337, gives item
@@ -382,7 +384,7 @@ What chains the cutscenes is established (EU ROM, Ghidra, `cargo dq9re triggers`
 
 ## Open questions
 
-- Natives still without a role (571, 560, 547, 815): "unidentified" table of
+- Natives still without a role (560, 815): "unidentified" table of
   [stb-natives.md](stb-natives.md#angel-falls-prologue-natives-used-j0).
 - Palette of 238: modes 1 and 2 are not observed; objects of 809 and shadows of 581/582
   **[hypothesis]**.

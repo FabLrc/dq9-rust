@@ -124,7 +124,7 @@ handler and its direct callees, USA source, wiki `Engine-Functions`/`Event-Scrip
 | 409, 411, 413 (5 each) | 409: timed caption (`W+0x195b |= 4`, `W+0x9a8 = n`; alpha `W+0x9b0`, step `0x8444` per tick, 60 ticks per fade); 411: vertical centring of the window (`W+0x195b |= 0x40`, `0206b6c8`); 413: silent text (`W+0x19b2 = 0`, `02045608`) | **Executed**: text/window alpha (60-tick fade, hold `n` ticks, 60 fade), vertical centring with 410, beep suppression (`Talk`); stopping the message counter during the caption is not modelled **[hypothesis]** |
 | 559 (2) | byte `+0x490` of the singleton `0205ec44`; handler `ov_001::021609e4` | **Modelled**: `Event::SetQuestSignal(u8)`, applied before the end trigger; condition `0x1f` rereads this signed byte. At the end of 21595, value 1 selects 1.4.1 and the return to the Observatory instead of the 1.3.2 fallback. Evidence: [`trigger.md`](trigger.md), § "1.2: arrival and village tasks". |
 | 560 (9) | `1` if `0202b7e8()==0` or `0202c1b4()==0` | unknown subsystem; wiki: "cutscene chained to a conversation" **[hypothesis]** |
-| 547 (1) | scripted battle transition (object of the type-1 slot made visible, mask `0x40000000`) | outside v0.1 (J4): battle does not exist, the effect stays reported |
+| 547 (1) | scripted battle transition (object of the type-1 slot made visible, mask `0x40000000`) | **executed** since the battle scene batch: both screens to black, battle track, scene (`app.md`, § "Battle scene"); the swirl model and the slot object are not drawn |
 | 552 (1) | three-bone camera (`02160768`, `0204a170`), same `ctx+4` as 572/531; **executed** (eye/aim by bones, target carried by `foot`) | byte `+0x265` (839) is not driven |
 | 581 (2), 582 (4) | bit 1 (value 2) of `NpcTable+0x98` (`0203cf5c`): `581(0)` sets it, `581(1)` and `582` clear it, `582` also clears `0x10000` of the 32 NPCs ("event cast NPCs", which 566 modes 4 and 5 set). Only reader found: `0203de94` (NPC loop towards `0208f88c`, with `zone+0x38/+0x3c`) only processes an NPC if `+0x98 = 0` or if it carries `0x10000`. Bit 0 of `+0x98` instead cuts sprite drawing (`0203dda4`, `0203ddf0`) | **[hypothesis]**: `0208f88c` draws the NPCs' shadow; the engine here draws none, so 581/582 have no visible effect |
 | 584 (1) | door opening: placement `(block entry, identifier)`, angle ±6434 (90°), speed 409 per update, sound `g_DoorSeTable[flags & 0xf]`; **executed** (rotation of the placement, subtree collision included) | the sound is read (low nibble of the zone, base effects 200 to 204) and played; the sliding/reverse branches are not read |
@@ -186,7 +186,7 @@ silence), three-bone camera 552 and door 584. The door sound is played: the low 
 zone (`Zone::sound`) gives `g_DoorSeTable`, base effect 200 + nibble, once per
 opening.
 
-**Still not executed**: 547 (battle transition, J4: the battle-scene batch) and 417 (see its row). Screen
+**Still not executed**: 417 (see its row). 547 is executed by the battle scene. Screen
 swapping (`SwapScreens`) is executed (redraw and captures).
 
 ## Count by family

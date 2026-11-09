@@ -296,7 +296,8 @@ character = index in the glyph table of the `me` font** (`font.md`), terminated 
   (12 bytes) has no established role.
 - Internal content of the blocks `QuestLog`, `QuestTimers`, `Hints`, `Monsters`, `Alchemy`,
   `Accolades`, `TreasureMaps`, `Profile`, `Dqvc`, `Misc`: sizes and RAM destinations
-  established, **fields not decoded**. Same for the bag (`Main`+7652).
+  established, **fields not decoded**. The bag (`Main`+7652) is decoded in
+  [party.md](party.md) (`dq9_core::party::Bag`).
 - The write protocol is understood (§ "Role of the two slots") but **not ported**:
   it drives the hardware (`Save_BackupWrite`) and a load state machine, hence no
   `port:` marker; `dq9_formats::save` only writes the image (`Save::seal`).

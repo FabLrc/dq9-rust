@@ -429,20 +429,30 @@ Progress:
       restore (`j4-party-state`, `re/party.md`).
 - [x] Battle rules kernel: generators and the resolution of one action, identical to
       BattleEmulator on 306 vectors (`j4-battle-kernel`, `re/battle.md`).
-- [ ] Chapter 2 cutscenes: `--events-report 2.1-1` 47 complete, 3 partial (`v2-ch2-cutscenes`,
-      `a48ff86`). Open in range: native 417 (2700+22593), placements (0, 28)/(0, 30) of
-      2535+22510 that no map of area 7100 holds; 547 goes to the battle scene.
-- [ ] Battle flow: turns, commands, monster ways, statuses, end of battle and level-up.
-- [ ] Battle scene: stage, fighters, camera, transition; then windows, menus and messages.
-- [ ] Roaming monsters and encounters on `F01`, `S01M01`, `D01`.
+- [ ] Chapter 2 cutscenes: `--events-report 2.1-1` 47 complete, 3 partial (`v2-ch2-cutscenes`).
+      Open in range: native 417 (2700+22593), placements (0, 28)/(0, 30) of 2535+22510 that no
+      map of area 7100 holds.
+- [x] Battle text: `strbtl`, `actmsg`, `str_bres`, `str_btl`, `str_tm` and name inflection
+      in five languages (`j4-battle-text`, `re/battle-text.md`).
+- [ ] Battle flow: **headless done** (`j4-battle-flow`: setup from ROM records, rounds,
+      monster ways and targets, flight, victory, drops; `re/battle.md`); party fighters and
+      award done (`j4-party-progress`, `re/party.md`). Remaining: statuses, damage handlers and
+      the special actions of the chapter 2 monsters (`j4-battle-actions`, list in
+      `re/battle.md`), wiring to the application.
+- [ ] Battle scene: stage, fighters on the grid, side camera, transition 547 done
+      (`j4-battle-scene`, `app.md` § "Battle scene"). Remaining: action-script shots, swirl,
+      encounter transition, companions, command and message windows.
+- [ ] Roaming monsters: rules read in code and modelled in `dq9_core::encounter`
+      (`j4-roaming`, `re/encounter.md`), **[hypothesis]** until a melonDS field state checks
+      zone and spawn (challenger pending); not drawn yet.
 - [ ] Field menu, Angel Falls facilities, chests and examine, wipe-out.
 - [ ] Chapter 2 route 1.4.1 → 2750 in a real test, Hexagoon won and lost; battle 26 played.
 - [ ] Browser: continuous session from a new game to 2750.
 
-Order (waves of at most four batches): data, party state, battle kernel and chapter 2
-cutscenes first; then flow, scene, roaming monsters and the chapter 2 route; then windows and
-menus, facilities and the stand-in's removal; last the Hexagoon, the end-to-end test, the
-browser and docs consistency.
+Next waves (paused after v2-2): (1) `j4-battle-actions`, the battle wired to the scene with
+command and message windows (stand-in removed), roaming monsters drawn and their melonDS
+check; (2) field menu, Angel Falls facilities, chests, wipe-out, the chapter 2 route test;
+(3) the Hexagoon both ways, the browser session, docs consistency.
 
 **v0.2** criterion: a new game played by hand reaches the end of 2750 natively and in the
 browser, with every battle fought; a headless run with a fixed seed reaches it in a real test;
