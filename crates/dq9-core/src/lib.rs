@@ -1,5 +1,6 @@
 //! Deterministic field state, movement and collision. No platform I/O.
 
+pub mod battle;
 pub mod camera;
 pub mod collision;
 pub mod cutscene;
