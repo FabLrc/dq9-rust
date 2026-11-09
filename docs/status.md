@@ -3,7 +3,7 @@
 Rewritten by the coordinator at each integration; do not add a log here.
 Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 9, 2026 (`main` after the r1 refactoring wave)
+## Status as of November 9, 2026 (`main` at `6b5223f`, wave v2-1 partly integrated)
 
 - **v0.1 functional natively**: `cargo run -p dq9-app --release -- --new-game` plays
   the opening, the Observatory prologue, the physical return to Angel Falls (1100) and the
@@ -26,20 +26,34 @@ Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`]
   hall; no continuous session up to 4107, the tower or Angel Falls (`app.md`,
   § Verification).
 
-## Active wave: v2-1 (v0.2 foundations), base after `d14820c`
+## v0.2 (J4): new game → end of event 2750 (landslide cleared), every battle fought
 
-v0.2 target (`roadmap.md`, J4): new game → end of event 2750 (landslide cleared), every battle
-fought. Batches (at most four, one Cargo target each):
+Integrated (wave v2-1, all `verify.ps1 -RequireRom` green):
+
+- `j4-party-state` (Flash, `613f29c`): level tables (`dq9_formats::level`), `party::Party`
+  in `GameState`; new game equal to `pro1.ml1` on every compared field but the typed name.
+  `pro11.ml1` already holds battle 26's rewards (experience 7, gold 13, item 22087): it is not
+  "before battle 26" (`re/party.md`).
+- `j4-battle-data` (Flash, `68df94f`): `dq9_formats::battle` (monsters, actions, spells,
+  `itembtlprm`, encounters), `dq9re monster|action|encounters`; `S01M01`, `D01M01`, `D01M05`
+  have no roamers (`re/battle-data.md`).
+- `j4-battle-kernel` (Sonnet, `6b5223f`): `dq9_core::battle` resolves one action; 306 action
+  and 2400 primitive vectors equal to BattleEmulator / the decompilation; Woosh critical
+  deviation where BattleEmulator truncates early (`re/battle.md`).
+
+Active (one Cargo target each, run `run_5fc3a0162f54`):
 
 | Batch | Model | Owns (shared files) |
 |---|---|---|
-| `j4-battle-data` | Flash | `dq9-formats` battle tables, `dq9re` battle commands |
-| `j4-party-state` | Flash | `dq9-core/src/state.rs`, level tables, party module |
-| `j4-battle-kernel` | Sonnet (rule design, float-exact port) | `dq9-core/src/battle/**` |
-| `v2-ch2-cutscenes` | Sonnet (native RE) | `dq9-app/src/event.rs` + `event/**`, `re/symbols.txt` |
+| `v2-ch2-cutscenes` | Sonnet (native RE) | `dq9-app` `app.rs`, `event.rs` + `event/**`, `dq9-render/**`, `re/symbols.txt` |
+| `j4-battle-flow` | Sonnet (state machine design) | `dq9-core/src/battle/**` |
+| `j4-roaming` | Sonnet (open RE, challenger on zone/spawn) | `dq9-core/src/encounter*`, `lib.rs` |
+| `j4-party-progress` | Flash | `dq9-core/src/party*` |
+| `j4-battle-text` | Flash | `dq9-formats` `battle/text*`, `message.rs`, `dq9re/src/main.rs` |
 
-Previous wave r1 (refactoring, `efa8bec`..`eb70d4f`): 14 behaviour-preserving batches, all
-integrated (`orchestration/README.md`).
+Next wave (needs `app.rs`/`dq9-render` free): battle scene and windows, roaming monsters on
+screen, `j4-battle-actions` (statuses and damage handlers of the chapter 2 monsters), stand-in
+removal.
 
 ## Blockers and next steps
 

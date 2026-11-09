@@ -58,9 +58,15 @@ RE → implementation → challenger → integration → final "docs consistency
    ```powershell
    ./scripts/integrate.ps1 -Branch FabLrc/j3-sound-effects -Spec build/batches/j3-sound-effects.md
    ./scripts/integrate.ps1 -Branch FabLrc/j3-sound-effects -Spec build/batches/j3-sound-effects.md -Apply -Message 'audio: play field sound effects'
-   # release the worker on the Orca side, then:
    ./scripts/integrate.ps1 -Branch FabLrc/j3-sound-effects -Spec build/batches/j3-sound-effects.md -Cleanup
+   orca orchestration worker-release --dispatch <dispatch id>
    ```
+
+   Order matters (wave v2-1): `-Cleanup` **right after** `-Apply`, before releasing the worker
+   and before applying the next batch. `worker-release` unregisters the Orca worktree, after
+   which `-Cleanup` fails at `worktree remove` (exit 255) and leaves the `tools` junction and
+   the branch behind; and once another batch has touched a shared file (`lib.rs`), the
+   "integrated" check fails because `main` no longer equals the branch on that file.
 
    The checks verify: branch contains `main` (otherwise rebase), changed files within
    ```owns (except the `README.md` progress block, always accepted), no forbidden file

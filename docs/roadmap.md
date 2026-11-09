@@ -424,11 +424,11 @@ implementation in the headless run (`cargo dq9re script 2.1 --quiet`: 102, 103, 
 
 Progress:
 
-- [ ] Battle data readers and `dq9re` inspection (`j4-battle-data`).
-- [ ] Party state: new game equal to the original at first control, save restore
-      (`j4-party-state`).
-- [ ] Battle rules kernel: generators and the resolution of one action, identical to
-      BattleEmulator (`j4-battle-kernel`).
+- [x] Battle data readers and `dq9re` inspection (`j4-battle-data`, `re/battle-data.md`).
+- [x] Party state: new game equal to the original at first control (`pro1.ml1`), save
+      restore (`j4-party-state`, `re/party.md`).
+- [x] Battle rules kernel: generators and the resolution of one action, identical to
+      BattleEmulator on 306 vectors (`j4-battle-kernel`, `re/battle.md`).
 - [ ] Chapter 2 cutscenes: the 15 natives, `--events-report 2.1` with no visible gap up to 2750
       (`v2-ch2-cutscenes`).
 - [ ] Battle flow: turns, commands, monster ways, statuses, end of battle and level-up.
