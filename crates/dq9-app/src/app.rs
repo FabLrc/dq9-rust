@@ -879,9 +879,7 @@ impl App {
         if let Some(place) = place
             && Some(place.map) != here
         {
-            let spawn = place
-                .position
-                .map(|(p, angle)| (Vec3::from_array(p), field::yaw_of_angle(angle)));
+            let spawn = crate::event::spawn(&place);
             status(&format!("event {event} happens on map {}", place.map));
             self.quiet_events = true;
             let loaded = self.load_map(&place.map.to_string(), true, spawn, None, false);

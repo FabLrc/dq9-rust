@@ -1102,7 +1102,6 @@ pub fn place(rom: &[u8], event: u16) -> Option<dq9_core::script::load::EventPlac
 
 /// Start position and facing of `place`: the map's spawn point in world units and the yaw the
 /// event record gives it.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the app and the web still convert it themselves
 pub(crate) fn spawn(place: &dq9_core::script::load::EventPlace) -> Option<(Vec3, f32)> {
     place
         .position

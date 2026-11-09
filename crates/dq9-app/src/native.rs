@@ -458,12 +458,7 @@ fn prepare(cli: &Cli, rom: &[u8], save: Option<&[u8]>) -> Result<Prepared> {
     let time = clock.phase().index();
     // An event happens on the map its record names, the hero at its start.
     let (map, spawn) = match place {
-        Some(place) => (
-            place.map.to_string(),
-            place
-                .position
-                .map(|(p, angle)| (Vec3::from_array(p), dq9_core::field::yaw_of_angle(angle))),
-        ),
+        Some(place) => (place.map.to_string(), crate::event::spawn(&place)),
         None => (start.map.clone(), None),
     };
     let mut trigger_state = load::trigger_state(
