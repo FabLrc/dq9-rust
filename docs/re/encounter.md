@@ -107,7 +107,7 @@ order (`0x02028214`). `F01P00.bin`: 79 nodes (masks 1 and 2), 139 edges; the Hex
 `D01P02`–`D01P04` 14–23 nodes. `S01M01`, `D01M01`, `D01M05` have no `encfld` group: nothing spawns.
 **Night/day**: only through the zone kind. No other time test.
 
-## (c) Roamer movement (`0x02076b58`, update tables `0x020e893c`/`0x020e89a4`)
+## (c) Roamer movement (EU `0x02076b68`, USA `func_02076b58`; update tables `0x020e893c`/`0x020e89a4`)
 
 Each update: `state_ms += dt` (`+0x14c`), `awake_ms += dt` unless state 0 (`+0x154`), notice test, then the
 state's update. `fld_mondata` value 3 is **five 3-bit fields** (`0x020795f8`): wander `+0x138`
@@ -202,10 +202,7 @@ touched, and the list read at `+0xf78` of the battle context is not filled by an
   the story-flag range of `0x02073d54`, A-button contacts (`+0xbe == 2` objects), multiplayer, solid monsters (`+0x17d & 6`) are not modelled.
 - `func_02028638` (the nearest node used when a roamer stops running) is approximated by the nearest node.
 
-## Symbols to add
+## Symbols
 
-`0x020733e8 Zone_SpawnTick`, `0x02073ed4 Zone_PickSpawnZone`, `0x02073fec Zone_PickRoamer`, `0x0209bdd8 Zone_PickBattleZone`,
-`0x0209afe4 Battle_DrawCompany`, `0x02032380 RandBelow`, `0x02076b58 Monster_Update`, `0x02076cdc Monster_SetState`,
-`0x02078e70 Monster_ChooseNode`, `ov_017::021a2128 Monster_Spawn`, `ov_017::021a1ad0 Monster_ReleaseFar`,
-`ov_017::02196430 Field_CheckEncounter`, `ov_017::02196fc8 Monster_Touches`, `ov_017::021970a0 Battle_SurpriseRoll`,
-`ov_017::021b848c Battle_PrepareParty`, `0x0204bd8c Collision_StageOfRecord`, `0x02028470 Graph_Nearest`.
+The names this note establishes are in `re/symbols.txt`, section "Roaming monsters and
+encounters" (`0x02032380 RandBelow` in the battle section).

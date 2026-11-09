@@ -910,3 +910,60 @@ ov_017::0218dba0 Character_DrawShadow  # skips the shadow when Object3D flag 0x1
 ov_017::021913d0 Guest_Start           # (GameResources, record): trigger action 0xcd (case 0x69) -> guest task with the attnpc record
 ov_017::02191484 Guest_Dismiss         # trigger action 0xcc (case 0x68): destroys character 0xce, clears the guest flag
 ov_017::021c1e6c Guest_LoadTask        # loads attnpc.gp2 and data/chara_sub/s%03dn.chr into character 0xce (the guest, outside the party list)
+
+# --- Battle kernel and flow (docs/re/battle.md); names from the decompilation or the wiki ---
+0x02032380 RandBelow                   # (n): (int)(n * (rand() - 1) / RAND_MAX), C library generator
+0x02074748 GetTensionMultiplier        # 1.0 1.5 2.5 4.0 6.0 party / 1.0 1.3 2.0 3.0 4.5 monster
+0x02074848 CalculateCriticalDamage     # attack power x between(0.95, 1.05) (action 1) or damage x between(1.5, 2.0)
+0x02074908 CalculateMonsterCritRate    # literal zero
+0x02074958 GetMultiTargetFalloff       # 1.0 0.8 0.6 0.4 0.2
+0x02089640 InitMonsterBattleStatus     # HP draw from the world generator, skipped for a set battle
+0x0208a04c IsWayUsable                 # a monster way's usability test
+0x0208a380 ChooseWayByWeights          # weighted pick among the usable ways
+0x0208a92c ChooseMonsterWay            # rule by battle record +0x10 bits 5-7
+ov_000::02153aa4 RechooseMonsterInGroup   # another standing monster of the group (NextRandomMax)
+ov_000::02153c24 RechooseGroup            # a group with none standing -> a drawn one that has
+ov_000::021540fc SettlePartyTargets        # by side and reach; then RollHitCount
+ov_000::0215440c SettleMonsterTargets      # alive stored targets, else PickDefaultTargets; then RollHitCount
+ov_000::02154a04 PickDefaultTargets        # by side and reach; weighted pick for reach 2/5; then RollHitCount
+ov_000::02154f30 WeightedPartyPick         # front line 2, back line 1; NextRandomMax(total) + 1
+ov_000::02155184 RegisterDefeatedMonster   # experience and gold sums, kind list
+ov_000::02156118 GetBlockRate
+ov_000::02156270 GetEvasionRate
+ov_000::02156648 RollAccuracy
+ov_000::02156b38 GetResistance
+ov_000::02156cc4 RollCritical
+ov_000::02156e30 RollBlock
+ov_000::02156f98 RollEvasion
+ov_000::02157d3c CheckBattleEnd            # [battle+0x8e14]: 2 party down, 1 monsters down
+ov_000::0215833c RollActorStatusWake       # NextRandomMax(100) per action before ResolveAction
+ov_000::0215858c TickActorStatus           # NextRandomMax(100) per action after it, battle going on
+ov_000::0215f1ac ReorderTurnRecords        # turn classes 10, 5, 1 to the front, 32 to the back
+ov_000::0215f57c GetExtraActionCount       # NextRandomMax(2) always; table by record bits 8-10
+ov_000::0215f7a8 TryPartyFlee              # world generator
+ov_000::0215fbe0 RollHitCount              # two draws every call: Between(3, 4), Between(6, 8)
+ov_023::021edf54 BattleVictory
+ov_023::021f454c RollDrops                 # once per monster kind, C library generator
+ov_024::021da55c DispatchDamageHandler     # 67 member pointers indexed by action +0x18 bits 18-26
+ov_024::021e6a90 CalculateFinalDamage
+ov_024::021eb5d0 ResolveAction
+ov_024::021f418c TargetHandlerFlee         # targeting handler 112
+ov_024::021f66cc DispatchTargetHandler     # action +0x0c (AI mode 1) / +0x0e (mode 2)
+
+# --- Roaming monsters and encounters (docs/re/encounter.md); behaviour [hypothesis] without an original state ---
+0x02028470 Graph_Nearest               # nearest node of the map's path graph
+0x0204bd8c Collision_StageOfRecord     # ground record -> stage 30000 + 100a + 10b + c
+0x020733e8 Zone_SpawnTick              # spawn timer of the current map, called each update
+0x02073ed4 Zone_PickSpawnZone          # encfld zone by the hour (kind 0 day, 1 night, 2 always) and node mask
+0x02073fec Zone_PickRoamer             # weighted roamer of the zone
+0x02076b68 Monster_Update              # func_02076b58: roamer state machine (tables 0x020e893c / 0x020e89a4)
+0x02076cdc Monster_SetState
+0x02078e70 Monster_ChooseNode
+0x0209afe4 Battle_DrawCompany          # encbtl company: weights, least, most
+0x0209bdd8 Zone_PickBattleZone
+ov_017::02196430 Field_CheckEncounter  # per frame: first touched roamer, facing test, surprise roll
+ov_017::02196fc8 Monster_Touches       # distance test
+ov_017::021970a0 Battle_SurpriseRoll
+ov_017::021a1ad0 Monster_ReleaseFar
+ov_017::021a2128 Monster_Spawn
+ov_017::021b848c Battle_PrepareParty   # stage from the ground record under the leader into the request +0x02

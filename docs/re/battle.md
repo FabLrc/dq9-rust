@@ -381,53 +381,13 @@ handlers 18, 26, 54, 66, 116, 117; the party's Defend (guard level); items.
 - **[hypothesis]** the combo counter's stepping (`Battle::step_combo`) is the wiki's reading of
   `func_ov024_021ea584` and `func_ov000_0215cd80`: not checked against the code here.
 
-## Symbols to add
+## Symbols
 
-For `re/symbols.txt` (owner: another batch). All named by the DQIX decompilation or by the wiki's
-proposals; evidence above. EU addresses:
-
-```
-0x02074748 GetTensionMultiplier        # func_02074738: 1.0 1.5 2.5 4.0 6.0 party / 1.0 1.3 2.0 3.0 4.5 monster
-0x02074848 CalculateCriticalDamage     # func_02074838: attack power x between(0.95,1.05) (action 1) or damage x between(1.5,2.0)
-0x02074908 CalculateMonsterCritRate    # func_020748f8: literal zero
-0x02074958 GetMultiTargetFalloff       # func_02074948: 1.0 0.8 0.6 0.4 0.2
-0x02089640 InitMonsterBattleStatus     # func_02089630: HP draw from GetBTRandom
-ov_000::02156118 GetBlockRate
-ov_000::02156270 GetEvasionRate
-ov_000::02156648 RollAccuracy
-ov_000::02156b38 GetResistance
-ov_000::02156cc4 RollCritical
-ov_000::02156e30 RollBlock
-ov_000::02156f98 RollEvasion
-ov_024::021da55c DispatchDamageHandler
-ov_024::021e6a90 CalculateFinalDamage
-ov_024::021eb5d0 ResolveAction
-ov_000::02153aa4 RechooseMonsterInGroup   # picks another standing monster of the group (NextRandomMax)
-ov_000::02153c24 RechooseGroup            # a group with none standing -> a drawn one that has
-ov_000::0215440c SettleMonsterTargets      # alive stored targets, else DefaultPick; then RollHitCount
-ov_000::021540fc SettlePartyTargets        # by side and reach; then RollHitCount
-ov_000::02154a04 PickDefaultTargets        # by side and reach; weighted pick for reach 2/5; then RollHitCount
-ov_000::02154f30 WeightedPartyPick         # front line 2, back line 1; NextRandomMax(total)+1
-ov_000::02155184 RegisterDefeatedMonster   # exp/gold sums, kind list
-ov_000::0215833c RollActorStatusWake       # NextRandomMax(100) per action before ResolveAction
-ov_000::0215858c TickActorStatus           # NextRandomMax(100) per action after it, battle going on
-ov_000::02157d3c CheckBattleEnd            # [battle+0x8e14]: 2 party down, 1 monsters down
-ov_000::0215f1ac ReorderTurnRecords        # turn classes 10, 5, 1 to the front, 32 to the back
-ov_000::0215f57c GetExtraActionCount       # NextRandomMax(2) always; table [0,coin,1,2,...] by record bits 8-10
-ov_000::0215f7a8 TryPartyFlee              # world generator
-ov_000::0215fbe0 RollHitCount              # two draws every call: Between(3,4), Between(6,8)
-ov_024::021f66cc DispatchTargetHandler     # action +0x0c (AI mode 1) / +0x0e (mode 2)
-ov_024::021f418c TargetHandlerFlee         # handler 112
-ov_023::021edf54 BattleVictory
-ov_023::021f454c RollDrops
-0x0208a04c IsWayUsable                     # func_0208a03c
-0x0208a380 ChooseWayByWeights              # func_0208a370
-0x0208a92c ChooseMonsterWay                # func_0208a91c: rule by record +0x10 bits 5-7
-0x02032380 RollOneIn                       # func_02032370: rand() based
-```
-
-(`ov_024::021e7bc0 GetAttackBaseDamage` and the `NextRandom*`/`CalculateCritRate`/
-`CalculatePhysicalDamage`/`RoundUp` functions are already named by the decompilation.)
+The names this note establishes (decompilation names or the wiki's proposals, EU addresses) are
+in `re/symbols.txt`, section "Battle kernel and flow". `0x02032380` is `RandBelow` there
+(`(int)(n × (rand() − 1) / RAND_MAX)`, decompiled), the same function `docs/re/encounter.md`
+uses. `ov_024::021e7bc0 GetAttackBaseDamage` and the `NextRandom*`/`CalculateCritRate`/
+`CalculatePhysicalDamage`/`RoundUp` functions are already named by the decompilation.
 
 ## `port:` markers
 
