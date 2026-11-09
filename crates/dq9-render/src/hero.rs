@@ -505,13 +505,7 @@ impl HeroRig {
             target.vertices[part.base..part.base + part.vertices.len()]
                 .copy_from_slice(&part.vertices);
         }
-        for draw in &mut target.draws {
-            let indices = &target.indices[draw.indices.start as usize..draw.indices.end as usize];
-            let sum = indices.iter().fold(Vec3::ZERO, |s, &i| {
-                s + Vec3::from_array(target.vertices[i as usize].position)
-            });
-            draw.center = (sum / indices.len().max(1) as f32).to_array();
-        }
+        target.recenter_draws();
         self.dirty = true;
         Ok(())
     }

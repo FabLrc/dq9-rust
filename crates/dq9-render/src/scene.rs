@@ -236,6 +236,20 @@ pub struct SceneModel {
     pub tinted: bool,
 }
 
+impl SceneModel {
+    /// Recomputes the model-space centroid of every draw from its posed vertices, to sort
+    /// translucent draws.
+    pub(crate) fn recenter_draws(&mut self) {
+        for draw in &mut self.draws {
+            let indices = &self.indices[draw.indices.start as usize..draw.indices.end as usize];
+            let sum = indices.iter().fold(Vec3::ZERO, |s, &i| {
+                s + Vec3::from_array(self.vertices[i as usize].position)
+            });
+            draw.center = (sum / indices.len().max(1) as f32).to_array();
+        }
+    }
+}
+
 /// A placed model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneInstance {
