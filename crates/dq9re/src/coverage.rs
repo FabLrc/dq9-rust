@@ -3,7 +3,7 @@
 //!
 //! - `re/functions.txt` lists every function of the European ARM9, ITCM and overlays, built
 //!   from the symbol maps of the USA decompilation (DQIX/dqix-decomp, Unlicense) with
-//!   addresses moved to the European release (`docs/ressources-externes.md`), each one
+//!   addresses moved to the European release (`docs/external-resources.md`), each one
 //!   classified game / platform / excluded (`docs/roadmap.md`).
 //! - A function counts as ported when a comment of a port crate names it in a `port:` marker:
 //!   `// port: 0x020d91ec, ov_017::021ba810, 0x0206974c..=0x02069fd4` (a range takes every
@@ -563,24 +563,40 @@ pub fn mark_ported(functions: &[Function], sources: &[(String, String)]) -> Resu
 
 fn percent(part: u64, whole: u64) -> String {
     let tenths = (part * 1000).checked_div(whole).unwrap_or(0);
-    format!("{},{} %", tenths / 10, tenths % 10)
+    format!("{}.{}%", tenths / 10, tenths % 10)
 }
 
 fn kib(bytes: u64) -> String {
-    format!("{} Ko", group(bytes.div_ceil(1024) as usize))
+    format!("{} KB", group(bytes.div_ceil(1024) as usize))
 }
 
-/// French digit grouping: `12142` → `12 142`.
+/// Thousands separator: `12142` → `12,142`.
 fn group(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
         if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(' ');
+            out.push(',');
         }
         out.push(c);
     }
     out
+}
+
+/// shields.io static badge for the ported share of game functions, colored by progress.
+fn badge(part: u64, whole: u64) -> String {
+    let tenths = (part * 1000).checked_div(whole).unwrap_or(0);
+    let color = match tenths {
+        0..250 => "orange",
+        250..750 => "yellow",
+        750..1000 => "yellowgreen",
+        _ => "brightgreen",
+    };
+    let label = percent(part, whole).replace('%', "%25");
+    format!(
+        "[![Ported](https://img.shields.io/badge/ported-{label}%20of%20functions-{color})]\
+         (docs/roadmap.md)"
+    )
 }
 
 /// Markdown block shown in the README, between `README_START` and `README_END`.
@@ -593,11 +609,13 @@ pub fn report(modules: &BTreeMap<Module, Tally>) -> String {
         total.ported_bytes += t.ported_bytes;
     }
     let mut out = format!(
-        "**Avancement : {}** des fonctions de jeu traduites ({} / {}), {} du code ({} / {}).\n\
-         Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code \
-         (définition dans `docs/roadmap.md`).\n\n\
-         <details><summary>Détail par module</summary>\n\n\
-         | Module | Fonctions traduites | Code traduit |\n|---|---:|---:|\n",
+        "{}\n\n\
+         **Progress: {}** of game functions ported ({} / {}), {} of the code ({} / {}).\n\
+         Computed by `cargo dq9re coverage` from the `port:` markers in the code \
+         (definition in `docs/roadmap.md`).\n\n\
+         <details><summary>Per-module detail</summary>\n\n\
+         | Module | Functions ported | Code ported |\n|---|---:|---:|\n",
+        badge(total.ported_functions as u64, total.functions as u64),
         percent(total.ported_functions as u64, total.functions as u64),
         group(total.ported_functions),
         group(total.functions),
@@ -834,10 +852,12 @@ fn f() {} // port: FUN_02069ffc 0x0206974c..=0x02069fd4
             format!("intro\n{README_START}\nnew\n{README_END}\nrest\n")
         );
         assert_eq!(splice_readme(&updated, "new\n").unwrap(), updated);
-        assert_eq!(percent(1, 3), "33,3 %");
-        assert_eq!(percent(0, 0), "0,0 %");
-        assert_eq!(group(12142), "12 142");
+        assert_eq!(percent(1, 3), "33.3%");
+        assert_eq!(percent(0, 0), "0.0%");
+        assert_eq!(group(12142), "12,142");
         assert_eq!(group(999), "999");
+        assert!(badge(21, 1000).contains("ported-2.1%25%20of%20functions-orange"));
+        assert!(badge(500, 1000).ends_with("-yellow)](docs/roadmap.md)"));
     }
 
     /// Every named function of `re/symbols.txt` must start a function of the list: checks the
