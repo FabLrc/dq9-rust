@@ -9,6 +9,8 @@
 use dq9_formats::map::StartPoint;
 use dq9_formats::save::{EVENT_FLAGS_SIZE, EventFlags, Save, Slot};
 
+use crate::party::Party;
+
 /// Length of the in-game day in seconds (`GameState+0x3d0`, 420.0 in RAM).
 pub const DAY_LENGTH: f32 = 420.0;
 /// Start of each phase in seconds (`0x020f33bc`, `+0xc`, `+0x10` in RAM: 390, 210, 180).
@@ -240,6 +242,9 @@ pub enum StateError {
     NoValidSlot,
     /// The slot's event block is not a whole block (cannot happen on a parsed save).
     BadEventBlock,
+    /// The slot's party block is inconsistent (more than four members, a record or held
+    /// items past the block, a bag that does not fit).
+    BadParty,
 }
 
 impl core::fmt::Display for StateError {
@@ -247,6 +252,7 @@ impl core::fmt::Display for StateError {
         f.write_str(match self {
             Self::NoValidSlot => "the save has no valid normal slot",
             Self::BadEventBlock => "the save's event block has the wrong size",
+            Self::BadParty => "the save's party block is inconsistent",
         })
     }
 }
@@ -261,13 +267,17 @@ pub struct GameState {
     pub placement: Placement,
     pub scenario: Scenario,
     pub clock: DayClock,
+    /// Members in party order (the leader first), gold and bag (`Save_UnpackMain`,
+    /// `0x020a95b4`).
+    pub party: Party,
     events: Vec<u8>,
 }
 
 impl GameState {
     /// A new game: prologue map, scenario 1/1/1 and the day's start, the clock running
-    /// (`0x0200f3a4`; the clock's initial 210 s from the wiki's *Time-Of-Day*). The event
-    /// block is empty **[unknown]**: the game's initial tracks are not read.
+    /// (`0x0200f3a4`; the clock's initial 210 s from the wiki's *Time-Of-Day*), and the hero
+    /// character creation makes ([`Party::new_game`]). The event block is empty
+    /// **[unknown]**: the game's initial tracks are not read.
     pub fn new_game() -> Self {
         Self {
             map: NEW_GAME_MAP,
@@ -278,6 +288,7 @@ impl GameState {
                 substep: 1,
             },
             clock: DayClock::new(DAY_START, true),
+            party: Party::new_game(),
             events: vec![0; EVENT_FLAGS_SIZE],
         }
     }
@@ -315,6 +326,7 @@ impl GameState {
                 substep: slot.scenario_substep(),
             },
             clock: DayClock::new(slot.day_timer(), true),
+            party: Party::from_slot(slot).map_err(|_| StateError::BadParty)?,
             events,
         })
     }
@@ -446,6 +458,18 @@ mod tests {
         assert_eq!(state.placement, Placement::MapStart);
         assert_eq!(state.scenario.chapter, 1);
         assert!(!state.events().global_flag(0));
+    }
+
+    #[test]
+    fn new_game_carries_the_hero_party() {
+        let state = GameState::new_game();
+        assert_eq!(state.party.members.len(), 1);
+        let hero = state.party.leader().unwrap();
+        assert_eq!(hero.vocation, crate::party::NOVICE_VOCATION);
+        assert_eq!(hero.levels, [1; dq9_formats::save::VOCATION_COUNT]);
+        assert_eq!(hero.experience, [0; dq9_formats::save::VOCATION_COUNT]);
+        assert_eq!(state.party.gold, 0);
+        assert!(state.party.bag.is_empty());
     }
 
     #[test]

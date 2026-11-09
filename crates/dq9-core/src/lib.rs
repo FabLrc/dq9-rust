@@ -7,6 +7,7 @@ pub mod field;
 pub mod fx;
 pub mod lighting;
 pub mod movement;
+pub mod party;
 pub mod scenario;
 pub mod script;
 pub mod state;
