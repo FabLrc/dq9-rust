@@ -1,5 +1,7 @@
+use dq9_formats::cast::TalkZone;
 use dq9_formats::font::{Font, FontId};
 use dq9_formats::message::{LeadingTags, compile};
+use glam::Vec3;
 
 use super::*;
 
