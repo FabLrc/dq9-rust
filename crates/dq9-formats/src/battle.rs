@@ -16,6 +16,7 @@ pub mod encounter;
 pub mod equipment;
 pub mod monster;
 pub mod spell;
+pub mod text;
 
 /// Low 12 bits of a `.nat` head word: the record count.
 const HEAD_COUNT_MASK: u32 = 0xfff;

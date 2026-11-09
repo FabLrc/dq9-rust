@@ -8,10 +8,17 @@
 //! port: 0x020424bc, 0x0206832c, 0x02068428, 0x02068f50, 0x02068e2c, 0x02069244
 //! port: 0x02069604, 0x02067ffc, 0x02069ffc
 //! port: 0x0206974c..=0x02069fd4
+//! port: 0x020e4968, 0x020e4874, 0x020e463c
+//!
+//! The last line is the inflected-name routine (`FUN_020e4958`, EU `0x020e4968`), its German
+//! suffix pass (`FUN_020e4864`, EU `0x020e4874`) and the article composition
+//! (`func_020e462c`, EU `0x020e463c`): [`article_number`], [`inflect`], [`Declension`].
 //!
 //! The range is the control-tag handlers of `Msg_Compile`, reduced here to their codes.
 
 use crate::font::Font;
+use nds_rom::bytes::u32_at;
+use nds_rom::{Error, Result};
 
 /// End of the tag starting at `text[0] == b'<'`: index of the first `>` not followed by
 /// another `>` (`Msg_FindTagEnd`, `0x020424bc`), so the glyph `<>>>` stays one tag.
@@ -725,6 +732,228 @@ pub fn leading_tags(text: &[u8]) -> (LeadingTags, &[u8]) {
     (tags, rest)
 }
 
+// --- Inflected names: `FUN_020e4968` -------------------------------------------------------
+
+/// A name as the inflection routine reads it: the singular at `+0x00`, the plural at `+0x04`
+/// and the grammar word at `+0x08`. The same triple opens a monster's name record
+/// (`mon_data_<lang>.nat`) and an item's (`itemname_<lang>.nat`); wiki *Articles*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NameRecord<'a> {
+    pub singular: &'a [u8],
+    pub plural: &'a [u8],
+    /// Bits 0–5 indefinite singular, 6–11 and 18–23 the two plurals, 12–17 definite
+    /// singular, 24–25 the gender, 26–31 not established (wiki *Articles*).
+    pub grammar: u32,
+}
+
+impl NameRecord<'_> {
+    /// Bits 24–25 of the grammar word: 0 he, 1 she, 2 it, 3 unused (wiki *Articles*,
+    /// INFERRED there). The battle text's `<IF_ACTOR_M>`/`_F`/`_N` choose by it.
+    pub fn gender(&self) -> u8 {
+        ((self.grammar >> 24) & 3) as u8
+    }
+
+    /// Whether the singular ends in `s` (`IF_LAST_LETTER_S_*`, German genitive).
+    pub fn ends_with_s(&self) -> bool {
+        self.singular.last() == Some(&b's')
+    }
+}
+
+/// The article a grammar tag asks for, as `FUN_020e4968` (`0x020e4968`, EU) chooses it: the
+/// tag's parameters pick one of six builders in the table at `0x020eea00` — singular or
+/// plural, with no article, an indefinite one or a definite one — and the builder reads the
+/// article number from the name's grammar word. `None` means the name stands alone.
+pub fn article_number(record: &NameRecord<'_>, grammar: Grammar) -> Option<u16> {
+    // The builder's index in the table: kind of number × 3 + `1 - article` + `ART_`.
+    let base = match grammar.article {
+        Some(article) => u32::from(grammar.number.unwrap_or(0)) * 3 + (1 - u32::from(article)),
+        None => u32::from(grammar.number.unwrap_or(0)) * 3,
+    };
+    let word = record.grammar;
+    match base + u32::from(grammar.with_article.unwrap_or(0)) {
+        1 => Some((100 + (word & 0x3f)) as u16),
+        2 => Some(((word >> 12) & 0x3f) as u16),
+        4 => Some((300 + ((word >> 6) & 0x3f)) as u16),
+        5 => Some((200 + ((word >> 18) & 0x3f)) as u16),
+        _ => None,
+    }
+}
+
+/// The German declension tables the engine keeps in the ARM9, used by `FUN_020e4968` and by
+/// its second pass `FUN_020e4864` (`0x020e4874`, EU). German names and articles are templates
+/// with case tags — `Schleim[gs]`, `[defm]` — that these tables expand (`s`, `der`, …).
+/// The tables are read from the ARM9, so no game text is copied here; addresses and layout in
+/// `docs/re/battle-text.md`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Declension {
+    /// `0x020eea60`: seven 12-byte entries — four case bytes, a name pointer, a length byte.
+    article_tags: Vec<(Vec<u8>, [u8; 4])>,
+    /// `0x020eea18`: twelve six-byte words, `der` to `einer`.
+    article_words: Vec<Vec<u8>>,
+    /// `0x020f2d2c`: thirteen 11-byte NUL-terminated tags, `g'` to `dn`.
+    suffix_tags: Vec<(Vec<u8>, [u8; 8])>,
+    /// `0x020ee9e8`: eight three-byte words, the empty one to `r`.
+    suffix_words: Vec<Vec<u8>>,
+}
+
+/// `0x020ee9e8`: eight three-byte suffix words.
+const DECLENSION_SUFFIX_WORDS: u32 = 0x020e_e9e8;
+/// `0x020eea18`: twelve six-byte article words.
+const DECLENSION_ARTICLE_WORDS: u32 = 0x020e_ea18;
+/// `0x020eea60`: seven 12-byte article tags, then a `0xffffffff` entry.
+const DECLENSION_ARTICLE_TAGS: u32 = 0x020e_ea60;
+/// `0x020eeac0`: thirteen 8-byte variant rows, two bytes per case (definite, indefinite).
+const DECLENSION_SUFFIX_VARIANTS: u32 = 0x020e_eac0;
+/// `0x020f2d2c`: thirteen 11-byte suffix tags, then an empty one.
+const DECLENSION_SUFFIX_TAGS: u32 = 0x020f_2d2c;
+
+impl Declension {
+    /// Reads the five tables from the ARM9, which is loaded at `load_addr`.
+    ///
+    /// # Errors
+    /// [`Error::Malformed`] when the ARM9 is shorter than the tables its addresses name.
+    pub fn from_arm9(arm9: &[u8], load_addr: u32) -> Result<Self> {
+        let at = |address: u32, len: usize| -> Result<&[u8]> {
+            let offset = address.checked_sub(load_addr).ok_or(Error::Malformed(
+                "declension table below the ARM9 load address",
+            ))?;
+            arm9.get(offset as usize..offset as usize + len)
+                .ok_or(Error::Malformed("ARM9 shorter than the declension tables"))
+        };
+        let mut article_tags = Vec::new();
+        for i in 0..7 {
+            let entry = at(DECLENSION_ARTICLE_TAGS + i * 12, 12)?;
+            let variants: [u8; 4] = entry[..4].try_into().unwrap();
+            if variants == [0xff; 4] {
+                break;
+            }
+            let name = at(u32_at(entry, 4)?, usize::from(entry[8]))?.to_vec();
+            article_tags.push((name, variants));
+        }
+        let mut article_words = Vec::new();
+        for i in 0..12 {
+            let word = at(DECLENSION_ARTICLE_WORDS + i * 6, 6)?;
+            article_words.push(word[..word.iter().position(|&b| b == 0).unwrap_or(6)].to_vec());
+        }
+        let mut suffix_tags = Vec::new();
+        for i in 0..13 {
+            let entry = at(DECLENSION_SUFFIX_TAGS + i * 11, 11)?;
+            if entry[0] == 0 {
+                break;
+            }
+            let name = entry[..entry.iter().position(|&b| b == 0).unwrap_or(11)].to_vec();
+            let variants: [u8; 8] = at(DECLENSION_SUFFIX_VARIANTS + i * 8, 8)?
+                .try_into()
+                .unwrap();
+            suffix_tags.push((name, variants));
+        }
+        let mut suffix_words = Vec::new();
+        for i in 0..8 {
+            let word = at(DECLENSION_SUFFIX_WORDS + i * 3, 3)?;
+            suffix_words.push(word[..word.iter().position(|&b| b == 0).unwrap_or(3)].to_vec());
+        }
+        Ok(Self {
+            article_tags,
+            article_words,
+            suffix_tags,
+            suffix_words,
+        })
+    }
+
+    /// `FUN_020e4968`'s first bracket loop: an article tag (`[defm]`, `[defn]`, …) becomes the
+    /// article word of `case` (0 NOM, 1 GEN, 2 DAT, 3 ACC), then a space unless the text
+    /// already has one.
+    fn expand_article_tags(&self, text: &[u8], case: u8) -> Vec<u8> {
+        let mut out = Vec::with_capacity(text.len());
+        let mut i = 0;
+        while i < text.len() {
+            if text[i] == b'['
+                && let Some((name, variants)) = self
+                    .article_tags
+                    .iter()
+                    .find(|(name, _)| text[i + 1..].starts_with(name))
+            {
+                if let Some(word) = self
+                    .article_words
+                    .get(usize::from(variants[usize::from(case.min(3))]))
+                {
+                    out.extend_from_slice(word);
+                }
+                i += 1 + name.len();
+                if text.get(i) != Some(&b' ') {
+                    out.push(b' ');
+                }
+                continue;
+            }
+            out.push(text[i]);
+            i += 1;
+        }
+        out
+    }
+
+    /// `FUN_020e4864`: a suffix tag (`[gs]`, `[dn]`, `[adjf]`, …) becomes the ending of
+    /// `case`; the article kind (0 definite, 1 indefinite or none) picks between the two
+    /// bytes of a case.
+    fn expand_suffixes(&self, text: &[u8], article: u8, case: u8) -> Vec<u8> {
+        let mut out = Vec::with_capacity(text.len());
+        let mut i = 0;
+        while i < text.len() {
+            if text[i] == b'['
+                && let Some((name, variants)) = self
+                    .suffix_tags
+                    .iter()
+                    .find(|(name, _)| text[i + 1..].starts_with(name))
+            {
+                let slot = usize::from(case.min(3)) * 2 + usize::from(article);
+                if let Some(word) = self.suffix_words.get(usize::from(variants[slot])) {
+                    out.extend_from_slice(word);
+                }
+                i += 1 + name.len();
+                continue;
+            }
+            out.push(text[i]);
+            i += 1;
+        }
+        out
+    }
+}
+
+/// The name an `Inflected` tag asks for, built like `FUN_020e4968` (`0x020e4968`): the
+/// article the tag and the grammar word choose, then the singular or the plural. `article`
+/// supplies `article_<lang>.nat`; `declension` is German's case tables and `None` elsewhere —
+/// a case tag without them leaves the templates alone, as the game does outside German.
+pub fn inflect<'a>(
+    record: &NameRecord<'_>,
+    grammar: Grammar,
+    article: impl FnOnce(u16) -> Option<&'a [u8]>,
+    declension: Option<&Declension>,
+) -> Vec<u8> {
+    let name = if grammar.number == Some(1) {
+        record.plural
+    } else {
+        record.singular
+    };
+    let mut out = Vec::with_capacity(name.len() + 8);
+    if let Some(text) = article_number(record, grammar).and_then(article)
+        && !text.is_empty()
+    {
+        out.extend_from_slice(text);
+        // `func_020e462c`: a space follows, unless the article ends with the apostrophe
+        // glyph `<1>` (French `l'`, Italian `l'`).
+        if text.len() < 4 || !text.ends_with(b"<1>") {
+            out.push(b' ');
+        }
+    }
+    out.extend_from_slice(name);
+    if let Some(declension) = declension {
+        let case = grammar.case.unwrap_or(0);
+        let article = u8::from(grammar.article != Some(0));
+        out = declension.expand_article_tags(&out, case);
+        out = declension.expand_suffixes(&out, article, case);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -764,6 +993,161 @@ mod tests {
         data.extend(16u32.to_le_bytes());
         data.push(0);
         (info, data)
+    }
+
+    fn slime() -> NameRecord<'static> {
+        NameRecord {
+            singular: b"slime",
+            plural: b"slimes",
+            grammar: 0x0204_1041,
+        }
+    }
+
+    fn article(number: u16) -> Option<&'static [u8]> {
+        match number {
+            0 => Some(b""),
+            1 => Some(b"the"),
+            101 => Some(b"a"),
+            201 => Some(b"the"),
+            301 => Some(b"some"),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn grammar_tags_pick_the_article_number_of_the_grammar_word() {
+        let record = slime();
+        let definite = Grammar {
+            article: Some(0),
+            with_article: Some(1),
+            number: None,
+            case: None,
+        };
+        let indefinite = Grammar {
+            article: Some(1),
+            ..definite
+        };
+        assert_eq!(article_number(&record, definite), Some(1));
+        assert_eq!(article_number(&record, indefinite), Some(101));
+        assert_eq!(
+            article_number(
+                &record,
+                Grammar {
+                    number: Some(0),
+                    ..definite
+                }
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            article_number(
+                &record,
+                Grammar {
+                    number: Some(1),
+                    ..definite
+                }
+            ),
+            Some(201)
+        );
+        assert_eq!(
+            article_number(
+                &record,
+                Grammar {
+                    number: Some(1),
+                    ..indefinite
+                }
+            ),
+            Some(301)
+        );
+        assert_eq!(article_number(&record, Grammar::default()), None);
+        assert_eq!(
+            article_number(
+                &record,
+                Grammar {
+                    number: Some(1),
+                    ..Grammar::default()
+                }
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn inflect_composes_article_and_number() {
+        let record = slime();
+        let definite = Grammar {
+            article: Some(0),
+            with_article: Some(1),
+            number: None,
+            case: None,
+        };
+        let plural = Grammar {
+            number: Some(1),
+            ..definite
+        };
+        assert_eq!(
+            inflect(&record, definite, article, None),
+            b"the slime".to_vec()
+        );
+        assert_eq!(
+            inflect(&record, plural, article, None),
+            b"the slimes".to_vec()
+        );
+        assert_eq!(
+            inflect(&record, Grammar::default(), article, None),
+            b"slime"
+        );
+        assert_eq!(
+            inflect(
+                &record,
+                Grammar {
+                    number: Some(1),
+                    ..Grammar::default()
+                },
+                article,
+                None
+            ),
+            b"slimes"
+        );
+        // An empty article prints neither the article nor a space.
+        let no_article = Grammar {
+            article: Some(0),
+            with_article: Some(1),
+            number: None,
+            case: None,
+        };
+        assert_eq!(
+            inflect(&record, no_article, |_| Some(&b""[..]), None),
+            b"slime"
+        );
+    }
+
+    #[test]
+    fn an_apostrophe_article_takes_no_space() {
+        let record = NameRecord {
+            singular: b"eau",
+            plural: b"eaux",
+            grammar: 1 << 12,
+        };
+        let definite = Grammar {
+            article: Some(0),
+            with_article: Some(1),
+            number: None,
+            case: None,
+        };
+        assert_eq!(
+            inflect(&record, definite, |_| Some(&b"l<1>"[..]), None),
+            b"l<1>eau"
+        );
+        assert_eq!(
+            inflect(&record, definite, |_| Some(&b"le"[..]), None),
+            b"le eau"
+        );
+    }
+
+    #[test]
+    fn a_short_arm9_is_not_a_declension() {
+        assert!(Declension::from_arm9(&[], 0x0200_0000).is_err());
     }
 
     #[test]

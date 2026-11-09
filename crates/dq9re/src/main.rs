@@ -1,6 +1,7 @@
 //! `dq9re`: command-line tooling for reverse engineering the Dragon Quest IX ROM.
 
 mod battle;
+mod battle_text;
 mod cast;
 mod coverage;
 mod doors;
@@ -155,6 +156,9 @@ enum Command {
         /// The action's number (`1` is the plain attack).
         number: u16,
     },
+    /// One battle message as the message window draws it: articles, plurals, genders and
+    /// numbers resolved from the name records and `article.gp2`.
+    BattleText(battle_text::BattleTextArgs),
     /// A map's encounter zones, roamers with their field data, and the company of each zone
     /// (`encfld.bin`, `encbtl.bin`, `fld_mondata.bin`).
     Encounters {
@@ -445,6 +449,7 @@ fn main() -> Result<()> {
         Command::Triggers(args) => triggers::run(&rom, &args),
         Command::Monster(args) => battle::run_monster(&rom, &args),
         Command::Action { number } => battle::run_action(&rom, number),
+        Command::BattleText(args) => battle_text::run(&rom, &args),
         Command::Encounters { map } => battle::run_encounters(&rom, &map),
         Command::StageEvents { stage } => triggers::stage_events(&rom, &stage),
         Command::Narc {
