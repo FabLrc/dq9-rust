@@ -3,7 +3,7 @@
 Rewritten by the coordinator at each integration; do not add a log here.
 Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 9, 2026 (`main` at `6b5223f`, wave v2-1 partly integrated)
+## Status as of November 9, 2026 (`main` at `c28d318`, v0.2 waves v2-1 integrated, v2-2 active)
 
 - **v0.1 functional natively**: `cargo run -p dq9-app --release -- --new-game` plays
   the opening, the Observatory prologue, the physical return to Angel Falls (1100) and the
@@ -40,20 +40,26 @@ Integrated (wave v2-1, all `verify.ps1 -RequireRom` green):
 - `j4-battle-kernel` (Sonnet, `6b5223f`): `dq9_core::battle` resolves one action; 306 action
   and 2400 primitive vectors equal to BattleEmulator / the decompilation; Woosh critical
   deviation where BattleEmulator truncates early (`re/battle.md`).
+- `v2-ch2-cutscenes` (Sonnet, `a48ff86`): `--events-report 2.1-1` 47 complete, 3 partial
+  (was 8 complete). The report now plays each scene at its own story point; cast mode 10 is
+  the party guest (Ivor, `attnpc.gp2`, actions `0xcd`/`0xcc`); natives 102/103 (screen
+  cover), 540, 223, 577 drawn; 509, 550, 556, 571 documented without rendered effect.
+  Open in range: 417 (2700+22593), placements (0, 28)/(0, 30) of 2535+22510; prologue report
+  and `M01` capture unchanged.
 
 Active (one Cargo target each, run `run_5fc3a0162f54`):
 
 | Batch | Model | Owns (shared files) |
 |---|---|---|
-| `v2-ch2-cutscenes` | Sonnet (native RE) | `dq9-app` `app.rs`, `event.rs` + `event/**`, `dq9-render/**`, `re/symbols.txt` |
 | `j4-battle-flow` | Sonnet (state machine design) | `dq9-core/src/battle/**` |
 | `j4-roaming` | Sonnet (open RE, challenger on zone/spawn) | `dq9-core/src/encounter*`, `lib.rs` |
 | `j4-party-progress` | Flash | `dq9-core/src/party*` |
 | `j4-battle-text` | Flash | `dq9-formats` `battle/text*`, `message.rs`, `dq9re/src/main.rs` |
+| `j4-battle-scene` | Flash | `dq9-app` (`app.rs`, `event*`, `battle*`), `dq9-render/**` |
 
-Next wave (needs `app.rs`/`dq9-render` free): battle scene and windows, roaming monsters on
-screen, `j4-battle-actions` (statuses and damage handlers of the chapter 2 monsters), stand-in
-removal.
+Next: `j4-battle-actions` (statuses and damage handlers of the chapter 2 monsters, after the
+flow), battle windows and messages, roaming monsters on screen, stand-in removal, field menu
+and facilities.
 
 ## Blockers and next steps
 

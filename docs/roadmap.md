@@ -429,8 +429,9 @@ Progress:
       restore (`j4-party-state`, `re/party.md`).
 - [x] Battle rules kernel: generators and the resolution of one action, identical to
       BattleEmulator on 306 vectors (`j4-battle-kernel`, `re/battle.md`).
-- [ ] Chapter 2 cutscenes: the 15 natives, `--events-report 2.1` with no visible gap up to 2750
-      (`v2-ch2-cutscenes`).
+- [ ] Chapter 2 cutscenes: `--events-report 2.1-1` 47 complete, 3 partial (`v2-ch2-cutscenes`,
+      `a48ff86`). Open in range: native 417 (2700+22593), placements (0, 28)/(0, 30) of
+      2535+22510 that no map of area 7100 holds; 547 goes to the battle scene.
 - [ ] Battle flow: turns, commands, monster ways, statuses, end of battle and level-up.
 - [ ] Battle scene: stage, fighters, camera, transition; then windows, menus and messages.
 - [ ] Roaming monsters and encounters on `F01`, `S01M01`, `D01`.
