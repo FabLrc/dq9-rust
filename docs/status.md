@@ -3,7 +3,7 @@
 Rewritten by the coordinator at each integration; do not add a log here.
 Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 8, 2026 (`main` after the 0x8d cast rebuild)
+## Status as of November 9, 2026 (`main` after the r1 refactoring wave)
 
 - **v0.1 functional natively**: `cargo run -p dq9-app --release -- --new-game` plays
   the opening, the Observatory prologue, the physical return to Angel Falls (1100) and the
@@ -19,17 +19,20 @@ Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`]
   byte for byte up to `M01M08`.
 - **Cadence**: fixed 60 Hz loop; hero, `Field::step` and model pose at 30 Hz
   (odd frames, `Hero::step(ticks = 2)`, `7db7f41`, test
-  `field_cadence_holds_the_pose_and_matches_the_original_every_vblank`).
+  `field_cadence_holds_the_pose_and_matches_the_original_every_vblank` in `app/tests.rs`).
 - **Measured parity**: first player control and free checkpoint 1.1.2 identical to
   the original except `4135`, random loot from battle 26 (accepted deviation, `re/item.md`).
 - **Browser** (Pages, build `21e1e42`): opening, first player control, 1140, 1130 and raised
   hall; no continuous session up to 4107, the tower or Angel Falls (`app.md`,
   § Verification).
 
-## Active batches
+## Last wave: r1 refactoring (`efa8bec`..`eb70d4f`), no active batch
 
-None. Only `main` remains, locally and on `origin`: integrated branches have been
-deleted, `v01-init-flags` after carrying over `Party_FlagEquippedItems` (`re/item.md`).
+14 behaviour-preserving batches (13 Flash, `r1-trigger-field` on Sonnet, no Opus): large
+modules split (`app.rs` 3187→1576 lines, `event.rs` 2360→1143, `cutscene.rs` 2110→1030,
+`trigger`, `talk`, `sdat`, `melonds`, `player`, `auto`, dq9re map), duplicates merged, dead
+`Renderer` methods and per-frame allocations removed; every batch passed `verify.ps1 -RequireRom`,
+parity 2/2, M01 capture identical, coverage unchanged (fixes: `orchestration/README.md`).
 
 ## Blockers and next steps
 
@@ -50,14 +53,7 @@ deleted, `v01-init-flags` after carrying over `Party_FlagEquippedItems` (`re/ite
    (monsters, objects: **[unknown]**); `TestFlags00(0x1000)` assumed zero. No original state
    at 4104 in 1.2 yet confirms NPC 99 without a map change.
 
-## Evidence
+## Evidence and comparison
 
-Local, never committed. New batches: `build/evidence/<batch>/manifest.json`
-(`scripts/evidence.ps1`). Old roots: `build/v01-20261107/` and `build/orca/`;
-the `docs/re/*.md` notes and `app.md` cite paths and hashes.
-
-## Comparison with the original
-
-`scripts/parity.ps1` replays the references (`build/evidence/parity/references.json`) on
-the headless runtime; accepted deviations are listed in the reference with their justification.
-`scripts/compare-runs.ps1` and `dq9re state diff/watch` are used for diagnosis.
+Local evidence: `build/evidence/<batch>/manifest.json` (`scripts/evidence.ps1`). Parity:
+`scripts/parity.ps1`; diagnosis: `scripts/compare-runs.ps1`, `dq9re state diff/watch`.
