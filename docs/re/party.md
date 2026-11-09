@@ -96,6 +96,76 @@ at the current vocation and level. It also fills a new-game hero's maxima and cu
 (the character has none yet); a restored character keeps the record's maxima, which include
 seeds and equipment exactly as the load writes them.
 
+## Battle numbers of a member
+
+`Character::fighter` (`crates/dq9-core/src/party.rs`) turns a member into the battle
+kernel's `Fighter`. The level table's attributes are the base; the worn equipment adds
+the item stats table's fields (`item.md`, § "The stats table"), summed over the eight
+places by the same loop `func_02083e28` makes (EU `0x02083e38`, USA `0x02083e28`):
+
+- attack = strength + item attack, defence = resilience + item defence;
+- deftness, agility and magical might + their item fields; magical mending has no
+  established item field and stays the level table's value;
+- evasion = `GetEvasionRate`'s `2.0` (`ov_000::02156270`) + the item evasion fields over
+  `10.0` (`func_02084f68`, EU `0x02084f68`, USA `0x02084f58`); block = the block fields
+  over `10.0` (`func_02084ef8`, EU `0x02084ef8`, USA `0x02084ee8`), zero with no shield
+  (`ov_000::02156118`); the critical bonus = the critical fields over `10.0`
+  (`func_02084e78`, EU `0x02084e88`, USA `0x02084e78`);
+- resistances start at 100 and add, for each worn item, the twenty signed bytes of its
+  `itembtlprm.nat` record on elements 1–7 and 9–21 (`func_02083e28`); element 8 is the
+  plain Attack's and stays 100; a negative sum is held at 0;
+- the weapon's element is the `itembtlprm` flags' bits 23–25 (0 = none);
+- current and maximum HP/MP are the member's (`Save_UnpackMain`/`func_02082d7c`).
+
+The base `stats` must have been filled by `apply_level_tables` first: a restored save's
+record only carries the stat block, which the model does not fold into `stats`. A field
+the game takes from a skill panel or a trait (the book's critical bonus, trait `0x11d`,
+the accuracy die, a multi-strike weapon) stays at the kernel's neutral value.
+
+Evidence: `pro1.ml1`'s hero is level 1 Minstrel, strength 9, with the copper sword
+(20004, attack 7 in stats entry 0) — the fighter's attack is 16; the armour 13007's
+defence is 2. **[hypothesis]**: the attack and defence fields as named come from the
+wiki and the item descriptions, not from a battle state; the rate fields are read in
+`func_02084ef8`/`f68`/`e78`.
+
+## A won battle's award
+
+`Party::award` follows the victory routine (`func_ov023_021edf54`) and its helpers:
+
+1. **Experience is shared** by `func_ov023_021f4098`, per member:
+   `ceil(total × (k + level) × rounds / Σ (k + level) × rounds)`. A member who is down
+   (`func_02061bd8`) receives and weighs nothing. The `rounds` factor is the same for
+   every member and cancels in the share. `k` is the band of `expadj.nat`
+   (`func_ov023_021f5534`): 4 up to 10,000 experience, 3 up to 20,000, 2 beyond; the
+   European file has no second block. The total is first multiplied by
+   `1 + (n − 1) ÷ 10` for `n` connected players (1 alone, so no change here).
+   **Not modelled:** the `× 1.05` for a member wearing an item with `itembtlprm` flag bit
+   16 (`func_0208538c`) — the award carries no equipment table; and the multiplayer path.
+2. The share is added to the **current vocation's** experience (`func_ov023_021f5150`),
+   never to the other twelve (`GetExperience`, `ov_023::021eea98`).
+3. **Level-up** is the field's result window (`func_ov023_021f0a5c`): it loads
+   `level<vocation>.bin`, parses rows with `func_020824a0` (`func_02082064` per record),
+   and takes a level when the next row's column 0 is not above the total
+   (`func_020824a0` returns the new level; `func_ov023_021f0a5c` compares the row's
+   experience). Every level crossed at once is taken.
+   `func_02083ccc` writes the new row's attributes and maxima into the member, then
+   `func_02083e28` adds seeds and equipment again; HP and MP are **not** healed. Skill
+   points receive column 10's difference, the pool held at **2,600** (`iRam021f1224`,
+   `0xA28`). The row's experience column 0 is the wiki's **[INFERRED]** experience
+   threshold.
+4. **Gold is added whole** and held at **9,999,999** (`func_ov023_021f5150`'s literal;
+   `func_0207d2c4`, EU `0x0207d2d4`, has the same cap).
+5. **Drops** take `func_0207c378`'s rule (EU `0x0207c388`): add to the first stack of the
+   item, clamped to **99**, else to the first empty slot; a full bag loses the copy. The
+   drop rolls themselves are the C library `rand` (`re/battle-data.md`, § "A monster's
+   drops") and are not this batch's: they are passed in already rolled.
+
+**Check:** `bat6.ml1` after battle 26 is experience 7 in the Minstrel (still level 1,
+level 2 needs more), gold 13 and one copy of item 22087 in the bag. A new-game hero
+awarded 7/13/`[22087]` reproduces exactly that record; `pro1.ml1` + those three values
+is `bat6.ml1` (`docs/re/party.md` oracle section). The synthetic 1→3 test pins the row
+changes, the skill-point difference, the maxima and the unhealed HP/MP.
+
 ## The bag (`Main+0x1d5c`, 0x1D4 bytes)
 
 Not typed by `save.rs`; decoded by `Party`/`Bag`:

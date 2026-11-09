@@ -30,7 +30,7 @@ A record:
 
 | offset | type | meaning |
 |---:|---|---|
-| `+0x00` | `u32` | use actions (wiki: two `u16`, 252 = none) |
+| `+0x00` | `u32` | **stats-table index** (`0..count−1`, each used once; `0xffffffff` on the tools, which have no stats table) |
 | `+0x08` | `u32` | category (low nibble = equipment class) |
 | `+0x0c` | `u32` | bits 12–22: **compendium index**; low nibble: sort position |
 | `+0x18` | `s16` | **item id** (`func_020de56c`, `0x020de57c`) |
@@ -38,6 +38,36 @@ A record:
 The compendium index is the one read by `func_0207cc18` (`0x0207cc28`):
 `(record[0xc] & 0x7fffff) >> 0xc`. It is 0 for items with no compendium entry
 (some of the tools): the game then sets no flag.
+
+### The stats table
+
+An equipment member continues after its records with **one 32-byte stats entry per
+record**, indexed by the record's `+0x00` word. Measured on the European tables: 268
+weapons, 183 armour and 52 accessories, the indexes dense and unique; the stats table
+ends where the names block starts (weapons `+0x430c`, armour `+0x2dcc`, accessories
+`+0xd0c`). The tools' records hold `0xffffffff` and the member has no stats table.
+`dq9_formats::item::ItemStats` reads it (`add_member`, `get`).
+
+Three words hold the battle numbers `func_02083e28` adds to the level table's
+attributes, three signed 10-bit fields each:
+
+| word | bits 0–9 | bits 10–19 | bits 20–29 |
+|---|---|---|---|
+| `+0x08` | **attack** | **defence** | not established |
+| `+0x0c` | **block** | **evasion** | **critical** |
+| `+0x10` | **deftness** | **agility** | **magical might** |
+
+The rates are **in tenths of a hundredth**: `func_02084ef8` (block), `func_02084f68`
+(evasion) and `func_02084e78` (critical) sum the three fields over the worn places and
+divide by the `10.0` at `0x02084f64`/`0x02084ef4`. `GetEvasionRate`
+(`ov_000::02156270`) adds `2.0`; `GetBlockRate` (`ov_000::02156118`) is zero without a
+shield. Evidence beyond the code: the copper sword (20004) entry 0 is attack 7; the
+strength ring 4, raging ruby 9 and soldier's medal 20 are their attack; the gold ring 2
+and dragon scale 5 their defence; the critical acclaim's third rate field is 40; the
+agility ring 20, meteorite bracer 100, utility belt 25 deftness, brainy bracer 8 and
+sorcerer's ring 15 magical might. Attack, defence, deftness, agility and might are
+INFERRED from those descriptions and the guide; the three rate fields are read in the
+code. No established field carries magical mending.
 
 ## "Item obtained" flag
 
