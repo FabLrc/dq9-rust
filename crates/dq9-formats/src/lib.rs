@@ -3,6 +3,7 @@
 //! Like `nds-rom`, everything works on borrowed bytes with no I/O and returns
 //! [`nds_rom::Error`] on malformed input. Format notes live in `docs/re/`.
 
+pub mod battle;
 pub mod bgm;
 pub mod cast;
 pub mod chr;

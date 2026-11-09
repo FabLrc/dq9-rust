@@ -1,5 +1,6 @@
 //! `dq9re`: command-line tooling for reverse engineering the Dragon Quest IX ROM.
 
+mod battle;
 mod cast;
 mod coverage;
 mod doors;
@@ -146,6 +147,20 @@ enum Command {
     /// List the rules of a scenario trigger file, filtered by event type, room, story point or
     /// a number they mention (what an event or a battle chains to).
     Triggers(triggers::TriggersArgs),
+    /// One monster's battle data (`mon_btldata.nat`), names and grammar (`mon_data`), list
+    /// entry (`mon_list`), six ways with their action names, drops and resistances.
+    Monster(battle::MonsterArgs),
+    /// One action's fields (`actdt_a`/`actdt_b`) and its range (`actdamage_*`).
+    Action {
+        /// The action's number (`1` is the plain attack).
+        number: u16,
+    },
+    /// A map's encounter zones, roamers with their field data, and the company of each zone
+    /// (`encfld.bin`, `encbtl.bin`, `fld_mondata.bin`).
+    Encounters {
+        /// Map code (`F01`) or id (`20001`).
+        map: String,
+    },
     /// List the scenes of a story stage (`1.1`, `1.1-3`) with the map each happens on.
     StageEvents { stage: String },
     /// List (and optionally extract) the members of a NARC file in the ROM.
@@ -428,6 +443,9 @@ fn main() -> Result<()> {
             quiet,
         } => script::run(&rom, &target, &lang, quiet),
         Command::Triggers(args) => triggers::run(&rom, &args),
+        Command::Monster(args) => battle::run_monster(&rom, &args),
+        Command::Action { number } => battle::run_action(&rom, number),
+        Command::Encounters { map } => battle::run_encounters(&rom, &map),
         Command::StageEvents { stage } => triggers::stage_events(&rom, &stage),
         Command::Narc {
             path,
