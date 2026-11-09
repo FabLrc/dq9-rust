@@ -442,7 +442,7 @@ impl CollisionWorld {
     /// `Zone3D_GroundHeight` (`0x02018fcc`): the height a character at `position` stands at —
     /// the highest floor found by a ray from one unit above to ten below, plus
     /// [`STAND_HEIGHT`]; the last piece with a floor wins, as in the game. The floor's height
-    /// is taken in the piece's frame, without its position **[hypothèse]** (the pieces of
+    /// is taken in the piece's frame, without its position **[hypothesis]** (the pieces of
     /// ground have no height offset).
     pub fn ground(&self, position: Fx3) -> Option<i32> {
         let hi = [
@@ -720,7 +720,7 @@ impl CollisionWorld {
 /// `2π - angle` as the game feeds its sine/cosine routines, whose result truncates to `fx32`
 /// (`ov_017::02192b48`): the rotation matrix `MTX_RotY33_(sin, cos)` that takes a world
 /// offset into the frame of a piece turned by `angle`. The argument is `0x6487 - angle`, one
-/// unit short of a turn **[hypothèse]**: the SDK routines are evaluated in floating point
+/// unit short of a turn **[hypothesis]**: the SDK routines are evaluated in floating point
 /// here.
 fn rotation_y(angle: i32) -> [i32; 9] {
     let argument = f64::from(0x6487 - angle) / 4096.0;

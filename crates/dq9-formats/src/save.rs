@@ -657,7 +657,7 @@ impl<'a> Character<'a> {
     }
 
     /// Face as an item id (`+356`, 9020..=9033: slot h2 of `CharaParts_GetPartNumbers`,
-    /// `docs/re/characters.md` § « Le héros »).
+    /// `docs/re/characters.md` § "The hero").
     pub fn face_item(&self) -> u16 {
         u16_at(self.0, 356)
     }

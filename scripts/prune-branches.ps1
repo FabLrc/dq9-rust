@@ -3,7 +3,7 @@
 # Groups:
 #   merged      reachable from main (`git branch --merged main`)
 #   equivalent  not merged, but every commit has a patch-identical one in main
-#               (`git cherry main <b>` prints no `+` line): typically squash-merged lots
+#               (`git cherry main <b>` prints no `+` line): typically squash-merged batches
 #   unique      at least one commit absent from main (`+` in `git cherry`): never deleted
 # main, the current branch and any branch checked out in a worktree are skipped.
 #

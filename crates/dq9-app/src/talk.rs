@@ -5,7 +5,7 @@
 //! Layout numbers come from `MessageShow` (`0x0204501c`): window rectangle `(2, 0x74, 0xfc,
 //! 0x4a)`, three lines of 20 pixels, name plate `advance + 26 - (advance & 7)` wide and 22 high.
 //! The margins of the text, the plate and prompt positions, the fill colour and the wait arrow
-//! are **[hypothèses]** (`docs/re/dialogue.md`, § « Fenêtre »).
+//! are **[hypotheses]** (`docs/re/dialogue.md`, § "Message window").
 
 use anyhow::{Context as _, Result, bail};
 use dq9_core::Hero;
@@ -37,15 +37,15 @@ fn archive_path(map_code: &str, chapter: u8) -> Result<String> {
 
 /// The message window on the 256×192 screen (`func_02042b98(win, 2, 0x74, 0xfc, 0x4a)`).
 const WINDOW: [i32; 4] = [2, 0x74, 0xfc, 0x4a];
-/// Where the text starts, from the window's corner **[hypothèse]** (the game's text origin is
+/// Where the text starts, from the window's corner **[hypothesis]** (the game's text origin is
 /// `(2, 0x7e)` in its own text layer).
 const TEXT_MARGIN: [i32; 2] = [12, 10];
 /// Pixels between the lines (`+0x1864 = 0x14`).
 const LINE_HEIGHT: i32 = 20;
-/// Width the text wraps at **[hypothèse]**.
+/// Width the text wraps at **[hypothesis]**.
 const TEXT_WIDTH: i32 = 228;
 const NAME_HEIGHT: i32 = 22;
-/// Window fill **[hypothèse]**.
+/// Window fill **[hypothesis]**.
 const FILL: [f32; 4] = [0.02, 0.03, 0.22, 0.9];
 const SELECTED: [f32; 4] = [0.25, 0.35, 0.8, 0.95];
 
@@ -98,7 +98,7 @@ impl Assets {
         let border: [Image; 8] = border
             .try_into()
             .map_err(|_| anyhow::anyhow!("eight window pieces"))?;
-        // The big arrow of `arrow2.spr` as the wait arrow **[hypothèse]**.
+        // The big arrow of `arrow2.spr` as the wait arrow **[hypothesis]**.
         let arrow = sprite_image(&rom, "data/ani/arrow2.spr")?;
         let label = |text: &str| {
             let (glyphs, advance) = font.layout(text.as_bytes());

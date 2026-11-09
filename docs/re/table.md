@@ -1,62 +1,62 @@
-# Tables d'enregistrements Level-5 (`.bin`, `.bmmp`, `.bcfg`)
+# Level-5 record tables (`.bin`, `.bmmp`, `.bcfg`)
 
-Implémentation : `crates/dq9-formats/src/table.rs`. Outils : `cargo dq9re table <archive.gp2>
-<membre>` (affiche les enregistrements), `cargo dq9re text --lang en` (tous les textes).
+Implementation: `crates/dq9-formats/src/table.rs`. Tools: `cargo dq9re table <archive.gp2>
+<member>` (prints the records), `cargo dq9re text --lang en` (all texts).
 
-Format générique de la majorité des données du jeu : dialogues (`scenario/*/NNN_xx.bin`),
-menus (`bin/menu`), paramètres, cartes (`map/*.bin`, flottants de positions), etc.
-Le nom du format est inconnu **[hypothèse : ancêtre du « cfg.bin » des jeux Level-5 3DS]**.
-Lecteur du jeu : `Tbl_*` (`0x02030644`–`0x02030b8c`), décrit dans `dialogue.md`.
+Generic format of most game data: dialogue (`scenario/*/NNN_xx.bin`),
+menus (`bin/menu`), parameters, maps (`map/*.bin`, position floats), etc.
+The format name is unknown **[hypothesis: ancestor of the "cfg.bin" of Level-5 3DS games]**.
+Game reader: `Tbl_*` (`0x02030644`–`0x02030b8c`), described in `dialogue.md`.
 
-## Preuves
+## Evidence
 
-Hypothèse construite sur `scenario/M02M0/018_en.bin`, puis vérifiée sur toutes les données
-(test `record_tables_parse` de `crates/dq9-formats/tests/real_rom.rs`) :
+Hypothesis built on `scenario/M02M0/018_en.bin`, then checked on all data
+(test `record_tables_parse` in `crates/dq9-formats/tests/real_rom.rs`):
 
-- 47 386 membres de GPC2 se lisent sans erreur : 47 075 `.bin` (sur 47 227), les 283 `.bmmp`
-  et les 28 `.bcfg`. Les 152 `.bin` restants ont d'autres formats (ex.
+- 47,386 GPC2 members parse without error: 47,075 `.bin` (of 47,227), all 283 `.bmmp`
+  and the 28 `.bcfg`. The remaining 152 `.bin` have other formats (e.g.
   `pack_lv5/minimap/shipMPos.bin`).
-- Chaque décalage de chaîne pointe sur un début de chaîne, et le mot 3 de l'en-tête est
-  exactement le nombre de chaînes distinctes référencées.
-- Les valeurs de type 2 sont des flottants plausibles (`map/loola/*.bin` : `-67.27`, `0.17`…).
+- Every string offset points at a string start, and header word 3 is
+  exactly the number of distinct referenced strings.
+- Type 2 values are plausible floats (`map/loola/*.bin`: `-67.27`, `0.17`…).
 
 ## Structure
 
 ```
-0x00 u32 nombre d'enregistrements
-0x04 u32 position du bloc de chaînes
-0x08 u32 taille du bloc de chaînes
-0x0C u32 nombre de chaînes distinctes
-0x10 enregistrements…
-     octets 0xFF jusqu'au bloc de chaînes
-     bloc de chaînes (chaînes terminées par 0), puis bourrage à 16 octets
+0x00 u32 record count
+0x04 u32 string block position
+0x08 u32 string block size
+0x0C u32 distinct string count
+0x10 records…
+     0xFF bytes up to the string block
+     string block (0-terminated strings), then padding to 16 bytes
 ```
 
-Enregistrement :
+Record:
 
 ```
-u16  type (signification propre au fichier)
-u8   n = nombre de champs
-u8[ceil(n/4)] types des champs, 2 bits par champ, bit de poids faible en premier
-     bourrage 0xFF jusqu'à un multiple de 4 octets
-u32[n] valeurs
+u16  type (file-specific meaning)
+u8   n = field count
+u8[ceil(n/4)] field types, 2 bits per field, least significant bit first
+     0xFF padding up to a multiple of 4 bytes
+u32[n] values
 ```
 
-| Type | Valeur |
+| Type | Value |
 |---|---|
-| 0 | chaîne : décalage dans le bloc de chaînes ; `0xFFFFFFFF` = absente |
-| 1 | entier 32 bits |
-| 2 | flottant 32 bits IEEE |
-| 3 | jamais rencontré (rejeté) |
+| 0 | string: offset in the string block; `0xFFFFFFFF` = absent |
+| 1 | 32-bit integer |
+| 2 | 32-bit IEEE float |
+| 3 | never encountered (rejected) |
 
-Exemple (`018_en.bin`, en-tête d'enregistrement `01 00 04 15`) : type 1, 4 champs de types
-`1,1,1,0` → trois entiers puis une chaîne. Avec 5 champs (`02 00 05 55 00 FF FF FF`) les types
-occupent deux octets.
+Example (`018_en.bin`, record header `01 00 04 15`): type 1, 4 fields of types
+`1,1,1,0` → three integers then a string. With 5 fields (`02 00 05 55 00 FF FF FF`) the types
+take two bytes.
 
-Les chaînes sont en ASCII avec balises `<…>` (voir `text.md`) ; quelques chaînes de debug
-sont en Shift-JIS (`bin/presetdt`).
+Strings are ASCII with `<…>` tags (see `text.md`); a few debug strings
+are Shift-JIS (`bin/presetdt`).
 
-## Dialogues (`scenario/<lieu>/NNN_<langue>.bin`)
+## Dialogue (`scenario/<place>/NNN_<lang>.bin`)
 
-Types 1, 2, 4, 5 ; 4 champs `[a, b, emplacement, texte]` ou 5 champs
-`[a, b, nuit, emplacement, texte]`. Sens complet et algorithme de choix : `dialogue.md`.
+Types 1, 2, 4, 5; 4 fields `[a, b, slot, text]` or 5 fields
+`[a, b, night, slot, text]`. Full meaning and selection algorithm: `dialogue.md`.

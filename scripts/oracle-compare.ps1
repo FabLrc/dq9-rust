@@ -11,7 +11,7 @@
 #
 # Exit code 0 only when the map, the current track index, every track's progress and both
 # flag sets, the global flags and (when the runtime provides them) the quests agree.
-# See docs/re/melonds-state.md, § « Oracle différentiel ».
+# See docs/re/melonds-state.md, § "Differential oracle".
 param(
     [Parameter(Mandatory)] [string] $State,
     [string] $Report = '',

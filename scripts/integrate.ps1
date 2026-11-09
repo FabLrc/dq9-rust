@@ -1,7 +1,7 @@
 # Integration gate for a worker branch: checks it, squash-merges it into main, removes its worktree.
 #
 # Usage (from the main checkout, on `main`, clean tree):
-#   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec build/lots/<lot>.md
+#   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec build/batches/<batch>.md
 #   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec <spec> -Apply -Message 'docs: summary'
 #   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec <spec> -Apply -Message '...' -Cleanup
 #   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Cleanup

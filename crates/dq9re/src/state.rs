@@ -27,7 +27,7 @@ pub fn run(
         (Some(path), None) => path,
         (None, Some(ram)) => ram,
         (Some(_), Some(_)) => bail!("pass a savestate or --ram, not both"),
-        (None, None) => bail!("pass a savestate path or --ram FICHIER"),
+        (None, None) => bail!("pass a savestate path or --ram FILE"),
     };
     let bytes = fs::read(file).with_context(|| format!("reading {}", file.display()))?;
     // A positional path may be either container; `--ram` insists on the raw image.

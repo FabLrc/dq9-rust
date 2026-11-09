@@ -1,6 +1,6 @@
 //! The story's flow in the application: a new game, and what chains the scenes that the
 //! event task and the field do not already chain (scripted battles). The mechanisms are the
-//! game's (`dq9_core::scenario`, `docs/re/trigger.md`, § Combats scriptés).
+//! game's (`dq9_core::scenario`, `docs/re/trigger.md`, § Scripted battles).
 
 use dq9_core::scenario::{self, Step};
 use dq9_core::state::GameState;
@@ -79,7 +79,7 @@ impl App {
         self.day = lighting::day_clock(Some(game.clock), self.options.time, self.options.clock);
         self.time = self.day.phase().index();
         // The hero as the conditions read him: alive, level 1 Guardian, in the opening outfit
-        // (0x32/0x52 compare the worn items; the slots of the items are a **[hypothèse]**).
+        // (0x32/0x52 compare the worn items; the slots of the items are a **[hypothesis]**).
         let look = dq9_formats::hero::HeroLook::new_game();
         let mut hero = Member {
             hp: 1,

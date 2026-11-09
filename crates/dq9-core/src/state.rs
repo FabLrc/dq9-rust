@@ -186,7 +186,7 @@ const MAP_VISIT_FLAG_BASE: u16 = 0xa96;
 /// (4100), 2729 for the map id 1949 and 2774 for the `S14` group (6400). The constant 1949
 /// at `0x0201bb84` is a **flag** set by `func_0201b588`, not a map id. Map ids
 /// 20000..=29999 and those outside `99..=9999` take branches of the original that are not
-/// established (`docs/re/trigger.md`, § « Drapeaux globaux posés à l'ouverture »); this
+/// established (`docs/re/trigger.md`, § "Global flags set at the opening"); this
 /// returns `None` for them rather than guessing.
 pub fn map_visit_flag(map: u16) -> Option<u16> {
     (99 < map && map <= 9999).then(|| MAP_VISIT_FLAG_BASE + map / 100)

@@ -1,7 +1,7 @@
 //! Fixed-point arithmetic of the game (`fx32`: 20.12, 4096 = 1.0) as the SDK routines and the
 //! game's own helpers compute it, rounding included: the movement and collision modules rely
 //! on every result matching the hardware divider and square-root unit bit for bit
-//! (`docs/re/movement.md`, « Arithmétique »).
+//! (`docs/re/movement.md`, "Arithmetic").
 //!
 //! port: 0x020c2c04, 0x020c2c14, 0x020c2da0, 0x020c2dd4, 0x020c2e08, 0x020c2e44, 0x020c2ec8,
 //! port: 0x020c2f28, 0x020c3040, 0x020c339c, 0x02030ce8, 0x02030d34, 0x02030e3c

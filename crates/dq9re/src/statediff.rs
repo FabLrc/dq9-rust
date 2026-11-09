@@ -1,5 +1,5 @@
 //! `dq9re state diff`: compare two oracle states, a melonDS savestate (`.ml1`) or a 4 MiB
-//! main-RAM image (`docs/re/melonds-state.md`, § « Différentiel de deux états »).
+//! main-RAM image (`docs/re/melonds-state.md`, § "Diff of two states").
 //!
 //! The game-level fields come first: map and area, current track and story point, hero pose,
 //! the five tracks (progress and both flag sets), global flags and quests. Everything else is

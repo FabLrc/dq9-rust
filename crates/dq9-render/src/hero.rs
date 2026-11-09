@@ -1,6 +1,6 @@
 //! The protagonist's animated model: the worn parts of `chara_pc.gp2` assembled on the shared
 //! 14-bone rig and played with the motions of `mp0200n`/`mp0200ne` (`docs/re/characters.md`
-//! § « Le héros »). The parts are merged into one scene model so the application moves a single
+//! § "The hero"). The parts are merged into one scene model so the application moves a single
 //! instance.
 //!
 //! Body and legs carry the rig: the joint animation poses each of them with the same tracks.
@@ -28,7 +28,7 @@ const MODEL_SCALE: i32 = 0x10a;
 
 /// The speed in world units per second from which the hero runs instead of walking: just under
 /// the game's top speed (`Character_Init` `0x02032e68`, `0x189` per 1/60 s ≈ 5.76 units/s)
-/// **[hypothèse]** : the game itself plays `run` for any movement in the field
+/// **[hypothesis]**: the game itself plays `run` for any movement in the field
 /// (`func_02033dd4` maps state 1 to the `run` animation), `walk` is only used by scripts.
 pub const RUN_SPEED: f32 = 5.0;
 

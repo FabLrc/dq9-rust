@@ -1,81 +1,81 @@
-# Polices
+# Fonts
 
-Implémentation : `crates/dq9-formats/src/font.rs`. Outil : `cargo dq9re font me` (planche de
-glyphes) ou `cargo dq9re font me --text "Caract<'e>ristiques"` (rendu d'une ligne), PNG dans
+Implementation: `crates/dq9-formats/src/font.rs`. Tool: `cargo dq9re font me` (glyph
+sheet) or `cargo dq9re font me --text "Caract<'e>ristiques"` (renders one line), PNG in
 `build/`.
 
-## Comment ça a été trouvé
+## How it was found
 
-1. Le moteur de la boîte de message (`MsgWin_DrawGlyphs`, `0x02066d00`) appelle
-   `Font_Kerning` (`0x020425f4`), qui lit un tableau global de polices.
-2. Ce tableau est rempli par `Font_LoadAll` (`0x02042954`) → `Font_Load` (`0x02042814`), qui
-   charge `data/pack_lv5/fi_%s.bin` et `fd_%s.bin` pour `s7` puis `me`.
-3. La planche décodée (`fd_me.bin`) affiche l'alphabet attendu ; les chaînes du tableau des
-   glyphes (`fi_me.bin`) correspondent exactement aux balises d'accent des textes (`<'e>`,
-   `<^a>`…). Test `fonts_cover_accent_tags` : toutes les balises d'accent utilisées dans les
-   textes des 5 langues sont des glyphes de la police `me`.
+1. The message box engine (`MsgWin_DrawGlyphs`, `0x02066d00`) calls
+   `Font_Kerning` (`0x020425f4`), which reads a global font array.
+2. That array is filled by `Font_LoadAll` (`0x02042954`) → `Font_Load` (`0x02042814`), which
+   loads `data/pack_lv5/fi_%s.bin` and `fd_%s.bin` for `s7` then `me`.
+3. The decoded sheet (`fd_me.bin`) shows the expected alphabet; the strings of the glyph
+   table (`fi_me.bin`) match exactly the accent tags of the texts (`<'e>`,
+   `<^a>`…). Test `fonts_cover_accent_tags`: every accent tag used in the
+   texts of the 5 languages is a glyph of the `me` font.
 
-Les fichiers `pack/font/*.mes` (528) et `pack_lv5/font_lv5.gp2` (`f8.mes`) sont des polices
-partielles de kanji (codes Shift-JIS) héritées de la version japonaise ; elles ne servent pas
-au texte européen **[hypothèse : jamais chargées en version EU]**.
+The files `pack/font/*.mes` (528) and `pack_lv5/font_lv5.gp2` (`f8.mes`) are partial
+kanji fonts (Shift-JIS codes) inherited from the Japanese version; they are not used
+for European text **[hypothesis: never loaded in the EU version]**.
 
-| Police | Index | Fichiers | Glyphes | Paires de crénage | Planche | Largeur des espaces |
+| Font | Index | Files | Glyphs | Kerning pairs | Sheet | Space width |
 |---|---|---|---|---|---|---|
-| `s7` (petite) | 0 | `fi_s7.bin`, `fd_s7.bin` | 245 | 22 | 1312 × 12 | 2 |
+| `s7` (small) | 0 | `fi_s7.bin`, `fd_s7.bin` | 245 | 22 | 1312 × 12 | 2 |
 | `me` (messages) | 1 | `fi_me.bin`, `fd_me.bin` | 242 | 105 | 1600 × 12 | 3 |
 
-La largeur des espaces vient de `g_FontSpaceWidth` (`0x020e7aa4`) dans l'ARM9.
+The space width comes from `g_FontSpaceWidth` (`0x020e7aa4`) in the ARM9.
 
-## `fi_*.bin` : table des glyphes
+## `fi_*.bin`: glyph table
 
 ```
 0x00 "1.1\0"
-0x04 u32 nombre de glyphes
-0x08 u32 nombre de paires de crénage
-0x0C u32 position de la table de crénage
-0x10 u32 position de la table des glyphes
-0x14 u32 position du bloc de chaînes
+0x04 u32 glyph count
+0x08 u32 kerning pair count
+0x0C u32 kerning table position
+0x10 u32 glyph table position
+0x14 u32 string block position
 ```
 
-Les positions sont relatives au début du fichier (le jeu les transforme en pointeurs au
-chargement).
+Positions are relative to the start of the file (the game turns them into pointers on
+load).
 
-Glyphe (8 octets) :
+Glyph (8 bytes):
 
-| Offset | Champ |
+| Offset | Field |
 |---|---|
-| 0 | u32 position de la chaîne remplacée par le glyphe (`A`, `<'e>`, `<1>`, `<heart>`…) |
-| 4 | u8 largeur en pixels |
-| 5 | bits 0-5 : longueur de la chaîne ; bit 6 : voyelle ; bit 7 : minuscule |
-| 6 | u16 colonne de départ dans la planche |
+| 0 | u32 position of the string replaced by the glyph (`A`, `<'e>`, `<1>`, `<heart>`…) |
+| 4 | u8 width in pixels |
+| 5 | bits 0-5: string length; bit 6: vowel; bit 7: lowercase |
+| 6 | u16 start column in the sheet |
 
-Les bits 6 et 7 servent aux règles linguistiques : `<CAP>` met en majuscule le glyphe suivant
-s'il est minuscule ; les conditions `<IF_VOWEL_…>` (élision française, « a »/« an ») testent la
-voyelle **[hypothèse pour ce dernier point : le test passe par `FUN_02067ffc`, pas encore lu]**.
+Bits 6 and 7 serve the language rules: `<CAP>` uppercases the next glyph
+if it is lowercase; the `<IF_VOWEL_…>` conditions (French elision, "a"/"an") test the
+vowel **[hypothesis for this last point: the test goes through `FUN_02067ffc`, not read yet]**.
 
-Crénage (4 octets) : `u8 glyphe gauche, u8 glyphe droit, s8 ajustement, u8 0`.
+Kerning (4 bytes): `u8 left glyph, u8 right glyph, s8 adjustment, u8 0`.
 
-## `fd_*.bin` : planche de glyphes
+## `fd_*.bin`: glyph sheet
 
 ```
 0x00 "1.0\0"
-0x04 u16 largeur, u16 hauteur (pixels)
-0x08 u32 taille des données
-0x0C u32 position des données
+0x04 u16 width, u16 height (pixels)
+0x08 u32 data size
+0x0C u32 data position
 ```
 
-Données : 1 bit par pixel, ligne par ligne, bit de poids fort en premier, 1 = encre.
+Data: 1 bit per pixel, row by row, most significant bit first, 1 = ink.
 
-## Mise en page (`Font_MeasureString`, `0x020420f8`)
+## Layout (`Font_MeasureString`, `0x020420f8`)
 
-Pour chaque position du texte :
+For each text position:
 
-1. Recherche du **premier** glyphe, dans l'ordre de la table, dont la chaîne est un préfixe du
-   texte (`Font_FindGlyph`, `0x020424f4`).
-2. Glyphe trouvé : avance = crénage(précédent, glyphe) + largeur + 1, puis on saute la longueur
-   de la chaîne.
-3. Pas de glyphe (ex. espace) : avance = largeur des espaces + 1, aucun crénage ensuite.
+1. Search for the **first** glyph, in table order, whose string is a prefix of the
+   text (`Font_FindGlyph`, `0x020424f4`).
+2. Glyph found: advance = kerning(previous, glyph) + width + 1, then skip the string
+   length.
+3. No glyph (e.g. space): advance = space width + 1, no kerning afterwards.
 
-La largeur finale est la somme des avances moins 1. `MsgWin_DrawGlyphs` dessine chaque glyphe à
-`x + crénage`, puis avance de `largeur + 1` ; le code `0xFF19` vaut un espace et `0xFF18` passe à
-la ligne suivante.
+The final width is the sum of advances minus 1. `MsgWin_DrawGlyphs` draws each glyph at
+`x + kerning`, then advances by `width + 1`; code `0xFF19` is a space and `0xFF18` moves to
+the next line.

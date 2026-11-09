@@ -1,7 +1,7 @@
 # Produces a melonDS savestate of the game resumed from a save file, then checks it with
 # `dq9re state --save` (resident code vs the ROM, save copies vs RAM).
 # Usage: powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save build/sav/demo.sav
-#        [-Out partie.ml1] [-Settle 8] [-Keys "Down:1.5,Up+Right:0.4,idle:0.5"] [-Keep]
+#        [-Out game.ml1] [-Settle 8] [-Keys "Down:1.5,Up+Right:0.4,idle:0.5"] [-Keep]
 # -Keys holds DS keys (Up, Down, Left, Right, A, B; `+` joins keys held together, `idle` holds
 # none) for the given seconds once the game is in the field, before the state is saved. Timing
 # is wall clock (about two frames of jitter); the arrows must be mapped in melonDS.toml.

@@ -1,478 +1,478 @@
-# Feuille de route
+# Roadmap
 
-Objectif : DQ9 entièrement réimplémenté en Rust (natif et Web), avec une **première version
-jouable le plus tôt possible**, en s'appuyant au maximum sur le travail public existant
-(`ressources-externes.md`). Chaque étape se termine par une doc dans `docs/re/`, une
-implémentation testée et un commit.
+Goal: DQ9 fully reimplemented in Rust (native and Web), with a **first playable version
+as early as possible**, building as much as possible on existing public work
+(`external-resources.md`). Each step ends with a doc in `docs/re/`, a tested
+implementation and a commit.
 
-État courant, lots actifs et blocages : [`status.md`](status.md) (seule source, réécrite à
-chaque intégration). Ce fichier garde le plan, les jalons et ce qui est fait.
+Current status, active batches and blockers: [`status.md`](status.md) (single source, rewritten at
+each integration). This file keeps the plan, the milestones and what is done.
 
-## Principes
+## Principles
 
-1. **Tranche verticale d'abord.** On construit le chemin minimal « nouvelle partie → se
-   déplacer → parler → scènes → combattre » sur une zone, puis on élargit. Un système n'est
-   approfondi que lorsqu'une zone jouable en a besoin.
-2. **Ne pas redécouvrir ce qui est connu.** Avant d'analyser une fonction ou un format :
-   symboles et code de la décompilation USA (adresses converties pour la ROM européenne),
-   pages du wiki DQIX, puis seulement Ghidra. Ce qui est repris est cité et revérifié sur la
+1. **Vertical slice first.** Build the minimal path "new game → move
+   → talk → cutscenes → fight" on one area, then widen. A system is only
+   deepened when a playable area needs it.
+2. **Do not rediscover what is known.** Before analyzing a function or a format:
+   symbols and code from the USA decompilation (addresses converted for the European ROM),
+   DQIX wiki pages, and only then Ghidra. Anything reused is cited and rechecked on the
    ROM.
-3. **Traduire le comportement du jeu, remplacer la plateforme.** La logique de jeu est
-   traduite fonction par fonction ; les bibliothèques Nintendo (NitroSDK, NitroSystem, Wi-Fi,
-   C runtime) et le matériel (VRAM, moteurs 2D/3D, son) ne sont pas traduits mais remplacés
-   par `dq9-render`, `dq9-audio`, `dq9-app` et la crate `std`.
-4. **Des oracles pour vérifier.** melonDS (stub GDB, sauvegardes d'état), DQIX Enhanced
-   (portage PC fidèle à l'image près, GPL : comportement seulement), BattleEmulator et
-   Grotto-Searcher (combats, grottes) : même entrée, même résultat.
-5. **Les sauvegardes DS comme points de départ.** Charger un `.sav` réel permet de tester
-   n'importe quel moment du jeu sans y jouer depuis le début.
+3. **Translate the game's behavior, replace the platform.** Game logic is
+   translated function by function; Nintendo libraries (NitroSDK, NitroSystem, Wi-Fi,
+   C runtime) and hardware (VRAM, 2D/3D engines, sound) are not translated but replaced
+   by `dq9-render`, `dq9-audio`, `dq9-app` and the `std` crate.
+4. **Oracles to verify.** melonDS (GDB stub, save states), DQIX Enhanced
+   (frame-accurate PC port, GPL: behavior only), BattleEmulator and
+   Grotto-Searcher (battles, grottoes): same input, same result.
+5. **DS saves as starting points.** Loading a real `.sav` makes it possible to test
+   any point of the game without playing from the start.
 
-## Définition de « 100 % traduit »
+## Definition of "100% translated"
 
-Périmètre mesuré sur la décompilation USA (`config/usa/arm9`) : **14 780 fonctions**, 2,9 Mo
-de code.
+Scope measured on the USA decompilation (`config/usa/arm9`): **14,780 functions**, 2.9 MB
+of code.
 
-| Catégorie | Contenu | Traitement |
+| Category | Content | Handling |
 |---|---|---|
-| Jeu | logique Level-5 de l'ARM9 principal et des overlays de jeu | **traduite** en Rust, en citant l'adresse d'origine |
-| Plateforme | NitroSDK, NitroSystem (G3D, son), C runtime, overlay 31 (Wi-Fi, 1 962 fonctions), multiboot | **remplacée**, non traduite |
-| Hors jeu | overlays de débogage (7, 22), anti-piratage, écran d'erreur de lecture (19) | **exclue** |
+| Game | Level-5 logic of the main ARM9 and the game overlays | **translated** into Rust, citing the original address |
+| Platform | NitroSDK, NitroSystem (G3D, sound), C runtime, overlay 31 (Wi-Fi, 1,962 functions), multiboot | **replaced**, not translated |
+| Out of game | debug overlays (7, 22), anti-piracy, read-error screen (19) | **excluded** |
 
-« 100 % » = toutes les fonctions de la catégorie Jeu sont traduites ou explicitement
-remplacées par un équivalent documenté, et les tests différentiels passent.
+"100%" = every function in the Game category is translated or explicitly
+replaced by a documented equivalent, and the differential tests pass.
 
-### Mesure (`cargo dq9re coverage`)
+### Measurement (`cargo dq9re coverage`)
 
-- `re/functions.txt` liste les 14 780 fonctions aux adresses européennes avec leur catégorie.
-  Il est généré par `cargo dq9re functions <checkout de dqix-decomp>` (commit noté en tête) ;
-  le test `our_symbols_start_listed_functions` vérifie que nos symboles y tombent tous sur un
-  début de fonction.
-- Une fonction compte comme traduite quand un commentaire d'une crate du portage (toutes sauf
-  `dq9re` et `testrom`) la cite dans un marqueur `port:` :
-  `//! port: 0x020d91ec, ov_017::021ba810` ou une plage `0x0206974c..=0x02069fd4` (toutes les
-  fonctions qui y commencent). Une adresse qui n'est pas un début de fonction est une erreur.
-- Classement automatique : overlays 30/31 et fichiers `src/NitroSDK/` de la décompilation,
-  C runtime, démarrage et stubs BIOS en Plateforme ; overlays 7, 19, 22, 29 hors jeu ; le
-  reste en Jeu, sauf la whitelist de 86 routines ARM9 européennes vérifiées
-  individuellement par module Main, adresse, taille et nom source exact
-  ([preuves](re/nitro-sdk.md)). **Le NitroSDK de l'ARM9 principal reste partiellement
-  identifié** : la part Plateforme grandira à mesure qu'il sera reconnu.
-- La CI vérifie les marqueurs à chaque exécution, affiche le résultat dans le résumé du job
-  et échoue si le bloc d'avancement du `README.md` est périmé (le mettre à jour en local par
+- `re/functions.txt` lists the 14,780 functions at European addresses with their category.
+  It is generated by `cargo dq9re functions <dqix-decomp checkout>` (commit noted at the top);
+  the test `our_symbols_start_listed_functions` checks that all our symbols fall on a
+  function start in it.
+- A function counts as translated when a comment in a port crate (all except
+  `dq9re` and `testrom`) cites it in a `port:` marker:
+  `//! port: 0x020d91ec, ov_017::021ba810` or a range `0x0206974c..=0x02069fd4` (all the
+  functions starting in it). An address that is not a function start is an error.
+- Automatic classification: overlays 30/31 and `src/NitroSDK/` files of the decompilation,
+  C runtime, startup and BIOS stubs in Platform; overlays 7, 19, 22, 29 out of game; the
+  rest in Game, except the whitelist of 86 European ARM9 routines checked
+  individually by Main module, address, size and exact source name
+  ([evidence](re/nitro-sdk.md)). **The NitroSDK of the main ARM9 remains partially
+  identified**: the Platform share will grow as it gets recognized.
+- CI checks the markers on every run, shows the result in the job summary
+  and fails if the progress block of `README.md` is stale (update it locally with
   `scripts/verify.ps1`).
 
-### Carte des overlays
+### Overlay map
 
-Noms internes et rôles d'après [dqix-functions](https://github.com/DQIX/dqix-functions) ;
-nombre de fonctions d'après la décompilation USA.
+Internal names and roles from [dqix-functions](https://github.com/DQIX/dqix-functions);
+function counts from the USA decompilation.
 
-| Overlay | Nom interne | Fonctions | Rôle | Jalon |
+| Overlay | Internal name | Functions | Role | Milestone |
 |---|---|---:|---|---|
-| ARM9 | — | 6 205 | moteur Level-5 + bibliothèques Nintendo (à trier) | selon besoin |
-| 17 | gamemain | 1 194 | boucle de jeu, terrain, triggers, interpréteur `.stb` | J1–J3 |
-| 1 | event | 515 | scènes, natives des scripts (`ov_001::0215ae1c…`) | J3 |
-| 0 | battle | 826 | combat | J4 |
-| 24 / 25 / 26 | sub_battle / sub_round / sub_command | 573 / 304 / 24 | combat : action, tour, commandes | J4 |
-| 23 | sub_menu | 827 | menus secondaires, fin de combat, contenu téléchargeable | J4–J5 |
+| ARM9 | — | 6,205 | Level-5 engine + Nintendo libraries (to sort) | as needed |
+| 17 | gamemain | 1,194 | game loop, field, triggers, `.stb` interpreter | J1–J3 |
+| 1 | event | 515 | cutscenes, script natives (`ov_001::0215ae1c…`) | J3 |
+| 0 | battle | 826 | battle | J4 |
+| 24 / 25 / 26 | sub_battle / sub_round / sub_command | 573 / 304 / 24 | battle: action, round, commands | J4 |
+| 23 | sub_menu | 827 | secondary menus, end of battle, downloadable content | J4–J5 |
 | 2 / 4 / 5 / 11 | topmenu / menucallback / equipmenu / menusys | 213 / 532 / 89 / 186 | menus | J5 |
-| 3 | shisetsu | 510 | établissements (boutiques, auberge, église…) | J5 |
-| 20 / 21 / 9 | title / charamake / charamake2 | 18 / 5 / 43 | titre, création du personnage | J5 |
-| 13 | skillup | 40 | points de compétence | J5 |
-| 33 / 34 | bgload1 / bgload2 | 5 / 5 | chargement en arrière-plan | J1 |
-| 27 | sub_staffroll | 87 | générique de fin | J6 |
-| 6 | renkin | 132 | alchimie | J7 |
-| 8 / 14 / 12 / 15 | jourecode / subjugation / prof / charaview | 63 / 69 / 71 / 103 | registres, bestiaire, profil, visionneuse | J7 |
-| 16 | movieview | 87 | vidéos Mobiclip | J9 |
-| 31 / 30 | wifi / sub_libmb | 1 962 / 11 | Wi-Fi Nintendo, téléchargement DS | J8 (remplacés) |
-| 7, 22, 19, 29 | debug, sub_debug, readerror, sub_makescn | — | hors jeu | exclus |
+| 3 | shisetsu | 510 | facilities (shops, inn, church…) | J5 |
+| 20 / 21 / 9 | title / charamake / charamake2 | 18 / 5 / 43 | title, character creation | J5 |
+| 13 | skillup | 40 | skill points | J5 |
+| 33 / 34 | bgload1 / bgload2 | 5 / 5 | background loading | J1 |
+| 27 | sub_staffroll | 87 | end credits | J6 |
+| 6 | renkin | 132 | alchemy | J7 |
+| 8 / 14 / 12 / 15 | jourecode / subjugation / prof / charaview | 63 / 69 / 71 / 103 | records, bestiary, profile, viewer | J7 |
+| 16 | movieview | 87 | Mobiclip videos | J9 |
+| 31 / 30 | wifi / sub_libmb | 1,962 / 11 | Nintendo Wi-Fi, DS download | J8 (replaced) |
+| 7, 22, 19, 29 | debug, sub_debug, readerror, sub_makescn | — | out of game | excluded |
 
-Les overlays 10, 28 et 32 (`pitfall`, `sub_hoge`, `sound`) sont à identifier.
+Overlays 10, 28 and 32 (`pitfall`, `sub_hoge`, `sound`) remain to be identified.
 
-## Fait
+## Done
 
-- [x] Environnement : Rust, CI, outils RE (Ghidra + import scripté, melonDS), `dq9re`.
-- [x] Conteneur ROM : en-tête, fichiers, ARM9/overlays (BLZ), NARC, codecs Nintendo.
-- [x] Archives GPC2 + compression Level-5 (`gpc2.md`).
-- [x] Tables d'enregistrements (`table.md`) ; extraction de tous les textes (`text.md`).
-- [x] Pipeline des messages réimplémenté (6 passes, balises, codes `FF01..FF2F`, conditions,
-      majuscules) et rendu des dialogues avec les polices du jeu (`font.md`, `dq9re msg`).
-- [x] Choix de la réplique d'un PNJ (`dialogue.md`, `dq9re talk`).
-- [x] Triggers de scénario : chargement, conditions, pistes, types d'événements, actions
-      immédiates et différées sur un état modélisé (`trigger.md`).
-- [x] Scripts d'événements `.stb` : format, machine à pile, désassembleur (`stb.md`,
+- [x] Environment: Rust, CI, RE tools (Ghidra + scripted import, melonDS), `dq9re`.
+- [x] ROM container: header, files, ARM9/overlays (BLZ), NARC, Nintendo codecs.
+- [x] GPC2 archives + Level-5 compression (`gpc2.md`).
+- [x] Record tables (`table.md`); extraction of all texts (`text.md`).
+- [x] Message pipeline reimplemented (6 passes, tags, codes `FF01..FF2F`, conditions,
+      capitalization) and dialogue rendering with the game's fonts (`font.md`, `dq9re msg`).
+- [x] Choice of an NPC's line (`dialogue.md`, `dq9re talk`).
+- [x] Scenario triggers: loading, conditions, tracks, event types, immediate
+      and deferred actions on a modeled state (`trigger.md`).
+- [x] `.stb` event scripts: format, stack machine, disassembler (`stb.md`,
       `dq9re stb`).
-- [x] Interpréteur des scripts d'événements dans `dq9-core` : machine à pile traduite de
-      `ov_017`, entrées 200/100/300, attentes par signaux, événements typés, `Director`
-      branché sur les requêtes des triggers ; les 30 scripts du prologue vont à leur terme
-      (`stb.md`, § Interpréteur, `dq9re script`).
-- [x] Finitions J3 : identité du héros sauvegardé dans les messages (nom en glyphes et sexe),
-      confirmation sonore des choix avec exceptions `NOTSE`, placements masqués à l'heure
-      choisie affichables/déplaçables par les natives 574/575 (`dialogue.md`, `sdat.md`, `stb.md`).
-- [x] Recensement des ressources externes (`ressources-externes.md`).
-- [x] Inventaire statique des 228 natives STB employées : arguments, effets établis,
-      preuves par adresses et limites (`re/stb-natives.md`) ; noms descriptifs dans
-      `dq9re stb` uniquement pour les comportements démontrés.
-- [x] Noms et bornes de `re/functions.txt` appliqués dans Ghidra avant les symboles
-      locaux, à l'import comme sur un projet existant (`re/rom-layout.md`).
-- [x] Premier lot de **50 routines NitroSDK ARM9** identifié et classé Plateforme,
-      non porté ; noms canoniques et preuves individuelles dans
-      [`re/nitro-sdk.md`](re/nitro-sdk.md). Le classement global du SDK reste ouvert.
-- [x] Second lot de **36 primitives matérielles ARM9** (9 CP15, 27 G3X/affichage) classées
-      Plateforme par comportement : Plateforme 2 718, Jeu 12 056 ([preuves](re/nitro-sdk.md)).
-- [x] Cadence du champ : boucle fixe à 60 Hz, héros et `Field::step` à 30 Hz
-      (`Hero::step(ticks = 2)` aux images impaires), égale à l'original VBlank par VBlank
-      sur `X01M05` ([`re/movement.md`](re/movement.md)).
-- [x] Point de contrôle libre 1.1.2 : carte, piste, drapeaux d'étape, quêtes et position
-      identiques à l'original ; seul écart, `4135`, butin aléatoire du combat 26
+- [x] Event script interpreter in `dq9-core`: stack machine translated from
+      `ov_017`, entries 200/100/300, waits on signals, typed events, `Director`
+      wired to trigger requests; the 30 prologue scripts run to completion
+      (`stb.md`, § Interpreter, `dq9re script`).
+- [x] J3 finishing touches: saved hero identity in messages (name in glyphs and sex),
+      sound confirmation of choices with `NOTSE` exceptions, placements hidden at the chosen
+      time displayable/movable by natives 574/575 (`dialogue.md`, `sdat.md`, `stb.md`).
+- [x] Survey of external resources (`external-resources.md`).
+- [x] Static inventory of the 228 STB natives used: arguments, established effects,
+      evidence by address and limits (`re/stb-natives.md`); descriptive names in
+      `dq9re stb` only for demonstrated behaviors.
+- [x] Names and bounds from `re/functions.txt` applied in Ghidra before local
+      symbols, on import as on an existing project (`re/rom-layout.md`).
+- [x] First batch of **50 ARM9 NitroSDK routines** identified and classified Platform,
+      not ported; canonical names and individual evidence in
+      [`re/nitro-sdk.md`](re/nitro-sdk.md). Global classification of the SDK remains open.
+- [x] Second batch of **36 ARM9 hardware primitives** (9 CP15, 27 G3X/display) classified
+      Platform by behavior: Platform 2,718, Game 12,056 ([evidence](re/nitro-sdk.md)).
+- [x] Field cadence: fixed 60 Hz loop, hero and `Field::step` at 30 Hz
+      (`Hero::step(ticks = 2)` on odd frames), equal to the original VBlank by VBlank
+      on `X01M05` ([`re/movement.md`](re/movement.md)).
+- [x] Free checkpoint 1.1.2: map, track, stage flags, quests and position
+      identical to the original; only deviation, `4135`, random loot from battle 26
       ([`re/melonds-state.md`](re/melonds-state.md), [`re/item.md`](re/item.md)).
 
-## J0 — Accélérateurs
+## J0 — Accelerators
 
-Petits chantiers qui rendent tous les suivants plus rapides.
+Small jobs that make all the following ones faster.
 
-- [x] **Symboles de la décompilation dans Ghidra** : appliquer les noms et les bornes de
-      `re/functions.txt` avant `re/symbols.txt` (nos noms priment) ; exceptions de tailles
-      nulles et chevauchement explicites, pas de mode ARM/Thumb inventé.
-- [x] **`dq9re functions` / `dq9re coverage`** : liste des fonctions aux adresses
-      européennes, classement, marqueurs `port:`, bloc d'avancement du README vérifié par la CI.
-- [ ] **Classement du NitroSDK** de l'ARM9 principal : poursuivre au-delà des
-      [86 routines vérifiées](re/nitro-sdk.md) (Plateforme 2 718), sans attribution par
-      préfixe ni voisinage, pour affiner la catégorie Plateforme.
-- [ ] **Natives des scripts** : reporter dans `stb.md` les rôles lus par le wiki
-      ([Engine-Functions](https://github.com/DQIX/wiki/blob/main/Engine-Functions.md)) en
-      vérifiant chacune sur `ov_001` ; priorité aux plus fréquentes (210, 570, 206, 208, 571).
-      L'[inventaire statique](re/stb-natives.md) est complet. **Avancement** : les 120 natives
-      du prologue d'Angel Falls (étapes 1.1 à 1.3, `cargo dq9re stb-natives --stage 1.1-3`)
-      sont identifiées ou listées comme inconnues avec ce qui a été tenté ; unités de temps
-      tranchées (fondu en ticks de 60 Hz, mouvements en 30 Hz nominal, `GetTickCount`
-      mesuré à 2) ; 570 est `OBJECT3D_FLAG_HIDDEN`. Les légendes 409/411/413, la caméra à trois
-      os 552 et la porte 584 sont établies et exécutées (lot « scènes restantes »). Restent le
-      bit `0x10` de 571, la transition 547 (J4), l'index du son de porte, 554, 560 et les
-      natives hors prologue.
-- [x] **Sauvegarde DS** (`dq9-formats::save`, [`re/save.md`](re/save.md)) : conteneur
-      (2 emplacements, 3 CRC-32, relecture/réécriture octet pour octet sur une sauvegarde
-      réelle), champs typés (groupe, personnages et leurs noms, or, temps de jeu, équipement,
-      chapitre/étape/sous-étape, pistes de scénario, drapeaux globaux/d'histoire), les 16
-      blocs du sérialiseur (`Block`, pavage exact de la zone de la somme B), rôles des deux
-      emplacements (0 normale, 1 suspension, copie miroir à chaque sauvegarde normale) et
-      protocole d'écriture à 4 états, 21 fonctions du jeu nommées. `dq9re save`. Le décodage
-      interne de quelques blocs (journal de quêtes, bestiaire, sac, cartes au trésor…) est
-      repris quand `dq9-core` en aura besoin (liste dans `re/save.md`, § Inconnu).
-- [ ] **Oracle** : lecteur d'états melonDS fait et vérifié sur des états réels
-      (`dq9_formats::melonds`, `dq9re state`, [`re/melonds-state.md`](re/melonds-state.md) :
-      mémoire, code résident et overlays comparés à la ROM ; format d'après ndskit, MIT) ;
-      `scripts/melonds-state.ps1` produit un état depuis un `.sav` sans prendre le premier
-      plan. **Sauvegarde chargée → RAM** : toutes les copies de `Save_LoadSlot` et les champs
-      des membres du groupe (`PartyMember_LoadRecord`) retrouvés octet pour octet
-      (`SAVE_COPIES`, `compare_party`, `dq9re state --save`, `re/save.md` § « En RAM »).
-      **Position** : objets du groupe et du héros lus en RAM (`GameState+8`, `Object3D+0x44`,
-      `dq9re state`), vérifiés en déplaçant le héros. **Différentiel v0.1** :
-      `dq9re state --json` lit le bloc d'événements complet (5 pistes, leurs deux jeux de
-      drapeaux, drapeaux globaux, quêtes, carte, VBlank) ; `scripts/oracle-compare.ps1` le
-      compare au rapport du runtime (`track i: … flags`, `global flags`) ;
-      `scripts/melonds-play.ps1` pilote une nouvelle partie réelle (écran titre, création du
-      personnage, combat 26, états) sans premier plan. Première mesure réelle au premier
-      contrôle de l'Observatoire : carte `4105`, héros à la même position, histoire 1.1.1 et
-      `step_flags {1}` identiques ; **17 drapeaux globaux manquaient** au runtime
-      (`1450–1454,1461,2721,2751,2774,3191,3775,3955,4046,4212,4283,4410,4414`), `337` commun
-      (preuves et limites dans [`re/melonds-state.md`](re/melonds-state.md), § « Oracle
-      différentiel »). Depuis, leurs causes sont branchées ([`re/trigger.md`](re/trigger.md),
-      [`re/item.md`](re/item.md)) : seuls `4135`/`4212`, butin de combat aléatoire, restent
-      hors du runtime.
-      **Reste** : références originales d'Angel Falls, des quêtes du village et de la fin du
-      prologue par le chemin physique réel ; le rejeu direct des pads natifs est falsifié, il
-      faut des positions monde ([`re/melonds-state.md`](re/melonds-state.md), § « Portes du
-      retour »). Le harnais libretro avance image par image (`melondsds_host.py`).
-- [x] Crates prévues par `architecture.md` créées : `dq9-core`, `dq9-render`, `dq9-audio`,
-      `dq9-app` ; l'état modélisé des triggers est passé de `dq9-formats` à `dq9-core`
-      (`dq9-core/src/trigger.rs` ; `dq9-formats::trigger` ne garde que le parsing).
+- [x] **Decompilation symbols in Ghidra**: apply the names and bounds from
+      `re/functions.txt` before `re/symbols.txt` (our names take precedence); explicit
+      zero-size and overlap exceptions, no invented ARM/Thumb mode.
+- [x] **`dq9re functions` / `dq9re coverage`**: list of functions at European
+      addresses, classification, `port:` markers, README progress block checked by CI.
+- [ ] **NitroSDK classification** of the main ARM9: continue beyond the
+      [86 verified routines](re/nitro-sdk.md) (Platform 2,718), without attribution by
+      prefix or proximity, to refine the Platform category.
+- [ ] **Script natives**: carry over into `stb.md` the roles read from the wiki
+      ([Engine-Functions](https://github.com/DQIX/wiki/blob/main/Engine-Functions.md)),
+      checking each one on `ov_001`; priority to the most frequent (210, 570, 206, 208, 571).
+      The [static inventory](re/stb-natives.md) is complete. **Progress**: the 120 natives
+      of the Angel Falls prologue (stages 1.1 to 1.3, `cargo dq9re stb-natives --stage 1.1-3`)
+      are identified or listed as unknown with what was tried; time units
+      settled (fade in 60 Hz ticks, movements at nominal 30 Hz, `GetTickCount`
+      measured at 2); 570 is `OBJECT3D_FLAG_HIDDEN`. Captions 409/411/413, the three-bone
+      camera 552 and door 584 are established and executed ("remaining cutscenes" batch).
+      Remaining: bit `0x10` of 571, transition 547 (J4), the door sound index, 554, 560 and
+      natives outside the prologue.
+- [x] **DS save** (`dq9-formats::save`, [`re/save.md`](re/save.md)): container
+      (2 slots, 3 CRC-32, byte-for-byte reread/rewrite on a real
+      save), typed fields (party, characters and their names, gold, play time, equipment,
+      chapter/stage/substage, scenario tracks, global/story flags), the 16
+      serializer blocks (`Block`, exact tiling of the checksum B area), roles of the two
+      slots (0 normal, 1 suspend, mirror copy on each normal save) and
+      4-state write protocol, 21 game functions named. `dq9re save`. Internal decoding
+      of a few blocks (quest log, bestiary, bag, treasure maps…) is
+      picked up when `dq9-core` needs it (list in `re/save.md`, § Unknown).
+- [ ] **Oracle**: melonDS state reader done and checked on real states
+      (`dq9_formats::melonds`, `dq9re state`, [`re/melonds-state.md`](re/melonds-state.md):
+      memory, resident code and overlays compared with the ROM; format from ndskit, MIT);
+      `scripts/melonds-state.ps1` produces a state from a `.sav` without taking the
+      foreground. **Loaded save → RAM**: all copies of `Save_LoadSlot` and the fields
+      of party members (`PartyMember_LoadRecord`) found byte for byte
+      (`SAVE_COPIES`, `compare_party`, `dq9re state --save`, `re/save.md` § "In RAM").
+      **Position**: party and hero objects read in RAM (`GameState+8`, `Object3D+0x44`,
+      `dq9re state`), checked by moving the hero. **v0.1 differential**:
+      `dq9re state --json` reads the full event block (5 tracks, their two sets of
+      flags, global flags, quests, map, VBlank); `scripts/oracle-compare.ps1`
+      compares it with the runtime report (`track i: … flags`, `global flags`);
+      `scripts/melonds-play.ps1` drives a real new game (title screen, character
+      creation, battle 26, states) without foreground. First real measurement at the first
+      player control in the Observatory: map `4105`, hero at the same position, story 1.1.1 and
+      `step_flags {1}` identical; **17 global flags were missing** from the runtime
+      (`1450–1454,1461,2721,2751,2774,3191,3775,3955,4046,4212,4283,4410,4414`), `337` shared
+      (evidence and limits in [`re/melonds-state.md`](re/melonds-state.md), § "Differential
+      oracle"). Since then, their causes are wired ([`re/trigger.md`](re/trigger.md),
+      [`re/item.md`](re/item.md)): only `4135`/`4212`, random battle loot, remain
+      outside the runtime.
+      **Remaining**: original references for Angel Falls, the village quests and the end of the
+      prologue via the real physical route; direct replay of native pads is falsified,
+      world positions are needed ([`re/melonds-state.md`](re/melonds-state.md), § "Return
+      doors"). The libretro harness advances frame by frame (`melondsds_host.py`).
+- [x] Crates planned by `architecture.md` created: `dq9-core`, `dq9-render`, `dq9-audio`,
+      `dq9-app`; the modeled trigger state moved from `dq9-formats` to `dq9-core`
+      (`dq9-core/src/trigger.rs`; `dq9-formats::trigger` keeps only the parsing).
 
-## J1 — Voir le monde
+## J1 — Seeing the world
 
-Afficher une carte et ses personnages dans une fenêtre (natif et wasm).
+Display a map and its characters in a window (native and wasm).
 
-| Tâche | Réutiliser |
+| Task | Reuse |
 |---|---|
-| `BMD0`/`BTX0`/`BCA0` (+ `BTA0`/`BTP0`/`BMA0`) | [apicula](https://github.com/scurest/apicula) (Rust, 0BSD) : reprendre ses lecteurs dans `dq9-formats`, avec mention ; wiki NSBMD/NSBTP/NSBTA |
-| rendu wgpu proche de la DS (points fixes, matériaux, toon, brouillard, transparence, tri) | `src/NitroSDK/NSBXX/` de la décompilation (commandes de rendu G3D), GBATEK, rendu de DQIX Enhanced en comparaison visuelle |
-| liste des cartes `maplist9.bin`, archives `.ambl`/`.amdj`, objets `.bmdj`, textures | wiki Map-List, Map-Archive, Map-Objects, Map-Textures ; Tagged-Data-Table |
-| personnages `.chr` (`.bcfg`, modèles, animations), parties d'équipement | wiki Character-Parts, Motion-Tables |
-| application `dq9-app` (winit + wgpu, 60 Hz fixe), caméra libre | — |
+| `BMD0`/`BTX0`/`BCA0` (+ `BTA0`/`BTP0`/`BMA0`) | [apicula](https://github.com/scurest/apicula) (Rust, 0BSD): take its readers into `dq9-formats`, with credit; wiki NSBMD/NSBTP/NSBTA |
+| wgpu rendering close to the DS (fixed-point, materials, toon, fog, transparency, sorting) | `src/NitroSDK/NSBXX/` of the decompilation (G3D render commands), GBATEK, DQIX Enhanced rendering for visual comparison |
+| map list `maplist9.bin`, `.ambl`/`.amdj` archives, `.bmdj` objects, textures | wiki Map-List, Map-Archive, Map-Objects, Map-Textures; Tagged-Data-Table |
+| `.chr` characters (`.bcfg`, models, animations), equipment parts | wiki Character-Parts, Motion-Tables |
+| `dq9-app` application (winit + wgpu, fixed 60 Hz), free camera | — |
 
-Critère : `dq9-app --map M01` affiche le village d'Angel Falls avec ses PNJ animés, en natif
-et dans un navigateur.
+Criterion: `dq9-app --map M01` shows the Angel Falls village with its animated NPCs, natively
+and in a browser.
 
-Avancement :
+Progress:
 
-- [x] Liste des cartes `maplist9.bin` réimplémentée (`dq9_formats::maplist`,
-      [`re/maplist.md`](re/maplist.md), `dq9re maps`) : 1 010 enregistrements identiques à la
-      RAM d'un état melonDS ; carte courante lue en `g_Zone3D+0`.
-- [x] Lecteur G3D porté d'apicula (`nds_rom::g3d`, [`re/g3d.md`](re/g3d.md),
-      `dq9re model`) : les 4 328 `BMD0`, 737 `BTX0` et 525 `BTP0` des cartes se lisent,
-      22 827 textures décodées, 748 435 triangles assemblés.
-- [x] Assemblage des cartes réimplémenté (`dq9_formats::map`,
-      [`re/map-archive.md`](re/map-archive.md), `dq9re map`) : fichiers chargés, blocs
-      `.bmdj`, parties et instances avec leur transformation ; les 667 `.ambl` et 669 `.amdj`
-      s'assemblent, 5 341 ressources toutes résolues, `C01M09` identique à la RAM (melonDS).
-- [x] Animations G3D décodées et évaluées image par image (`nds_rom::g3d`,
-      [`re/g3d.md`](re/g3d.md), `dq9re model --anim --frame`) d'après la bibliothèque NITRO de
-      la décompilation : articulations `BCA0` (poses exactes en virgule fixe, règles d'échelle
-      Maya/Softimage), matrices de texture et `BTA0`, couleurs `BMA0`, motifs `BTP0` ; les
-      9 887 fichiers d'animation des cartes et des `.chr` s'évaluent sur toutes leurs images.
-- [x] Rendu et application (`dq9-render`, `dq9-app`, [`app.md`](app.md)) : `dq9-app --map M01`
-      affiche la carte texturée en natif (fenêtre ou `--screenshot` PNG) et dans un navigateur
-      (wasm, ROM choisie dans la page) ; passes opaque/translucide, alpha, faces cachées,
-      matrices de texture, caméra libre à la projection du jeu (`0x0202df78`), boucle fixe à
-      60 Hz ; les 738 jeux d'archives se construisent.
-- [x] Personnages réimplémentés au niveau des données (`dq9_formats::cast`, `chr`, `spr`,
-      [`re/characters.md`](re/characters.md), `dq9re cast`, `dq9re chr`) : script de
-      placement `place.bin` (20 types, chaînes et priorités), distribution `npc.bin`, corps
-      (sprite `.spr`, modèle `chara_sub/*.chr`, monstre `enemy.gp2`), mouvement initial,
-      tables `.bcfg` ; 508 cartes × 19 chapitres résolues, 2 683 `.chr` et 1 298 `.spr` lus,
-      `C01M09` identique à la table des PNJ en RAM (melonDS).
-- [x] Intégration des animations et des PNJ dans `dq9-app` : état CPU `AnimatedScene`,
-      pas fixes partagés natif/Web, poses G3D, SRT, couleurs/alpha MAT et textures PAT ;
-      drapeaux des parties, mouvements initiaux `.chr`, sprites face à la caméra et monstres.
-      Captures déterministes `--frame N`, choix de progression `--chapter/--step/--substep`
-      (prologue par défaut). Hauteurs de placement conservées sans collision du sol ;
-      limites de comportement et de rendu détaillées dans [`app.md`](app.md).
-- [x] **Héros animé** (`dq9_formats::hero`, `dq9_render::hero`, `dq9re hero`,
-      [`re/characters.md`](re/characters.md) § « Le héros ») : pièces de `chara_pc.gp2`
-      résolues depuis les objets portés (visage et cheveux par `itemdt_def`, forme des cheveux
-      selon le couvre-chef, bras/chaussures en textures), assemblées sur le gabarit de 14 os,
-      animées par `mp0200n`/`mp0200ne` (`stand`, `walk`, `run` ; le jeu joue `stand` au repos et
-      `run` en marche), orientées selon le cap, à l'échelle `0x10a × corpulence` (vérifiée sur
-      la RAM) ; `dq9-app` l'affiche à la place du repère, avec l'apparence du héros de la
-      sauvegarde (`--save`) ou un héros par défaut **[hypothèse]** ; `--screenshot --walk`
-      montre la marche. Non fait : armes, boucliers, ailes, teints du `palette.bin`,
-      compagnons du groupe.
-- [ ] Éclairage de la carte (`.bats`), brouillard et heure du jour appliqués au rendu (fait,
-      reste la validation melonDS des zones avancées) :
-      parseur `.bats` (`dq9_formats::lighting`, 504 scripts), horloge du jour et choix/mélange
-      de l'entrée par phase (`dq9_core::lighting`, d'après `LightingManager`/`GameState`, EU
-      vérifié), lumières DS, teinte de base, fond en dégradé, brouillard (équation de melonDS) et
-      contours dans `dq9-render` ; `--time night|morning|day|evening`, `--clock`, liste Web.
-      Validé à melonDS (état `C01M09`, `scripts/melonds-capture.ps1`) : registres de brouillard
-      et valeurs de teinte identiques à la RAM, densité de brouillard à 0,01 près sur cinq
-      tables, image à 12,8/255 de moyenne. **Non validé** : lumières DS et ciel en zone avancée
-      (aucun état melonDS sur un champ), brouillard sur un matériau de terrain, mode alpha seul,
-      indice de remplacement et `BeginFade` ([`re/lighting.md`](re/lighting.md)).
+- [x] Map list `maplist9.bin` reimplemented (`dq9_formats::maplist`,
+      [`re/maplist.md`](re/maplist.md), `dq9re maps`): 1,010 records identical to the
+      RAM of a melonDS state; current map read at `g_Zone3D+0`.
+- [x] G3D reader ported from apicula (`nds_rom::g3d`, [`re/g3d.md`](re/g3d.md),
+      `dq9re model`): the 4,328 `BMD0`, 737 `BTX0` and 525 `BTP0` of the maps read,
+      22,827 textures decoded, 748,435 triangles assembled.
+- [x] Map assembly reimplemented (`dq9_formats::map`,
+      [`re/map-archive.md`](re/map-archive.md), `dq9re map`): loaded files, `.bmdj`
+      blocks, parts and instances with their transform; the 667 `.ambl` and 669 `.amdj`
+      assemble, 5,341 resources all resolved, `C01M09` identical to RAM (melonDS).
+- [x] G3D animations decoded and evaluated frame by frame (`nds_rom::g3d`,
+      [`re/g3d.md`](re/g3d.md), `dq9re model --anim --frame`) from the NITRO library of
+      the decompilation: `BCA0` joints (exact fixed-point poses, Maya/Softimage scale
+      rules), texture matrices and `BTA0`, `BMA0` colors, `BTP0` patterns; the
+      9,887 animation files of the maps and `.chr` evaluate on all their frames.
+- [x] Rendering and application (`dq9-render`, `dq9-app`, [`app.md`](app.md)): `dq9-app --map M01`
+      shows the textured map natively (window or `--screenshot` PNG) and in a browser
+      (wasm, ROM chosen in the page); opaque/translucent passes, alpha, back-face culling,
+      texture matrices, free camera with the game's projection (`0x0202df78`), fixed 60 Hz
+      loop; the 738 archive sets build.
+- [x] Characters reimplemented at the data level (`dq9_formats::cast`, `chr`, `spr`,
+      [`re/characters.md`](re/characters.md), `dq9re cast`, `dq9re chr`): placement
+      script `place.bin` (20 types, chains and priorities), `npc.bin` cast, body
+      (`.spr` sprite, `chara_sub/*.chr` model, `enemy.gp2` monster), initial movement,
+      `.bcfg` tables; 508 maps × 19 chapters resolved, 2,683 `.chr` and 1,298 `.spr` read,
+      `C01M09` identical to the NPC table in RAM (melonDS).
+- [x] Integration of animations and NPCs into `dq9-app`: CPU state `AnimatedScene`,
+      fixed steps shared native/Web, G3D poses, SRT, MAT colors/alpha and PAT textures;
+      part flags, initial `.chr` movements, camera-facing sprites and monsters.
+      Deterministic captures `--frame N`, progress selection `--chapter/--step/--substep`
+      (prologue by default). Placement heights kept without ground collision;
+      behavior and rendering limits detailed in [`app.md`](app.md).
+- [x] **Animated hero** (`dq9_formats::hero`, `dq9_render::hero`, `dq9re hero`,
+      [`re/characters.md`](re/characters.md) § "The hero"): `chara_pc.gp2` pieces
+      resolved from worn items (face and hair through `itemdt_def`, hair shape
+      depending on headgear, arms/shoes as textures), assembled on the 14-bone template,
+      animated by `mp0200n`/`mp0200ne` (`stand`, `walk`, `run`; the game plays `stand` at rest and
+      `run` when walking), oriented by heading, at scale `0x10a × build` (checked against
+      RAM); `dq9-app` shows it in place of the marker, with the hero's appearance from the
+      save (`--save`) or a default hero **[hypothesis]**; `--screenshot --walk`
+      shows walking. Not done: weapons, shields, wings, `palette.bin` skin tones,
+      party companions.
+- [ ] Map lighting (`.bats`), fog and time of day applied to rendering (done,
+      melonDS validation of advanced areas remains):
+      `.bats` parser (`dq9_formats::lighting`, 504 scripts), day clock and per-phase entry
+      choice/blend (`dq9_core::lighting`, from `LightingManager`/`GameState`, EU
+      checked), DS lights, base tint, gradient background, fog (melonDS equation) and
+      outlines in `dq9-render`; `--time night|morning|day|evening`, `--clock`, Web list.
+      Validated against melonDS (state `C01M09`, `scripts/melonds-capture.ps1`): fog registers
+      and tint values identical to RAM, fog density within 0.01 on five
+      tables, image within 12.8/255 on average. **Not validated**: DS lights and sky in an advanced area
+      (no melonDS state on a field), fog on a terrain material, alpha-only mode,
+      replacement index and `BeginFade` ([`re/lighting.md`](re/lighting.md)).
 
-## J2 — Se déplacer
+## J2 — Moving around
 
-| Tâche | Réutiliser |
+| Task | Reuse |
 |---|---|
-| état de jeu (`dq9-core`) initialisé depuis une sauvegarde DS (J0) ou un état par défaut : **fait** pour carte, position, cap, scénario, heure du jour, drapeaux d'événements ; reste groupe, sac, or | — |
-| déplacement du héros, collisions, caméra de terrain (rotation L/R) | wiki Map-Collision, Getting-Around ; `ov_017` |
-| placement des PNJ par carte et étape (`.npc`, script `place.bin`), sprites `.spr` | wiki Area-Cast, Sprites |
-| portes et changements de carte, zones de trigger orientées | wiki Doors, Triggers (« Areas ») |
-| heure du jour | wiki Time-Of-Day |
+| game state (`dq9-core`) initialized from a DS save (J0) or a default state: **done** for map, position, heading, scenario, time of day, event flags; party, bag, gold remain | — |
+| hero movement, collisions, field camera (L/R rotation) | wiki Map-Collision, Getting-Around; `ov_017` |
+| NPC placement per map and stage (`.npc`, `place.bin` script), `.spr` sprites | wiki Area-Cast, Sprites |
+| doors and map changes, oriented trigger zones | wiki Doors, Triggers ("Areas") |
+| time of day | wiki Time-Of-Day |
 
-Critère : depuis une sauvegarde réelle, se promener dans tout Angel Falls, entrer dans les
-maisons et en ressortir ; position comparée à melonDS sur une même séquence d'entrées.
+Criterion: from a real save, walk around all of Angel Falls, enter the
+houses and leave them; position compared with melonDS on the same input sequence.
 
-Avancement : l'heure du jour existe comme horloge de 420 s et phase explicite
-(`dq9_core::lighting::DayClock`, port de `GameState::SetDayTimer`/`AdvanceDayTimer`, sans le
-branchement de la mise à jour de scène qui la fait courir sur les cartes de type 0 et 7 : l'application
-l'entre par option). `dq9-core` porte le déplacement du chef de groupe d'après `ov_017::0218e210`
-([`re/movement.md`](re/movement.md)) : pavé et caps, rotation du modèle (`0x324`), vitesse
-(`0x189`, accélération `0x28`), requête `.col2` par grille, rayon du sol, sphère contre les murs,
-chute, glissement le long des murs, en `fx32` au bit près ; la rotation `L`/`R` de la caméra
-(`FieldCamera`) est portée sans sa hauteur ni sa distance. L'application affiche le héros animé (J1) et suit la caméra.
-`--save`/le champ Web restaurent la carte, la position et le cap du héros, l'heure et le
-scénario du slot normal valide (`dq9_core::state::GameState`, [`re/save.md`](re/save.md)
-§ « Position à la reprise » : le groupe est posé au point de départ `0x6e` de la carte ;
-égal à melonDS sur la démo et sur la carte 100) ; la sauvegarde de suspension (position
-enregistrée) est décodée mais non vérifiée en RAM, le reste de l'état (groupe, sac) et le
-cast selon le scénario sauvegardé ne sont pas branchés.
-Portes, zones et warps du `.bmbl` : lus en `fx32` comme le jeu (`dq9_formats::map::Regions`,
-identiques à la RAM de melonDS dans `C01M09` et `C01`) et testés par `dq9_core::field` : boîte
-tournée (sens de la rotation lu sur la ROM), hauteur, cylindres, portes de type 2 qui exigent
-une marche contre leur orientation pendant quatre images, aires de la carte et aires ajoutées
-par l'action `0x8f`, événements 2, 3, 5, 6, 17 et 20 des triggers (changement de carte rendu à
-l'application, autres demandes journalisées jusqu'à J3), marques `0x6c`/`0x88` des portes.
-`dq9-app` ne fait que réagir aux événements ; entrer dans les maisons d'Angel Falls et en
-sortir fonctionne (`dq9-app --walk`, test `angel_falls_houses_open_and_close`).
-Comparaison à melonDS sur l'église de Stornway : sortie (warp `0x72`) et retour (porte de type
-2) concordent pour les cartes, les arrivées, les angles et le bord de franchissement, à ± 2
-images de pilotage près ([`re/map-archive.md`](re/map-archive.md)). Restent : la tâche de porte
-(animation, marche automatique, fondu), les zones des autres types et la comparaison à nombre
-d'images égal sur un parcours complet : le pas terrain à 30 Hz égale l'original VBlank par
-VBlank sur `X01M05` (`field_cadence_holds_the_pose_and_matches_the_original_every_vblank`),
-mais le critère différentiel de J2 n'est pas validé sur tout Angel Falls.
+Progress: time of day exists as a 420 s clock and explicit phase
+(`dq9_core::lighting::DayClock`, port of `GameState::SetDayTimer`/`AdvanceDayTimer`, without the
+wiring of the scene update that makes it run on maps of type 0 and 7: the application
+sets it by option). `dq9-core` holds the party leader's movement from `ov_017::0218e210`
+([`re/movement.md`](re/movement.md)): d-pad and headings, model rotation (`0x324`), speed
+(`0x189`, acceleration `0x28`), grid-based `.col2` query, ground ray, sphere against walls,
+falling, sliding along walls, in `fx32` bit-exact; the camera's `L`/`R` rotation
+(`FieldCamera`) is ported without its height or distance. The application shows the animated hero (J1) and follows the camera.
+`--save`/the Web field restore the map, the hero's position and heading, the time and the
+scenario of the valid normal slot (`dq9_core::state::GameState`, [`re/save.md`](re/save.md)
+§ "Position on resume": the party is placed at the map's start point `0x6e`;
+equal to melonDS on the demo and on map 100); the suspend save (saved
+position) is decoded but not checked in RAM, the rest of the state (party, bag) and the
+cast for the saved scenario are not wired.
+Doors, zones and warps of the `.bmbl`: read in `fx32` like the game (`dq9_formats::map::Regions`,
+identical to melonDS RAM in `C01M09` and `C01`) and tested by `dq9_core::field`: rotated
+box (rotation direction read from the ROM), height, cylinders, type-2 doors that require
+walking against their orientation for four frames, map areas and areas added
+by action `0x8f`, trigger events 2, 3, 5, 6, 17 and 20 (map change handed to
+the application, other requests logged until J3), `0x6c`/`0x88` door marks.
+`dq9-app` only reacts to events; entering Angel Falls houses and leaving
+works (`dq9-app --walk`, test `angel_falls_houses_open_and_close`).
+Comparison with melonDS on the Stornway church: exit (warp `0x72`) and return (type-2
+door) match for maps, arrivals, angles and the crossing edge, within ± 2
+driving frames ([`re/map-archive.md`](re/map-archive.md)). Remaining: the door task
+(animation, automatic walk, fade), zones of other types and the comparison at equal
+frame count over a full route: the 30 Hz field step equals the original VBlank by
+VBlank on `X01M05` (`field_cadence_holds_the_pose_and_matches_the_original_every_vblank`),
+but the J2 differential criterion is not validated over all of Angel Falls.
 
-Déplacement fidèle : porté dans `dq9-core` (`fx`, `movement`, `collision`, `camera`), constantes
-comparées à la ROM par `tests/movement_rom.rs` ; vitesse mesurée sous melonDS (une mesure, ± 1 image,
-compatible : [`re/movement.md`](re/movement.md)). L'orbite de terrain démarre à la distance 11
-et à la hauteur relative 6 du constructeur, suit le héros à mi-hauteur et reprend après les
-scènes, y compris les chaînes qui changent de carte (vérifié en natif et dans Chromium :
-`M01`, sauvegarde `C01M09`, nouvelle partie jusqu'à `X01M05`). Restent : personnages et objets
-de zone qui poussent le héros, aimantation sur les zones orientées, échelles, suivi lissé et
-zones de caméra, comparaison position par position à nombre d'images égal.
+Faithful movement: ported into `dq9-core` (`fx`, `movement`, `collision`, `camera`), constants
+compared with the ROM by `tests/movement_rom.rs`; speed measured under melonDS (one measurement, ± 1 frame,
+compatible: [`re/movement.md`](re/movement.md)). The field orbit starts at the constructor's distance 11
+and relative height 6, follows the hero at mid-height and resumes after
+cutscenes, including chains that change map (checked natively and in Chromium:
+`M01`, save `C01M09`, new game up to `X01M05`). Remaining: area characters and objects
+that push the hero, snapping on oriented zones, ladders, smoothed follow and
+camera zones, position-by-position comparison at equal frame count.
 
-## J3 — Parler et scènes : **v0.1 jouable**
+## J3 — Talking and cutscenes: **playable v0.1**
 
-| Tâche | Réutiliser |
+| Task | Reuse |
 |---|---|
-| fenêtre de dialogue à l'écran : police, cadre, nom de l'orateur, défilement, Oui/Non ; balises de mise en page restantes (`<CEN>`, `<TC#>`, `<W=#>`… de `text.md`) | `message.rs`, `font.rs` (fait) ; wiki Text-Markup |
-| triggers branchés sur le jeu réel (parler, examiner, entrer dans une zone) | `trigger.rs` (fait) |
-| interpréteur `.stb` dans `dq9-core` (attente par image, appels de fonctions) — **fait** (`dq9_core::script`, voir Avancement) | `stb.rs` (fait) ; wiki Event-Scripts |
-| natives : personnages (200), caméra (300), messages (400), scène et fondus (500, 100–122) — **jouées à l'écran** pour le prologue (voir Avancement) | wiki Engine-Functions ; `ov_001` |
-| deux écrans DS : écran haut (carte) et bas, disposition configurable | — |
-| son : musique SDAT, effets et jingles — **fait** (sans comparaison à l'oreille ni à melonDS) : `dq9-audio` (séquenceur, enveloppes DS, ondes ADPCM, PSG, bruit, archives de séquences SSAR, mixeur multi-séquences avec limites et priorités des joueurs du SDAT), musique de la carte lue dans `maplist9.bin` + `mapbgm.bin`, natives 554 et 712 à 738 des scripts (effets des groupes chargés, effets de base, jingles `ME_` avec fondu et reprise de la musique, volume, arrêt, verrou), sons du message (bip de frappe, `<EXC>`, `<QES>`, ouverture et confirmation de choix avec exceptions `NOTSE` ; déplacement du curseur silencieux d'après le code EU), sortie cpal/WebAudio (`--mute`, touche `M`), `dq9re sseq|sdat|se`, `dq9-app --sound-wav` ; reste : sons de portes, de pas et de gestes, effets de combat, flux STRM, réglage de volume du joueur ([`re/sdat.md`](re/sdat.md)) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL) ; wiki SDAT |
+| on-screen dialogue window: font, frame, speaker name, scrolling, Yes/No; remaining layout tags (`<CEN>`, `<TC#>`, `<W=#>`… from `text.md`) | `message.rs`, `font.rs` (done); wiki Text-Markup |
+| triggers wired to the real game (talk, examine, enter a zone) | `trigger.rs` (done) |
+| `.stb` interpreter in `dq9-core` (per-frame wait, function calls) — **done** (`dq9_core::script`, see Progress) | `stb.rs` (done); wiki Event-Scripts |
+| natives: characters (200), camera (300), messages (400), cutscene and fades (500, 100–122) — **played on screen** for the prologue (see Progress) | wiki Engine-Functions; `ov_001` |
+| two DS screens: top screen (map) and bottom, configurable layout | — |
+| sound: SDAT music, effects and jingles — **done** (without comparison by ear or with melonDS): `dq9-audio` (sequencer, DS envelopes, ADPCM waves, PSG, noise, SSAR sequence archives, multi-sequence mixer with SDAT player limits and priorities), map music read from `maplist9.bin` + `mapbgm.bin`, script natives 554 and 712 to 738 (loaded group effects, base effects, `ME_` jingles with fade and music resume, volume, stop, lock), message sounds (typing beep, `<EXC>`, `<QES>`, opening and confirming choices with `NOTSE` exceptions; cursor movement silent per the EU code), cpal/WebAudio output (`--mute`, key `M`), `dq9re sseq|sdat|se`, `dq9-app --sound-wav`; remaining: door, footstep and gesture sounds, battle effects, STRM streams, player volume setting ([`re/sdat.md`](re/sdat.md)) | [SSEQPlayer](https://github.com/kode54/SSEQPlayer), FSS (WTFPL); wiki SDAT |
 
-Avancement :
+Progress:
 
-- [ ] **Fenêtre de dialogue** (`dq9_core::talk`, `dq9_render::ui`, `dq9-app/src/talk.rs`,
-      [`re/dialogue.md`](re/dialogue.md) § « Fenêtre de message ») : A dans `dq9-app` (natif et
-      Web, `Entrée`/`Espace`) parle au PNJ en face du héros (partenaire de `Talk_NearestNpc`,
-      déclencheur « parler » de la carte, réplique choisie par `dialogue::select`) ; fenêtre
-      du jeu (cadre `win0..7.spr`, police `me`, plaque `//Nom//`, coupure des lignes, pages,
-      flèche d'attente, défilement à la 4ᵉ ligne, Oui/Non avec branches `<YES>`/`<NO>` et
-      sauts `<JP_x>`/`<LB_x>`), balises de tête (`<CEN>`, `<WIN>`, `<GYOU=>`, `<MOJI=>`,
-      `<COLOR=>`, `<RECT=>`) ; les 37 988 répliques anglaises se jouent jusqu'à la fermeture
-      (test réel) ; capture `--input` d'une réplique de Hugo, d'Aquila (question) et d'Erinn.
-      Le nom et le sexe du héros viennent du slot valide de la sauvegarde, y compris avec
-      `--map` ; sans sauvegarde et en nouvelle partie, l'identité par défaut est conservée.
-      Substitution et conditions testées ; branche féminine contrôlée à l'écran avec la
-      sauvegarde de démonstration.
-      **Reste** : valider sur melonDS les constantes de mise en page non lues (marges, plaque,
-      fenêtre Oui/Non, fond, flèche), PNJ tournés vers le héros et immobiles, ballons,
-      langues autres que l'anglais, `<TC#>` et `<W=#>` (absentes du chemin des conversations).
-- [ ] **Triggers branchés** : l'événement 0 « parler » (`Field::talk`) est branché sur la
-      conversation ; les demandes `Request::Event` des triggers (actions `0x77`, `0x80`, `0x9b`)
-      démarrent l'événement dans l'application, la fin d'un événement tire l'événement 11
-      (`Field::event_ended`), la fin d'une conversation l'événement 1 (`Field::talk_ended`), la
-      fin d'un combat scripté 15/16 (`Field::battle_ended`) et `0x76` hors conversation ouvre la
-      fenêtre (`App::talk_to`) ; l'action `0x78` est le **combat scripté** (`Request::Battle`,
-      `trigger.md` § Combats scriptés) ; restent « examiner », les zones d'autres types, le
-      système de combat (substitut « gagné » : `scenario::stand_in`) et les demandes `Other`
+- [ ] **Dialogue window** (`dq9_core::talk`, `dq9_render::ui`, `dq9-app/src/talk.rs`,
+      [`re/dialogue.md`](re/dialogue.md) § "Message window"): A in `dq9-app` (native and
+      Web, `Enter`/`Space`) talks to the NPC facing the hero (partner of `Talk_NearestNpc`,
+      the map's "talk" trigger, line chosen by `dialogue::select`); the game's
+      window (frame `win0..7.spr`, font `me`, `//Name//` plate, line breaking, pages,
+      wait arrow, scrolling at the 4th line, Yes/No with `<YES>`/`<NO>` branches and
+      `<JP_x>`/`<LB_x>` jumps), header tags (`<CEN>`, `<WIN>`, `<GYOU=>`, `<MOJI=>`,
+      `<COLOR=>`, `<RECT=>`); the 37,988 English lines play through to closing
+      (real test); `--input` capture of a line from Hugo, Aquila (question) and Erinn.
+      The hero's name and sex come from the save's valid slot, including with
+      `--map`; without a save and on a new game, the default identity is kept.
+      Substitution and conditions tested; female branch checked on screen with the
+      demo save.
+      **Remaining**: validate on melonDS the layout constants not read (margins, plate,
+      Yes/No window, background, arrow), NPCs turning toward the hero and standing still, balloons,
+      languages other than English, `<TC#>` and `<W=#>` (absent from the conversation path).
+- [ ] **Triggers wired**: event 0 "talk" (`Field::talk`) is wired to the
+      conversation; `Request::Event` requests from triggers (actions `0x77`, `0x80`, `0x9b`)
+      start the event in the application, the end of an event fires event 11
+      (`Field::event_ended`), the end of a conversation event 1 (`Field::talk_ended`), the
+      end of a scripted battle 15/16 (`Field::battle_ended`) and `0x76` outside a conversation opens the
+      window (`App::talk_to`); action `0x78` is the **scripted battle** (`Request::Battle`,
+      `trigger.md` § Scripted battles); remaining: "examine", zones of other types, the
+      battle system (stand-in "won": `scenario::stand_in`) and `Other` requests
       (141…).
-- [x] **Nouvelle partie : le prologue s'enchaîne** (`dq9-app --new-game`, bouton « Nouvelle
-      partie » du Web, `dq9_core::scenario`, [`app.md`](app.md) § « Nouvelle partie »,
-      [`re/stb.md`](re/stb.md) § « Enchaînement du prologue ») : état de `GameState::new_game`,
-      héros par défaut, première scène `21500` ; `21507 → combat 26 → 21520 → … → 21596` par la
-      native 538, le trigger 11, l'action `0x78` et le trigger 15, puis le joueur a la main à
-      l'Observatoire (`--new-game --headless --auto`, 210 s de jeu). Le pilote **marche** :
-      direction au pavé, `Hero::step`, collisions, portes (la double porte de `X01M07` est
-      poussée puis ouverte par la native 584), passe 1170, franchit la rampe vers `X01M03`,
-      atteint **1.2.1** après Yggdrasil (21510), puis revient physiquement à Angel Falls 1100
-      sans téléportation ([`re/movement.md`](re/movement.md)). **Reste** : le combat 26 (J4)
-      et la comparaison d'ordre, de durées et de drapeaux à l'original au-delà de 1.1.2 ;
-      le pilote est un outil de test, pas une fonction du jeu.
-- [ ] **Interpréteur `.stb`** : `dq9_core::script` traduit `Stb_Run` et ses auxiliaires
-      (`ov_017::021d4980…021d6148`, marqueurs `port:`), joue les entrées 200, 100 et 300 d'un
-      événement une mise à jour à la fois (`Script::step`) et rend des `Event` typés (fondus,
-      messages, acteurs, caméra, son, déclarations de distribution) ; l'application répond par des
-      `Signal` (message fermé, acteur au repos, caméra au repos…). Le `Director` démarre l'événement
-      d'une requête `Request::Event` des triggers et enchaîne la native 538. Les 30 scripts du
-      prologue (étapes 1.1 à 1.3) vont à leur terme sans erreur (`cargo dq9re script 1.1-3`, test
-      réel `prologue_scripts_run_to_completion`) ; 7 natives de rôle inconnu ou sans effet
-      rendu sont rapportées une fois et ignorées. **Exécution à l'écran** (`dq9_core::cutscene`, `dq9-app/src/event.rs`,
-      [`app.md`](app.md) § « Événements », [`re/stb.md`](re/stb.md) § « Exécution à l'écran ») :
-      `--stage 1.1` / `--event N` jouent les scènes (fondus, messages dans la fenêtre de
-      conversation, acteurs qui bougent, tournent et jouent leurs mouvements, caméra du script
-      dont celle portée par les os d'un modèle, déplacements au pas du jeu, lumière et heure,
-      brouillard, attachements d'os du halo et des ailes, mouvements des PNJ de la carte, bulles,
-      sprites de script, palette des personnages) ; les 30 scripts du prologue vont à leur terme
-      (`--events-report 1.1-3` : 28 sans manque visible, 2 partielles — 22 avant les effets de
-      scène —, aucune « non jouée »). Les placements masqués à l'heure choisie restent
-      construits et les natives 574/575 peuvent les montrer et les déplacer : les scènes
-      1330 et 21510 sont désormais complètes ; capture native de 1330 et test réel du
-      placement affiché, image de référence `M01` inchangée pixel pour pixel.
-      Restent : 547 (transition de combat, J4), le son de la porte 584, les placements de
-      collision (574/575 sur les murs/sol), comparer l'ordre, les durées et les poses à
-      melonDS, l'appelant de l'entrée 200 et les natives sans rôle
-      (`re/stb.md`, § Interpréteur).
-- **Deux écrans DS** (`dq9-app/src/screens.rs`, `dq9_render::Panel`) : écran haut = champ 3D avec
-  la caméra du jeu (`0x0202df78`) ; écran bas = fond uni, contenu tactile non identifié
-  **[inconnu]** ; dispositions `stacked`, `side`, `top` (`--layout`, touche `R`, select Web).
-  Partiel : rien n'est encore affiché sur l'écran du bas.
+- [x] **New game: the prologue chains** (`dq9-app --new-game`, the Web "New
+      game" button, `dq9_core::scenario`, [`app.md`](app.md) § "New game",
+      [`re/stb.md`](re/stb.md) § "Prologue chaining"): `GameState::new_game` state,
+      default hero, first cutscene `21500`; `21507 → battle 26 → 21520 → … → 21596` through
+      native 538, trigger 11, action `0x78` and trigger 15, then the player gets control at
+      the Observatory (`--new-game --headless --auto`, 210 s of play). The driver **walks**:
+      d-pad direction, `Hero::step`, collisions, doors (the double door of `X01M07` is
+      pushed then opened by native 584), passes 1170, crosses the ramp toward `X01M03`,
+      reaches **1.2.1** after Yggdrasil (21510), then physically returns to Angel Falls 1100
+      without teleporting ([`re/movement.md`](re/movement.md)). **Remaining**: battle 26 (J4)
+      and comparing order, durations and flags with the original beyond 1.1.2;
+      the driver is a test tool, not a game feature.
+- [ ] **`.stb` interpreter**: `dq9_core::script` translates `Stb_Run` and its helpers
+      (`ov_017::021d4980…021d6148`, `port:` markers), plays entries 200, 100 and 300 of an
+      event one update at a time (`Script::step`) and emits typed `Event`s (fades,
+      messages, actors, camera, sound, cast declarations); the application answers with
+      `Signal`s (message closed, actor idle, camera idle…). The `Director` starts the event
+      from a trigger `Request::Event` and chains native 538. The 30
+      prologue scripts (stages 1.1 to 1.3) run to completion without error (`cargo dq9re script 1.1-3`, real
+      test `prologue_scripts_run_to_completion`); 7 natives with unknown role or no rendered
+      effect are reported once and ignored. **On-screen execution** (`dq9_core::cutscene`, `dq9-app/src/event.rs`,
+      [`app.md`](app.md) § "Events", [`re/stb.md`](re/stb.md) § "On-screen execution"):
+      `--stage 1.1` / `--event N` play the cutscenes (fades, messages in the conversation
+      window, actors that move, turn and play their motions, script camera
+      including the one carried by a model's bones, movement at the game's step, light and time,
+      fog, halo and wing bone attachments, map NPC movements, bubbles,
+      script sprites, character palette); the 30 prologue scripts run to completion
+      (`--events-report 1.1-3`: 28 with no visible gap, 2 partial — 22 before the cutscene
+      effects —, none "not played"). Placements hidden at the chosen time remain
+      built and natives 574/575 can show and move them: cutscenes
+      1330 and 21510 are now complete; native capture of 1330 and real test of the
+      displayed placement, reference image `M01` unchanged pixel for pixel.
+      Remaining: 547 (battle transition, J4), the sound of door 584, collision
+      placements (574/575 on walls/ground), comparing order, durations and poses with
+      melonDS, the caller of entry 200 and the natives without a role
+      (`re/stb.md`, § Interpreter).
+- **Two DS screens** (`dq9-app/src/screens.rs`, `dq9_render::Panel`): top screen = 3D field with
+  the game's camera (`0x0202df78`); bottom screen = plain background, touch content not identified
+  **[unknown]**; layouts `stacked`, `side`, `top` (`--layout`, key `R`, Web select).
+  Partial: nothing is displayed on the bottom screen yet.
 
-**v0.1** : nouvelle partie avec un héros par défaut (modèle animé fait en J1 ; reste le choix
-de son apparence à la création du personnage), prologue d'Angel Falls jouable (scènes,
-dialogues, quêtes du village), sans combats. Critère : toute la suite d'événements du
-prologue se déroule ; état des drapeaux identique à melonDS aux mêmes points. **État** :
-fonctionnellement complète en natif (tâches 1.2, verrou de sortie, aire 12, 21595 et retour
-1.4.1 couverts par des tests réels), non certifiée de bout en bout dans le navigateur ni
-comparée à l'original au-delà de 1.1.2 ([`status.md`](status.md)).
+**v0.1**: new game with a default hero (animated model done in J1; choosing
+its appearance at character creation remains), playable Angel Falls prologue (cutscenes,
+dialogue, village quests), without battles. Criterion: the whole event sequence of the
+prologue runs; flag state identical to melonDS at the same points. **Status**:
+functionally complete natively (tasks 1.2, exit lock, area 12, 21595 and return
+1.4.1 covered by real tests), not certified end to end in the browser nor
+compared with the original beyond 1.1.2 ([`status.md`](status.md)).
 
-## J4 — Combattre : **v0.2**
+## J4 — Fighting: **v0.2**
 
-| Tâche | Réutiliser |
+| Task | Reuse |
 |---|---|
-| tables : monstres, actions, objets, sorts, niveaux, articles | wiki Monsters, Actions, Items, Spell-Table, Level-Tables, Articles |
-| générateurs aléatoires AT/BT/CT (constantes connues) | glossaire dqix-functions, `src/Util/Random.cpp` |
-| monstres visibles sur le terrain, apparition et rencontre | wiki Encounters ; scripts DeSmuME (nœuds d'apparition) |
-| déroulement : commandes, ordre, IA, dégâts, critiques, tension, états, fin et expérience | `src/Combat/` de la décompilation (formules déjà en C++), wiki Battle-Resolution, Battle-AI, Battle-Commands ; overlays 0, 24, 25, 26 |
-| présentation : arène, animations, messages, interface | wiki Battle-Stages, Battle-Presentation, Battle-Text |
-| combats scriptés (boss) | wiki Event-Battles |
+| tables: monsters, actions, items, spells, levels, articles | wiki Monsters, Actions, Items, Spell-Table, Level-Tables, Articles |
+| AT/BT/CT random generators (constants known) | dqix-functions glossary, `src/Util/Random.cpp` |
+| monsters visible on the field, spawning and encounter | wiki Encounters; DeSmuME scripts (spawn nodes) |
+| flow: commands, order, AI, damage, criticals, tension, statuses, end and experience | `src/Combat/` of the decompilation (formulas already in C++), wiki Battle-Resolution, Battle-AI, Battle-Commands; overlays 0, 24, 25, 26 |
+| presentation: arena, animations, messages, interface | wiki Battle-Stages, Battle-Presentation, Battle-Text |
+| scripted battles (bosses) | wiki Event-Battles |
 
-Critère : résultats identiques à BattleEmulator sur ses combats de référence (même graine,
-mêmes entrées). **v0.2** : jusqu'au premier boss du jeu.
+Criterion: results identical to BattleEmulator on its reference battles (same seed,
+same inputs). **v0.2**: up to the game's first boss.
 
-## J5 — Progresser : **v0.3**
+## J5 — Progressing: **v0.3**
 
-- Écran titre, création du personnage, chargement/sauvegarde au format DS (J0).
-- Menus : objets, équipement (modèles changeants), sorts, statut, stratégie, compétences
+- Title screen, character creation, loading/saving in DS format (J0).
+- Menus: items, equipment (changing models), spells, status, tactics, skills
   (overlays 2, 4, 5, 11, 13).
-- Établissements : boutiques, auberge, église, banque (overlay 3 ; wiki Inns-and-Churches,
+- Facilities: shops, inn, church, bank (overlay 3; wiki Inns-and-Churches,
   Items `shopdata1.bin`).
-- Équipe, recrutement au Quester's Rest, vocations (wiki Party, Vocation-Skill-Trees,
+- Party, recruiting at Quester's Rest, vocations (wiki Party, Vocation-Skill-Trees,
   Skill-Panels).
 
-**v0.3** : on peut jouer, sauvegarder et reprendre, avec une sauvegarde échangeable avec la DS.
+**v0.3**: you can play, save and resume, with a save interchangeable with the DS.
 
-## J6 — Histoire complète : **v0.5**
+## J6 — Full story: **v0.5**
 
-- Toutes les cartes, scènes et natives restantes ; navire, Starflight Express (wiki Ship,
-  Starflight-Express, Travel) ; zoom (téléportation).
-- Combats de boss et mécaniques spéciales rencontrées ; générique (overlay 27).
-- Fermer les **[sens inconnu]** de `trigger.md` et `stb.md` au fil des chapitres.
+- All remaining maps, cutscenes and natives; ship, Starflight Express (wiki Ship,
+  Starflight-Express, Travel); zoom (teleportation).
+- Boss battles and special mechanics encountered; credits (overlay 27).
+- Close the **[unknown meaning]** items of `trigger.md` and `stb.md` chapter by chapter.
 
-**v0.5** : le jeu se termine. Critère : scénario parcouru de bout en bout, sauvegardes de
-contrôle à chaque chapitre comparées à melonDS.
+**v0.5**: the game can be finished. Criterion: scenario played end to end, checkpoint
+saves at each chapter compared with melonDS.
 
-## J7 — Contenu annexe
+## J7 — Side content
 
-- Quêtes, accolades, mini-médailles, bestiaire, registres (overlays 8, 14 ; wiki Quests,
+- Quests, accolades, mini medals, bestiary, records (overlays 8, 14; wiki Quests,
   Accolades, Mini-Medals).
-- Alchimie (overlay 6 ; wiki Alchemy, Alchemy-Recipes).
-- Grottes et cartes au trésor : générateur traduit depuis `src/Grotto/` de la décompilation,
-  vérifié contre Grotto-Searcher ; boss légendaires.
-- Récolte, tours de passe-passe, visionneuse de personnages (wiki Gathering, Party-Tricks).
+- Alchemy (overlay 6; wiki Alchemy, Alchemy-Recipes).
+- Grottoes and treasure maps: generator translated from `src/Grotto/` of the decompilation,
+  checked against Grotto-Searcher; legendary bosses.
+- Gathering, party tricks, character viewer (wiki Gathering, Party-Tricks).
 
-## J8 — Multijoueur et contenu en ligne
+## J8 — Multiplayer and online content
 
-Le multijoueur en ligne du projet : ce que la DS faisait en local, sur Internet.
+The project's online multiplayer: what the DS did locally, over the Internet.
 
-- Coopération jusqu'à 4 joueurs (visites via Pavo) et mode Tag : protocole réseau propre, au
-  niveau du jeu (pas d'émulation radio) ; données échangées d'après `ov_017` et la session
-  (conditions 0x17/0x51 de `trigger.md`).
-- DQVC (calendrier des 52 soldes, fichiers chiffrés RC4) et quêtes/invités téléchargeables,
-  servis localement ; formats d'après DQIX Enhanced (faits seulement) et `DQIX/auction`.
-- Remplace les overlays 30 et 31.
+- Co-op up to 4 players (visits via Pavo) and Tag mode: own network protocol, at
+  the game level (no radio emulation); exchanged data from `ov_017` and the session
+  (conditions 0x17/0x51 of `trigger.md`).
+- DQVC (calendar of the 52 sales, RC4-encrypted files) and downloadable quests/guests,
+  served locally; formats from DQIX Enhanced (facts only) and `DQIX/auction`.
+- Replaces overlays 30 and 31.
 
-## J9 — 100 %
+## J9 — 100%
 
-- `dq9re coverage` à 100 % pour la catégorie Jeu.
-- Vidéos Mobiclip (overlay 16) via FFmpeg ou décodeur propre ; son complet (effets, flux).
-- Langues des cinq versions européennes ; versions USA/JPN si la correspondance d'adresses
-  est étendue.
-- Finitions plateforme : Web, manettes, écran large, mise à l'échelle.
+- `dq9re coverage` at 100% for the Game category.
+- Mobiclip videos (overlay 16) via FFmpeg or an own decoder; complete sound (effects, streams).
+- Languages of the five European versions; USA/JPN versions if the address mapping
+  is extended.
+- Platform finishing: Web, gamepads, widescreen, scaling.
 
-## Approche écartée : recompilation hybride
+## Rejected approach: hybrid recompilation
 
-Exécuter le code ARM d'origine (recompilé ou interprété) et le remplacer progressivement
-donnerait un jeu jouable plus tôt, mais : DQIX Enhanced le fait déjà ; il faudrait émuler le
-matériel DS (contraire à `architecture.md`) ; la cible Web en souffrirait ; et ses sources
-sont en GPL. On garde la réimplémentation et on utilise ces projets comme oracles.
+Running the original ARM code (recompiled or interpreted) and replacing it gradually
+would give a playable game sooner, but: DQIX Enhanced already does it; it would require emulating
+the DS hardware (contrary to `architecture.md`); the Web target would suffer; and its sources
+are GPL. We keep the reimplementation and use these projects as oracles.
 
-## Risques
+## Risks
 
-| Risque | Parade |
+| Risk | Mitigation |
 |---|---|
-| Rendu 3D éloigné de la DS | comparaison d'images avec melonDS/DQIX Enhanced dès J1 ; sémantique G3D de la décompilation |
-| Natives des scripts nombreuses (228) | lectures du wiki, implémentation à la demande par zone jouable |
-| Écarts USA/Europe | correspondance d'adresses vérifiée (J0) ; observations du wiki faites sur la ROM européenne |
-| Licences | règles de `ressources-externes.md` : intégrer Unlicense/MIT/0BSD/WTFPL, lire seulement GPL et non licencié |
+| 3D rendering far from the DS | image comparison with melonDS/DQIX Enhanced from J1; G3D semantics from the decompilation |
+| Many script natives (228) | wiki readings, on-demand implementation per playable area |
+| USA/Europe differences | address mapping verified (J0); wiki observations made on the European ROM |
+| Licenses | rules of `external-resources.md`: integrate Unlicense/MIT/0BSD/WTFPL, only read GPL and unlicensed |

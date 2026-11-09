@@ -1,5 +1,5 @@
 //! `dq9re script`: runs event scripts headless with a fake application that completes every
-//! wait at once, and prints the event trace (`docs/re/stb.md`, § Interpréteur).
+//! wait at once, and prints the event trace (`docs/re/stb.md`, § Interpreter).
 
 use std::collections::BTreeMap;
 

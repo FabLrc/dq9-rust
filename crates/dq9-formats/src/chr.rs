@@ -57,7 +57,7 @@ impl AnimKind {
     }
 }
 
-/// `BCFG::SizeCEntry`, opcode `0x6c` **[inconnu]**: `(value, time)` attached to a motion.
+/// `BCFG::SizeCEntry`, opcode `0x6c` **[unknown]**: `(value, time)` attached to a motion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MotionMark {
     /// Third field (`Tbl_FieldInt`), kept on 16 bits.
@@ -67,7 +67,7 @@ pub struct MotionMark {
 }
 
 /// `BCFG::AltSizeCEntry`, opcode `0x6f`: a cue at a time of a motion (a sound effect
-/// according to the decomp's naming, **[hypothèse]**).
+/// according to the decomp's naming, **[hypothesis]**).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MotionCue {
     /// Third field, kept on 16 bits.

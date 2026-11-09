@@ -1,5 +1,5 @@
 //! The protagonist's body: which parts of `chara_pc.gp2` a character is drawn with
-//! (`docs/re/characters.md` § « Le héros »).
+//! (`docs/re/characters.md` § "The hero").
 //!
 //! A human character is a set of ten worn items (slots h0–h9 of `CharaParts_GetPartNumbers`,
 //! USA `func_02072afc`): armour, legwear, face, hair, gloves, footwear, headgear, weapon, shield
@@ -49,7 +49,7 @@ fn worn(id: u16, first: u16) -> Option<u16> {
 
 impl HeroLook {
     /// The hero a new game starts with: a man (face 9024, hair 9006: the male presets of
-    /// `charapreset.bin`) in the Celestrian outfit of the opening, **[hypothèse]** : celestial
+    /// `charapreset.bin`) in the Celestrian outfit of the opening, **[hypothesis]**: celestial
     /// suit, stockings and shoes, and the halo (items 13007, 16215, 17120, 12805).
     pub fn new_game() -> Self {
         Self {

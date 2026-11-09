@@ -1,6 +1,6 @@
 //! The field camera's turn: the shoulder buttons rotate it around the hero within a quarter
 //! turn of its home direction, both together bring it back (`FieldCamera_Update`,
-//! `0x020a213c`; `docs/re/movement.md`, « Caméra de terrain »). Only the yaw is modelled: the
+//! `0x020a213c`; `docs/re/movement.md`, "Field camera"). Only the yaw is modelled: the
 //! camera's height, distance and target follow the application's camera.
 //!
 //! Angles are `fx32` (0x6488 per turn) as in the game, where yaw 0 looks towards `-z` and a

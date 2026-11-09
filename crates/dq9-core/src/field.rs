@@ -1,6 +1,6 @@
 //! Field regions: what the game does each frame with the leader's position and the regions
-//! of the map's `.bmbl` (`docs/re/map-archive.md`, « Portes et changements de carte »,
-//! `docs/re/trigger.md`, « Zones »). No I/O: the caller supplies the parsed regions
+//! of the map's `.bmbl` (`docs/re/map-archive.md`, "Doors, zones and map changes",
+//! `docs/re/trigger.md`, "Zones"). No I/O: the caller supplies the parsed regions
 //! (`dq9_formats::map::Regions`) and the bytes of the scenario trigger file.
 //!
 //! [`Field::step`] runs, for one map and one leader pose, the checks of the field task
@@ -51,7 +51,7 @@ const EVENT_LOADED: i32 = 20;
 const APPROACH_BAND: i32 = 0xccc - 0x170;
 /// Consecutive frames walking into a doorway before it reacts (`+0x42ec` counts to 3).
 const APPROACH_FRAMES: i16 = 3;
-/// Doorway flag set by trigger actions 0x6c/0x88 (« already opened »): the doorway is
+/// Doorway flag set by trigger actions 0x6c/0x88 ("already opened"): the doorway is
 /// skipped (`ov_017::02197a64` tests bits 0 and 2).
 const DOORWAY_USED: u16 = 0x4;
 const DOORWAY_DISABLED: u16 = 0x1;
@@ -283,7 +283,7 @@ pub struct MapChange {
     pub position: Option<Vec3>,
     /// Arrival orientation as the game's object angle; see [`yaw_of_angle`].
     pub angle: Option<f32>,
-    /// Entry point of the destination (`0x72` value 15, trigger action 0x85…) **[inconnu]**.
+    /// Entry point of the destination (`0x72` value 15, trigger action 0x85…) **[unknown]**.
     pub entry: Option<i32>,
     pub cause: Cause,
 }
@@ -397,7 +397,7 @@ pub fn trigger_path(code: &str) -> Option<String> {
 
 /// Trigger state of a new game at `story`: flags, quests and the same progress on every
 /// scenario track (the real game keeps one per track; a single story point is all the
-/// application is given). The time of day is a nonzero value by day **[hypothèse]**.
+/// application is given). The time of day is a nonzero value by day **[hypothesis]**.
 pub fn initial_state(story: &dq9_formats::cast::Story) -> State {
     let mut state = State {
         flags: story.flags.clone(),
@@ -1002,7 +1002,7 @@ impl Field {
     }
 }
 
-/// Actions 0x6c and 0x88 (`Trig_RunAction` cases 8 and `0x24`): set or clear the « used »
+/// Actions 0x6c and 0x88 (`Trig_RunAction` cases 8 and `0x24`): set or clear the "used"
 /// bit of the doorways of class `arg`, number operand 0 and facing operand 1 (degrees).
 /// A used doorway is skipped; setting it leaves a doorway with the runtime bit 0 alone.
 fn mark_doorways(doorways: &mut [Slot], op: &Op<'_>, used: bool) {

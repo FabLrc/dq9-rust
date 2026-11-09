@@ -3,8 +3,8 @@
 //! 11 ([`crate::field::Field::event_ended`]), whose actions start the next event (0x77), move the
 //! story forward (0x84), change the map (0x79…) or start a scripted battle (0x78,
 //! [`crate::trigger::Request::Battle`]); the end of that battle fires trigger event 15 or 16
-//! ([`crate::field::Field::battle_ended`]). Evidence in `docs/re/trigger.md`, § « Combats
-//! scriptés » and `docs/re/stb.md`, § « Enchaînement du prologue ».
+//! ([`crate::field::Field::battle_ended`]). Evidence in `docs/re/trigger.md`, § "Scripted
+//! battles" and `docs/re/stb.md`, § "Prologue chaining".
 //!
 //! This module holds what is left: the record of a scripted battle ([`BattleRecord`]), the
 //! stand-in for the battle system until J4 ([`stand_in`]), and the [`Journal`] the headless
@@ -28,9 +28,9 @@ pub struct BattleRecord {
     pub number: u32,
     /// `(monster number, count)` of the filled slots (`monster.bin` order).
     pub monsters: Vec<(u32, u32)>,
-    /// Battle music (wiki, EU **[hypothèse]**).
+    /// Battle music (wiki, EU **[hypothesis]**).
     pub track: u32,
-    /// Map of the arena, 0 for the one the ground names (wiki, EU **[hypothèse]**).
+    /// Map of the arena, 0 for the one the ground names (wiki, EU **[hypothesis]**).
     pub stage: u32,
 }
 

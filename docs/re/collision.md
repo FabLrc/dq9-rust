@@ -1,92 +1,89 @@
-# Collision des cartes (`.col2`)
+# Map collision (`.col2`)
 
-Le lecteur `dq9_formats::map::Collision::parse` décode les octets **décompressés** du maillage,
-de l'index de grille et des records de sol des fichiers `.col2` européens. Dans les archives,
-les membres `.col2` portent un en-tête de compression Nintendo ; l'appelant les décompresse
-avec `nds_rom::compress::decompress` avant de les parser. Le parseur n'effectue aucune E/S.
-Le parseur est consommé par `dq9-core` pour les requêtes de sol et le mouvement
-([`movement.md`](movement.md)). La construction reste sans E/S ; les archives et les membres
-sont fournis par l'appelant.
+The reader `dq9_formats::map::Collision::parse` decodes the **decompressed** bytes of the mesh,
+the grid index and the floor records of European `.col2` files. In the archives, `.col2`
+members carry a Nintendo compression header; the caller decompresses them with
+`nds_rom::compress::decompress` before parsing. The parser does no I/O.
+The parser is consumed by `dq9-core` for floor queries and movement
+([`movement.md`](movement.md)). Construction stays I/O-free; archives and members are
+supplied by the caller.
 
-## Structure observée
+## Observed structure
 
-Le format n'a pas de signature textuelle. Le premier mot vaut 3 sur les 1 178 fichiers de la
-ROM. Les offsets du tableau d'en-tête indiquent les sections ; le lecteur contrôle leurs
-bornes et leurs cohérences avant de construire le résultat.
+The format has no text signature. The first word is 3 in all 1,178 files of the ROM. The
+offsets of the header table point to the sections; the reader checks their bounds and
+consistency before building the result.
 
-| Décalage | Donnée | Décodage |
+| Offset | Data | Decoding |
 |---|---|---|
-| `0x00` | version | `u32`, valeur 3 |
-| `0x04` | `shift` | `u32`, de 0 à 5 ; sommets et bornes valent `entier << shift` en `fx32` |
-| `0x08` | limites | six `i16`, min x/y/z puis max x/y/z |
-| `0x14` | nombre de triangles | `u32` |
-| `0x18` | dimensions de cellule | `u16` taille, `u16` inconnu |
-| `0x1c`, `0x20` | dimensions de la grille | `u32` X et Z |
-| `0x24`…`0x30` | offsets | triangles, comptes, débuts et indices par cellule |
-| `0x34`, `0x38` | records de sol | nombre `u32`, offset `u32` |
+| `0x00` | version | `u32`, value 3 |
+| `0x04` | `shift` | `u32`, 0 to 5; vertices and bounds are `integer << shift` in `fx32` |
+| `0x08` | bounds | six `i16`, min x/y/z then max x/y/z |
+| `0x14` | triangle count | `u32` |
+| `0x18` | cell dimensions | `u16` size, `u16` unknown |
+| `0x1c`, `0x20` | grid dimensions | `u32` X and Z |
+| `0x24`…`0x30` | offsets | triangles, counts, starts and indices per cell |
+| `0x34`, `0x38` | floor records | count `u32`, offset `u32` |
 
-Chaque triangle fait 28 octets : trois sommets `i16[3]`, une normale `fx16[3]` signée en
-1.3.12, puis un mot d'attributs `u32`. Les coordonnées sont des entiers dans les unités des
-limites, pas des valeurs fx32. Les records terminaux font 8 octets ; seuls leurs deux premiers
-`u16` ont une interprétation établie. Sur les cartes ordinaires, le premier décode des chiffres
-de terrain pour l'identifiant du stage de combat ; sur la carte céleste, les bits 5–9 du
-second servent à l'autorisation d'atterrissage.
+Each triangle is 28 bytes: three vertices `i16[3]`, a signed 1.3.12 normal `fx16[3]`, then a
+`u32` attribute word. Coordinates are integers in the units of the bounds, not fx32 values.
+Trailing records are 8 bytes; only their first two `u16` have an established
+interpretation. On ordinary maps, the first decodes terrain digits for the battle stage
+identifier; on the sky map, bits 5–9 of the second are used for landing permission.
 
-La grille a `gridX * gridZ + floor(gridZ / 2)` cellules. Le fichier stocke pour chacune un
-compte `u8` et un début `u16` dans une liste d'indices `u16`. Le lecteur exige des plages
-consécutives, des indices de triangles valides et au plus un `u16` nul d'alignement final. Il
-préserve les plages sous forme d'indices contigus (`cells` et `cell_indices`), sans allocation
-par cellule.
+The grid has `gridX * gridZ + floor(gridZ / 2)` cells. For each one the file stores a `u8`
+count and a `u16` start into a `u16` index list. The reader requires consecutive ranges,
+valid triangle indices and at most one trailing zero `u16` for alignment. It keeps the ranges
+as contiguous indices (`cells` and `cell_indices`), with no per-cell allocation.
 
-## Preuves et limites
+## Evidence and limits
 
-Les faits du format proviennent de la page [Map-Collision du wiki DQIX](https://github.com/DQIX/wiki/blob/main/Map-Collision.md),
-réobservée sur la ROM européenne `YDQP01` : elle rapporte des contrôles exhaustifs sur 1 178
-fichiers, 109 122 triangles, normales conformes au produit vectoriel pour chaque triangle non
-dégénéré et grilles couvrant les limites. Le code de collision du jeu ne valide pas encore le
-lecteur ici.
+The format facts come from the [Map-Collision page of the DQIX wiki](https://github.com/DQIX/wiki/blob/main/Map-Collision.md),
+re-observed on the European ROM `YDQP01`: it reports exhaustive checks over 1,178 files,
+109,122 triangles, normals matching the cross product for every non-degenerate triangle and
+grids covering the bounds. The game's collision code does not yet validate the reader here.
 
-Le test `collision_meshes_parse` ouvre chaque archive `.amdj` de la ROM, décompresse son
-membre `.col2`, puis vérifie par `Collision::parse` les 1 178 maillages (109 122 triangles).
-Les tests synthétiques vérifient décodage, sections tronquées et incohérence des plages. La
-ROM n'est pas une fixture et n'est pas nécessaire à la CI.
+The test `collision_meshes_parse` opens every `.amdj` archive of the ROM, decompresses its
+`.col2` member, then checks the 1,178 meshes (109,122 triangles) through `Collision::parse`.
+Synthetic tests check decoding, truncated sections and inconsistent ranges. The ROM is not a
+fixture and is not needed by CI.
 
-Reste inconnu : le sens exact des deux derniers demi-mots des records ; le facteur `2^shift` est
-confirmé par le code (`0x0204bf54` : bornes `<< shift` ; `ov_017::02192b48` : sommets × `1 << shift`).
-Certains petits maillages sont vraisemblablement des volumes
-verticaux, pas des surfaces praticables. Le lecteur expose ces données sans leur attribuer de
-physique.
+Still unknown: the exact meaning of the last two half-words of the records; the `2^shift`
+factor is confirmed by the code (`0x0204bf54`: bounds `<< shift`; `ov_017::02192b48`: vertices × `1 << shift`).
+Some small meshes are likely vertical
+volumes, not walkable surfaces. The reader exposes this data without assigning it any
+physics.
 
-## Utilisation par J2
+## Use by J2
 
-`dq9_core::CollisionWorld` garde les maillages `Collision` tels que lus et leurs placements
-(`Piece` : maillage, position et angle `fx32` du placement) ; le jeu travaille dans le repère de
-chaque pièce, sommets = entiers du fichier `<< shift`. Le déplacement, le rayon du sol et la
-poussée des murs sont décrits dans [`movement.md`](movement.md).
+`dq9_core::CollisionWorld` keeps the `Collision` meshes as read and their placements
+(`Piece`: mesh, position and `fx32` angle of the placement); the game works in the frame of
+each piece, vertices = file integers `<< shift`. Movement, the floor ray and wall push-out
+are described in [`movement.md`](movement.md).
 
-## Grille, mot d'attributs et requête (J2, `0x0204c040`)
+## Grid, attribute word and query (J2, `0x0204c040`)
 
-Le code de requête établit (relu dans `dq9_core::collision::query` et vérifié par des tests
-synthétiques) :
+The query code establishes (re-read in `dq9_core::collision::query` and checked by synthetic
+tests):
 
-- **Objet `.col2` en mémoire** (`0x0204bf54`, 0x4c octets) : `+0` en-tête, `+4` triangles,
-  `+8` comptes de cellules (`u8`), `+0xc` débuts (`u16`), `+0x10` indices (`u16`), `+0x14`
-  records (version 3), `+0x18` bornes maximales `<< shift`, `+0x24` minimales `<< shift`,
-  `+0x48` nombre de cellules `gridX × gridZ + gridZ / 2`.
-- **Test de bornes** : la boîte de la requête (en coordonnées de la pièce) doit recouper les
-  bornes du maillage (bords inclus), puis elle est décalée de `shift` (décalage arithmétique) ;
-  un triangle est retenu si sa boîte la recoupe.
-- **Boîte d'un triangle** : le mot d'attributs (`+0x18`) est formé des octets `0x18..0x1a` :
-  six quartets d'indices (dans les 9 coordonnées du triangle) du min x/y/z puis du max
-  x/y/z ; l'octet `0x1b` est `(indice de record << 1) | marque temporaire`. Cela explique les
-  valeurs « permutations de `0x543210` » du wiki.
-- **Grille décalée** : au plus 7 cellules, toutes sont balayées ; sinon rangée =
-  `⌊FX_Div(zc − minZ, taille) / 4096⌋` (tronqué vers 0), colonne = idem sur `x` (avec
-  `+ taille / 2` sur les rangées impaires), `zc` et `xc` étant les centres de la boîte ; la
-  cellule centrale a l'indice `rangée × gridX + colonne + rangée / 2` et ses voisines (six
-  autour d'une rangée paire, sept selon la position sur une rangée impaire, qui compte
-  `gridX + 1` cellules) sont aussi lues. Une valeur légèrement hors grille (moins d'une cellule
-  en deçà) tombe, par la troncature, dans la première colonne ou rangée.
-- 0x60 triangles au plus par pièce et par requête, 0xc0 candidats examinés.
+- **In-memory `.col2` object** (`0x0204bf54`, 0x4c bytes): `+0` header, `+4` triangles,
+  `+8` cell counts (`u8`), `+0xc` starts (`u16`), `+0x10` indices (`u16`), `+0x14`
+  records (version 3), `+0x18` max bounds `<< shift`, `+0x24` min bounds `<< shift`,
+  `+0x48` cell count `gridX × gridZ + gridZ / 2`.
+- **Bounds test**: the query box (in piece coordinates) must overlap the mesh bounds (edges
+  inclusive), then it is shifted by `shift` (arithmetic shift); a triangle is kept if its
+  box overlaps it.
+- **Triangle box**: the attribute word (`+0x18`) is made of bytes `0x18..0x1a`: six index
+  nibbles (into the triangle's 9 coordinates) for min x/y/z then max x/y/z; byte `0x1b` is
+  `(record index << 1) | temporary mark`. This explains the "permutations of `0x543210`"
+  values in the wiki.
+- **Staggered grid**: with at most 7 cells, all are scanned; otherwise row =
+  `⌊FX_Div(zc − minZ, size) / 4096⌋` (truncated toward 0), column = same on `x` (with
+  `+ size / 2` on odd rows), `zc` and `xc` being the box centers; the central cell has
+  index `row × gridX + column + row / 2` and its neighbors (six around an even row, seven
+  depending on the position on an odd row, which has `gridX + 1` cells) are read too. A value
+  slightly outside the grid (less than one cell short) falls, through truncation, into the
+  first column or row.
+- At most 0x60 triangles per piece and per query, 0xc0 candidates examined.
 
-Le lecteur `Collision::parse` expose déjà ces mots (`Triangle::attributes`).
+The reader `Collision::parse` already exposes these words (`Triangle::attributes`).

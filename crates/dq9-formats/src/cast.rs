@@ -117,11 +117,11 @@ pub struct Placement<'a> {
     pub time: u8,
     /// `+0xa` bit 2: placed by flags (record 17).
     pub by_flags: bool,
-    /// `+0xa` bits 3-5: record 18's value **[inconnu]**.
+    /// `+0xa` bits 3-5: record 18's value **[unknown]**.
     pub state: u8,
     /// `+0xa` bit 6: placed by quest and span (record 21).
     pub by_quest_span: bool,
-    /// `+0xb`: record 12's NPC **[inconnu : un PNJ lié]**.
+    /// `+0xb`: record 12's NPC **[unknown: a linked NPC]**.
     pub linked_npc: u8,
     /// `+0xc`: flags ORed by records 11, 15 (`0x800`, seated) and 16 (`0x2000`), copied into
     /// the NPC object's flags (`0x02040550`).
@@ -144,7 +144,7 @@ pub struct Placement<'a> {
     /// `+0x34`: points (`fx32`) of records 9 and 10, a closed loop.
     pub path: Vec<[i32; 3]>,
     /// `+0x38`: record 13's value × 4096, `0x7a` by default, given to the NPC object
-    /// (`0x02040c0c`) **[hypothèse : vitesse]**.
+    /// (`0x02040c0c`) **[hypothesis: speed]**.
     pub speed: i32,
     /// `+0x3c`: record 15's angle × 4096 (seated NPCs).
     pub seat_angle: i32,
@@ -154,14 +154,14 @@ pub struct Placement<'a> {
     pub order: u16,
     /// `+0x46`: quest of records 14 and 21, -1 otherwise.
     pub quest: i16,
-    /// `+0x48`: record 16's vector (the `s069` object) **[inconnu]**.
+    /// `+0x48`: record 16's vector (the `s069` object) **[unknown]**.
     pub prop: [i32; 3],
     /// `+0x54`, `+0x58`: record 19's archive (relative to `data/`) and motion name.
     pub chr: Option<&'a [u8]>,
     pub motion_name: Option<&'a [u8]>,
-    /// `+0x5c`: record 20's `[f2, 0, f3, f1]` × 4096 **[inconnu]**.
+    /// `+0x5c`: record 20's `[f2, 0, f3, f1]` × 4096 **[unknown]**.
     pub extra: Option<[i32; 4]>,
-    /// `+0x60`: record 18's optional value × 4096 **[inconnu]**.
+    /// `+0x60`: record 18's optional value × 4096 **[unknown]**.
     pub state_value: i32,
 }
 
@@ -247,7 +247,7 @@ pub struct CastMember<'a> {
     pub japanese_name: Option<&'a [u8]>,
     /// Field 3: resource name (`n003a`, `s017`, `z015d`).
     pub name: Option<&'a [u8]>,
-    /// Field 4 (`+3`) **[inconnu]**.
+    /// Field 4 (`+3`) **[unknown]**.
     pub byte3: u8,
 }
 

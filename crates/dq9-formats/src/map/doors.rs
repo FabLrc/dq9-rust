@@ -1,7 +1,7 @@
 //! Region records of a map's `.bmbl`: map-changing warps (`0x72`) and typed zones (`0x73`
 //! followed by `0x74`: doorways, areas). Layout, handler addresses and evidence in
-//! `docs/re/map-archive.md` (« Portes et changements de carte ») and `docs/re/trigger.md`
-//! (« Zones »). This module parses the records the way their handlers store them (fixed
+//! `docs/re/map-archive.md` ("Doors, zones and map changes") and `docs/re/trigger.md`
+//! ("Zones"). This module parses the records the way their handlers store them (fixed
 //! point, like the game); the presence tests and what entering a region does are in
 //! `dq9_core::field`.
 //!
@@ -58,14 +58,14 @@ pub struct ZoneVolume {
 pub struct Warp {
     pub volume: WarpVolume,
     /// Value 7 (struct `+0`): 1 is a door whose approach is animated, 0 changes map at once
-    /// (`0x0219ca88`). **[hypothèse]** for the exact meaning of 1.
+    /// (`0x0219ca88`). **[hypothesis]** for the exact meaning of 1.
     pub kind: i32,
     /// Map id the code of value 8 names.
     pub destination: u16,
     /// Arrival position (values 11-13) and orientation (value 14, radians as `fx32`).
     pub arrival: [i32; 3],
     pub arrival_angle: i16,
-    /// Value 15 (`+0x6c`), -1 for most doors **[inconnu]**.
+    /// Value 15 (`+0x6c`), -1 for most doors **[unknown]**.
     pub entry: i32,
 }
 

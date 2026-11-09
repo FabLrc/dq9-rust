@@ -197,8 +197,8 @@ fn patched_save_start_matches_melonds_ram() {
 }
 
 /// The scene flag of the opening events, as read in the original's event context at the
-/// first control (`build/orca/oracle/`, `docs/re/trigger.md` § « Drapeaux globaux posés à
-/// l'ouverture »): base 540 plus the record's rank in `eventlist_lv5.bin`.
+/// first control (`build/orca/oracle/`, `docs/re/trigger.md` § "Global flags set at the
+/// opening"): base 540 plus the record's rank in `eventlist_lv5.bin`.
 #[test]
 fn scene_flags_match_the_oracle_checkpoints() {
     let Some(bytes) = testrom::load() else { return };

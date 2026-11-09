@@ -62,28 +62,26 @@ fn player_text(message: &str) -> Option<(Notice, String)> {
         // The parser's detail (offsets, lengths) cannot help the player; the console keeps it.
         return Some((
             Notice::Rom,
-            "Ce fichier n'est pas une ROM Dragon Quest IX européenne (YDQP01).".to_owned(),
+            "This file is not a European Dragon Quest IX ROM (YDQP01).".to_owned(),
         ));
     }
     if let Some(detail) = message.strip_prefix("GPU: ") {
         return Some((
             Notice::Gpu,
-            format!(
-                "Le moteur graphique n'a pas pu démarrer (WebGPU ou WebGL 2 requis) : {detail}"
-            ),
+            format!("The graphics engine could not start (WebGPU or WebGL 2 required): {detail}"),
         ));
     }
     if let Some(detail) = message.strip_prefix("cannot create the window: ") {
         return Some((
             Notice::Window,
-            format!("La fenêtre du jeu n'a pas pu être créée : {detail}"),
+            format!("The game window could not be created: {detail}"),
         ));
     }
     None
 }
 
-/// Shows a status line; engine errors that the player can act on are shown in French and in
-/// the error style, and an unusable ROM disables "Nouvelle partie" again. Engine progress
+/// Shows a status line; engine errors that the player can act on are shown in plain words and
+/// in the error style, and an unusable ROM disables "New game" again. Engine progress
 /// lines do not replace an error the player has not acknowledged by picking a file or
 /// starting a game.
 pub fn status(message: &str) {
@@ -213,7 +211,7 @@ fn watch_rom_input(proxy: EventLoopProxy<UserEvent>) {
         .and_then(|d| d.get_element_by_id("rom"))
         .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
     else {
-        error("La page n'a pas de champ <input type=file id=rom>.");
+        error("The page has no <input type=file id=rom> field.");
         return;
     };
     let target = input.clone();
@@ -228,7 +226,7 @@ fn watch_rom_input(proxy: EventLoopProxy<UserEvent>) {
         target.set_disabled(true);
         set_disabled("newgame", true);
         announce(&format!(
-            "Lecture de {name} ({:.0} Mio)… la ROM ne quitte pas ce navigateur.",
+            "Reading {name} ({:.0} MiB)… the ROM does not leave this browser.",
             size / 1048576.0
         ));
         let proxy = proxy.clone();
@@ -241,14 +239,14 @@ fn watch_rom_input(proxy: EventLoopProxy<UserEvent>) {
                     target.set_disabled(false);
                     set_disabled("newgame", false);
                     announce(&format!(
-                        "ROM lue localement ({:.0} Mio) ; elle ne quitte pas ce navigateur.",
+                        "ROM read locally ({:.0} MiB); it does not leave this browser.",
                         size / 1048576.0
                     ));
                     focus_canvas();
                 }
                 Err(e) => {
                     target.set_disabled(false);
-                    error(&format!("Lecture de la ROM impossible : {e:?}"));
+                    error(&format!("Cannot read the ROM: {e:?}"));
                 }
             }
         });
@@ -257,7 +255,7 @@ fn watch_rom_input(proxy: EventLoopProxy<UserEvent>) {
         .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
         .is_err()
     {
-        error("Impossible de surveiller le champ ROM.");
+        error("Cannot watch the ROM field.");
     }
     // The listener lives as long as the page.
     on_change.forget();
@@ -268,7 +266,7 @@ fn watch_save_input(proxy: EventLoopProxy<UserEvent>) {
         .and_then(|d| d.get_element_by_id("save"))
         .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
     else {
-        error("La page n'a pas de champ <input type=file id=save>.");
+        error("The page has no <input type=file id=save> field.");
         return;
     };
     let target = input.clone();
@@ -290,14 +288,14 @@ fn watch_save_input(proxy: EventLoopProxy<UserEvent>) {
                     let _ = proxy.send_event(UserEvent::Save(bytes));
                     target.set_disabled(false);
                     announce(&format!(
-                        "Sauvegarde lue localement ({:.1} Mio) ; elle ne quitte pas ce navigateur.",
+                        "Save read locally ({:.1} MiB); it does not leave this browser.",
                         size / 1048576.0
                     ));
                     focus_canvas();
                 }
                 Err(e) => {
                     target.set_disabled(false);
-                    error(&format!("Lecture de la sauvegarde impossible : {e:?}"));
+                    error(&format!("Cannot read the save: {e:?}"));
                 }
             }
         });
@@ -306,7 +304,7 @@ fn watch_save_input(proxy: EventLoopProxy<UserEvent>) {
         .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
         .is_err()
     {
-        error("Impossible de surveiller le champ sauvegarde.");
+        error("Cannot watch the save field.");
     }
     on_change.forget();
 }
@@ -317,7 +315,7 @@ fn watch_time_select(proxy: EventLoopProxy<UserEvent>, initial: u32) {
         .and_then(|d| d.get_element_by_id("time"))
         .and_then(|e| e.dyn_into::<web_sys::HtmlSelectElement>().ok())
     else {
-        error("La page n'a pas de sélecteur <select id=time>.");
+        error("The page has no <select id=time> selector.");
         return;
     };
     select.set_value(&initial.to_string());
@@ -332,7 +330,7 @@ fn watch_time_select(proxy: EventLoopProxy<UserEvent>, initial: u32) {
         .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
         .is_err()
     {
-        error("Impossible de surveiller le sélecteur de moment.");
+        error("Cannot watch the time-of-day selector.");
     }
     on_change.forget();
 }
@@ -343,7 +341,7 @@ fn watch_layout_select(proxy: EventLoopProxy<UserEvent>, initial: Layout) {
         .and_then(|d| d.get_element_by_id("layout"))
         .and_then(|e| e.dyn_into::<web_sys::HtmlSelectElement>().ok())
     else {
-        error("La page n'a pas de sélecteur <select id=layout>.");
+        error("The page has no <select id=layout> selector.");
         return;
     };
     select.set_value(initial.name());
@@ -358,7 +356,7 @@ fn watch_layout_select(proxy: EventLoopProxy<UserEvent>, initial: Layout) {
         .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
         .is_err()
     {
-        error("Impossible de surveiller le sélecteur d'écrans.");
+        error("Cannot watch the screen layout selector.");
     }
     on_change.forget();
 }
@@ -367,19 +365,19 @@ fn watch_layout_select(proxy: EventLoopProxy<UserEvent>, initial: Layout) {
 /// until a ROM is queued, so the event loop never sees a new game without its ROM.
 fn watch_new_game_button(proxy: EventLoopProxy<UserEvent>) {
     let Some(button) = document().and_then(|d| d.get_element_by_id("newgame")) else {
-        error("La page n'a pas de bouton <button id=newgame>.");
+        error("The page has no <button id=newgame> button.");
         return;
     };
     let on_click = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
         let _ = proxy.send_event(UserEvent::NewGame);
-        announce("Nouvelle partie : chargement du prologue…");
+        announce("New game: loading the prologue…");
         focus_canvas();
     });
     if button
         .add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())
         .is_err()
     {
-        error("Impossible de surveiller le bouton « Nouvelle partie ».");
+        error("Cannot watch the \"New game\" button.");
     }
     on_click.forget();
 }
@@ -399,7 +397,7 @@ fn release_keys_on_blur() {
         .add_event_listener_with_callback("blur", on_blur.as_ref().unchecked_ref())
         .is_err()
     {
-        error("Impossible de surveiller la perte de focus.");
+        error("Cannot watch focus loss.");
     }
     on_blur.forget();
 }
@@ -409,7 +407,7 @@ pub fn main() {
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
         Ok(l) => l,
         Err(e) => {
-            error(&format!("Le moteur n'a pas pu démarrer : {e}"));
+            error(&format!("The engine could not start: {e}"));
             return;
         }
     };
@@ -422,8 +420,8 @@ pub fn main() {
     watch_layout_select(proxy.clone(), options.layout);
     release_keys_on_blur();
     announce(
-        "Choisissez votre ROM Dragon Quest IX (.nds) ; une sauvegarde .sav est facultative. \
-         Ces fichiers restent dans ce navigateur.",
+        "Choose your Dragon Quest IX ROM (.nds); a .sav save is optional. \
+         These files stay in this browser.",
     );
     event_loop.spawn_app(App::new(proxy, options, None));
 }

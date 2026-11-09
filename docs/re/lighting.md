@@ -1,261 +1,261 @@
-# Scripts d'éclairage `.bats`
+# `.bats` lighting scripts
 
-Source de référence : `crates/dq9-formats/src/lighting.rs`. Sources de décompilation USA
-(`tools/dqix-decomp`, commit b5c617a) : `src/Graphics/LightingInfo.cpp`
-(`LightingInfo::LoadFromScript` et les handlers de `s_lightingOpcodes`),
-`src/Resource/Script.cpp` (table de records), `include/Graphics/LightingInfo.h`.
+Reference source: `crates/dq9-formats/src/lighting.rs`. USA decompilation sources
+(`tools/dqix-decomp`, commit b5c617a): `src/Graphics/LightingInfo.cpp`
+(`LightingInfo::LoadFromScript` and the `s_lightingOpcodes` handlers),
+`src/Resource/Script.cpp` (record table), `include/Graphics/LightingInfo.h`.
 
-Adresses EU : `ExecuteLightingScript` `0x0207b938` (taille `0x64`), `LightingInfo::Initialize`
-`0x0207b99c`, `Reset` `0x0207b9dc`, `LoadFromScript` `0x0207ba1c`. Appelant : `Zone3D_LoadBats`
-`0x02014424`, qui range le résultat dans `Zone3D+0x10c` (cf. `map-archive.md`).
+EU addresses: `ExecuteLightingScript` `0x0207b938` (size `0x64`), `LightingInfo::Initialize`
+`0x0207b99c`, `Reset` `0x0207b9dc`, `LoadFromScript` `0x0207ba1c`. Caller: `Zone3D_LoadBats`
+`0x02014424`, which stores the result in `Zone3D+0x10c` (see `map-archive.md`).
 
-Adresses USA → EU : ARM9 USA `0x0200F3B8..0x0200FB20` → +0x8, `0x0200FB20..0x020EEBD0` → +0x10.
+USA → EU addresses: ARM9 USA `0x0200F3B8..0x0200FB20` → +0x8, `0x0200FB20..0x020EEBD0` → +0x10.
 
-## Conteneur
+## Container
 
-- Archive `data/map/ats_<c>.ambl` (NARC), membre `<nom>.bats`, compressé en LZ10 (en-tête BIOS
-  `0x10`, taille sur 24 bits). Décompressé : 560 à 1072 octets.
-- Le corps est une table de records au sens de `table.rs` (`Table::parse`) : en-tête de 16
-  octets (nombre de records, décalage du pool, taille du pool, nombre de chaînes), puis les
-  records, `0xFF` de bourrage, pool de chaînes.
-- Mesure ROM (EU) : 504 membres `.bats` dans les 14 archives `ats_B`..`ats_Z`, tous décodables ;
-  6400 records au total, 9 à 16 par script. Pool vide sur les 504 (aucune chaîne).
+- Archive `data/map/ats_<c>.ambl` (NARC), member `<name>.bats`, LZ10-compressed (BIOS header
+  `0x10`, 24-bit size). Decompressed: 560 to 1072 bytes.
+- The body is a record table in the sense of `table.rs` (`Table::parse`): 16-byte header
+  (record count, pool offset, pool size, string count), then the
+  records, `0xFF` padding, string pool.
+- ROM measurement (EU): 504 `.bats` members in the 14 archives `ats_B`..`ats_Z`, all decodable;
+  6400 records in total, 9 to 16 per script. Pool empty in all 504 (no strings).
 
 ## Records
 
-Chaque record a un opcode (`kind`) et des champs `INT` (type 1) ou `FLOAT` (type 2). Les
-champs de type 0 (chaîne) et 3 sont invalides ici : les scripts lus n'en contiennent pas.
+Each record has an opcode (`kind`) and `INT` (type 1) or `FLOAT` (type 2) fields. Type 0
+(string) and type 3 fields are invalid here: the scripts read contain none.
 
-| Opcode | Handler | Fonction USA (`s_lightingOpcodes`, `LightingInfo.cpp`) | Adresse EU | Mesure ROM |
+| Opcode | Handler | USA function (`s_lightingOpcodes`, `LightingInfo.cpp`) | EU address | ROM count |
 |---|---|---|---|---|
-| `0x64` | déclare l'éclairage avancé | `LightingScript_DeclareAdvancedLighting` | `0x0207b2dc` | 236 |
+| `0x64` | declares advanced lighting | `LightingScript_DeclareAdvancedLighting` | `0x0207b2dc` | 236 |
 | `0x65` | nop | `LightingScript_Nop` | `0x0207b314` | 0 |
-| `0x66` | entrée avancée alternative | `LightingScript_CreateAdvancedLightingEntry_Alternate` | `0x0207b31c` | 0 |
-| `0x67` | déclare l'éclairage de base | `LightingScript_DeclareBasicLighting` | `0x0207b4d0` | 268 |
-| `0x68` | entrée d'éclairage de base | `LightingScript_CreateBasicLightingEntry` | `0x0207b504` | 715 |
-| `0x69` | entrée de brouillard | `LightingScript_CreateFogEntry` | `0x0207b648` | 3529 |
-| `0x6a` | entrée avancée | `LightingScript_CreateAdvancedLightingEntry` | `0x0207b78c` | 1652 |
+| `0x66` | alternate advanced entry | `LightingScript_CreateAdvancedLightingEntry_Alternate` | `0x0207b31c` | 0 |
+| `0x67` | declares basic lighting | `LightingScript_DeclareBasicLighting` | `0x0207b4d0` | 268 |
+| `0x68` | basic lighting entry | `LightingScript_CreateBasicLightingEntry` | `0x0207b504` | 715 |
+| `0x69` | fog entry | `LightingScript_CreateFogEntry` | `0x0207b648` | 3529 |
+| `0x6a` | advanced entry | `LightingScript_CreateAdvancedLightingEntry` | `0x0207b78c` | 1652 |
 
-Un opcode inconnu est ignoré.
+An unknown opcode is ignored.
 
-### Index d'emplacement
+### Slot index
 
-Le champ 0 de chaque entrée est l'index d'emplacement, lu dans `0..7` (`SLOTS = 7`). Une valeur
-hors de cette plage, négative comprise, est ignorée. Sur la ROM, aucun index n'est hors
-bornes. Le code USA indexe sans contrôle pour `0x68` et `0x6a` : comportement non défini, non
-reproduit.
+Field 0 of each entry is the slot index, read in `0..7` (`SLOTS = 7`). A value
+outside this range, negatives included, is ignored. On the ROM, no index is out of
+bounds. The USA code indexes without a check for `0x68` and `0x6a`: undefined behavior, not
+reproduced.
 
 ### Gradient
 
-`0x64` et `0x67` lisent un décalage de centre de gradient (float, champ 0) si le nombre de
-champs est non nul ; sinon il vaut 0.
+`0x64` and `0x67` read a gradient center offset (float, field 0) if the field count
+is non-zero; otherwise it is 0.
 
 ### Opcode `0x66`
 
-Présent dans la table des handlers USA, absent de la ROM EU (0 occurrence sur 6400 records).
-Son layout est reproduit tel que décrit par le code USA, sans vérification sur la ROM.
-`[hypothèse]` : le champ 6 est lu puis écarté, comme dans le code USA.
+Present in the USA handler table, absent from the EU ROM (0 occurrences in 6400 records).
+Its layout is reproduced as described by the USA code, without verification on the ROM.
+`[hypothesis]`: field 6 is read then discarded, as in the USA code.
 
-### Éclairage de base (`0x67`, `0x68`)
+### Basic lighting (`0x67`, `0x68`)
 
-`0x68` lit la position (champs 1-3), les couleurs de fond et de fond secondaire (4, 5), la
-couleur du pot (6), `unk_70` (7), `unk_54` (8), les diffuses sprite et modèle (9, 10) et la
-couleur de bord (11) ; la couleur de bord marque l'entrée comme renseignée.
-`[hypothèse]` (rapporté par le pair `LightingFogRender`, non vérifié dans les sources lues) : `unk_70` = luminosité, `unk_54` = contraste. Sources : `LightingInfo.cpp` (`0x68`, lignes 101-102), `LightingManager.cpp` (lerp des deux tableaux, l. 216-233). `[inconnu]` : rôle de `positions`.
+`0x68` reads the position (fields 1-3), the background and secondary background colors (4, 5), the
+pot color (6), `unk_70` (7), `unk_54` (8), the sprite and model diffuses (9, 10) and the
+edge color (11); the edge color marks the entry as filled.
+`[hypothesis]` (reported by peer `LightingFogRender`, not verified in the sources read): `unk_70` = brightness, `unk_54` = contrast. Sources: `LightingInfo.cpp` (`0x68`, lines 101-102), `LightingManager.cpp` (lerp of the two arrays, l. 216-233). `[unknown]`: role of `positions`.
 
-### Brouillard (`0x69`)
+### Fog (`0x69`)
 
-Champs : index (0), activation (1), couleur (2), type (3), profondeur (4), décalage (5), table de
-densité packée (6-13, little-endian, 0x20 octets), alpha (14). Application au rendu : § « Rendu et validation à melonDS » plus bas.
+Fields: index (0), enable (1), color (2), type (3), depth (4), offset (5), packed
+density table (6-13, little-endian, 0x20 bytes), alpha (14). Application to rendering: § "Rendering and validation against melonDS" below.
 
-#### Registres de brouillard (ARM9 EU, désassemblage)
+#### Fog registers (ARM9 EU, disassembly)
 
-Lu dans `build/rom/arm9.bin` (extrait de la ROM du joueur, non committé) et dans Ghidra :
+Read in `build/rom/arm9.bin` (extracted from the player's ROM, not committed) and in Ghidra:
 
-- `func_020c54a4` (`0x020c54b4`) `(enable, type, depthShift, offset)` : si `enable == 0`,
-  `DISP3DCNT &= 0xCF7F` (efface l'activation, bit 7). Sinon `FOG_OFFSET = offset` puis
-  `DISP3DCNT = DISP3DCNT & 0xC0BF | type << 6 | depthShift << 8 | 0x80`. Pool : `0x0400035C`
+- `func_020c54a4` (`0x020c54b4`) `(enable, type, depthShift, offset)`: if `enable == 0`,
+  `DISP3DCNT &= 0xCF7F` (clears enable, bit 7). Otherwise `FOG_OFFSET = offset` then
+  `DISP3DCNT = DISP3DCNT & 0xC0BF | type << 6 | depthShift << 8 | 0x80`. Pool: `0x0400035C`
   (FOG_OFFSET), `0x04000060` (DISP3DCNT), `0x0000CF7F`.
-- `func_020c5574` (`0x020c5584`) `(table)` : appelle `func_020ca50c(table, 0x04000360)`, qui copie
-  32 octets (8 mots) : écriture de la table de densité FOG_TABLE (32 entrées).
-- Bits de DISP3DCNT (GBATEK, confirmés par la source de melonDS, `GPU3D_Soft.cpp`
-  `ScanlineFinalPass`) : bit 6 = mode (0 couleur + alpha, **1 alpha seul**), bit 7 = activation,
-  bits 8–11 = décalage de profondeur. Le jeu écrit `type << 6` : `type` 0 = couleur et alpha, 1 =
-  alpha seul, comme dans `FogInfo` USA.
-- `FOG_COLOR` (`0x04000358`) : écrit `color | alpha << 16` par `ProcessZoneChange`
-  (`0x020519f4`, +408) et `RecomputeAdvancedLighting` (`0x02051d38`, +1272) ; vérifié par
-  xrefs Ghidra EU (écritures à `0x04000358` : ces deux fonctions et `func_020c51dc`).
-- Le masque `0xCF7F` (désactivation) efface aussi les bits 12–13 ([inconnu], sans effet connu).
-- `DISP3DCNT` dans les états melonDS `field.ml1`, `demo.ml1`, `before.ml1`, `moved.ml1`
-  (section `GP3D`, voir § suivant) : `0x1b9` = textures (bit 0), mélange alpha (3),
-  anticrénelage (4), **marquage des contours (5)**, brouillard activé (7), décalage 1 ; ni
-  toon ni surbrillance (bit 1 à 0) : les données n'emploient pas le toon.
+- `func_020c5574` (`0x020c5584`) `(table)`: calls `func_020ca50c(table, 0x04000360)`, which copies
+  32 bytes (8 words): write of the FOG_TABLE density table (32 entries).
+- DISP3DCNT bits (GBATEK, confirmed by the melonDS source, `GPU3D_Soft.cpp`
+  `ScanlineFinalPass`): bit 6 = mode (0 color + alpha, **1 alpha only**), bit 7 = enable,
+  bits 8–11 = depth shift. The game writes `type << 6`: `type` 0 = color and alpha, 1 =
+  alpha only, as in USA `FogInfo`.
+- `FOG_COLOR` (`0x04000358`): written `color | alpha << 16` by `ProcessZoneChange`
+  (`0x020519f4`, +408) and `RecomputeAdvancedLighting` (`0x02051d38`, +1272); verified by
+  Ghidra EU xrefs (writes to `0x04000358`: these two functions and `func_020c51dc`).
+- The `0xCF7F` mask (disable) also clears bits 12–13 ([unknown], no known effect).
+- `DISP3DCNT` in the melonDS states `field.ml1`, `demo.ml1`, `before.ml1`, `moved.ml1`
+  (`GP3D` section, see next §): `0x1b9` = textures (bit 0), alpha blending (3),
+  anti-aliasing (4), **edge marking (5)**, fog enabled (7), shift 1; neither
+  toon nor highlight (bit 1 at 0): the data does not use toon.
 
-Validation RAM (savestate melonDS `field.ml1`, `LightingManager` à `0x02107930`, 0x9c octets) :
-les valeurs par défaut de `Initialize` (USA) sont présentes à l'identique en EU : offset `0x5800`
-à `+0x58`, couleur `0x7FFF` à `+0x5C`, alpha `15` à `+0x60`, `densityTable[i] = 2i` (32 octets) à
-`+0x64`. Ces décalages sont [hypothèse] : ils viennent de la valeur, pas d'un type de structure.
-Le champ `GP3D` du savestate se lit en suivant `GPU3D::DoSavestate` de melonDS (code GPL lu pour
-comprendre le format, rien de copié) : `DISP3DCNT` (u32), tables toon (64 octets) et contours
-(16 octets), `FOG_COLOR`, `FOG_OFFSET`, `FOG_TABLE` (32 octets). Dans `field.ml1` (`C01M09`) :
-`EDGE_COLOR` = `0x0466` ×8, `FOG_COLOR` = `0x001f7fff`, `FOG_OFFSET` = `0x5800`, table nulle,
-décalage 1 : exactement l'entrée 0 de `C01M0300.bats` (contour `0x466`, brouillard `offset 22528`,
-couleur `0x7fff`, alpha 31, table nulle, décalage 1), brouillard activé même si le champ
-« activé » du script est faux (`ProcessZoneChange` passe `true`).
+RAM validation (melonDS savestate `field.ml1`, `LightingManager` at `0x02107930`, 0x9c bytes):
+the `Initialize` (USA) default values are present identically in EU: offset `0x5800`
+at `+0x58`, color `0x7FFF` at `+0x5C`, alpha `15` at `+0x60`, `densityTable[i] = 2i` (32 bytes) at
+`+0x64`. These offsets are [hypothesis]: they come from the value, not from a structure type.
+The savestate `GP3D` field is read following melonDS `GPU3D::DoSavestate` (GPL code read to
+understand the format, nothing copied): `DISP3DCNT` (u32), toon (64 bytes) and edge
+(16 bytes) tables, `FOG_COLOR`, `FOG_OFFSET`, `FOG_TABLE` (32 bytes). In `field.ml1` (`C01M09`):
+`EDGE_COLOR` = `0x0466` ×8, `FOG_COLOR` = `0x001f7fff`, `FOG_OFFSET` = `0x5800`, null table,
+shift 1: exactly entry 0 of `C01M0300.bats` (edge `0x466`, fog `offset 22528`,
+color `0x7fff`, alpha 31, null table, shift 1), fog enabled even though the script's
+"enabled" field is false (`ProcessZoneChange` passes `true`).
 
-### Éclairage avancé (`0x6a`)
+### Advanced lighting (`0x6a`)
 
-Lumière 1 (champs 1-5), lumière 0 (6-10), couleurs (11-17).
+Light 1 (fields 1-5), light 0 (6-10), colors (11-17).
 
-Les blocs de base et avancé sont gardés séparément. Le jeu les superpose dans une union
-`[inconnu]` : le parseur ne reproduit pas l'aliasing.
+The basic and advanced blocks are kept separate. The game overlays them in a union
+`[unknown]`: the parser does not reproduce the aliasing.
 
-## Vérifications
+## Verification
 
-- Test `lighting_scripts_parse` (`crates/dq9-formats/tests/real_rom.rs`) : 504 membres,
-  tous décodés par `LightingInfo::parse`.
-- Tests synthétiques dans `lighting.rs` : chaque handler, index ignoré, paramètre manquant,
-  type invalide, troncature.
+- Test `lighting_scripts_parse` (`crates/dq9-formats/tests/real_rom.rs`): 504 members,
+  all decoded by `LightingInfo::parse`.
+- Synthetic tests in `lighting.rs`: each handler, ignored index, missing parameter,
+  invalid type, truncation.
 
-## Heure du jour et choix de l'entrée
+## Time of day and entry selection
 
-Module `dq9_core::lighting`. Sources : `GameTime.cpp`, `LightingManager.cpp`, `AtmosphericEffect.cpp`
-(décompilation USA), contrôlées sur le code EU (Ghidra) et la RAM d'un état melonDS.
+Module `dq9_core::lighting`. Sources: `GameTime.cpp`, `LightingManager.cpp`, `AtmosphericEffect.cpp`
+(USA decompilation), checked against the EU code (Ghidra) and the RAM of a melonDS state.
 
-### L'horloge
+### The clock
 
-- `GameState+0x3cc` (EU `0x020f37a4`) : secondes, flottant ; `+0x3d0` : longueur du jour,
-  `420.0` ; `+0x3d4` : `1/60` par tick (RAM : `0x3c888889`) ; `+0x3d8` : en marche ; `+0x3dc` :
-  phase. `AdvanceDayTimer` (`0x02010250`) ajoute `ticks * 1/60` si l'horloge court ; `SetDayTimer`
-  (`0x02010298`) replie le temps sur `0..420` puis choisit la phase ; `SetTimeOfDay`
-  (`0x02010374`) met le temps au début de la phase.
-- Seuils lus en RAM EU (`0x020f33bc`) : `420`, `390`, `210`, `180` : nuit `0..180`, matin
-  `180..210`, jour `210..390`, soir `390..420`. La table USA est indexée `[2]`, `[3]`, `[4]` pour
-  les mêmes valeurs ; l'indexation EU n'est pas relue instruction par instruction **[hypothèse]**,
-  mais les valeurs sont celles du wiki Time-Of-Day.
-- `ov_017::0218d0ec` (une fois par image de jeu) : appelle `AdvanceDayTimer` seulement sur une
-  carte de type `0` ou `7` (champ, océan, ciel), puis recopie `GetDayTimer` et `GetTimeOfDay` dans
-  `LightingManager+0x94` et `+0x98` (sauf pendant certains modes : valeurs de `func_02046b24` 3,
-  4, 10 et 0x16 **[inconnu]** : le code n'est pas nommé). Ce même code lève le drapeau d'histoire
-  `0x1140` quand la phase passe à matin ou nuit.
-- Chargement d'une sauvegarde (`func_020aaf84`, `0x020aaf94`+780) : `SetDayTimer(temps lu)`, puis
-  recopie dans `+0x94` / `+0x98`, `SetZone`, `RecomputeAdvancedLighting`.
-- Dans notre port la phase est une **entrée explicite** (`--time night|morning|day|evening`,
-  `--clock <seconde>`, liste déroulante Web, touche `T`) : `DayClock` modélise l'horloge, le
-  RTC de la DS n'intervient pas. Le jeu ne lit pas le RTC pour la phase : seule l'horloge de
-  `GameState` compte (le wiki Time-Of-Day le confirme : 420 s par jour, nouvelle partie à 210 s).
+- `GameState+0x3cc` (EU `0x020f37a4`): seconds, float; `+0x3d0`: day length,
+  `420.0`; `+0x3d4`: `1/60` per tick (RAM: `0x3c888889`); `+0x3d8`: running; `+0x3dc`:
+  phase. `AdvanceDayTimer` (`0x02010250`) adds `ticks * 1/60` if the clock runs; `SetDayTimer`
+  (`0x02010298`) wraps the time into `0..420` then picks the phase; `SetTimeOfDay`
+  (`0x02010374`) sets the time to the start of the phase.
+- Thresholds read in EU RAM (`0x020f33bc`): `420`, `390`, `210`, `180`: night `0..180`, morning
+  `180..210`, day `210..390`, evening `390..420`. The USA table is indexed `[2]`, `[3]`, `[4]` for
+  the same values; the EU indexing was not re-read instruction by instruction **[hypothesis]**,
+  but the values are those of the Time-Of-Day wiki page.
+- `ov_017::0218d0ec` (once per game frame): calls `AdvanceDayTimer` only on a
+  map of type `0` or `7` (field, ocean, sky), then copies `GetDayTimer` and `GetTimeOfDay` into
+  `LightingManager+0x94` and `+0x98` (except during certain modes: `func_02046b24` values 3,
+  4, 10 and 0x16 **[unknown]**: the code is not named). The same code raises story flag
+  `0x1140` when the phase switches to morning or night.
+- Loading a save (`func_020aaf84`, `0x020aaf94`+780): `SetDayTimer(read time)`, then
+  copy into `+0x94` / `+0x98`, `SetZone`, `RecomputeAdvancedLighting`.
+- In our port the phase is an **explicit input** (`--time night|morning|day|evening`,
+  `--clock <second>`, Web drop-down list, `T` key): `DayClock` models the clock, the
+  DS RTC plays no part. The game does not read the RTC for the phase: only the
+  `GameState` clock counts (the Time-Of-Day wiki confirms it: 420 s per day, new game at 210 s).
 
-### Choix de l'entrée d'une carte
+### Entry selection for a map
 
-- Le script `.bats` est choisi par `Zone3D_QueueLighting` / `Zone3D_StepLighting` (nom de la
-  carte, `map-archive.md`) et rangé dans `Zone3D+0x10c` (`LightingInfo`). `maybeMode_` : `1` base,
-  `2` avancé, `0` aucun.
-- Indice d'emplacement (`LightingManager+0x90`, remplacement ; `0` = non utilisé) : s'il est
-  non nul il indexe toutes les tables au lieu de la phase. **[inconnu]** : jamais observé non nul
-  (`LightingManager.h` USA) ; reproduit mais non utilisé par l'application.
-- **Mode avancé** (champs, champs de bataille ; 236 scripts) : `ProcessZoneChange` complète
-  les entrées manquantes (`FillMissingEntries` des blocs avancé et brouillard, `0x020504b4`,
-  `0x02050840`), puis `RecomputeAdvancedLighting` (`0x02051d38`, chaque image) appelle
-  `GetCurrentAdvancedLightingValues` (`0x02050c30`) : phase courante `i`, suivante `(i+1)%4`,
-  `t = (temps − (fin de phase i − 2 s)) / 2 s` borné à `[0, 1]` (fin de phase : 180, 210, 390, 420).
-  Couleurs mélangées canal par canal en `char` tronqué (`InterpolateColors`, `0x02051160`), directions
-  mélangées linéairement. Le brouillard suit `ComputeFogInfo` (`0x02051254`, même `t`, multiplié par
-  l'échelle de lumière) : couleur, alpha, décalage et table mélangés, type et décalage de profondeur
-  de la phase courante. Les directions des lumières sont arrondies à 1.19.12 (demi vers l'extérieur),
-  normalisées par `VEC_Normalize` (`0x020c2f28`), plafonnées à `0xff7`, puis `SetLightVector`
-  garde les bits 3..12 : vecteur signé 1.0.9 (`dq9_core::lighting::light_vector`). Les lumières 2 et
-  3 sont noires ; les lumières 0 et 1 ont la couleur interpolée.
-- **Mode de base** (villages, bâtiments, grottes ; 268 scripts) : `ProcessZoneChange` (`0x020519f4`) lit
-  l'entrée de la **phase** sans mélange. Si le temps dépasse `fin − 4 s`, le gestionnaire passe à la
-  phase suivante et **règle l'horloge de `GameState` sur son début** (`SetDayTimer`) :
-  `settle_basic_entry`. Il écrit le brouillard de l'entrée (`func_020c54a4(true, type, shift, offset)`,
-  `FOG_COLOR`, `func_020c5574(table)`), la couleur de contour, `SetDiffuseAmbientColors(model, 0)` ;
-  les lumières restent noires. Les modèles dont les maillages envoient des couleurs
-  (`mesh+4 & 2`) sont retouchés une fois au chargement par
-  `ModelTransformTintBrightnessContrast` (`0x020516a0`) sauf si la ressource porte le drapeau 0x20 :
-  `ColorTransformTintBrightnessContrast` (`0x02050980`) multiplie chaque canal 5 bits par
-  `positions[i]` (`func_0207ba28`, EU `0x0207ba38`), ajoute la « luminosité » `unk_70`, puis le
-  « contraste » `unk_54³` (ajouté au-dessus de 0,5, retranché en dessous, sans franchir 0,5).
-  **Vérifié en RAM** (`field.ml1`, `LightingManager+0x2c..0x3c`) : `0.81`, `1.16`, `2.0`,
-  luminosité `0.03`, contraste `0.017576` = `0.26³` ; ce sont les champs `unk_0`, `unk_70` et `unk_54`
-  de l'entrée 0 de `C01M0300.bats` (le script de `C01M09`), lus par notre parseur.
-- Le fond : `DrawBackgroundGradient` (`0x02052420`) : mode de base, couleurs `background` /
-  `background_second` de la phase ; mode avancé, couleurs interpolées. Dégradé vertical dont la
-  couleur d'horizon est sur la ligne où tombe un point à 2048 unités dans la direction horizontale
-  de la caméra (`MaybeComputeHorizonPosition`, `0x02052360`), plus `gradientCenterOffset_`.
-- Le jeu superpose `Fog::OFF` quand `maybeMode_` n'est ni 1 ni 2 (carte sans `.bats`).
+- The `.bats` script is chosen by `Zone3D_QueueLighting` / `Zone3D_StepLighting` (map
+  name, `map-archive.md`) and stored in `Zone3D+0x10c` (`LightingInfo`). `maybeMode_`: `1` basic,
+  `2` advanced, `0` none.
+- Slot index (`LightingManager+0x90`, override; `0` = unused): if
+  non-zero it indexes all tables instead of the phase. **[unknown]**: never observed non-zero
+  (USA `LightingManager.h`); reproduced but not used by the application.
+- **Advanced mode** (fields, battlefields; 236 scripts): `ProcessZoneChange` fills in
+  the missing entries (`FillMissingEntries` of the advanced and fog blocks, `0x020504b4`,
+  `0x02050840`), then `RecomputeAdvancedLighting` (`0x02051d38`, every frame) calls
+  `GetCurrentAdvancedLightingValues` (`0x02050c30`): current phase `i`, next `(i+1)%4`,
+  `t = (time − (end of phase i − 2 s)) / 2 s` clamped to `[0, 1]` (end of phase: 180, 210, 390, 420).
+  Colors blended per channel as truncated `char` (`InterpolateColors`, `0x02051160`), directions
+  blended linearly. Fog follows `ComputeFogInfo` (`0x02051254`, same `t`, multiplied by
+  the light scale): color, alpha, offset and table blended, type and depth shift
+  of the current phase. Light directions are rounded to 1.19.12 (half away from zero),
+  normalized by `VEC_Normalize` (`0x020c2f28`), capped at `0xff7`, then `SetLightVector`
+  keeps bits 3..12: signed 1.0.9 vector (`dq9_core::lighting::light_vector`). Lights 2 and
+  3 are black; lights 0 and 1 have the interpolated color.
+- **Basic mode** (villages, buildings, grottoes; 268 scripts): `ProcessZoneChange` (`0x020519f4`) reads
+  the **phase** entry without blending. If the time exceeds `end − 4 s`, the manager switches to the
+  next phase and **sets the `GameState` clock to its start** (`SetDayTimer`):
+  `settle_basic_entry`. It writes the entry's fog (`func_020c54a4(true, type, shift, offset)`,
+  `FOG_COLOR`, `func_020c5574(table)`), the edge color, `SetDiffuseAmbientColors(model, 0)`;
+  lights stay black. Models whose meshes send colors
+  (`mesh+4 & 2`) are retouched once at load by
+  `ModelTransformTintBrightnessContrast` (`0x020516a0`) unless the resource carries flag 0x20:
+  `ColorTransformTintBrightnessContrast` (`0x02050980`) multiplies each 5-bit channel by
+  `positions[i]` (`func_0207ba28`, EU `0x0207ba38`), adds the "brightness" `unk_70`, then the
+  "contrast" `unk_54³` (added above 0.5, subtracted below, without crossing 0.5).
+  **Verified in RAM** (`field.ml1`, `LightingManager+0x2c..0x3c`): `0.81`, `1.16`, `2.0`,
+  brightness `0.03`, contrast `0.017576` = `0.26³`; these are the fields `unk_0`, `unk_70` and `unk_54`
+  of entry 0 of `C01M0300.bats` (the script of `C01M09`), read by our parser.
+- The background: `DrawBackgroundGradient` (`0x02052420`): basic mode, `background` /
+  `background_second` colors of the phase; advanced mode, interpolated colors. Vertical gradient whose
+  horizon color sits on the line where a point 2048 units away in the camera's horizontal
+  direction falls (`MaybeComputeHorizonPosition`, `0x02052360`), plus `gradientCenterOffset_`.
+- The game overlays `Fog::OFF` when `maybeMode_` is neither 1 nor 2 (map without `.bats`).
 
-### Piloté par les scripts d'événements (J3)
+### Driven by event scripts (J3)
 
-`BeginFade` (`lightRGBScale_`, native 578), l'indice de remplacement non nul (548/549), la phase
-de la scène (588/589) et le brouillard (804) sont posés par les événements
-(`dq9_core::cutscene::SceneLight`, `dq9_app::lighting::scene_environment`, [`stb-natives.md`](stb-natives.md#effets-exécutés-à-lécran-j3)) :
-l'échelle pondère les couleurs des lumières, du fond **et du fond de dégradé** (`DrawBackgroundGradient`,
-USA `LightingManager.cpp` l. 1087 ; `Lighting::select` applique `scale_channels` au fond et à
-l'horizon), la durée est comptée en `2 × valeur` ticks **[hypothèse]**. Contrôle : sur `21520`,
-`SceneLight::scale` passe de 1,0 à 0,6 sur 80 ticks puis revient (test
-`fade_is_linear_and_ends_on_target`, capture plus sombre pendant le fondu).
+`BeginFade` (`lightRGBScale_`, native 578), the non-zero override index (548/549), the cutscene
+phase (588/589) and the fog (804) are set by events
+(`dq9_core::cutscene::SceneLight`, `dq9_app::lighting::scene_environment`, [`stb-natives.md`](stb-natives.md#effects-executed-on-screen-j3)):
+the scale weights the colors of the lights, of the background **and of the gradient background** (`DrawBackgroundGradient`,
+USA `LightingManager.cpp` l. 1087; `Lighting::select` applies `scale_channels` to the background and the
+horizon), the duration is counted as `2 × value` ticks **[hypothesis]**. Check: on `21520`,
+`SceneLight::scale` goes from 1.0 to 0.6 over 80 ticks then back (test
+`fade_is_linear_and_ends_on_target`, darker capture during the fade).
 
-### Non modélisé
+### Not modeled
 
-Mode forcé de `ov_017` (`1 << 9` : phase de bataille lue en `+5`), l'entrée 4 du wagon du
-Starflight Express (`zone 6401`), couleurs `ambient` des PNJ (`ApplyAmbientColorToModel` n'est
-appliquée qu'aux modèles de terrain d'un monde avancé, cf. `func_02016874`), effets de brillance (table
-`SetShininessTable`). Sur les cartes de base, l'échelle de lumière ne change pas la teinte des
-sommets (`ColorTransformTintBrightnessContrast` n'en dépend pas dans notre modèle) : seul le fond
-la suit **[hypothèse]**.
+Forced mode of `ov_017` (`1 << 9`: battle phase read at `+5`), entry 4 of the
+Starflight Express wagon (`zone 6401`), NPC `ambient` colors (`ApplyAmbientColorToModel` is only
+applied to terrain models of an advanced world, see `func_02016874`), shininess effects (table
+`SetShininessTable`). On basic maps, the light scale does not change the vertex
+tint (`ColorTransformTintBrightnessContrast` does not depend on it in our model): only the background
+follows it **[hypothesis]**.
 
-## Rendu et validation à melonDS
+## Rendering and validation against melonDS
 
-Implémentation : `dq9_render::lighting` (`Environment`), `shader.wgsl`, `background.wgsl`,
-`edge.wgsl`. `dq9-app::lighting` relie `dq9_core::lighting::Lighting` au rendu.
+Implementation: `dq9_render::lighting` (`Environment`), `shader.wgsl`, `background.wgsl`,
+`edge.wgsl`. `dq9-app::lighting` connects `dq9_core::lighting::Lighting` to the renderer.
 
-| Élément | Source | État |
+| Element | Source | State |
 |---|---|---|
-| lumières DS (équation GBATEK / melonDS `CalculateLighting`), normales des modèles de carte, `DIF_AMB`, `SPE_EMI`, bits 0-3 de `POLYGON_ATTR` | `LightingManager::SubmitToRenderConfig` `0x02052254` | appliqué par sommet, **non comparé à melonDS** (aucun état melonDS en zone avancée disponible ; en zone de base les lumières sont noires) |
-| teinte de base (couleurs de sommets des maillages `mesh+4 & 2`) | `0x02050980`, `0x020516a0` | appliquée, valeurs d'entrée vérifiées en RAM ; image **comparée à melonDS** sur `C01M09` (ci-dessous) |
-| diffuse des sprites et des personnages | `spriteDiffuseColor_`, `modelDiffuseColor_` | multiplie leur couleur ; couleur de la carte de base lue de `.bats` |
-| fond | `DrawBackgroundGradient` | dégradé appliqué ; **non comparé** (la caméra de `C01M09` ne voit pas le fond) |
-| brouillard | `func_020c54a4`, `FOG_COLOR`, `FOG_TABLE`, équation melonDS | **validé à melonDS** sur la densité (ci-dessous), mode alpha seul non validé |
-| marquage des contours | `DISP3DCNT` bit 5, `EDGE_COLOR` | appliqué (`edge.wgsl`, règle de melonDS : voisin d'identifiant de polygone différent et plus éloigné), validé à l'œil seulement sur `C01M09` ; sur `M01` il cerne des taches de sol d'identifiant 1 à 6, tracé instable car décalques coplanaires (comportement DS non vérifié). Largeur : un pixel DS (hauteur de l'écran 3D / 192) |
-| toon, surbrillance, anticrénelage | bits 1 et 4 de `DISP3DCNT` | toon/surbrillance : bit 1 à 0, donc inutile ; anticrénelage non fait |
+| DS lights (GBATEK / melonDS `CalculateLighting` equation), map model normals, `DIF_AMB`, `SPE_EMI`, bits 0-3 of `POLYGON_ATTR` | `LightingManager::SubmitToRenderConfig` `0x02052254` | applied per vertex, **not compared to melonDS** (no melonDS state in an advanced zone available; in a basic zone lights are black) |
+| basic tint (vertex colors of `mesh+4 & 2` meshes) | `0x02050980`, `0x020516a0` | applied, input values verified in RAM; image **compared to melonDS** on `C01M09` (below) |
+| sprite and character diffuse | `spriteDiffuseColor_`, `modelDiffuseColor_` | multiplies their color; basic map color read from `.bats` |
+| background | `DrawBackgroundGradient` | gradient applied; **not compared** (the `C01M09` camera does not see the background) |
+| fog | `func_020c54a4`, `FOG_COLOR`, `FOG_TABLE`, melonDS equation | **validated against melonDS** on density (below), alpha-only mode not validated |
+| edge marking | `DISP3DCNT` bit 5, `EDGE_COLOR` | applied (`edge.wgsl`, melonDS rule: neighbor with a different and farther polygon ID), validated by eye only on `C01M09`; on `M01` it outlines ground patches with IDs 1 to 6, unstable outline because of coplanar decals (DS behavior not verified). Width: one DS pixel (3D screen height / 192) |
+| toon, highlight, anti-aliasing | bits 1 and 4 of `DISP3DCNT` | toon/highlight: bit 1 at 0, so unneeded; anti-aliasing not done |
 
-Équation de brouillard (melonDS `CalculateFogDensity`, vérifiée sur matériel par ses auteurs) :
-`z` = profondeur 24 bits du tampon Z (`((z_clip * 0x4000) / w + 0x3fff) * 0x200`) ; si
-`z < FOG_OFFSET * 0x200` densité = `table[0]`, sinon `zz = ((z − offset) >> 2) << DISP3DCNT[8..11]`, indice
-`zz >> 17` (32 au plus), fraction `zz & 0x1ffff`, interpolation entre les entrées `i−1` et `i` de la
-table où l'entrée 0 est doublée et la dernière répétée (copie interne de 34 valeurs), densité plafonnée à
-128 (≥ 127 → 128) ; `couleur = (fog * d + pixel * (128 − d)) >> 7` avec le fog 5 bits élargi
-à 6 bits (`2c + 1`, `0` reste `0`). Seuls les polygones dont `POLYGON_ATTR` bit 15 est levé sont
-embrumés ; la cible de comparaison (C01M09) n'en a que pour les sprites.
+Fog equation (melonDS `CalculateFogDensity`, verified on hardware by its authors):
+`z` = 24-bit depth of the Z buffer (`((z_clip * 0x4000) / w + 0x3fff) * 0x200`); if
+`z < FOG_OFFSET * 0x200` density = `table[0]`, otherwise `zz = ((z − offset) >> 2) << DISP3DCNT[8..11]`, index
+`zz >> 17` (32 at most), fraction `zz & 0x1ffff`, interpolation between entries `i−1` and `i` of the
+table where entry 0 is doubled and the last one repeated (internal copy of 34 values), density capped at
+128 (≥ 127 → 128); `color = (fog * d + pixel * (128 − d)) >> 7` with the 5-bit fog widened
+to 6 bits (`2c + 1`, `0` stays `0`). Only polygons whose `POLYGON_ATTR` bit 15 is set are
+fogged; the comparison target (C01M09) has them only for sprites.
 
-### Comparaison à melonDS (état `field.ml1`, `C01M09` de nuit)
+### Comparison with melonDS (state `field.ml1`, `C01M09` at night)
 
-`scripts/melonds-capture.ps1` charge un état melonDS dans la fenêtre portable et enregistre l'écran
-(`build/scratch/ref-*.png`, 256×192). Notre image : `--map C01M09 --time night --chapter 19
+`scripts/melonds-capture.ps1` loads a melonDS state in the portable window and saves the screen
+(`build/scratch/ref-*.png`, 256×192). Our image: `--map C01M09 --time night --chapter 19
 --step 2 --substep 1 --night --eye=0.21,6.87,7.84 --target=0.21,0.87,-1.38 --size 256x192`
-(caméra lue en RAM de l'état, `0x027e3950`, la projection du jeu).
+(camera read from the state's RAM, `0x027e3950`, the game's projection).
 
-- **Image sans brouillard forcé** (équation de teinte et contours) : différence absolue moyenne
-  (hors héros et fenêtre de dialogue, 256×105 pixels) **12,8 / 255** par canal (R 12,8, V 13,8, B 11,7) ;
-  médiane 7 ; 43 % des pixels à moins de 8. Notre rendu est en moyenne 3 à 4 niveaux plus sombre.
-  Écarts connus : pas de filtrage de texture ni d'arrondi à 6 bits comme la DS, héros remplacé
-  par un repère, contours et ombres en pixels de 256×192 suréchantillonnés.
-- **Brouillard** : l'état est modifié (`FOG_COLOR`, `FOG_OFFSET`, `FOG_TABLE`, décalage de `DISP3DCNT`
-  écrits dans la section `GP3D` avant le chargement) et l'image melonDS comparée à la nôtre avec
-  `--fog OFFSET,SHIFT,COLOR,D0..D31` (mêmes valeurs). La densité effective (part de la couleur de
-  brouillard sur les pixels du PNJ, estimée par moindres carrés avec la couleur sans brouillard) :
+- **Image without forced fog** (tint equation and edges): mean absolute difference
+  (excluding the hero and the dialogue window, 256×105 pixels) **12.8 / 255** per channel (R 12.8, G 13.8, B 11.7);
+  median 7; 43% of pixels below 8. Our render is on average 3 to 4 levels darker.
+  Known gaps: no texture filtering or 6-bit rounding like the DS, hero replaced
+  by a marker, edges and shadows in supersampled 256×192 pixels.
+- **Fog**: the state is modified (`FOG_COLOR`, `FOG_OFFSET`, `FOG_TABLE`, `DISP3DCNT` shift
+  written into the `GP3D` section before loading) and the melonDS image compared to ours with
+  `--fog OFFSET,SHIFT,COLOR,D0..D31` (same values). The effective density (share of the fog
+  color on the NPC pixels, estimated by least squares with the fog-free color):
 
-| table | offset / décalage / couleur | melonDS | nous |
+| table | offset / shift / color | melonDS | us |
 |---|---|---|---|
-| constante 64 | `0x5800` / 1 / bleu | 0,506 | 0,498 |
-| `3i` | `0x5a00` / 2 / vert | 0,632 | 0,631 |
-| `127 − 4i` | `0x5400` / 0 / jaune | 0,750 | 0,745 |
-| `5i` | `0x6000` / 2 / cyan | 0,822 | 0,828 |
-| `4i` | `0` / 0 / magenta | 0,878 | 0,891 |
+| constant 64 | `0x5800` / 1 / blue | 0.506 | 0.498 |
+| `3i` | `0x5a00` / 2 / green | 0.632 | 0.631 |
+| `127 − 4i` | `0x5400` / 0 / yellow | 0.750 | 0.745 |
+| `5i` | `0x6000` / 2 / cyan | 0.822 | 0.828 |
+| `4i` | `0` / 0 / magenta | 0.878 | 0.891 |
 
-  La formule (profondeur, offset, décalage, interpolation, mélange à 128) concorde à 0,01 près sur
-  un point de profondeur (le PNJ) : **pas de validation sur terrain** (aucun matériau de `C01M09`
-  n'est brumeux), **ni du mode alpha seul** ni de l'alpha de `FOG_COLOR`.
-- Non fait : zone avancée (lumières, dégradé de ciel, fondu de 2 s) comparée à melonDS : il faudrait
-  un état melonDS sur un champ ; les états existants sont tous à `C01M09`.
+  The formula (depth, offset, shift, interpolation, blend at 128) matches within 0.01 on
+  one depth point (the NPC): **no validation on terrain** (no `C01M09` material
+  is fogged), **nor of the alpha-only mode** nor of the `FOG_COLOR` alpha.
+- Not done: advanced zone (lights, sky gradient, 2 s fade) compared to melonDS: it would need
+  a melonDS state on a field; the existing states are all at `C01M09`.

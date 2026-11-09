@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -20,30 +20,30 @@
 <body>
   <header>
     <details class="intro">
-      <summary><strong>DQ9 Rust</strong> — démo technique : aide et limites</summary>
-      <p>Sélectionnez votre propre ROM européenne de Dragon Quest IX (YDQP01), puis cliquez
-        sur « Nouvelle partie ». Une sauvegarde DS peut aussi être chargée. Ces fichiers
-        restent dans votre navigateur : ils ne sont jamais envoyés au serveur.</p>
-      <p>Le clavier est actif dès que la ROM est lue : flèches pour marcher, Entrée ou
-        Espace pour parler et avancer les messages, Q/E pour tourner la caméra.
-        M coupe le son ; le navigateur ne l'autorise qu'après une interaction. Cliquer dans
-        l'image reprend le clavier à tout moment, et changer un réglage le rend au jeu.</p>
-      <p>Version expérimentale : combats sautés, effets encore incomplets et écran inférieur
-        provisoire. Navigateur récent avec WebGPU ou WebGL 2 requis ; ordinateur et clavier
-        recommandés. Aucune ROM n'est fournie.</p>
+      <summary><strong>DQ9 Rust</strong> — tech demo: help and limits</summary>
+      <p>Select your own European Dragon Quest IX ROM (YDQP01), then click
+        "New game". A DS save can also be loaded. These files
+        stay in your browser: they are never sent to the server.</p>
+      <p>The keyboard is active as soon as the ROM is read: arrows to walk, Enter or
+        Space to talk and advance messages, Q/E to turn the camera.
+        M mutes the sound; the browser only allows it after an interaction. Clicking the
+        image takes the keyboard back at any time, and changing a setting returns it to the game.</p>
+      <p>Experimental version: battles skipped, effects still incomplete and lower screen
+        provisional. Recent browser with WebGPU or WebGL 2 required; computer and keyboard
+        recommended. No ROM is provided.</p>
     </details>
-    <label>ROM (.nds) : <input type="file" id="rom" accept=".nds" disabled></label>
-    <label>Sauvegarde (.sav, facultative) : <input type="file" id="save" accept=".sav" disabled></label>
-    <label>Moment : <select id="time" disabled>
-      <option value="0">nuit</option><option value="1">matin</option>
-      <option value="2">jour</option><option value="3">soir</option>
+    <label>ROM (.nds): <input type="file" id="rom" accept=".nds" disabled></label>
+    <label>Save (.sav, optional): <input type="file" id="save" accept=".sav" disabled></label>
+    <label>Time: <select id="time" disabled>
+      <option value="0">night</option><option value="1">morning</option>
+      <option value="2">day</option><option value="3">evening</option>
     </select></label>
-    <label>Écrans : <select id="layout" disabled>
-      <option value="stacked">superposés</option><option value="side">côte à côte</option>
-      <option value="top">haut seul</option>
+    <label>Screens: <select id="layout" disabled>
+      <option value="stacked">stacked</option><option value="side">side by side</option>
+      <option value="top">top only</option>
     </select></label>
-    <button id="newgame" type="button" disabled>Nouvelle partie</button>
-    <span id="status" role="status" aria-live="polite" data-kind="info">chargement du moteur…</span>
+    <button id="newgame" type="button" disabled>New game</button>
+    <span id="status" role="status" aria-live="polite" data-kind="info">loading the engine…</span>
   </header>
   <main><canvas id="dq9" tabindex="0"></canvas></main>
   <script type="module">
@@ -73,14 +73,14 @@
       const { default: init } = await import("./pkg/dq9-app.js");
       await init();
       if (status.dataset.kind !== "error") {
-        // "Nouvelle partie" stays disabled until the ROM bytes are queued (web.rs).
+        // "New game" stays disabled until the ROM bytes are queued (web.rs).
         for (const control of document.querySelectorAll("header input, header select")) {
           control.disabled = false;
         }
         status.dataset.kind = "info";
       }
     } catch (error) {
-      fail("Impossible de charger le moteur. Vérifiez votre connexion et rechargez la page.");
+      fail("Cannot load the engine. Check your connection and reload the page.");
       console.error(error);
     }
   </script>

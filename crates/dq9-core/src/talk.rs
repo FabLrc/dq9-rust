@@ -44,7 +44,7 @@ pub struct Talkable {
     pub position: [i32; 3],
     pub zones: Vec<TalkZone>,
     /// Record 20 of the placement script: `[dx, 0, dz, extra range]` (`fx32`), the offset of
-    /// the talk centre and the extra range **[inconnu : usage exact]**.
+    /// the talk centre and the extra range **[unknown: exact use]**.
     pub extra: Option<[i32; 4]>,
 }
 
@@ -104,8 +104,8 @@ fn facing_error(hero: Vec3, yaw: f32, to: [i32; 3]) -> f32 {
 ///
 /// An NPC is a candidate when a talk zone holds the hero, or when the hero is within 1.5
 /// units on x and z of it (offset and enlarged by its record-20 values) and, for anything
-/// but a thing to examine, nearer than 1.75 on the ground plane **[écart : le jeu mesure la
-/// distance en 3D, ici les hauteurs des PNJ sont celles des placements, non recalées]**. Of the
+/// but a thing to examine, nearer than 1.75 on the ground plane **[deviation: the game measures
+/// the distance in 3D, here the NPC heights are those of the placements, not readjusted]**. Of the
 /// candidates the one the hero faces most directly wins; a zone partner is accepted whatever
 /// its angle, a free one only when strictly better than the best free one so far. The
 /// object flags and the "hero busy" tests are not modelled.
@@ -228,7 +228,7 @@ impl Default for Names {
 
 /// Branch of a conditional block: the first when the condition holds. Only the hero's sex
 /// and the size of the party (a party of one) are known; every other rule takes its first
-/// branch, like the `dq9re msg` preview **[hypothèse]**.
+/// branch, like the `dq9re msg` preview **[hypothesis]**.
 fn branch(rule: &Condition, names: &Names) -> u8 {
     match rule.start {
         "IF_HERO_MALE" | "IF_MALE" | "IF_HOST_MALE" | "IF_ADDRESSEE_MALE" => {
@@ -275,7 +275,7 @@ pub enum PromptKind {
 }
 
 impl PromptKind {
-    /// English labels (system strings 0x1b to 0x1e **[hypothèse : numéros]**).
+    /// English labels (system strings 0x1b to 0x1e **[hypothesis: numbers]**).
     pub fn labels(self) -> [&'static str; 2] {
         match self {
             Self::YesNo | Self::NoYes => ["Yes", "No"],
@@ -349,7 +349,7 @@ impl AnswerSound {
 }
 
 /// Characters typed between two blips: the game blips when its counter passes 3 and takes 4
-/// off (`0x020659a0`) **[hypothèse : one character per count]**.
+/// off (`0x020659a0`) **[hypothesis: one character per count]**.
 pub const BLIP_EVERY: u32 = 4;
 
 /// One step of a prepared message.
@@ -546,7 +546,7 @@ pub fn prepare(font: &Font, text: &[u8], names: &Names, max_width: i32) -> Scrip
 // --- The dialogue state machine -------------------------------------------------------------
 
 /// Steps a finished line waits before the box scrolls up (`0x1864 = 20` pixels, one per
-/// tick **[hypothèse : un pixel par pas]**).
+/// tick **[hypothesis: one pixel per step]**).
 pub const SCROLL_STEPS: u32 = 20;
 
 /// Buttons pressed during one step (edges, not levels).
@@ -641,7 +641,7 @@ impl Dialogue {
     }
 
     /// A message of an event script (native 400): when its text ends without an end tag it
-    /// waits for the action key instead of closing at once **[hypothèse]**.
+    /// waits for the action key instead of closing at once **[hypothesis]**.
     pub fn for_event(script: Script) -> Self {
         Self {
             hold_at_end: true,
@@ -843,7 +843,7 @@ impl Dialogue {
                             self.clear_box();
                             self.at + i + 1
                         }
-                        // An answer without branch ends the message **[hypothèse]**.
+                        // An answer without branch ends the message **[hypothesis]**.
                         None => self.script.ops[self.at..]
                             .iter()
                             .position(|op| matches!(op, Op::End(_)))

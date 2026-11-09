@@ -384,7 +384,7 @@ impl Player {
         }
         // Once every track has ended, notes held without a length are let go, unless their
         // wave plays once: it ends by itself (the sound effects are written that way: a key,
-        // a length of 0 and the end of the track) **[hypothèse, docs/re/sdat.md]**.
+        // a length of 0 and the end of the track) **[hypothesis, docs/re/sdat.md]**.
         if self.tracks.iter().all(|t| !t.active) {
             for voice in &mut self.voices {
                 if voice.remaining.is_none() && voice.loops() {

@@ -68,7 +68,7 @@ fn scripts_are_deterministic() {
 }
 
 /// Where the opening scenes of the prologue happen, from the event lists: the first scene of
-/// stage 1.1 and the maps of its chain (`docs/app.md`, § Événements).
+/// stage 1.1 and the maps of its chain (`docs/app.md`, § Events).
 #[test]
 fn prologue_events_know_their_map_and_the_stage_its_opening() {
     let Some(bytes) = testrom::load() else { return };

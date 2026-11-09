@@ -2,10 +2,10 @@
 //! `.stb` script of an event, the cutscene layer (`dq9_core::cutscene`) keeps what it did to
 //! the actors, the camera and the screen brightness, and this module draws it: actor
 //! transforms and motions go to the render instances, the camera to the view, messages to
-//! the message window, fades to an overlay (`docs/app.md`, § Événements).
+//! the message window, fades to an overlay (`docs/app.md`, § Events).
 //!
 //! One fixed step of 1/60 s is one tick. The script runs every second tick (an update of the
-//! game is 2 ticks, `docs/re/stb-natives.md`, § Temps et unités); the cutscene advances at
+//! game is 2 ticks, `docs/re/stb-natives.md`, § Time and units); the cutscene advances at
 //! each tick and reports what ended as [`Signal`]s.
 //!
 //! Models are not loaded while the script runs: [`EventPlayer::prepare`] first plays the
@@ -1397,7 +1397,7 @@ impl EventPlayer {
 
     /// The matrix a model attached to a bone of another target (natives 235, 236) is placed in:
     /// the parent's world times the bone's (`02037868`, `020378a0`); the model's own pose is
-    /// relative to it **[hypothèse]** (the scripts reset the scale of the attached models to
+    /// relative to it **[hypothesis]** (the scripts reset the scale of the attached models to
     /// 1, which only makes sense if the parent's scale is inherited). `None` when the model
     /// is not attached or its parent cannot be resolved.
     fn attachment_base(&self, scene: &AnimatedScene, node: &Node, depth: u32) -> Option<Mat4> {

@@ -1,216 +1,240 @@
 # DQ9 Rust
 
-Réimplémentation en Rust de *Dragon Quest IX – Sentinels of the Starry Skies* (Nintendo DS),
-pour Windows, macOS, Linux et le Web, avec à terme le multijoueur de la DS rendu possible en
-ligne. Le jeu est rétro-analysé et ses ressources sont lues depuis **votre propre ROM** ; aucune
-donnée du jeu n'est incluse dans ce dépôt.
+[![CI](https://img.shields.io/github/actions/workflow/status/FabLrc/dq9-rust/ci.yml?branch=main&label=CI&logo=github)](https://github.com/FabLrc/dq9-rust/actions/workflows/ci.yml)
+[![Web demo](https://img.shields.io/github/actions/workflow/status/FabLrc/dq9-rust/pages.yml?branch=main&label=web%20demo&logo=webassembly)](https://fablrc.github.io/dq9-rust/?newgame=1)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
+[![Rust 1.99 | edition 2024](https://img.shields.io/badge/rust-1.99%20%7C%20edition%202024-orange?logo=rust)](rust-toolchain.toml)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Web-informational)](docs/app.md)
+[![ROM](https://img.shields.io/badge/ROM-YDQP01%20(Europe)-lightgrey)](rom/README.md)
+[![Last commit](https://img.shields.io/github/last-commit/FabLrc/dq9-rust)](https://github.com/FabLrc/dq9-rust/commits/main)
 
-**[Tester DQ9 Rust dans le navigateur](https://fablrc.github.io/dq9-rust/?newgame=1)** —
-sélectionnez votre propre ROM européenne (`YDQP01`) : le bouton « Nouvelle partie » s'active
-une fois la ROM lue et le jeu prend le clavier automatiquement. Les fichiers ROM et
-sauvegarde restent locaux : aucun envoi au serveur.
-La démo est publique, expérimentale et nécessite un navigateur récent avec WebGPU ou WebGL 2.
+A Rust reimplementation of *Dragon Quest IX – Sentinels of the Starry Skies* (Nintendo DS) for
+Windows, macOS, Linux and the Web, with the long-term goal of making the DS multiplayer
+playable online. The game is reverse engineered and its assets are read from **your own ROM**;
+no game data is included in this repository.
 
-**État** : v0.1 fonctionnelle en natif, partiellement certifiée dans le navigateur ; détail,
-limites et prochaines étapes dans [`docs/status.md`](docs/status.md).
-`cargo run -p dq9-app --release -- --new-game` lance l'ouverture, enchaîne le prologue,
-l'Observatoire et le retour à Angel Falls, puis les scènes du village. `--map M01`, ou une
-sauvegarde passée en `--save`, ouvre directement Angel Falls.
-On y trouve :
-
-- deux écrans DS (empilés, côte à côte ou écran du haut seul) ;
-- cartes texturées, éclairage, brouillard et heure du jour ;
-- PNJ animés et héros animé ;
-- déplacement porté en virgule fixe, avec collisions et caméra L/R ;
-- portes, maisons et warps scénarisés, conversations dans la fenêtre de message du jeu ;
-- scènes scriptées : interpréteur `.stb`, personnages, caméra, fondus, effets, nuit ;
-- tâches du village 1.2 : anneau, veuve, écurie, verrou de sortie, retour 1.4.1 ;
-- musique, effets sonores et jingles ;
-- départ depuis une sauvegarde DS (`--save`).
-
-Manquent encore :
-
-- les combats : le premier combat scripté est compté comme gagné ;
-- quelques effets de scène ;
-- la certification navigateur de bout en bout et la comparaison à l'original sur tout le
-  parcours (voir [`docs/status.md`](docs/status.md)).
-
-État, limites et preuves : [`docs/status.md`](docs/status.md) ; plan et jalons :
-[`docs/roadmap.md`](docs/roadmap.md) ; lancement et commandes : `docs/app.md`.
+**[Try DQ9 Rust in your browser](https://fablrc.github.io/dq9-rust/?newgame=1)** — select
+your own European ROM (`YDQP01`): the "New game" button becomes active once the ROM is read and
+the game grabs the keyboard automatically. ROM and save files stay local: nothing is uploaded.
+The demo is public, experimental and needs a recent browser with WebGPU or WebGL 2.
 
 <!-- coverage:start -->
-**Avancement : 2,1 %** des fonctions de jeu traduites (265 / 12 056), 2,7 % du code (70 Ko / 2 505 Ko).
-Calculé par `cargo dq9re coverage` à partir des marqueurs `port:` du code (définition dans `docs/roadmap.md`).
+[![Ported](https://img.shields.io/badge/ported-2.1%25%20of%20functions-orange)](docs/roadmap.md)
 
-<details><summary>Détail par module</summary>
+**Progress: 2.1%** of game functions ported (265 / 12,056), 2.7% of the code (70 KB / 2,505 KB).
+Computed by `cargo dq9re coverage` from the `port:` markers in the code (definition in `docs/roadmap.md`).
 
-| Module | Fonctions traduites | Code traduit |
+<details><summary>Per-module detail</summary>
+
+| Module | Functions ported | Code ported |
 |---|---:|---:|
-| ARM9 | 235 / 5 464 (4,3 %) | 61 Ko / 826 Ko (7,3 %) |
-| ITCM | 0 / 34 (0,0 %) | 0 Ko / 6 Ko (0,0 %) |
-| ov_000 | 0 / 826 (0,0 %) | 0 Ko / 190 Ko (0,0 %) |
-| ov_001 | 1 / 515 (0,1 %) | 1 Ko / 70 Ko (0,0 %) |
-| ov_002 | 0 / 213 (0,0 %) | 0 Ko / 101 Ko (0,0 %) |
-| ov_003 | 0 / 510 (0,0 %) | 0 Ko / 176 Ko (0,0 %) |
-| ov_004 | 0 / 532 (0,0 %) | 0 Ko / 113 Ko (0,0 %) |
-| ov_005 | 0 / 89 (0,0 %) | 0 Ko / 38 Ko (0,0 %) |
-| ov_006 | 0 / 132 (0,0 %) | 0 Ko / 51 Ko (0,0 %) |
-| ov_008 | 0 / 63 (0,0 %) | 0 Ko / 29 Ko (0,0 %) |
-| ov_009 | 0 / 43 (0,0 %) | 0 Ko / 26 Ko (0,0 %) |
-| ov_010 | 0 / 3 (0,0 %) | 0 Ko / 2 Ko (0,0 %) |
-| ov_011 | 0 / 186 (0,0 %) | 0 Ko / 18 Ko (0,0 %) |
-| ov_012 | 0 / 71 (0,0 %) | 0 Ko / 28 Ko (0,0 %) |
-| ov_013 | 0 / 40 (0,0 %) | 0 Ko / 15 Ko (0,0 %) |
-| ov_014 | 0 / 69 (0,0 %) | 0 Ko / 21 Ko (0,0 %) |
-| ov_015 | 0 / 103 (0,0 %) | 0 Ko / 34 Ko (0,0 %) |
-| ov_016 | 0 / 87 (0,0 %) | 0 Ko / 22 Ko (0,0 %) |
-| ov_017 | 29 / 1 194 (2,4 %) | 10 Ko / 301 Ko (3,1 %) |
-| ov_020 | 0 / 18 (0,0 %) | 0 Ko / 9 Ko (0,0 %) |
-| ov_021 | 0 / 5 (0,0 %) | 0 Ko / 2 Ko (0,0 %) |
-| ov_023 | 0 / 827 (0,0 %) | 0 Ko / 147 Ko (0,0 %) |
-| ov_024 | 0 / 573 (0,0 %) | 0 Ko / 152 Ko (0,0 %) |
-| ov_025 | 0 / 304 (0,0 %) | 0 Ko / 90 Ko (0,0 %) |
-| ov_026 | 0 / 24 (0,0 %) | 0 Ko / 24 Ko (0,0 %) |
-| ov_027 | 0 / 87 (0,0 %) | 0 Ko / 20 Ko (0,0 %) |
-| ov_028 | 0 / 34 (0,0 %) | 0 Ko / 5 Ko (0,0 %) |
-| ov_033 | 0 / 5 (0,0 %) | 0 Ko / 3 Ko (0,0 %) |
-| ov_034 | 0 / 5 (0,0 %) | 0 Ko / 3 Ko (0,0 %) |
+| ARM9 | 235 / 5,464 (4.3%) | 61 KB / 826 KB (7.3%) |
+| ITCM | 0 / 34 (0.0%) | 0 KB / 6 KB (0.0%) |
+| ov_000 | 0 / 826 (0.0%) | 0 KB / 190 KB (0.0%) |
+| ov_001 | 1 / 515 (0.1%) | 1 KB / 70 KB (0.0%) |
+| ov_002 | 0 / 213 (0.0%) | 0 KB / 101 KB (0.0%) |
+| ov_003 | 0 / 510 (0.0%) | 0 KB / 176 KB (0.0%) |
+| ov_004 | 0 / 532 (0.0%) | 0 KB / 113 KB (0.0%) |
+| ov_005 | 0 / 89 (0.0%) | 0 KB / 38 KB (0.0%) |
+| ov_006 | 0 / 132 (0.0%) | 0 KB / 51 KB (0.0%) |
+| ov_008 | 0 / 63 (0.0%) | 0 KB / 29 KB (0.0%) |
+| ov_009 | 0 / 43 (0.0%) | 0 KB / 26 KB (0.0%) |
+| ov_010 | 0 / 3 (0.0%) | 0 KB / 2 KB (0.0%) |
+| ov_011 | 0 / 186 (0.0%) | 0 KB / 18 KB (0.0%) |
+| ov_012 | 0 / 71 (0.0%) | 0 KB / 28 KB (0.0%) |
+| ov_013 | 0 / 40 (0.0%) | 0 KB / 15 KB (0.0%) |
+| ov_014 | 0 / 69 (0.0%) | 0 KB / 21 KB (0.0%) |
+| ov_015 | 0 / 103 (0.0%) | 0 KB / 34 KB (0.0%) |
+| ov_016 | 0 / 87 (0.0%) | 0 KB / 22 KB (0.0%) |
+| ov_017 | 29 / 1,194 (2.4%) | 10 KB / 301 KB (3.1%) |
+| ov_020 | 0 / 18 (0.0%) | 0 KB / 9 KB (0.0%) |
+| ov_021 | 0 / 5 (0.0%) | 0 KB / 2 KB (0.0%) |
+| ov_023 | 0 / 827 (0.0%) | 0 KB / 147 KB (0.0%) |
+| ov_024 | 0 / 573 (0.0%) | 0 KB / 152 KB (0.0%) |
+| ov_025 | 0 / 304 (0.0%) | 0 KB / 90 KB (0.0%) |
+| ov_026 | 0 / 24 (0.0%) | 0 KB / 24 KB (0.0%) |
+| ov_027 | 0 / 87 (0.0%) | 0 KB / 20 KB (0.0%) |
+| ov_028 | 0 / 34 (0.0%) | 0 KB / 5 KB (0.0%) |
+| ov_033 | 0 / 5 (0.0%) | 0 KB / 3 KB (0.0%) |
+| ov_034 | 0 / 5 (0.0%) | 0 KB / 3 KB (0.0%) |
 
 </details>
 <!-- coverage:end -->
 
-## Arborescence
+## Status
 
-| Chemin | Rôle |
+**v0.1 works natively and is partly certified in the browser**; details, limits and next steps
+in [`docs/status.md`](docs/status.md).
+`cargo run -p dq9-app --release -- --new-game` runs the opening, chains the prologue, the
+Observatory and the return to Angel Falls, then the village scenes. `--map M01`, or a save
+passed with `--save`, opens Angel Falls directly.
+What works:
+
+- both DS screens (stacked, side by side, or top screen only);
+- textured maps, lighting, fog and time of day;
+- animated NPCs and an animated hero;
+- movement ported in fixed-point, with collisions and the L/R camera;
+- doors, houses and scripted warps, conversations in the game's message window;
+- scripted cutscenes: `.stb` interpreter, characters, camera, fades, effects, night;
+- village tasks 1.2: ring, widow, stable, exit lock, return 1.4.1;
+- music, sound effects and jingles;
+- starting from a DS save (`--save`).
+
+Still missing:
+
+- battles: the first scripted battle is counted as won;
+- a few cutscene effects;
+- end-to-end browser certification and comparison with the original over the whole route
+  (see [`docs/status.md`](docs/status.md)).
+
+Status, limits and evidence: [`docs/status.md`](docs/status.md); plan and milestones:
+[`docs/roadmap.md`](docs/roadmap.md); running and commands: [`docs/app.md`](docs/app.md).
+
+## Quick start
+
+You only need Rust (via [rustup](https://rustup.rs); `rust-toolchain.toml` pins the version) and
+your own ROM. Ghidra, melonDS and the other reverse-engineering tools are optional.
+
+```sh
+cargo run -p dq9-app --release -- --new-game   # play from the opening
+cargo dq9re info                               # check the ROM
+cargo test --workspace                         # tests (ROM-based ones skip without a ROM)
+```
+
+## Repository layout
+
+| Path | Role |
 |---|---|
-| `crates/nds-rom` | ROM DS : en-tête, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC, modèles et animations G3D. Sans E/S, compile en wasm. |
-| `crates/dq9-formats` | Formats Level-5 de DQ9 : archives `.gp2`, tables, polices, messages, répliques, triggers, scripts `.stb`, cartes, personnages, éclairage, sauvegarde, SDAT. Sans E/S, compile en wasm. |
-| `crates/dq9-core` | Logique de jeu déterministe : état depuis une sauvegarde ou une nouvelle partie, déplacement et collisions en virgule fixe, caméra, portes et zones, triggers, conversations, interpréteur `.stb`, scènes, enchaînement du scénario. Sans E/S, compile en wasm. |
-| `crates/dq9-render` | Rendu wgpu proche du moteur 3D de la DS : cartes, PNJ, héros, éclairage, brouillard, interface 2D. Sans E/S, compile en wasm. |
-| `crates/dq9-audio` | Séquenceur SSEQ, banques, ondes et mixage du son de la DS. Sans E/S, compile en wasm. |
-| `crates/dq9-app` | Application (winit + wgpu, natif et Web) : `cargo run -p dq9-app --release -- --new-game` (`docs/app.md`). |
-| `crates/dq9re` | CLI de rétro-ingénierie (`cargo dq9re --help`). |
-| `crates/testrom` | Localise la ROM pour les tests sur données réelles. |
-| `re/symbols.txt` | Noms retrouvés, source de vérité appliquée au projet Ghidra. |
-| `re/ghidra_scripts/`, `scripts/` | Scripts Ghidra et PowerShell : installation des outils, import, requêtes, symboles, états melonDS. |
-| `docs/` | Feuille de route, architecture, ressources externes, notes de RE (`re/`). |
-| `rom/` | Votre ROM (ignorée par git). |
+| `crates/nds-rom` | DS ROM: header, FNT/FAT, overlays, ARM9 (BLZ), LZ10/LZ11/Huffman/RLE, NARC, G3D models and animations. No I/O, builds for wasm. |
+| `crates/dq9-formats` | DQ9 Level-5 formats: `.gp2` archives, tables, fonts, messages, dialogue lines, triggers, `.stb` scripts, maps, characters, lighting, save, SDAT. No I/O, builds for wasm. |
+| `crates/dq9-core` | Deterministic game logic: state from a save or a new game, fixed-point movement and collisions, camera, doors and zones, triggers, conversations, `.stb` interpreter, cutscenes, scenario chaining. No I/O, builds for wasm. |
+| `crates/dq9-render` | wgpu renderer close to the DS 3D engine: maps, NPCs, hero, lighting, fog, 2D interface. No I/O, builds for wasm. |
+| `crates/dq9-audio` | SSEQ sequencer, banks, waves and mixing of the DS sound. No I/O, builds for wasm. |
+| `crates/dq9-app` | Application (winit + wgpu, native and Web): `cargo run -p dq9-app --release -- --new-game` ([`docs/app.md`](docs/app.md)). |
+| `crates/dq9re` | Reverse-engineering CLI (`cargo dq9re --help`). |
+| `crates/testrom` | Locates the ROM for real-data tests. |
+| `re/symbols.txt` | Recovered names, source of truth applied to the Ghidra project. |
+| `re/ghidra_scripts/`, `scripts/` | Ghidra and PowerShell scripts: tool installation, import, queries, symbols, melonDS states. |
+| `docs/` | Roadmap, architecture, external resources, reverse-engineering notes (`re/`). |
+| `rom/` | Your ROM (ignored by git). |
 
-## Mise en place
+## Setup
 
-ROM attendue : version européenne `YDQP01` (voir `rom/README.md`), placée dans `rom/`, à la
-racine, ou désignée par `--rom <chemin>` / `DQ9_ROM`.
+Expected ROM: European release `YDQP01` (see [`rom/README.md`](rom/README.md)), placed in `rom/`,
+at the repository root, or given with `--rom <path>` / `DQ9_ROM`.
 
-Prérequis : Rust via rustup (version épinglée par `rust-toolchain.toml`, cible
-`wasm32-unknown-unknown` incluse). Sous Windows, hôte `x86_64-pc-windows-gnu` avec MinGW-w64
-(WinLibs) dans le `PATH`.
+Requirements: Rust via rustup (version pinned by `rust-toolchain.toml`, `wasm32-unknown-unknown`
+target included). On Windows, host `x86_64-pc-windows-gnu` with MinGW-w64 (WinLibs) in the
+`PATH`. The scripts are PowerShell; on macOS and Linux run them with
+[`pwsh`](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (CI
+does so on Linux). The reverse-engineering tool installer is Windows-only.
 
 ```powershell
-cargo dq9re info                 # vérifie la ROM
-cargo dq9re extract --unpack     # code + données dans build/rom, archives .gp2 dépliées
+cargo dq9re info                 # check the ROM
+cargo dq9re extract --unpack     # code + data in build/rom, .gp2 archives unpacked
 
-# Outils de RE (Windows) : JDK, Ghidra, melonDS dans ./tools, SHA-256 vérifiés
+# Reverse-engineering tools (Windows): JDK, Ghidra, melonDS in ./tools, SHA-256 verified
 powershell -ExecutionPolicy Bypass -File scripts/setup-re-tools.ps1
-powershell -ExecutionPolicy Bypass -File scripts/ghidra-import.ps1   # projet re/ghidra (~3 min)
-powershell -ExecutionPolicy Bypass -File scripts/ghidra.ps1          # interface graphique
-powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save partie.sav   # état .ml1 vérifié (~40 s)
+powershell -ExecutionPolicy Bypass -File scripts/ghidra-import.ps1   # re/ghidra project (~3 min)
+powershell -ExecutionPolicy Bypass -File scripts/ghidra.ps1          # graphical interface
+powershell -ExecutionPolicy Bypass -File scripts/melonds-state.ps1 -Save game.sav   # verified .ml1 state (~40 s)
 ```
 
-## Développement
+## Development
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1              # fmt, clippy, tests, wasm, avancement
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast        # fmt et clippy seulement
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only test   # étapes choisies
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -RequireRom  # échoue sans ROM
-powershell -ExecutionPolicy Bypass -File scripts/parity.ps1              # comparaison à l'original
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1              # fmt, clippy, tests, wasm, progress
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast        # fmt and clippy only
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only test   # selected steps
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -RequireRom  # fails without a ROM
+powershell -ExecutionPolicy Bypass -File scripts/parity.ps1              # comparison with the original
 ```
 
-`scripts/verify.ps1` est la seule source des commandes de vérification (la CI l'appelle) :
-il enchaîne fmt, clippy, tests (ceux sur la vraie ROM si elle est présente), build wasm et
-bloc d'avancement ci-dessus, et s'arrête au premier échec ; les cibles partagées entre
-worktrees et les outils facultatifs (`sccache`, `cargo nextest`) sont décrits dans
-[`docs/app.md`](docs/app.md#boucle-de-développement).
+`scripts/verify.ps1` is the single source of the verification commands (CI calls it): it runs
+fmt, clippy, tests (the real-ROM ones when a ROM is present), the wasm build and the progress
+block above, and stops at the first failure; targets shared between worktrees and the optional
+tools (`sccache`, `cargo nextest`) are described in
+[`docs/app.md`](docs/app.md#development-loop).
 
-Deux outils de diagnostic, sans effet sur le jeu :
+Two diagnostic tools, with no effect on the game:
 
 ```powershell
-# Liste (puis supprime avec -Apply) les vieux états d'émulateur sous build/
+# List (then delete with -Apply) old emulator states under build/
 powershell -ExecutionPolicy Bypass -File scripts/prune-build.ps1
-# Compare deux runs par point d'histoire, pas par tick
+# Compare two runs by story point, not by tick
 powershell -ExecutionPolicy Bypass -File scripts/compare-runs.ps1 `
     -Original build/oracle/original.jsonl -Runtime build/oracle/runtime.jsonl
-# Compare deux états (delta nommé) et nomme les changements d'un watch image par image
+# Compare two states (named delta) and name the changes of a watch frame by frame
 cargo dq9re state diff bat6.ml1 bat4.ml1
 cargo dq9re state watch --file build/oracle/watch.jsonl
 ```
 
-`prune-build.ps1` ne touche ni aux `.sav`, ni aux `.nds`, ni aux JSON ou images, et refuse la
-racine du dépôt. `compare-runs.ps1` aligne les checkpoints JSONL sur la carte et la piste
-courante, en préférant le même `kind` (`control`, `after`) et à défaut le point de contrôle du
-runtime : un chargement de carte ne se compare pas à une prise de contrôle. Il compare ensuite
-progression, drapeaux et quêtes ; il complète `oracle-compare.ps1`, qui part d'un état melonDS
-unique.
+`prune-build.ps1` touches neither `.sav`, `.nds`, JSON nor image files, and refuses the
+repository root. `compare-runs.ps1` aligns the JSONL checkpoints on the current map and track,
+preferring the same `kind` (`control`, `after`) and otherwise the runtime checkpoint: a map
+load is not compared with a player-control handoff. It then compares progress, flags and
+quests; it complements `oracle-compare.ps1`, which starts from a single melonDS state.
 
-La CI appelle `scripts/verify.ps1` sous Linux (fmt, clippy, tests, wasm), sans jamais avoir
-accès à la ROM, puis calcule l'avancement et échoue si le bloc de ce README est périmé : le
-mettre à jour en local par `verify.ps1`. Un commit qui ne touche que la documentation,
-`re/symbols.txt`, `re/ghidra_scripts/` ou `rom/` ne relance pas la CI (un changement de
-`re/functions.txt` la relance) ; le déploiement Pages n'est redéclenché que par les chemins
-qui changent le binaire web (`crates/**`, manifestes, `rust-toolchain*`).
+CI runs `scripts/verify.ps1` on Linux (fmt, clippy, tests, wasm) without ever having access to
+the ROM, then computes the progress and fails if the block in this README is stale: refresh it
+locally with `verify.ps1`. A commit that only touches documentation, `re/symbols.txt`,
+`re/ghidra_scripts/` or `rom/` does not rerun CI (a change to `re/functions.txt` does); the
+Pages deployment is only triggered by paths that change the web binary (`crates/**`,
+manifests, `rust-toolchain*`).
 
-## Rétro-ingénierie
+## Reverse engineering
 
-- **`cargo dq9re`** : `ls data/map/`, `gp2 <archive> --out <dossier>`, `table <archive>
-  <membre>`, `msg`, `font`, `narc <fichier> -d`, `cat <fichier> -d`,
-  `talk data/scenario/M02M0.gp2 018_en.bin --quest 11=1 --level 25` (triggers puis réplique
-  choisie pour un état donné), `stb data/event/ev03030.gp2` (script d'événement désassemblé
-  avec ses textes), `map X01M07 --image build/scratch/x01m07.png --scale 16` (vue du dessus
-  de la collision), `map X01M07 --reach 0 0.17 6.8 --to 0 0.17 17.5 --reach-image
-  build/scratch/reach.png` (portée réelle en 3D, voir
-  [`docs/re/map-archive.md`](docs/re/map-archive.md#voir-la-collision-dq9re-map---image---reach)).
-- **États oracle** : `cargo dq9re state état.ml1` (sections, VBlank, scénario, code comparé à
-  la ROM), `--json` (le point d'histoire que compare le runtime), `--peek 020f33d8:40`, et
-  `state --ram ram.bin` sur une image RAM principale brute de 4 Mio (`--dump-ram` du harnais),
-  ou un nom de fichier sans `--ram` ; `cargo dq9re states index build/oracle --out
-  build/oracle/index.json` puis `states find --story 1.1.2 [--map 4101]` pour retrouver un
-  état sans l'ouvrir ([`docs/re/melonds-state.md`](docs/re/melonds-state.md)).
-- **Harnais libretro** : `python scripts/melondsds_host.py --rom <ROM> --core
+- **`cargo dq9re`**: `ls data/map/`, `gp2 <archive> --out <dir>`, `table <archive>
+  <member>`, `msg`, `font`, `narc <file> -d`, `cat <file> -d`,
+  `talk data/scenario/M02M0.gp2 018_en.bin --quest 11=1 --level 25` (triggers, then the line
+  chosen for a given state), `stb data/event/ev03030.gp2` (disassembled event script with its
+  texts), `map X01M07 --image build/scratch/x01m07.png --scale 16` (top view of the
+  collision), `map X01M07 --reach 0 0.17 6.8 --to 0 0.17 17.5 --reach-image
+  build/scratch/reach.png` (actual reach in 3D, see
+  [`docs/re/map-archive.md`](docs/re/map-archive.md#viewing-the-collision-dq9re-map---image---reach)).
+- **Oracle states**: `cargo dq9re state state.ml1` (sections, VBlank, scenario, code compared
+  with the ROM), `--json` (the story point the runtime compares), `--peek 020f33d8:40`, and
+  `state --ram ram.bin` on a raw 4 MiB main RAM image (`--dump-ram` of the harness), or a file
+  name without `--ram`; `cargo dq9re states index build/oracle --out
+  build/oracle/index.json` then `states find --story 1.1.2 [--map 4101]` to find a state
+  without opening it ([`docs/re/melonds-state.md`](docs/re/melonds-state.md)).
+- **libretro harness**: `python scripts/melondsds_host.py --rom <ROM> --core
   tools/build/melondsds_libretro.dll --input run.jsonl --frames 23050 --checkpoints
   build/oracle/checkpoints.jsonl --dump-ram build/oracle/ram.bin --state-out
-  build/oracle/core.bin --shot build/oracle/control.png` exécute la ROM dans le cœur melonDS
-  DS, sans fenêtre ni focus : entrées image par image (`pad`, `touch`, `checkpoint`, `shot`),
-  RAM, états et PNG ; il atteint le premier contrôle de l'Observatoire en original (format
-  des entrées et limites dans [`docs/re/melonds-state.md`](docs/re/melonds-state.md)).
-- **Ghidra** : ARM9 dans le bloc `arm9`, ITCM/DTCM à leurs adresses d'exécution, chaque
-  overlay dans son espace `ov_NNN`. Requêtes sans interface :
-  `scripts/ghidra-query.ps1 decomp|xrefs|calls|disasm <adresse>` (`0x020d91ec` ou
-  `ov_017::0218c0f4`) ; une requête verrouille le projet, en lancer plusieurs demande des
-  copies de `re/ghidra` désignées par `DQ9_GHIDRA_PROJECT`. Les résultats sont mis en cache
-  dans `build/ghidra-cache/` (clé : commande, adresses, ROM, SHA-256 de `Query.java`) ;
-  `-Refresh` force la requête.
-  Les imports et `scripts/ghidra-apply-symbols.ps1` appliquent les noms et bornes de
-  `re/functions.txt`, puis les surcharges de `re/symbols.txt` ; détails et limites
-  dans [`docs/re/rom-layout.md`](docs/re/rom-layout.md#noms-et-bornes-dans-ghidra).
-- **melonDS** (`tools/melonds`) : référence visuelle et analyse dynamique par son stub GDB.
-- **Avant d'analyser** : symboles et code de la [décompilation USA](https://github.com/DQIX/dqix-decomp)
-  (adresses à convertir pour la ROM européenne) et [wiki des formats DQIX](https://github.com/DQIX/wiki),
-  voir `docs/ressources-externes.md`.
+  build/oracle/core.bin --shot build/oracle/control.png` runs the ROM in the melonDS DS core,
+  without a window or focus: frame-by-frame inputs (`pad`, `touch`, `checkpoint`, `shot`),
+  RAM, states and PNG; it reaches the first player control in the Observatory on the original
+  (input format and limits in [`docs/re/melonds-state.md`](docs/re/melonds-state.md)).
+- **Ghidra**: ARM9 in the `arm9` block, ITCM/DTCM at their run-time addresses, each overlay in
+  its own `ov_NNN` space. Headless queries:
+  `scripts/ghidra-query.ps1 decomp|xrefs|calls|disasm <address>` (`0x020d91ec` or
+  `ov_017::0218c0f4`); a query locks the project, running several needs copies of
+  `re/ghidra` designated by `DQ9_GHIDRA_PROJECT`. Results are cached in
+  `build/ghidra-cache/` (key: command, addresses, ROM, SHA-256 of `Query.java`); `-Refresh`
+  forces the query.
+  Imports and `scripts/ghidra-apply-symbols.ps1` apply the names and bounds of
+  `re/functions.txt`, then the overrides of `re/symbols.txt`; details and limits in
+  [`docs/re/rom-layout.md`](docs/re/rom-layout.md#names-and-bounds-in-ghidra).
+- **melonDS** (`tools/melonds`): visual reference and dynamic analysis through its GDB stub.
+- **Before analysing**: symbols and code of the
+  [USA decompilation](https://github.com/DQIX/dqix-decomp) (addresses to convert for the
+  European ROM) and the [DQIX formats wiki](https://github.com/DQIX/wiki), see
+  [`docs/external-resources.md`](docs/external-resources.md).
 
-Consigner une découverte :
+Recording a finding:
 
-1. Nommer fonctions et données dans `re/symbols.txt` (`<adresse> <nom> # commentaire`), puis
-   `scripts/ghidra-apply-symbols.ps1` (projet fermé dans l'interface). Les noms locaux
-   priment sur ceux de la décompilation ; le projet Ghidra est jetable.
-2. Décrire le format ou le comportement dans `docs/re/<sujet>.md` : preuves (adresses,
-   contrôles sur données), hypothèses marquées **[hypothèse]**.
-3. Implémenter dans la crate correspondante avec un test sur données synthétiques et, si
-   pertinent, un invariant sur la vraie ROM (`tests/real_rom.rs`).
+1. Name functions and data in `re/symbols.txt` (`<address> <name> # comment`), then
+   `scripts/ghidra-apply-symbols.ps1` (project closed in the interface). Local names take
+   precedence over those of the decompilation; the Ghidra project is disposable.
+2. Describe the format or behaviour in `docs/re/<topic>.md`: evidence (addresses, checks on
+   data), hypotheses marked **[hypothesis]**.
+3. Implement it in the matching crate with a test on synthetic data and, when relevant, an
+   invariant on the real ROM (`tests/real_rom.rs`).
 
-### Accès rapide au code d'origine
+### Quick access to the original code
 
-`scripts/decomp.ps1` relie une adresse ou un nom européens au fichier source de la
-décompilation USA (Unlicense, checkout non commité, attendu dans `tools/dqix-decomp`) :
+`scripts/decomp.ps1` maps a European address or name to the source file of the USA
+decompilation (Unlicense, uncommitted checkout, expected in `tools/dqix-decomp`):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/decomp.ps1 0x02010250   # GameState::AdvanceDayTimer
@@ -218,38 +242,54 @@ powershell -ExecutionPolicy Bypass -File scripts/decomp.ps1 GameState::SetDayTim
 powershell -ExecutionPolicy Bypass -File scripts/decomp.ps1 -List SetDayTimer
 ```
 
-Il affiche l'adresse et le nom européens, l'adresse USA, le chemin source et un extrait ;
-`-Decomp PATH` désigne un autre checkout. Détails, cache Ghidra et limites :
-[`docs/re/outils.md`](docs/re/outils.md).
+It prints the European address and name, the USA address, the source path and an excerpt;
+`-Decomp PATH` selects another checkout. Details, Ghidra cache and limits:
+[`docs/re/tools.md`](docs/re/tools.md).
 
 ## Documentation
 
-| Fichier | Contenu |
+| File | Content |
 |---|---|
-| `docs/status.md` | état courant, lots actifs, blocages et prochaines étapes (seule source) |
-| `docs/roadmap.md` | jalons jusqu'au portage complet, définition du « 100 % » |
-| `docs/architecture.md` | crates cibles et règles (portabilité, déterminisme, traçabilité) |
-| `docs/orchestration/` | kit de travail avec des agents : coordinateur, règles des workers, modèle de lot |
-| `docs/app.md` | lancer `dq9-app` (natif, navigateur), options, commandes, événements, rendu et ses approximations |
-| `docs/ressources-externes.md` | décompilation, wiki, portage PC, outils DS, licences |
-| `docs/re/rom-layout.md` | structure de la ROM, overlays, systèmes de fichiers |
-| [`docs/re/nitro-sdk.md`](docs/re/nitro-sdk.md) | routines NitroSDK ARM9 identifiées (classées Plateforme, non portées) |
-| `docs/re/gpc2.md`, `table.md` | archives et compression Level-5, tables d'enregistrements |
-| `docs/re/text.md`, `font.md` | textes, balises, pipeline des messages, polices |
-| `docs/re/dialogue.md`, `trigger.md`, `stb.md` | répliques et fenêtre de message, triggers de scénario, scripts d'événements et leur exécution |
-| [`docs/re/item.md`](docs/re/item.md) | objets : tables `itemdt_*`, indices de compendium, drapeaux « objet obtenu » |
-| `docs/re/stb-natives.md` | inventaire des 228 natives employées : arguments, effets établis, adresses et inconnus |
-| `docs/re/maplist.md`, `map-archive.md`, `g3d.md` | liste des cartes, assemblage des cartes, portes et zones, modèles et animations G3D |
-| `docs/re/characters.md` | PNJ, distribution par étape, sprites, modèles, héros |
-| `docs/re/collision.md`, `movement.md` | collisions `.col2`, déplacement du héros et caméra |
-| `docs/re/lighting.md` | éclairage `.bats`, brouillard, heure du jour |
-| `docs/re/sdat.md` | son : SDAT, séquences, effets, jingles, musique des cartes |
-| `docs/re/save.md` | sauvegarde DS : conteneur, sommes de contrôle, champs typés, inconnus |
-| `docs/re/melonds-state.md` | oracle melonDS : états `.ml1` et images RAM, catalogue, harnais libretro, adresses utiles, vérification restante |
-| `docs/re/outils.md` | cache des requêtes Ghidra, adresse européenne vers source de la décompilation USA |
-| `AGENTS.md` | contexte et règles pour les agents de développement |
+| [`docs/status.md`](docs/status.md) | current status, active batches, blockers and next steps (single source) |
+| [`docs/roadmap.md`](docs/roadmap.md) | milestones up to the full port, definition of "100%" |
+| [`docs/architecture.md`](docs/architecture.md) | target crates and rules (portability, determinism, traceability) |
+| [`docs/orchestration/`](docs/orchestration/README.md) | kit for working with agents: coordinator, worker rules, batch template |
+| [`docs/app.md`](docs/app.md) | running `dq9-app` (native, browser), options, commands, events, rendering and its approximations |
+| [`docs/external-resources.md`](docs/external-resources.md) | decompilation, wiki, PC port, DS tools, licenses |
+| [`docs/re/rom-layout.md`](docs/re/rom-layout.md) | ROM structure, overlays, file systems |
+| [`docs/re/nitro-sdk.md`](docs/re/nitro-sdk.md) | identified ARM9 NitroSDK routines (classified Platform, not ported) |
+| [`docs/re/gpc2.md`](docs/re/gpc2.md), [`table.md`](docs/re/table.md) | Level-5 archives and compression, record tables |
+| [`docs/re/text.md`](docs/re/text.md), [`font.md`](docs/re/font.md) | texts, tags, message pipeline, fonts |
+| [`docs/re/dialogue.md`](docs/re/dialogue.md), [`trigger.md`](docs/re/trigger.md), [`stb.md`](docs/re/stb.md) | dialogue lines and message window, scenario triggers, event scripts and their execution |
+| [`docs/re/item.md`](docs/re/item.md) | items: `itemdt_*` tables, compendium indices, "item obtained" flags |
+| [`docs/re/stb-natives.md`](docs/re/stb-natives.md) | inventory of the 228 natives used: arguments, established effects, addresses and unknowns |
+| [`docs/re/maplist.md`](docs/re/maplist.md), [`map-archive.md`](docs/re/map-archive.md), [`g3d.md`](docs/re/g3d.md) | map list, map assembly, doors and zones, G3D models and animations |
+| [`docs/re/characters.md`](docs/re/characters.md) | NPCs, cast per story step, sprites, models, hero |
+| [`docs/re/collision.md`](docs/re/collision.md), [`movement.md`](docs/re/movement.md) | `.col2` collisions, hero movement and camera |
+| [`docs/re/lighting.md`](docs/re/lighting.md) | `.bats` lighting, fog, time of day |
+| [`docs/re/sdat.md`](docs/re/sdat.md) | sound: SDAT, sequences, effects, jingles, map music |
+| [`docs/re/save.md`](docs/re/save.md) | DS save: container, checksums, typed fields, unknowns |
+| [`docs/re/melonds-state.md`](docs/re/melonds-state.md) | melonDS oracle: `.ml1` states and RAM images, catalogue, libretro harness, useful addresses, remaining verification |
+| [`docs/re/tools.md`](docs/re/tools.md) | Ghidra query cache, European address to USA decompilation source |
+| [`AGENTS.md`](AGENTS.md) | context and rules for development agents |
 
-## Légal
+## Legal
 
-Ce projet ne contient ni ne distribue aucun fichier du jeu. Utilisez uniquement une copie que
-vous possédez légalement. Code sous licence MIT ou Apache-2.0.
+This project contains and distributes **no game files**: no ROM, no extracted assets, no
+game code. It reads the data from a copy you provide at run time. Use only a copy of the game
+you legally own.
+
+DQ9 Rust is an unofficial fan project. It is not affiliated with, endorsed or sponsored by
+Square Enix, Level-5, Armor Project, Bird Studio or Nintendo. *Dragon Quest* is a registered
+trademark of Square Enix Holdings Co., Ltd.; *Nintendo DS* is a trademark of Nintendo. All
+other trademarks belong to their respective owners and are used here only to identify the
+game this project is compatible with.
+
+## License
+
+Copyright © 2026 Fabien Laurence and DQ9 Rust contributors.
+
+Licensed under the [GNU Affero General Public License v3.0 or later](LICENSE)
+(`AGPL-3.0-or-later`). Any modified version you distribute, or make available to users over a
+network (for example a hosted web build or an online server), must be released under the same
+license with its complete source code.

@@ -1,79 +1,79 @@
-# Archives GPC2 (`*.gp2`) et compression Level-5
+# GPC2 archives (`*.gp2`) and Level-5 compression
 
-Implémentation : `crates/dq9-formats/src/{gpc2,level5}.rs`. Outil :
-`cargo dq9re gp2 <chemin>` (liste, `--out` extrait) et `cargo dq9re extract --unpack`
-(tout le contenu dans `build/rom/gp2/`).
+Implementation: `crates/dq9-formats/src/{gpc2,level5}.rs`. Tool:
+`cargo dq9re gp2 <path>` (lists, `--out` extracts) and `cargo dq9re extract --unpack`
+(all contents into `build/rom/gp2/`).
 
-## Comment ça a été trouvé
+## How it was found
 
-1. La chaîne `GPC2` n'apparaît qu'une fois dans l'ARM9 (`0x020f27f8`, table des tags
-   `GPC0`/`GPC1`/`GPC2` à `0x020f27e8`).
-2. `FileTags_StaticInit` (`0x020e6720`) copie ces tags dans les globales
+1. The string `GPC2` appears only once in the ARM9 (`0x020f27f8`, tag table
+   `GPC0`/`GPC1`/`GPC2` at `0x020f27e8`).
+2. `FileTags_StaticInit` (`0x020e6720`) copies these tags into the globals
    `g_TagGpc0..2` (`0x020f27c8..d0`).
-3. `g_TagGpc2` n'est lu que par `Gpc2_LoadIndex` (`0x020d91ec`), qui lit un en-tête de
-   0x14 octets puis décompresse l'index ; `Gpc_FindEntryByHash` (`0x020d902c`) et
-   `Gpc_EntryLocation` (`0x020d8fdc`) donnent le format des entrées.
-4. Hypothèses vérifiées sur les 1 671 fichiers `.gp2` de la ROM : tailles, hachages des noms
-   et décompression de tous les membres (test `crates/dq9-formats/tests/real_rom.rs`).
+3. `g_TagGpc2` is only read by `Gpc2_LoadIndex` (`0x020d91ec`), which reads a
+   0x14-byte header then decompresses the index; `Gpc_FindEntryByHash` (`0x020d902c`) and
+   `Gpc_EntryLocation` (`0x020d8fdc`) give the entry format.
+4. Hypotheses checked on the 1,671 `.gp2` files of the ROM: sizes, name hashes
+   and decompression of every member (test `crates/dq9-formats/tests/real_rom.rs`).
 
-## Bloc compressé Level-5
+## Level-5 compressed block
 
 ```
 u32  method | (decompressed_size << 3)
-...  corps
+...  body
 ```
 
-| method | Encodage du corps (codecs BIOS Nintendo, sans leur en-tête) |
+| method | Body encoding (Nintendo BIOS codecs, without their header) |
 |---|---|
-| 0 | stocké tel quel |
+| 0 | stored as is |
 | 1 | LZ10 |
-| 2 | Huffman, symboles de 4 bits (quartet bas émis en premier) |
-| 3 | Huffman, symboles de 8 bits |
+| 2 | Huffman, 4-bit symbols (low nibble emitted first) |
+| 3 | Huffman, 8-bit symbols |
 | 4 | RLE |
 
-Méthodes observées (archives sans drapeau) — index : 0 ×1 257, 2 ×403, 1 ×9, 3 ×2 ;
-noms : 1 ×1 657, 0 ×14 ; membres : 1 (LZ10) ×42 402, 4 (RLE) ×7 763, 3 ×2 437, 2 ×392,
-0 ×32. Contrôles de cohérence : les 758 `.nsbtx` décompressés commencent par `BTX0`, les
-textes RLE sont lisibles (`bin/bstr.gp2`).
+Observed methods (archives without flag) — index: 0 ×1,257, 2 ×403, 1 ×9, 3 ×2;
+names: 1 ×1,657, 0 ×14; members: 1 (LZ10) ×42,402, 4 (RLE) ×7,763, 3 ×2,437, 2 ×392,
+0 ×32. Sanity checks: the 758 decompressed `.nsbtx` start with `BTX0`, the
+RLE texts are readable (`bin/bstr.gp2`).
 
-## Archive GPC2
+## GPC2 archive
 
-Toutes les positions sont en **mots de 32 bits**, relatives au début du fichier.
+All positions are in **32-bit words**, relative to the start of the file.
 
-| Offset | Type | Champ |
+| Offset | Type | Field |
 |---|---|---|
 | 0x00 | `[u8;4]` | `GPC2` |
-| 0x04 | u16 | bits 0-11 : nombre d'entrées ; bits 12-15 : profondeur de la recherche dichotomique (`ceil(log2(n))`) |
-| 0x06 | u16 | position de l'index (toujours 5 = juste après l'en-tête) |
-| 0x08 | u16 | position de la table des noms |
-| 0x0A | u16 | position de la zone de données |
-| 0x0C | u16 | taille décompressée de l'index |
-| 0x0E | u16 | taille décompressée de la table des noms |
-| 0x10 | u32 | bits 0-27 : taille de la zone de données ; bits 28-31 : drapeaux |
+| 0x04 | u16 | bits 0-11: entry count; bits 12-15: binary search depth (`ceil(log2(n))`) |
+| 0x06 | u16 | index position (always 5 = right after the header) |
+| 0x08 | u16 | name table position |
+| 0x0A | u16 | data area position |
+| 0x0C | u16 | decompressed index size |
+| 0x0E | u16 | decompressed name table size |
+| 0x10 | u32 | bits 0-27: data area size; bits 28-31: flags |
 
-- Index et table des noms sont chacun un bloc Level-5.
-- La zone de données va jusqu'à la fin du fichier (`(0x0A + taille) * 4 == taille du fichier`).
-- Drapeau `0x1` (bit 28) : membres stockés **sans** en-tête Level-5. Vu seulement dans
-  `pack_lv5/enemy.gp2` et `prm/actdt_a.gp2`/`actdt_b.gp2`.
-- Au chargement, le jeu remplace le tag par `GPC1` pour la version décompressée en mémoire
-  (`Gpc1_FindMember`, `0x020d9110`) **[hypothèse : `GPC0` = variante non compressée]**.
+- Index and name table are each a Level-5 block.
+- The data area runs to the end of the file (`(0x0A + size) * 4 == file size`).
+- Flag `0x1` (bit 28): members stored **without** a Level-5 header. Seen only in
+  `pack_lv5/enemy.gp2` and `prm/actdt_a.gp2`/`actdt_b.gp2`.
+- On load, the game replaces the tag with `GPC1` for the decompressed in-memory version
+  (`Gpc1_FindMember`, `0x020d9110`) **[hypothesis: `GPC0` = uncompressed variant]**.
 
-### Entrée d'index (12 octets, triées par hachage croissant)
+### Index entry (12 bytes, sorted by ascending hash)
 
-| Offset | Champ |
+| Offset | Field |
 |---|---|
-| 0x0 | CRC-32 (zlib) du nom du membre |
-| 0x4 | bits 0-23 : position du membre (mots) relative à la zone de données ; bits 24-31 : octet bas de la position du nom |
-| 0x8 | bits 0-23 : taille stockée en octets ; bits 24-31 : octet haut de la position du nom |
+| 0x0 | CRC-32 (zlib) of the member name |
+| 0x4 | bits 0-23: member position (words) relative to the data area; bits 24-31: low byte of the name position |
+| 0x8 | bits 0-23: stored size in bytes; bits 24-31: high byte of the name position |
 
-Position du nom (octets dans la table des noms) = `(entry[0x8] >> 24) << 8 | entry[0x4] >> 24`.
-Les noms sont terminés par un zéro.
+Name position (bytes in the name table) = `(entry[0x8] >> 24) << 8 | entry[0x4] >> 24`.
+Names are zero-terminated.
 
-## Contenu
+## Contents
 
-53 639 membres dans 1 671 archives. Extensions : `.bin` (47 227), `.nsbmd` (1 913),
+53,639 members in 1,671 archives. Extensions: `.bin` (47,227), `.nsbmd` (1,913),
 `.nsbtx` (758), `.stb` (689), `.nat` (571), `.mes` (529), `.pac` (375), `.bmmp` (283),
 `.obg` (268), `.chr` (169), …
 
-Exemple : `data/scenario/M02M0.gp2` contient `NNN_{de,en,es,fr,it}.bin`, les textes de dialogue
-par langue (voir `docs/re/text.md`).
+Example: `data/scenario/M02M0.gp2` contains `NNN_{de,en,es,fr,it}.bin`, the dialogue texts
+per language (see `docs/re/text.md`).

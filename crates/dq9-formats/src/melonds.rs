@@ -84,7 +84,7 @@ pub struct NpcPlacement {
     pub flags: u32,
 }
 
-/// One scenario track of the event block (`docs/re/save.md`, § « Bloc d'événements »):
+/// One scenario track of the event block (`docs/re/save.md`, § "Event block"):
 /// progress bytes and the flags set in each of its two sets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackState {
@@ -330,7 +330,7 @@ pub struct Section {
 /// The ARM9-visible memories of a running game, whatever holds them: a melonDS savestate
 /// ([`State`]) or a raw main-RAM image ([`Memory::from_main_ram`], as `--dump-ram` writes).
 /// Every address reader lives here once, so a `.ml1` and a 4 MiB dump are read by the same
-/// code (`docs/re/melonds-state.md`, § « État neutre »).
+/// code (`docs/re/melonds-state.md`, § "Neutral state").
 #[derive(Debug, Clone, Copy)]
 pub struct Memory<'a> {
     main: &'a [u8],
@@ -708,14 +708,14 @@ impl<'a> Memory<'a> {
 
     /// The game's event block as `Save_UnpackEvents` leaves it in RAM: tracks, global flags,
     /// quest nibbles and the current track (`quest manager`, `0x334` bytes; `docs/re/save.md`,
-    /// § « Bloc d'événements »).
+    /// § "Event block").
     pub fn event_flags(&self) -> Result<EventFlags<'a>> {
         let bytes = self.read(QUEST_MANAGER, EVENT_FLAGS_SIZE)?;
         EventFlags::from_bytes(bytes).ok_or(Error::Malformed("event block shorter than 0x334"))
     }
 
-    /// The checkpoint a differential run compares (`docs/re/melonds-state.md`, § « Oracle
-    /// différentiel »): the whole event block, the current map and the frame counter.
+    /// The checkpoint a differential run compares (`docs/re/melonds-state.md`, § "Differential
+    /// oracle"): the whole event block, the current map and the frame counter.
     pub fn checkpoint(&self) -> Result<Checkpoint> {
         let events = self.event_flags()?;
         let bits = |bytes: &[u8]| -> Vec<i32> {

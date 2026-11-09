@@ -1,395 +1,395 @@
-# Scripts d'événements (`evNNNNN.stb`, `SB2`)
+# Event scripts (`evNNNNN.stb`, `SB2`)
 
-Implémentation : `crates/dq9-formats/src/stb.rs` (`Script::parse`, `Instr`,
-`Function::native_calls`). Outil : `cargo dq9re stb data/event/ev03030.gp2 [--lang fr]`
-désassemble le script et affiche le texte des messages à côté des appels de la native 400.
-L'interpréteur qui exécute ces scripts est dans `dq9-core` (§ [Interpréteur](#interpréteur-dq9-core-j3)) ;
-leurs effets sont joués à l'écran par `dq9-app` (§ [Exécution à l'écran](#exécution-à-lécran-dq9-corecutscene-dq9-app)).
+Implementation: `crates/dq9-formats/src/stb.rs` (`Script::parse`, `Instr`,
+`Function::native_calls`). Tool: `cargo dq9re stb data/event/ev03030.gp2 [--lang fr]`
+disassembles the script and prints the message text next to the native 400 calls.
+The interpreter that runs these scripts is in `dq9-core` (§ [Interpreter](#interpreter-dq9-core-j3));
+their effects are played on screen by `dq9-app` (§ [On-screen execution](#on-screen-execution-dq9-corecutscene-dq9-app)).
 
-Ce sont les scènes scriptées lancées par l'action de trigger 0x77 (`trigger.md`) :
-caméra, déplacements des personnages, dialogues, combats.
+These are the scripted cutscenes started by trigger action 0x77 (`trigger.md`):
+camera, character movement, dialogue, battles.
 
-## Fichiers
+## Files
 
-689 scripts, un par archive : 523 dans `data/event/evNNNNN.gp2`, 165 dans
-`data/evspt_lv5/evNNNNN.gp2`, 1 dans `data/event_lv5`. Chaque archive contient
-`evNNNNN.stb` et une table de textes par langue `evNNNNN_<lg>.bin` (`table.md`,
-enregistrements `[numéro de message, texte]`, numéros à partir de 100).
+689 scripts, one per archive: 523 in `data/event/evNNNNN.gp2`, 165 in
+`data/evspt_lv5/evNNNNN.gp2`, 1 in `data/event_lv5`. Each archive contains
+`evNNNNN.stb` and a per-language text table `evNNNNN_<lg>.bin` (`table.md`,
+records `[message number, text]`, numbers starting at 100).
 
-Les 524 numéros d'événement passés à l'action 0x77 sont des archives de `data/event` ou
-`data/evspt_lv5` (502) ou des entrées de `data/event/eventlist6.bin` et `evl_quest.bin`
-(tables d'enregistrements de type 102). Champs observés de ces entrées :
-`[chapitre, ?, ?, ?, salle, événement, archive, nom japonais, nom du script, 100, 200,
-300, x, y, z, angle, ?, -1, ?, ?, police "font12eventA…", ?, ?]`, l'archive pouvant
-différer de l'événement (1520 → `ev01515`) **[champs « ? » inconnus]**.
+The 524 event numbers passed to action 0x77 are archives of `data/event` or
+`data/evspt_lv5` (502) or entries of `data/event/eventlist6.bin` and `evl_quest.bin`
+(record tables of type 102). Observed fields of these entries:
+`[chapter, ?, ?, ?, room, event, archive, Japanese name, script name, 100, 200,
+300, x, y, z, angle, ?, -1, ?, ?, font "font12eventA…", ?, ?]`, the archive possibly
+differing from the event (1520 → `ev01515`) **["?" fields unknown]**.
 
-## En-tête
+## Header
 
-Mots de 32 bits, petit-boutiste (`ov_017::021d4c04` vérifie les 3 octets `SB2`) :
+32-bit words, little-endian (`ov_017::021d4c04` checks the 3 bytes `SB2`):
 
-| Mot | Contenu |
+| Word | Content |
 |---|---|
 | 0 | `SB2\0` |
-| 1 | enregistrement de fonction exécuté sans numéro d'entrée (`ov_017::021d4ce4`, numéro < 0) |
-| 2 | base du code : décalages de code, de saut, d'appel et de chaîne sont relatifs à elle |
-| 3, 4 | table des entrées `(numéro, enregistrement)` × nombre (ex. 100, 200, 300) |
-| 6 | nombre de variables globales du script (0 à 5) |
-| 5, 7 | toujours 0 |
+| 1 | function record run without an entry number (`ov_017::021d4ce4`, number < 0) |
+| 2 | code base: code, jump, call and string offsets are relative to it |
+| 3, 4 | table of entries `(number, record)` × count (e.g. 100, 200, 300) |
+| 6 | number of script global variables (0 to 5) |
+| 5, 7 | always 0 |
 
-## Fonctions
+## Functions
 
-Un enregistrement de `0x38` octets `[code, ?, cases du cadre, paramètres, zéros…]` est
-suivi de son code : `enregistrement + 0x38 == base + code` pour toutes les fonctions
-atteintes (contrôle `event_scripts_decode`). À l'appel (`ov_017::021d4af8`), les
-`paramètres` dernières valeurs de la pile deviennent les premières cases du cadre, les
-autres sont mises à zéro. Des chaînes constantes (noms d'animations `stand`, `walk`…,
-marqueurs en Shift-JIS) sont rangées entre les fonctions : `Script::parse` ne décode que le
-code atteint depuis les entrées (sauts et appels suivis), comme l'interpréteur.
+A `0x38`-byte record `[code, ?, frame slots, parameters, zeros…]` is
+followed by its code: `record + 0x38 == base + code` for every reached
+function (check `event_scripts_decode`). On call (`ov_017::021d4af8`), the last
+`parameters` stack values become the first frame slots, the
+others are zeroed. Constant strings (animation names `stand`, `walk`…,
+Shift-JIS markers) are stored between functions: `Script::parse` only decodes
+code reached from the entries (jumps and calls followed), like the interpreter.
 
 ## Machine (`ov_017::021d4e38`)
 
-Instructions de trois mots `[op, a, b]`. Pile de valeurs de 8 octets `(type, valeur)` :
-0 entier, 1 flottant, 2 chaîne, 3 adresse. Les opérations arithmétiques acceptent entier et
-flottant mélangés (conversion de l'entier), sinon l'interpréteur s'arrête en erreur
+Three-word instructions `[op, a, b]`. Stack of 8-byte values `(type, value)`:
+0 integer, 1 float, 2 string, 3 address. Arithmetic operations accept mixed integer and
+float (the integer is converted), otherwise the interpreter stops with an error
 (`FUN_0200159c(-1)`).
 
-| Op | Effet |
+| Op | Effect |
 |---|---|
-| 0 | rien |
-| 1 / 2 | empile la valeur / l'adresse de la variable `a` de portée `b` |
-| 3 | empile la constante `b` : `a` = 1 entier, 2 flottant, 3 chaîne (décalage depuis la base) |
-| 4 | dépile |
-| 5 | affectation : dépile valeur et adresse, écrit, rempile la valeur |
-| 6 / 7 / 8 / 9 / 0xa | `+` `−` `×` `/` `%` (0xa : entiers) |
-| 0xb / 0xc / 0xd | négation, entier → flottant, flottant → entier |
-| 0xe | comparaison `a` : 0x28 `==`, 0x29 `!=`, 0x2a `<`, 0x2b `<=`, 0x2c `>`, 0x2d `>=` ; empile 0 ou 1 |
-| 0xf | retour avec la valeur du sommet ; au cadre le plus externe, fin du script (valeur gardée en `+0x4c`) |
-| 0x10 | saut à `base + a` |
-| 0x11 / 0x12 | dépile ; saute si faux / vrai en rempilant 0 / 1 quand `b` ≠ 0 (`&&`, `\|\|`) |
-| 0x13 | appel de la fonction dont l'enregistrement est à `base + b` |
-| 0x14 | dépile `a` valeurs et les passe à une sortie de débogage |
-| 0x15 | appel natif : dépile `a` valeurs, la première est le numéro de la native |
-| 0x16 | rien à l'exécution ; `a` = 0 en tête de boucle, 1 à sa sortie dans les fonctions observées **[sens exact inconnu]** |
-| 0x17 | suspend le script jusqu'à l'image suivante (reprise à l'instruction suivante) |
-| 0x18 / 0x19 / 0x1a | et / ou bit à bit, non logique (entiers) |
-| 0x1b | fin du script |
-| 0x1c | incrémente `+0x50` et reprend après une suspension **[sens inconnu]** |
-| 0x1d / 0x1e | sinus / cosinus |
+| 0 | nothing |
+| 1 / 2 | pushes the value / the address of variable `a` with scope `b` |
+| 3 | pushes constant `b`: `a` = 1 integer, 2 float, 3 string (offset from the base) |
+| 4 | pops |
+| 5 | assignment: pops value and address, writes, pushes the value back |
+| 6 / 7 / 8 / 9 / 0xa | `+` `−` `×` `/` `%` (0xa: integers) |
+| 0xb / 0xc / 0xd | negation, integer → float, float → integer |
+| 0xe | comparison `a`: 0x28 `==`, 0x29 `!=`, 0x2a `<`, 0x2b `<=`, 0x2c `>`, 0x2d `>=`; pushes 0 or 1 |
+| 0xf | return with the top value; at the outermost frame, end of script (value kept at `+0x4c`) |
+| 0x10 | jump to `base + a` |
+| 0x11 / 0x12 | pops; jumps if false / true, pushing back 0 / 1 when `b` ≠ 0 (`&&`, `\|\|`) |
+| 0x13 | call of the function whose record is at `base + b` |
+| 0x14 | pops `a` values and passes them to a debug output |
+| 0x15 | native call: pops `a` values, the first is the native number |
+| 0x16 | nothing at run time; `a` = 0 at loop head, 1 at its exit in the observed functions **[exact meaning unknown]** |
+| 0x17 | suspends the script until the next frame (resumes at the next instruction) |
+| 0x18 / 0x19 / 0x1a | bitwise and / or, logical not (integers) |
+| 0x1b | end of script |
+| 0x1c | increments `+0x50` and resumes after a suspension **[meaning unknown]** |
+| 0x1d / 0x1e | sine / cosine |
 
-Portées des variables (`b` des op 1 et 2) : 1 case du cadre, 2 case `a + entier dépilé`,
-4 élément `entier dépilé` du tableau dont l'adresse est dans la case `a`, 0x40 globale ;
-8, 0x10, 0x20 et 0x200 sont les mêmes que 1, 2, 4 et 0x40 en retypant la case en flottant.
-Les données n'emploient que 1, 8 et 0x40.
+Variable scopes (`b` of ops 1 and 2): 1 frame slot, 2 slot `a + popped integer`,
+4 element `popped integer` of the array whose address is in slot `a`, 0x40 global;
+8, 0x10, 0x20 and 0x200 are the same as 1, 2, 4 and 0x40, retyping the slot as float.
+The data only use 1, 8 and 0x40.
 
-Statistiques (code atteint des 689 scripts) : 393 719 constantes, 80 237 appels natifs,
-20 685 appels de fonctions, aucun opcode au-delà de 0x1e.
+Statistics (reached code of the 689 scripts): 393,719 constants, 80,237 native calls,
+20,685 function calls, no opcode beyond 0x1e.
 
 ## Natives
 
-Table `{fonction, numéro}` × 304 en `ov_001::02164d6c` (terminée par `{0, -1}`), numéros
-0–9, 100–122, 200–240, 300–328, 400–421, 500–603, 700–738, 800–845 ; les fonctions sont en
-overlay 1 (`ov_001::0215ae1c…`). `ov_017::021d4bc8` appelle la native avec un pointeur sur
-ses arguments (sans le numéro) et leur nombre. Une native n'empile rien : elle rend ses
-résultats par des arguments adresse (op 2).
+Table `{function, number}` × 304 at `ov_001::02164d6c` (terminated by `{0, -1}`), numbers
+0–9, 100–122, 200–240, 300–328, 400–421, 500–603, 700–738, 800–845; the functions are in
+overlay 1 (`ov_001::0215ae1c…`). `ov_017::021d4bc8` calls the native with a pointer to
+its arguments (without the number) and their count. A native pushes nothing: it returns its
+results through address arguments (op 2).
 
-Le retour C du handler est **ignoré** : `Stb_CallNative` (`ov_017::021d4bc8`) appelle
-le pointeur puis revient ; le cas 0x15 de `Stb_Run` continue à l'instruction suivante.
-Un retour 0 n'est donc ni une attente ni un résultat sur la pile. Les attentes sont
-des boucles du script qui interrogent une sortie adresse puis exécutent `yield`.
+The handler's C return value is **ignored**: `Stb_CallNative` (`ov_017::021d4bc8`) calls
+the pointer then returns; case 0x15 of `Stb_Run` continues at the next instruction.
+A return of 0 is therefore neither a wait nor a result on the stack. Waits are
+script loops that poll an address output then execute `yield`.
 
-Accès aux arguments (valeurs de 8 octets, indices ci-dessous sans le numéro de native) :
+Argument access (8-byte values, indices below exclude the native number):
 
-| Fonction (`ov_017`) | Effet |
+| Function (`ov_017`) | Effect |
 |---|---|
-| `021d60f4` (`StbArg_Int`) | lit le mot valeur ; convertit un flottant en entier par `0200c5fc` si type 1 |
-| `021d6110` (`StbArg_Float`) | lit le mot valeur ; convertit un entier en flottant par `0200c670` si type 0 |
-| `021d612c` (`StbArg_Str`) | lit le mot valeur (pointeur de chaîne) |
-| `021d6134` / `021d6148` | écrivent le mot valeur de la case pointée si l'argument est de type 3 (adresse) ; ne modifient pas son type |
+| `021d60f4` (`StbArg_Int`) | reads the value word; converts a float to integer via `0200c5fc` if type 1 |
+| `021d6110` (`StbArg_Float`) | reads the value word; converts an integer to float via `0200c670` if type 0 |
+| `021d612c` (`StbArg_Str`) | reads the value word (string pointer) |
+| `021d6134` / `021d6148` | write the value word of the pointed slot if the argument is of type 3 (address); do not change its type |
 
-Ces faits proviennent de la décompilation et des conversions logicielles ARM9 ;
-ils ne constituent pas une observation d'exécution sous émulateur.
+These facts come from the decompilation and the ARM9 software conversions;
+they are not a run-time observation under an emulator.
 
-Le compilateur écrit le numéro sous la forme `base + décalage` (`int 400; int 5; add`) :
-plié, il est constant pour les 80 237 appels, qui emploient 228 natives
+The compiler writes the number as `base + offset` (`int 400; int 5; add`):
+folded, it is constant for all 80,237 calls, which use 228 natives
 (`Function::native_calls`, test `event_scripts_decode`).
 
-L’[inventaire des 228 natives employées](stb-natives.md) détaille, par famille,
-arguments, effets établis, adresses des handlers/moteur et limites d’identification.
-Les entrées encore incertaines restent numérotées.
+The [inventory of the 228 natives used](stb-natives.md) details, by family,
+arguments, established effects, handler/engine addresses and identification limits.
+Entries still uncertain stay numbered.
 
-206 enfile une position absolue, 208 une rotation (radians), 210 une animation
-nommée ; ce ne sont pas trois variantes de déplacement. Les acteurs STB, leurs
-liaisons et les personnages/modèles appartiennent à trois espaces distincts.
-Les commandes sont en files par canal ; 224 attend la fin de l’animation courante,
-contrairement à 210. Unités des durées : `stb-natives.md`, § Temps et unités (fondu en ticks
-de 60 Hz, mouvements en paires de ticks, soit 30 Hz nominal).
+206 queues an absolute position, 208 a rotation (radians), 210 a named
+animation; they are not three movement variants. STB actors, their
+bindings and the characters/models belong to three distinct spaces.
+Commands are queued per channel; 224 waits for the current animation to end,
+unlike 210. Duration units: `stb-natives.md`, § Time and units (fade in 60 Hz
+ticks, movements in tick pairs, i.e. 30 Hz nominal).
 
-Bilan des cinq natives les plus fréquentes (ROM EU, source USA clonée, wiki) :
+Summary of the five most frequent natives (EU ROM, cloned USA source, wiki):
 
-- **206, 208, 210** : handlers EU localisés (`ov_001`, `0215bfd4`, `0215c138`, `0215c298`,
-  noms dans `re/symbols.txt`). Absents de la décompilation USA clonée (elle ne contient ni
-  table native ni VM SB2) ; rôles établis par la ROM EU (commandes de file, `stb-natives.md`).
-  Les lectures du wiki (208 en radians, 210 « bit 1 ») sont **[hypothèse] EU**. Conflit
-  ouvert sur les bits de 210 (`0x01` contre « bit 1 »).
-- **570** : établie. `570(slot, b)` cache (`b=0`) ou affiche (`b≠0`) l'objet lié au slot :
-  le handler positionne le masque `1` de `Object3D::flags_`, soit `OBJECT3D_FLAG_HIDDEN`
-  (source USA `Object3D.cpp`). Ce n'est pas un prédicat « polled » : elle n'écrit rien par
-  adresse. 201 agit sur le même bit par identifiant de personnage.
-- **571** : mêmes slots, masque `0x10` de `flags_` (bit 4, sans lecteur dans la source USA)
-  et bit `0x40` d'un placement. Toujours appelée avec 570 ; sens **[inconnu]**.
+- **206, 208, 210**: EU handlers located (`ov_001`, `0215bfd4`, `0215c138`, `0215c298`,
+  names in `re/symbols.txt`). Absent from the cloned USA decompilation (it contains neither
+  the native table nor the SB2 VM); roles established from the EU ROM (queue commands, `stb-natives.md`).
+  The wiki's readings (208 in radians, 210 "bit 1") are **[hypothesis] EU**. Open conflict
+  on the bits of 210 (`0x01` versus "bit 1").
+- **570**: established. `570(slot, b)` hides (`b=0`) or shows (`b≠0`) the object bound to the slot:
+  the handler sets mask `1` of `Object3D::flags_`, i.e. `OBJECT3D_FLAG_HIDDEN`
+  (USA source `Object3D.cpp`). It is not a "polled" predicate: it writes nothing through
+  an address. 201 acts on the same bit by character identifier.
+- **571**: same slots, mask `0x10` of `flags_` (bit 4, no reader in the USA source)
+  and bit `0x40` of a placement. Always called with 570; meaning **[unknown]**.
 
-Aucune de ces cinq natives n'est marquée `port:`.
+None of these five natives is marked `port:`.
 
-400 affiche un message par identifiant ou chaîne ; 405 expose l’état d’attente
-(`ev03030:fn@0xe3c` boucle tant qu’il vaut 1), et 558 lit séparément la réponse.
-Le chemin YESNO documenté utilise 0=oui, 1=non, sans généralisation aux variantes.
-La caméra orbitale prend azimut, hauteur relative et distance totale, pas un pitch.
-726–728 chargent/restaurent des ressources sonores et jouent un index SE, pas des flags.
+400 displays a message by identifier or string; 405 exposes the wait state
+(`ev03030:fn@0xe3c` loops while it is 1), and 558 reads the answer separately.
+The documented YESNO path uses 0=yes, 1=no, without generalising to the variants.
+The orbital camera takes azimuth, relative height and total distance, not a pitch.
+726–728 load/restore sound resources and play an SE index, not flags.
 
-Les fonctions utilitaires sont compilées dans le fichier, pas fournies par le moteur ; dans
-`ev03030` : attente de `n` images (`while (n >= 0) { n -= 1; yield; }`, `fn@0x58`) et
-affichage d'un message avec attente de sa fin (`fn@0xe3c`).
+Utility functions are compiled into the file, not provided by the engine; in
+`ev03030`: wait for `n` frames (`while (n >= 0) { n -= 1; yield; }`, `fn@0x58`) and
+display a message, waiting for it to end (`fn@0xe3c`).
 
-## Interpréteur (`dq9-core`, J3)
+## Interpreter (`dq9-core`, J3)
 
-Implémentation : `crates/dq9-core/src/script.rs` et `script/` ; essai headless :
-`cargo dq9re script <archive|événement|étape> [--quiet]` (`data/event/ev01130.gp2`, `1130`,
-`1.1-3`), qui joue les scripts avec une application factice qui termine toute attente
-aussitôt.
+Implementation: `crates/dq9-core/src/script.rs` and `script/`; headless trial:
+`cargo dq9re script <archive|event|stage> [--quiet]` (`data/event/ev01130.gp2`, `1130`,
+`1.1-3`), which plays the scripts with a dummy application that ends every wait
+immediately.
 
-| Module | Rôle |
+| Module | Role |
 |---|---|
-| `script/vm.rs` | la machine (`Stb_Run` et ses auxiliaires), sans natives ; marqueurs `port:` |
-| `script/natives.rs` | numéro de native → `Event`, et l'état que les scripts interrogent |
-| `script/event.rs` | les `Event` : fondus, messages, acteurs, caméra, son, déclarations de distribution |
-| `script/load.rs` | numéro d'événement → archive, entrées et textes ; étapes du scénario |
-| `script.rs` | `Script` (entrées jouées une à une, `step`, `signal`) et `Director` (tâche d'événement) |
+| `script/vm.rs` | the machine (`Stb_Run` and its helpers), without natives; `port:` markers |
+| `script/natives.rs` | native number → `Event`, and the state the scripts poll |
+| `script/event.rs` | the `Event`s: fades, messages, actors, camera, sound, cast declarations |
+| `script/load.rs` | event number → archive, entries and texts; scenario stages |
+| `script.rs` | `Script` (entries played one by one, `step`, `signal`) and `Director` (event task) |
 
-**Machine.** Traduction fonction par fonction de `ov_017::021d4980…021d4e38` (les adresses sont
-dans les commentaires et dans le `port:` de `vm.rs`) : valeurs `(type, mot)` de 8 octets, une
-seule zone pour globales, pile et cadres, les types 3 (adresse) étant ici des indices de cette
-zone, si bien qu'une native écrit son résultat comme `StbArg_SetInt` : par l'adresse reçue,
-sans toucher au type. Limites de la ROM : pile de 0x80 valeurs, globales comprises, et 0x200
-cadres (`Event_InitStb`, `ov_001::021538d4`). Le jeu n'en vérifie pas la première ; ici un
-dépassement, un type incorrect (`FUN_0200159c(-1)`, l'erreur fatale du jeu), une division
-entière par zéro, une adresse hors zone ou une boucle de plus d'un million d'instructions sans
-`yield` arrêtent le script par une `Fault`, jamais par une panique. **[inconnu]** : l'effet
-d'une division par zéro sur la DS (la routine `_s32_div_f` n'est pas analysée) ; **[hypothèse]**
-`sin`/`cos` : le jeu convertit en double et appelle une routine logicielle (`0200c578`,
-`02009424`, `02008dcc`), reproduite par `f64::sin`, qui peut différer au dernier bit.
+**Machine.** Function-by-function translation of `ov_017::021d4980…021d4e38` (addresses are
+in the comments and in the `port:` of `vm.rs`): 8-byte `(type, word)` values, a
+single area for globals, stack and frames, type 3 (address) values being indices into this
+area here, so that a native writes its result like `StbArg_SetInt`: through the received address,
+without touching the type. ROM limits: stack of 0x80 values, globals included, and 0x200
+frames (`Event_InitStb`, `ov_001::021538d4`). The game does not check the former; here an
+overflow, a wrong type (`FUN_0200159c(-1)`, the game's fatal error), an integer division
+by zero, an out-of-area address or a loop of more than one million instructions without
+`yield` stop the script with a `Fault`, never a panic. **[unknown]**: the effect
+of a division by zero on the DS (the `_s32_div_f` routine is not analysed); **[hypothesis]**
+`sin`/`cos`: the game converts to double and calls a software routine (`0200c578`,
+`02009424`, `02008dcc`), reproduced by `f64::sin`, which may differ in the last bit.
 
-L'interpréteur est une machine à reprise : `Vm::run` s'arrête au `yield` (0x17) et repart à
-l'instruction suivante, comme `Stb_Resume`. Les opérations 0x10 à 0x12, 0x15 et 0x17 sont sans
-effet tant que le mot `+0x40` est positionné (`Vm::set_skip`) ; l'op 0x1c le remet à zéro et
-suspend. Aucun code ne positionne `+0x40` hors de l'interpréteur dans ce qui a été lu :
-**[hypothèse]** c'est le saut d'une scène (le test de saut `ov_001::02156858` fait passer
-`EventState_Run` à l'état 0xe et pose `+0x15c`, lu par la native 595). Non utilisé par
-l'application.
+The interpreter is a resumable machine: `Vm::run` stops at `yield` (0x17) and restarts at
+the next instruction, like `Stb_Resume`. Operations 0x10 to 0x12, 0x15 and 0x17 have no
+effect while word `+0x40` is set (`Vm::set_skip`); op 0x1c clears it and
+suspends. No code sets `+0x40` outside the interpreter in what has been read:
+**[hypothesis]** it is a cutscene skip (the skip test `ov_001::02156858` moves
+`EventState_Run` to state 0xe and sets `+0x15c`, read by native 595). Not used by
+the application.
 
-**Tâche d'événement.** Les fonctions du pilote sont dans `ov_001` (noms dans
-`re/symbols.txt`) : `Event_InitStb` crée la machine, `Event_StartEntry` (`Stb_Start` puis
-`Event_UpdateActors`), `Event_Resume` (`Stb_Resume`, puis files des 24 acteurs et de la
-caméra ; à la fin `Event_End`). L'ordre établi par les données (les 30 scripts de 1.1 à 1.3) :
+**Event task.** The driver functions are in `ov_001` (names in
+`re/symbols.txt`): `Event_InitStb` creates the machine, `Event_StartEntry` (`Stb_Start` then
+`Event_UpdateActors`), `Event_Resume` (`Stb_Resume`, then the queues of the 24 actors and of the
+camera; at the end `Event_End`). The order established by the data (the 30 scripts from 1.1 to 1.3):
 
-1. entrée **200** (`prepare`) : seule à appeler 566/567/568 (74 + 25 + 20 appels) ;
-2. `Event_QueueLoads`, puis `Event_BuildScene` construisent la distribution déclarée ;
-3. entrée **100** (`main`, champ `+0x4a`, `EventState_Build`) : toute la mise en scène ;
-4. entrée **300** (`finish`, champ `+0x4e`, `EventState_Finish`) : remises en état.
+1. entry **200** (`prepare`): the only one calling 566/567/568 (74 + 25 + 20 calls);
+2. `Event_QueueLoads`, then `Event_BuildScene` build the declared cast;
+3. entry **100** (`main`, field `+0x4a`, `EventState_Build`): all the staging;
+4. entry **300** (`finish`, field `+0x4e`, `EventState_Finish`): state restoration.
 
-Les trois numéros viennent de l'enregistrement de l'événement (valeurs 9 à 11 de la liste, 100,
-200, 300 partout). **[inconnu]** : l'appel de l'entrée 200 n'a pas été trouvé (`Stb_Start` n'a
-que deux appelants dans `ov_001`, pour 100 et 300) ; son rang avant la construction est établi
-par les données seulement. Une entrée absente du script (le plus souvent 300) ne fait rien
-(`Stb_Start` rend -1). La native 538 enchaîne l'événement suivant (`EventTask_Update`) : le
-`Director` le rejoue avant les autres événements en attente, et `Event::Ended` signale à
-l'application qu'elle doit tirer le déclencheur 11, comme le fait la tâche.
+The three numbers come from the event record (values 9 to 11 of the list, 100,
+200, 300 everywhere). **[unknown]**: the call of entry 200 has not been found (`Stb_Start` has
+only two callers in `ov_001`, for 100 and 300); its rank before the build is established
+by the data only. An entry absent from the script (most often 300) does nothing
+(`Stb_Start` returns -1). Native 538 chains the next event (`EventTask_Update`): the
+`Director` replays it before the other pending events, and `Event::Ended` tells
+the application to fire trigger 11, as the task does.
 
-**Attentes.** Aucune native ne bloque : le script boucle sur une sortie adresse avec `yield`.
-Le script lève donc lui-même ce qui devient occupé en enfilant du travail (405 après 400, 204
-après une commande d'acteur, 301 après une commande de caméra, 507 après 506) et
-l'application l'abaisse par un `Signal` (`MessageClosed`, `ActorIdle`, `CameraIdle`,
-`Preloaded`, `Answer`) ; les sorties que seule l'application connaît (pose des acteurs 543/544,
-animation en cours 234) sont dans `Runtime`. Les fondus n'ont aucun prédicat de fin : les
-scripts comptent des mises à jour (840 renvoie `Frame::ticks`, 2 par défaut, voir
-[stb-natives.md](stb-natives.md#temps-et-unités-j0)). Un message dont le numéro manque à la table
-du script n'affiche rien et n'attend rien (`ov_001::0215e2a4`) : cas réel dans `ev21595`
+**Waits.** No native blocks: the script loops on an address output with `yield`.
+The script therefore itself raises what becomes busy when it queues work (405 after 400, 204
+after an actor command, 301 after a camera command, 507 after 506) and
+the application lowers it through a `Signal` (`MessageClosed`, `ActorIdle`, `CameraIdle`,
+`Preloaded`, `Answer`); the outputs only the application knows (actor pose 543/544,
+current animation 234) are in `Runtime`. Fades have no end predicate: the
+scripts count updates (840 returns `Frame::ticks`, 2 by default, see
+[stb-natives.md](stb-natives.md#time-and-units-j0)). A message whose number is missing from the
+script's table displays nothing and waits for nothing (`ov_001::0215e2a4`): real case in `ev21595`
 (message 1).
 
-**Natives.** 96 des 120 natives du prologue sont traitées : celles qui agissent donnent un
-`Event` typé (arguments décodés comme les gestionnaires, unités du jeu), celles que les scripts
-interrogent répondent depuis `Runtime` ; 502, 503, 512, 587 et 724, qui ne
-gèrent que la mémoire ou le matériel de la DS (comme 706 à 709), sont ignorées sans
-rapport ; les autres sont rapportées **une fois** (`Event::Unimplemented`) et comptées, jamais
-fatales. Les identifiants hors des plages de la table (`0–9`, `100–122`, `200–240`, `300–328`,
-`400–421`, `500–603`, `700–738`, `800–845`) sont ignorés comme dans `Stb_CallNative`. 596
-(`StbNat_GetActorStatus`, `ov_001::02161ab8`) cherche la déclaration de 566 dont le second
-octet vaut l'argument : catégorie (`octet0 >> 4`, 1 héros local, 2 autre personnage, 0 sinon)
-et état ; absente : -1 et 2. L'état d'un personnage déclaré (0 ici) vient de son contrôleur
-d'animation **[hypothèse]**, les modes 9 et 10 de 566 ne sont pas modélisés **[inconnu]**.
+**Natives.** 96 of the 120 prologue natives are handled: those that act yield a typed
+`Event` (arguments decoded like the handlers, game units), those the scripts
+poll answer from `Runtime`; 502, 503, 512, 587 and 724, which only
+manage DS memory or hardware (like 706 to 709), are ignored without
+report; the others are reported **once** (`Event::Unimplemented`) and counted, never
+fatal. Identifiers outside the table ranges (`0–9`, `100–122`, `200–240`, `300–328`,
+`400–421`, `500–603`, `700–738`, `800–845`) are ignored as in `Stb_CallNative`. 596
+(`StbNat_GetActorStatus`, `ov_001::02161ab8`) looks up the 566 declaration whose second
+byte equals the argument: category (`byte0 >> 4`, 1 local hero, 2 other character, 0 otherwise)
+and state; absent: -1 and 2. The state of a declared character (0 here) comes from its animation
+controller **[hypothesis]**, modes 9 and 10 of 566 are not modelled **[unknown]**.
 
-**Résultat sur le prologue** (`cargo dq9re script 1.1-3`, test `prologue_scripts_run_to_completion`) :
-les 30 scripts vont à leur terme, sans erreur de la machine, de 56 mises à jour (`ev01140`) à
-3 579 (`ev21500`, 1 023 événements, environ deux minutes à 30 Hz ; il enchaîne `ev21507` par la
-native 538) ; chaque message `Text::Id`
-existe dans la table du script ; 7 natives restent sans effet modélisé dans `dq9-core` :
-547, 560, 571, 581, 582, 809 et 815 (les mêmes que « non identifiées » dans
-[stb-natives.md](stb-natives.md)). La native 559 écrit désormais le signal `+0x490` lu par
-la condition de trigger `0x1f` ; cette écriture doit précéder le trigger de fin de scène.
-Ce n'est
-pas une validation sous émulateur : l'ordre et les durées ne sont pas comparés à melonDS.
+**Result on the prologue** (`cargo dq9re script 1.1-3`, test `prologue_scripts_run_to_completion`):
+the 30 scripts run to completion, with no machine error, from 56 updates (`ev01140`) to
+3,579 (`ev21500`, 1,023 events, about two minutes at 30 Hz; it chains `ev21507` via
+native 538); every `Text::Id` message
+exists in the script's table; 7 natives remain without a modelled effect in `dq9-core`:
+547, 560, 571, 581, 582, 809 and 815 (the same as "unidentified" in
+[stb-natives.md](stb-natives.md)). Native 559 now writes the `+0x490` signal read by
+trigger condition `0x1f`; this write must precede the end-of-cutscene trigger.
+This is
+not an emulator validation: order and durations are not compared against melonDS.
 
-## Exécution à l'écran (`dq9-core::cutscene`, `dq9-app`)
+## On-screen execution (`dq9-core::cutscene`, `dq9-app`)
 
-Implémentation : `crates/dq9-core/src/cutscene.rs` (état de la scène, sans E/S, tests),
-`crates/dq9-app/src/event.rs` (`EventPlayer` : `Director` + rendu), acteurs et mouvements dans
-`dq9-render` (`AnimatedScene::add_actor`…) ; usage et résultat par scène dans
-[`app.md`](app.md), § « Événements ». Aucune fonction du jeu n'est portée en entier
-(pas de marqueur `port:`) : ce sont des modèles de comportement tirés des natives
-([`stb-natives.md`](stb-natives.md)) et des données. Les points ci-dessous sont ce que les
-30 scripts du prologue imposent ; ce n'est pas une comparaison à melonDS.
+Implementation: `crates/dq9-core/src/cutscene.rs` (cutscene state, no I/O, tests),
+`crates/dq9-app/src/event.rs` (`EventPlayer`: `Director` + rendering), actors and movements in
+`dq9-render` (`AnimatedScene::add_actor`…); usage and per-cutscene result in
+[`app.md`](../app.md), § "Events". No game function is ported in full
+(no `port:` marker): these are behaviour models drawn from the natives
+([`stb-natives.md`](stb-natives.md)) and the data. The points below are what the
+30 prologue scripts require; this is not a comparison against melonDS.
 
-**Établi par les données** (contrôles sur les 30 scripts, `cargo dq9re script`) :
+**Established by the data** (checks on the 30 scripts, `cargo dq9re script`):
 
-- Liste des événements (`eventlist6.bin`, `eventlist_lv5.bin`, enregistrements 102) : la valeur 4
-  est la carte de la scène (`ev21500` → 1112 `M01M12`, `ev21520` → 20101 `F01M01`, `ev01130` →
-  4105 `X01M05`), les valeurs 12 à 15 la position (x, y, z) et l'angle de départ du héros, tous
-  nuls (ou entiers) quand le script place lui-même les personnages (`dq9_core::script::load::place`).
-  Le premier enregistrement de l'étape 1.1 dans `eventlist_lv5.bin` est `21500`
+- Event list (`eventlist6.bin`, `eventlist_lv5.bin`, records 102): value 4
+  is the cutscene's map (`ev21500` → 1112 `M01M12`, `ev21520` → 20101 `F01M01`, `ev01130` →
+  4105 `X01M05`), values 12 to 15 the hero's starting position (x, y, z) and angle, all
+  zero (or integers) when the script places the characters itself (`dq9_core::script::load::place`).
+  The first record of stage 1.1 in `eventlist_lv5.bin` is `21500`
   (`stage_opening`).
-- Les déclarations 566 numérotent les membres de la distribution par leur champ `attach` : le
-  membre `n` est celui des créneaux de liaison et des acteurs de numéro `n` (`ev01130` : acteur 0
-  = héros, `attach 0` mode 0 ; acteur 1 = PNJ 105, `attach 1` mode 5 ; acteur 2 = modèle
-  `effect/ev999990700.chr`, `attach 2` mode 2 ; `ev01330` déclare 3, 4, 2, 1 dans cet ordre).
-  Modes : 0 le héros, 2/3/6/7 un modèle (ou sprite) de chemin donné, 4/5 un PNJ de la carte par son
-  numéro (`reference`). Le mode 4 aussi : `Event_BuildScene` le cherche dans la table des PNJ
-  (`NpcTable_FindById`) et lui réserve un emplacement `Chara_Get` ([stb-natives.md](stb-natives.md#effets-exécutés-à-lécran-j3)) ;
-  ses mouvements (`stand`, `walk`, `talk_loop`) viennent de l'archive du PNJ et des paquets de
-  l'événement.
-- Une liaison explicite (202) vise un personnage par son type : 4 avec le personnage 0 est le
-  héros, 1 avec un identifiant négatif un modèle chargé par 200/228/233, 2 un objet de carte.
-- Un clone (228) voit les paquets d'animation ajoutés ensuite à son modèle d'origine : en `ev21507`
-  le personnage −5 (clone de −4) joue des mouvements que seul −4 reçoit (`LoadModelArchive`),
-  de même −12 en `ev21500`. `RemoveAnimationPackage` est appelée pour chacun.
-- La caméra de l'ouverture (572, `eye`/`lookat`) est portée par un modèle sans polygone
-  (`ev01000cc000.chr`, `ev01000c000.chr`, mouvement `cut_00`/`cut_01` d'une tranche du fichier
-  `nsbca` du paquet de type 0) : l'œil et la cible sont les os de ce nom du modèle posé, dans le
-  repère de l'acteur. À l'échelle 0x10a/4096 que reçoit tout modèle chargé, l'œil et la cible de
-  `cut_01` tombent à quelques unités des personnages que le script place un peu avant (œil
-  (−11,75 ; 12,35 ; −14,58), cible (−27,40 ; 0,65 ; −9,20), personnages vers (−27 ; −0,3 ; −9)) ;
-  avec l'échelle 1 ils seraient à 400 unités.
-- Tout modèle chargé par 200 (`0215b72c`), cloné par 228 (`0215ba64`) ou monstre chargé par
-  233 (`0215ca4c`) est un nouvel `Object3D` à `SetScale(0x10a, 0x10a, 0x10a)` : constantes
-  `0x10a` lues dans l'overlay 1 à `0215b9c0`, `0215bb38`, `0215ccd8`. Le troisième argument
-  ne sert qu'à choisir l'allocateur (`021658b8[sélecteur]`). La native 211 (`0215c330`)
-  multiplie ses trois flottants par 4096,0 (`0215c3e4`) et écrit l'échelle absolue
-  (`Object3D::SetScale`, `020374f0`, `+0x5c..+0x60`). Contrôle : l'ancienne règle « sélecteur 1
-  → échelle 1 » rendait en `ev21500` les villageois, chevaux, Aquila et monstres (`s058`, `s064`,
-  `s066`, `s067`, `s070`, `z063a`…) 15 fois trop grands et éloignait la caméra de son porteur
-  `ev01000cc000.chr` (bords du ciel étoilé visibles) ; avec 0x10a, `--event 21500` et
-  `--event 21520` sont cadrées (`build/evidence/cutscene-load-scale/`, avant `before_late.png`
-  `ad50fc44cb16`, après `after_late.png` `4a1e9b1c9077`, ciel `after.png` `7d25b277dc0d`).
-- Les messages d'une scène sont fermés tantôt par le joueur (le script boucle sur 405), tantôt par
-  la native 401 après une durée (textes `<CEN>` des cinématiques, cadre retiré par 410).
+- The 566 declarations number the cast members by their `attach` field: member
+  `n` is that of the binding slots and actors numbered `n` (`ev01130`: actor 0
+  = hero, `attach 0` mode 0; actor 1 = NPC 105, `attach 1` mode 5; actor 2 = model
+  `effect/ev999990700.chr`, `attach 2` mode 2; `ev01330` declares 3, 4, 2, 1 in that order).
+  Modes: 0 the hero, 2/3/6/7 a model (or sprite) with a given path, 4/5 a map NPC by its
+  number (`reference`). Mode 4 too: `Event_BuildScene` looks it up in the NPC table
+  (`NpcTable_FindById`) and reserves a `Chara_Get` slot for it ([stb-natives.md](stb-natives.md#effects-executed-on-screen-j3));
+  its movements (`stand`, `walk`, `talk_loop`) come from the NPC's archive and the event's
+  packages.
+- An explicit binding (202) targets a character by its type: 4 with character 0 is the
+  hero, 1 with a negative identifier a model loaded by 200/228/233, 2 a map object.
+- A clone (228) sees the animation packages later added to its original model: in `ev21507`
+  character −5 (clone of −4) plays movements only −4 receives (`LoadModelArchive`),
+  likewise −12 in `ev21500`. `RemoveAnimationPackage` is called for each.
+- The opening camera (572, `eye`/`lookat`) is carried by a polygon-less model
+  (`ev01000cc000.chr`, `ev01000c000.chr`, movement `cut_00`/`cut_01` of a slice of the
+  `nsbca` file of the type-0 package): the eye and the target are the bones of that name in the posed model, in the
+  actor's frame. At the 0x10a/4096 scale every loaded model receives, the eye and target of
+  `cut_01` land a few units from the characters the script places shortly before (eye
+  (−11.75; 12.35; −14.58), target (−27.40; 0.65; −9.20), characters around (−27; −0.3; −9));
+  at scale 1 they would be 400 units away.
+- Every model loaded by 200 (`0215b72c`), cloned by 228 (`0215ba64`) or monster loaded by
+  233 (`0215ca4c`) is a new `Object3D` with `SetScale(0x10a, 0x10a, 0x10a)`: constants
+  `0x10a` read in overlay 1 at `0215b9c0`, `0215bb38`, `0215ccd8`. The third argument
+  only selects the allocator (`021658b8[selector]`). Native 211 (`0215c330`)
+  multiplies its three floats by 4096.0 (`0215c3e4`) and writes the absolute scale
+  (`Object3D::SetScale`, `020374f0`, `+0x5c..+0x60`). Check: the old rule "selector 1
+  → scale 1" rendered the villagers, horses, Aquila and monsters (`s058`, `s064`,
+  `s066`, `s067`, `s070`, `z063a`…) in `ev21500` 15 times too large and pushed the camera away from its carrier
+  `ev01000cc000.chr` (edges of the starry sky visible); with 0x10a, `--event 21500` and
+  `--event 21520` are framed (`build/evidence/cutscene-load-scale/`, before `before_late.png`
+  `ad50fc44cb16`, after `after_late.png` `4a1e9b1c9077`, sky `after.png` `7d25b277dc0d`).
+- A cutscene's messages are closed sometimes by the player (the script loops on 405), sometimes by
+  native 401 after a duration (`<CEN>` texts of the cinematics, frame removed by 410).
 
-**Hypothèses** (marquées dans le code) :
+**Hypotheses** (marked in the code):
 
-- Les commandes d'un acteur sont groupées en six canaux (position, rotation, animation, échelle,
-  alpha, rayon) ; les huit files du jeu n'ont pas été reliées une à une. Une commande instantanée
-  ne prend pas de tick, l'acteur est au repos quand tous les canaux sont vides ; 210 ne bloque
-  pas, 224 et 213 attendent la fin du mouvement en cours (fin = la fin de la tranche atteinte
-  une fois, y compris pour un mouvement qui boucle).
-- Les durées de la caméra (304 à 322) et du chemin (217) sont comptées comme celles des acteurs
-  (2 ticks par unité) ; le demi-angle de champ de 532/580 est celui du jeu (15° par défaut) ; le
-  roulis 327 tourne le vecteur haut autour de la visée, positif vers la droite de l'image.
-- `Event_BuildScene` ne lie pas elle-même la position de départ d'un PNJ de la carte : il garde
-  sa place jusqu'à la première commande, et la retrouve à la fin de la scène.
-- Fondus : le moteur « principal » est l'écran 3D ; un moteur verrouillé (112, 114, 116) ignore
-  les fondus simples (100, 101, 105, 106, 107) jusqu'à un fondu qui le déverrouille
-  (117 à 122) ; l'état revient à la normale quand la dernière scène finit.
-- Lumière : la durée de 578 est comptée comme celle des acteurs (2 ticks par unité, le jeu la
-  multiplie par `s16(02010218(save))`, ≈ 33 ms) ; la phase forcée par 588 est prise au début de la
-  phase, sans fondu vers la suivante ; 579 et 808 changent l'horloge du jour de l'application
-  (rechargement d'une carte ensuite). La phase des cartes de base se règle comme à l'entrée
-  d'une zone (`settle_basic_entry`) seulement quand le script ne la force pas.
-- Un modèle accroché à un os (235) est dessiné dans le repère du parent × la matrice de l'os
-  (`HeroRig::bone`, `actor_bone`), sa propre pose étant relative à cet os ; l'échelle du parent
-  est héritée **[hypothèse]**, que les scripts remettent à 1 pour le modèle accroché.
-- La bulle (541) est un sprite posé sur le rayon qui passe par le pixel de l'écran DS (projection
-  de l'acteur décalée de `(−6, −76)`), un peu devant l'acteur, à l'échelle d'un texel par pixel
-  DS **[hypothèse]** : le jeu la dessine en 2D par-dessus l'image.
-- Placements 574/575 : `Scene::build` construit une instance pour chaque placement de modèle ou
-  d'objet, y compris ceux que l'heure choisie cache (`Instance::hidden`, bit `0x4` de `+2`).
-  L'instance cachée a une échelle nulle mais garde sa matrice d'origine (`SceneInstance::home`,
-  `0x02013168`) ; 574 et 575 changent l'échelle et la translation d'après cet état : un 575
-  seul déplace le placement sans le montrer, 574 le montre à sa nouvelle position (dans un ordre
-  ou l'autre), jusqu'au rechargement de la carte, comme le jeu qui garde les champs de
-  l'enregistrement. Les placements de collision n'ont pas d'instance : leur changement de
-  murs/sol n'est pas appliqué et le rapport le compte (`collision placement`) depuis le lot
-  « scènes restantes ».
-- Légendes (409/411/413) : `W+0x9a8` donne le maintien ; `020658b8` fait varier `W+0x9b0` de
-  `0x8444` par image jusqu'à `0x1f0000` (60 images par fondu), `02066d00` en tire l'alpha du
-  texte. `0206b6c8` déplace la fenêtre à `(192 − (lignes − 1) × 20 − 8) / 2 − 16` (411) et
-  `02045608` coupe le bip quand `W+0x19b2 == 0` (413). Exécuté par `Talk` : alpha des quads,
-  texte centré quand 410 a retiré le cadre, blips filtrés ; le compteur de message est
-  **gelé** pendant la légende (`020657c8` : l'action ne ferme pas avant 401, 405 reste 1).
-- Caméra à trois os (552) : `0204a170` suit `eye` et `lookat` de la source et pose la cible sur
-  `foot` ; celle-ci est tournée tous les trois updates vers son déplacement. Exécuté par
-  `Camera::ThreeBoneCamera` et `EventPlayer::drag_three_bone` ; sa capture à l'image 1820 de
-  `21507` montre le changement de point de vue, sans comparaison melonDS.
-- Porte (584) : `02018b44` retrouve le placement `(entrée de bloc, identifiant)` de la zone ;
-  `02018310` fixe l'angle cible à `+6434` (90°) et la vitesse à `409` par update. Exécuté par
-  `Event::OpenDoor` : rotation du placement visible aux images 2900→2960 de `21500` ; le son
-  (index de `g_DoorSeTable` dépendant du quartet bas de la zone) reste rapporté.
+- An actor's commands are grouped into six channels (position, rotation, animation, scale,
+  alpha, radius); the game's eight queues have not been mapped one to one. An instant command
+  takes no tick, the actor is idle when all channels are empty; 210 does not block,
+  224 and 213 wait for the current movement to end (end = the end of the slice reached
+  once, including for a looping movement).
+- Camera durations (304 to 322) and path durations (217) are counted like the actors'
+  (2 ticks per unit); the half field-of-view angle of 532/580 is the game's (15° by default); the
+  roll 327 rotates the up vector around the line of sight, positive towards the right of the image.
+- `Event_BuildScene` does not itself bind the starting position of a map NPC: it keeps
+  its place until the first command, and gets it back at the end of the cutscene.
+- Fades: the "main" engine is the 3D screen; a locked engine (112, 114, 116) ignores
+  simple fades (100, 101, 105, 106, 107) until a fade that unlocks it
+  (117 to 122); the state returns to normal when the last cutscene ends.
+- Lighting: the duration of 578 is counted like the actors' (2 ticks per unit, the game
+  multiplies it by `s16(02010218(save))`, ≈ 33 ms); the phase forced by 588 is taken at the start of the
+  phase, without fading to the next; 579 and 808 change the application's time of day
+  (map reloaded afterwards). The phase of basic maps is set as on entering
+  an area (`settle_basic_entry`) only when the script does not force it.
+- A model attached to a bone (235) is drawn in the parent's frame × the bone matrix
+  (`HeroRig::bone`, `actor_bone`), its own pose being relative to that bone; the parent's scale
+  is inherited **[hypothesis]**, which the scripts reset to 1 for the attached model.
+- The bubble (541) is a sprite placed on the ray through the DS screen pixel (actor
+  projection offset by `(−6, −76)`), slightly in front of the actor, at a scale of one texel per DS
+  pixel **[hypothesis]**: the game draws it in 2D over the image.
+- Placements 574/575: `Scene::build` builds an instance for every model or
+  object placement, including those hidden by the chosen time (`Instance::hidden`, bit `0x4` of `+2`).
+  The hidden instance has a zero scale but keeps its original matrix (`SceneInstance::home`,
+  `0x02013168`); 574 and 575 change the scale and translation from this state: a 575
+  alone moves the placement without showing it, 574 shows it at its new position (in either
+  order), until the map is reloaded, like the game which keeps the record's
+  fields. Collision placements have no instance: their wall/floor change
+  is not applied and the report counts it (`collision placement`) since the
+  "remaining cutscenes" batch.
+- Captions (409/411/413): `W+0x9a8` gives the hold; `020658b8` varies `W+0x9b0` by
+  `0x8444` per frame up to `0x1f0000` (60 frames per fade), `02066d00` derives the text alpha
+  from it. `0206b6c8` moves the window to `(192 − (lines − 1) × 20 − 8) / 2 − 16` (411) and
+  `02045608` cuts the beep when `W+0x19b2 == 0` (413). Executed by `Talk`: quad alpha,
+  centred text when 410 has removed the frame, blips filtered; the message counter is
+  **frozen** during the caption (`020657c8`: the action does not close before 401, 405 stays 1).
+- Three-bone camera (552): `0204a170` follows the source's `eye` and `lookat` and sets the target on
+  `foot`; the latter is turned every three updates towards its displacement. Executed by
+  `Camera::ThreeBoneCamera` and `EventPlayer::drag_three_bone`; its capture at frame 1820 of
+  `21507` shows the change of viewpoint, without melonDS comparison.
+- Door (584): `02018b44` finds the area's `(block entry, identifier)` placement;
+  `02018310` sets the target angle to `+6434` (90°) and the speed to `409` per update. Executed by
+  `Event::OpenDoor`: rotation of the placement visible at frames 2900→2960 of `21500`; the sound
+  (index into `g_DoorSeTable` depending on the area's low nibble) is still reported.
 
-**Exécuté depuis J3** : lumière et heure (578, 579, 588, 589, 548/549, 808) et brouillard (804)
-par `dq9_core::cutscene::SceneLight` ; attachements d'os (235, 236) ; mouvements nommés des PNJ de
-la carte ; sprites 2D de script (521/522) ; bulles (541/542/561) ; placements (574/575) ;
-mouvements 545/546 ; palette (238) ; retour de la caméra (328) — détail et preuves dans
-[stb-natives.md](stb-natives.md#effets-exécutés-à-lécran-j3).
+**Executed since J3**: lighting and time (578, 579, 588, 589, 548/549, 808) and fog (804)
+via `dq9_core::cutscene::SceneLight`; bone attachments (235, 236); named movements of map
+NPCs; script 2D sprites (521/522); bubbles (541/542/561); placements (574/575);
+movements 545/546; palette (238); camera return (328) — details and evidence in
+[stb-natives.md](stb-natives.md#effects-executed-on-screen-j3).
 
-- Échange d'écrans (109/110) : `Cutscene::screen_swapped` conserve le bit `POWCNT1` 15 entre
-  événements ; `screens::field/overlay` et `app.rs` (fenêtre et capture) placent le champ et la
-  fenêtre sur l'autre écran.
+- Screen swap (109/110): `Cutscene::screen_swapped` keeps `POWCNT1` bit 15 across
+  events; `screens::field/overlay` and `app.rs` (window and capture) put the field and the
+  window on the other screen.
 
-**Non exécuté** (rapporté par `--events-report`) : native 547 (transition de combat, hors v0.1) ;
-le son de porte (584) ; 560, 571, 815, 581, 582 et 809 sont sans effet visible établi ou
-sans objet dessiné.
+**Not executed** (reported by `--events-report`): native 547 (battle transition, outside v0.1);
+the door sound (584); 560, 571, 815, 581, 582 and 809 have no established visible effect or
+no drawn object.
 
-## Enchaînement du prologue (`dq9-core::scenario`)
+## Prologue chaining (`dq9-core::scenario`)
 
-Ce qui enchaîne les scènes est établi (ROM EU, Ghidra, `cargo dq9re triggers`) :
+What chains the cutscenes is established (EU ROM, Ghidra, `cargo dq9re triggers`):
 
-- `ev21500` → `ev21507` : native 538 du script (`Director`).
-- `ev21507` → `ev21520` : la fin de `ev21507` tire le trigger 11 de `M01` (`8 : 21507`), dont
-  l'action `0x78(26)` est **un combat scripté**, pas une tâche inconnue (`trigger.md`, § Combats
-  scriptés : `Trig_RunDeferred` cas `0x78` remplit la tâche de combat `+0x3718`, numéro 26 dans
-  `eventbattle.bin`). La victoire tire le trigger 15 (`12 : 26`), qui lance `ev21520`
-  (`triggerM01.bin` et `triggerF.bin`). Il n'y a pas de combat avant J4 : l'application le
-  déclare gagné (`scenario::stand_in`).
-- `ev21520 → 21521 → 21522 → 21596` : natives 538 ; changements de carte (`F01M01`, `X01`,
-  `X01M01`, `X01M05`) demandés par les scripts d'après l'enregistrement de la liste des
-  événements. À la fin de `21596`, le trigger 11 de `X01M05` lève le drapeau 337, donne l'objet
-  22159 et rend la main au joueur.
-- Ensuite, tout vient des triggers : conversations (trigger 0 puis 1 à la fermeture :
-  `Field::talk_ended`), aires (2), portes et warps (17, 6), arrivée (20, 3), et le trigger 11 des
-  scènes (suite, étape `0x84`, transport `0xe1`/`0x85`). Exemple : `21591` (descendre à Angel
-  Falls) part de la conversation avec le PNJ 101 (`6 : 101`, `11 : 193`, `16 : 0` → `0x77(21591)`),
-  se termine par `0xe1(1100)` ; `21592` part du trigger d'arrivée (3) de `M01` à l'étape 1.2 ;
-  `21593` d'une conversation (PNJ 99) et se termine par `0x84(1, 4, 1)` (étape 1.4) et `0x85(4105)`.
-- Parcours complet : `dq9-app --new-game --headless --auto [--pilot]` (`app.md`, § « Nouvelle
-  partie »).
+- `ev21500` → `ev21507`: the script's native 538 (`Director`).
+- `ev21507` → `ev21520`: the end of `ev21507` fires trigger 11 of `M01` (`8 : 21507`), whose
+  action `0x78(26)` is **a scripted battle**, not an unknown task (`trigger.md`, § Scripted
+  battles: `Trig_RunDeferred` case `0x78` fills the battle task `+0x3718`, number 26 in
+  `eventbattle.bin`). Victory fires trigger 15 (`12 : 26`), which starts `ev21520`
+  (`triggerM01.bin` and `triggerF.bin`). There is no battle before J4: the application
+  declares it won (`scenario::stand_in`).
+- `ev21520 → 21521 → 21522 → 21596`: natives 538; map changes (`F01M01`, `X01`,
+  `X01M01`, `X01M05`) requested by the scripts from the event list
+  record. At the end of `21596`, trigger 11 of `X01M05` raises flag 337, gives item
+  22159 and hands control back to the player.
+- After that, everything comes from triggers: conversations (trigger 0 then 1 on close:
+  `Field::talk_ended`), areas (2), doors and warps (17, 6), arrival (20, 3), and trigger 11 of
+  cutscenes (follow-up, stage `0x84`, transport `0xe1`/`0x85`). Example: `21591` (going down to Angel
+  Falls) starts from the conversation with NPC 101 (`6 : 101`, `11 : 193`, `16 : 0` → `0x77(21591)`),
+  ends with `0xe1(1100)`; `21592` starts from the arrival trigger (3) of `M01` at stage 1.2;
+  `21593` from a conversation (NPC 99) and ends with `0x84(1, 4, 1)` (stage 1.4) and `0x85(4105)`.
+- Full run: `dq9-app --new-game --headless --auto [--pilot]` (`app.md`, § "New
+  game").
 
-## Questions ouvertes
+## Open questions
 
-- Natives encore sans rôle (571, 560, 547, 815) : tableau « non identifiées » de
-  [stb-natives.md](stb-natives.md#prologue-dangel-falls--natives-employées-j0).
-- Palette de 238 : les modes 1 et 2 ne sont pas observés ; objets de 809 et ombres de 581/582
-  **[hypothèse]**.
-- Nature (30 Hz ou 60 Hz) de `currentNumTicks_` : [hypothèse] VBlank, non démontrée.
-- Sens de l'op 0x16, de l'op 0x1c et du deuxième mot des enregistrements de fonction.
-- Champs inconnus des listes d'événements.
-- Appelant de l'entrée 200 et origine de `+0x40` (saut) dans la tâche d'événement.
-- Porte 584 : quartet bas de la zone (index du son 200–204) non lu, branche coulissante (bit
-  `0x20`) et sens inverse non modélisés. 571 reste non identifiée (bit `0x10` sans lecteur,
-  sans effet visible établi) ; 839 (`+0x265`) n'apparaît pas dans le prologue (seulement
-  `ev28920`) et n'est donc pas piloté en v0.1.
+- Natives still without a role (571, 560, 547, 815): "unidentified" table of
+  [stb-natives.md](stb-natives.md#angel-falls-prologue-natives-used-j0).
+- Palette of 238: modes 1 and 2 are not observed; objects of 809 and shadows of 581/582
+  **[hypothesis]**.
+- Nature (30 Hz or 60 Hz) of `currentNumTicks_`: [hypothesis] VBlank, not demonstrated.
+- Meaning of op 0x16, of op 0x1c and of the second word of function records.
+- Unknown fields of the event lists.
+- Caller of entry 200 and origin of `+0x40` (skip) in the event task.
+- Door 584: area low nibble (sound index 200–204) not read, sliding branch (bit
+  `0x20`) and reverse direction not modelled. 571 remains unidentified (bit `0x10` without reader,
+  no established visible effect); 839 (`+0x265`) does not appear in the prologue (only
+  `ev28920`) and is therefore not driven in v0.1.

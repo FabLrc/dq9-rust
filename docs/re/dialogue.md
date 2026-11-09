@@ -1,353 +1,353 @@
-# Dialogues des PNJ : choix de la réplique
+# NPC dialogue: choosing the line
 
-Implémentation : `crates/dq9-formats/src/dialogue.rs` (`parse`, `select`). Outil :
-`cargo dq9re talk <archive> <membre> [--step N] [--context N] [--talks N] [--night]
-[--quest Q=quartet] [--hero-down]…` décode le fichier et marque la réplique choisie pour cet
-état.
+Implementation: `crates/dq9-formats/src/dialogue.rs` (`parse`, `select`). Tool:
+`cargo dq9re talk <archive> <member> [--step N] [--context N] [--talks N] [--night]
+[--quest Q=quartet] [--hero-down]…` decodes the file and marks the line chosen for that
+state.
 
-## Chargement
+## Loading
 
-`TalkTask_Update` (`ov_017::021b8e8c`), état 0 :
+`TalkTask_Update` (`ov_017::021b8e8c`), state 0:
 
-- archive `data/scenario/%s%c0.gp2` : `%s` = trois premiers caractères du nom de la carte
-  (`M02`), `%c` = `Scenario_ChapterLetter` (`ov_017::0218d2c4`) appliqué au chapitre
-  (`Save_Chapter`, sauvegarde `+0x5cb0`) : `"ABCDEFGHIJSTKLMNOPQ"[chapitre - 1]`, 1 à 19 ;
-- membre `%03d_<LG>.bin` : `NNN` = premier `u16` de la définition du PNJ = identifiant du
-  champ 0 de `<carte>npc.bin` (voir plus bas). Contrôle : 8 006 des 8 461 fichiers anglais
-  ont un PNJ de ce numéro dans le `.npc` de leur carte ; les autres appartiennent aux cartes
-  de terrain `F*` (qui partagent `F.npc`) ou sont des restes.
+- archive `data/scenario/%s%c0.gp2`: `%s` = first three characters of the map name
+  (`M02`), `%c` = `Scenario_ChapterLetter` (`ov_017::0218d2c4`) applied to the chapter
+  (`Save_Chapter`, save `+0x5cb0`): `"ABCDEFGHIJSTKLMNOPQ"[chapter - 1]`, 1 to 19;
+- member `%03d_<LG>.bin`: `NNN` = first `u16` of the NPC definition = identifier of
+  field 0 of `<map>npc.bin` (see below). Check: 8,006 of the 8,461 English files
+  have an NPC with that number in their map's `.npc`; the others belong to the field
+  maps `F*` (which share `F.npc`) or are leftovers.
 
-L'application utilisait déjà cette règle de nommage, mais initialisait les triggers avec
-`1.1.1` même après chargement d'une sauvegarde : la démo en `C01M09`, progression `19.2.1`,
-cherchait donc `C01A0` au lieu de `C01Q0`. Elle restaure désormais les cinq pistes et leurs
-drapeaux, les drapeaux globaux et les quartets de quêtes du bloc sauvegardé ; `Field::enter`
-sélectionne la piste de la salle avant la conversation. Les variantes d'une même famille de
-cartes gardent les trois mêmes caractères ; ce n'est pas une recherche de chemins de secours.
-La progression de la piste choisit la lettre, puis son étape et sa sous-étape choisissent la
-réplique. Les options explicites de progression remplacent les champs correspondants.
-Lors d'un changement de salle, la distribution des PNJ est construite à partir de la piste
-**de destination** avant que `Field::enter` ne sélectionne cette même piste pour les triggers
-et les conversations ; l'état courant n'est pas modifié pendant la préparation du cast.
+The application already used this naming rule, but initialized the triggers with
+`1.1.1` even after loading a save: the demo in `C01M09`, progress `19.2.1`,
+therefore looked for `C01A0` instead of `C01Q0`. It now restores the five tracks and their
+flags, the global flags and the quest quartets from the save block; `Field::enter`
+selects the room's track before the conversation. Variants of the same map family
+keep the same three characters; this is not a fallback path search.
+The track's progress chooses the letter, then its step and substep choose the
+line. Explicit progress options replace the matching fields.
+On a room change, the NPC cast is built from the **destination** track before
+`Field::enter` selects that same track for triggers and conversations; the current
+state is not modified while the cast is prepared.
 
-Contrôles : sauvegarde de démonstration `19.2.1`, PNJ 25 en zone 80 : le navigateur ouvre
-`C01Q0/025_en.bin`, enregistrement 0, et la ligne s'affiche ; chargement sauvegarde avant ou
-après la ROM. Sur `M01`, étape 2, PNJ 2 : `M01A0/002_en.bin`, contexte 192, puis la fin de
-conversation déclenche l'événement 1380. Le texte du prêtre se termine par `<ADD>` ; le service
-religieux qui suit n'est pas implémenté.
+Checks: demo save `19.2.1`, NPC 25 in zone 80: the browser opens
+`C01Q0/025_en.bin`, record 0, and the line is displayed; save loaded before or
+after the ROM. On `M01`, step 2, NPC 2: `M01A0/002_en.bin`, context 192, then the end of
+the conversation fires event 1380. The priest's text ends with `<ADD>`; the religious
+service that follows is not implemented.
 
-Le fichier (une table d'enregistrements, `table.md`) passe par `Talk_SelectLine`
-(`ov_017::021ba810`), qui rejette les PNJ hors de `0..=999`.
+The file (a record table, `table.md`) goes through `Talk_SelectLine`
+(`ov_017::021ba810`), which rejects NPCs outside `0..=999`.
 
-## Lecteur générique de tables (ARM9)
+## Generic table reader (ARM9)
 
-Le parseur des tables, cherché en vain jusqu'ici, est en `0x02030644`–`0x02030b8c` (noms
-`Tbl_*` dans `re/symbols.txt`). Il reçoit un tableau `{u32 type; gestionnaire}` terminé par
-le type 0 (`Tbl_SetHandlers` le trie par type), parcourt les enregistrements dans l'ordre du
-fichier et appelle `gestionnaire(champs, nombre_de_champs)`, chaque champ décodé en
-`{type, valeur}`. Les types sans gestionnaire sont ignorés. `Tbl_FieldInt` convertit un
-flottant en entier et lit 0 pour une chaîne ; `Tbl_FieldStr` rend 0 si le champ n'est pas
-une chaîne.
+The table parser, searched for in vain until now, is at `0x02030644`–`0x02030b8c` (names
+`Tbl_*` in `re/symbols.txt`). It receives an array `{u32 type; handler}` terminated by
+type 0 (`Tbl_SetHandlers` sorts it by type), walks the records in file
+order and calls `handler(fields, field_count)`, each field decoded as
+`{type, value}`. Types without a handler are skipped. `Tbl_FieldInt` converts a
+float to an integer and reads 0 for a string; `Tbl_FieldStr` returns 0 if the field is not
+a string.
 
-## Enregistrements
+## Records
 
-Gestionnaires : `g_TalkLineHandlers` (`ov_017::021d7c58`). Deux formes, selon le nombre de
-champs :
+Handlers: `g_TalkLineHandlers` (`ov_017::021d7c58`). Two forms, depending on the number of
+fields:
 
 ```
-4 champs : a, b, emplacement, texte
-5 champs : a, b, nuit, emplacement, texte
+4 fields: a, b, slot, text
+5 fields: a, b, night, slot, text
 ```
 
-| Type | Fonction | `a`, `b` | Garde supplémentaire | Fichiers (5 langues) |
+| Type | Function | `a`, `b` | Extra guard | Files (5 languages) |
 |---|---|---|---|---|
-| 1 | `TalkLine_Step` | étape min, max (`a < 0` : toujours) | aucune | 80 450 |
-| 2 | `TalkLine_Quest` | quête, condition | invité d'une session : seulement quêtes > `0xad` | 90 430 |
-| 3 | `TalkLine_SessionStepA` | étape min, max | session active, drapeau de pair local nul | 0 |
-| 4 | `TalkLine_SessionStepB` | étape min, max | session active, drapeau de pair local non nul | 12 810 |
-| 5 | `TalkLine_HostStep` | étape min, max | pas invité, mot du héros nul | 6 250 |
-| 6 | `TalkLine_HostQuest` | quête, condition | comme 5 | 0 |
+| 1 | `TalkLine_Step` | min, max step (`a < 0`: always) | none | 80,450 |
+| 2 | `TalkLine_Quest` | quest, condition | guest of a session: only quests > `0xad` | 90,430 |
+| 3 | `TalkLine_SessionStepA` | min, max step | session active, local peer flag zero | 0 |
+| 4 | `TalkLine_SessionStepB` | min, max step | session active, local peer flag non-zero | 12,810 |
+| 5 | `TalkLine_HostStep` | min, max step | not a guest, hero word zero | 6,250 |
+| 6 | `TalkLine_HostQuest` | quest, condition | like 5 | 0 |
 
-- **Étape** : `Save_ScenarioStep`, sauvegarde `+0x5cb4` ; il faut `a <= étape <= b`.
-- **Quête** : 0 à `0xcb` ; la sauvegarde garde un quartet par quête à `+0x2cc` : bits 0-1
-  = état (`Quest_State`), bits 2 et 3 = drapeaux. Condition `b` :
+- **Step**: `Save_ScenarioStep`, save `+0x5cb4`; requires `a <= step <= b`.
+- **Quest**: 0 to `0xcb`; the save keeps one quartet per quest at `+0x2cc`: bits 0-1
+  = state (`Quest_State`), bits 2 and 3 = flags. Condition `b`:
 
-  | `b` | exige |
+  | `b` | requires |
   |---|---|
-  | -1 | état 0 |
-  | 0 | état 2 |
+  | -1 | state 0 |
+  | 0 | state 2 |
   | 1 | bit 2 |
-  | 2 | état 3 |
-  | 3 | état 1 |
-  | 4 | bit 3 et état 0 |
-  | autre | rien (le `switch` n'a pas de cas par défaut ; jamais rencontré) |
+  | 2 | state 3 |
+  | 3 | state 1 |
+  | 4 | bit 3 and state 0 |
+  | other | nothing (the `switch` has no default case; never encountered) |
 
-  Sur la quête 11 de George (`M02M0/018`) : état 0 = pas encore disponible, 1 = disponible
-  (le trigger de conversation vérifie alors le niveau avant de faire proposer la quête,
-  `trigger.md`), 2 = acceptée, 3 = terminée. **[Noms tirés des textes et des triggers.]**
-- **Nuit** (forme à 5 champs, valeur non nulle) : réplique ignorée de jour
-  (`Save_IsDaytime`, sauvegarde `+0x3dc` non nulle). Une fois qu'une réplique de nuit a passé
-  ce test, toutes les répliques **à 4 champs** suivantes sont ignorées ; les répliques à 5
-  champs de valeur 0 restent possibles. Les textes de nuit (« Good evening », « Zzzz… »)
-  confirment le sens.
-- **Session** : `0x0202b7e8` (session sans fil active), `0x0202c550` (active et console
-  locale ≠ pair 0, donc invitée), `0x0202c1b4` (octet du pair local à `+0x1038` de l'état de
-  session) **[sens inconnu]**. **Mot du héros** : demi-mot à `héros->+0x130->+4`, les **PV
-  du héros** **[hypothèse étayée, `trigger.md`]** : les types 5 et 6 exigent qu'ils soient
-  nuls, c'est-à-dire qu'un autre membre parle à la place du héros tombé (« friend of
-  `<HERO>` », silences des esprits que seul le héros entend). `dq9re talk` suppose le héros
-  debout ; `--hero-down` le fait tomber.
+  On George's quest 11 (`M02M0/018`): state 0 = not yet available, 1 = available
+  (the conversation trigger then checks the level before offering the quest,
+  `trigger.md`), 2 = accepted, 3 = completed. **[Names derived from texts and triggers.]**
+- **Night** (5-field form, non-zero value): line skipped during the day
+  (`Save_IsDaytime`, save `+0x3dc` non-zero). Once a night line has passed
+  this test, all following **4-field** lines are skipped; 5-field lines
+  with value 0 remain possible. The night texts ("Good evening", "Zzzz…")
+  confirm the meaning.
+- **Session**: `0x0202b7e8` (wireless session active), `0x0202c550` (active and local
+  console ≠ peer 0, hence guest), `0x0202c1b4` (local peer byte at `+0x1038` of the session
+  state) **[meaning unknown]**. **Hero word**: halfword at `hero->+0x130->+4`, the **hero's
+  HP** **[supported hypothesis, `trigger.md`]**: types 5 and 6 require it to be
+  zero, i.e. another member speaks in place of the fallen hero ("friend of
+  `<HERO>`", silences of spirits that only the hero hears). `dq9re talk` assumes the hero
+  is standing; `--hero-down` knocks them down.
 
-### Emplacement (`Talk_SlotAccepts`, `ov_017::021b9bcc`)
+### Slot (`Talk_SlotAccepts`, `ov_017::021b9bcc`)
 
-`emplacement / 80` doit égaler `contexte / 80` (le contexte de conversation, ci-dessous) ;
-puis, avec `t = emplacement % 80 / 16` et `n = emplacement % 16` :
+`slot / 80` must equal `context / 80` (the conversation context, below);
+then, with `t = slot % 80 / 16` and `n = slot % 16`:
 
-| `t` | réplique retenue si |
+| `t` | line kept if |
 |---|---|
-| 0 | `n <=` compteur de conversations 1 du PNJ |
-| 1 | `n <=` compteur 2 |
-| 2, 3 | `emplacement == contexte` |
-| 4 | `n <=` sauvegarde `+0x5cb8` (`Save_ScenarioSubstep`) et `n >=` meilleur `n` déjà retenu (le plus grand gagne) |
+| 0 | `n <=` the NPC's conversation counter 1 |
+| 1 | `n <=` counter 2 |
+| 2, 3 | `slot == context` |
+| 4 | `n <=` save `+0x5cb8` (`Save_ScenarioSubstep`) and `n >=` best `n` already kept (the largest wins) |
 
-Les deux compteurs sont des quartets par PNJ dans deux tableaux de 128 octets
-(`NpcTalkCount_Get`), tous deux incrémentés (saturés à 15) après chaque conversation
-réussie. **[Différence entre les deux inconnue : l'un est peut-être remis à zéro au
-chargement de la carte.]**
+The two counters are per-NPC quartets in two 128-byte arrays
+(`NpcTalkCount_Get`), both incremented (saturating at 15) after each successful
+conversation. **[Difference between the two unknown: one may be reset on
+map load.]**
 
-Les deux tableaux sont au pointeur `gameres+0x44c4` (les ressources de jeu), et deux remises
-à zéro sont établies :
+The two arrays are at pointer `gameres+0x44c4` (the game resources), and two resets
+are established:
 
-- **Nouveau chapitre ou nouvelle étape** : `Track_Advance` (`0x020703d8`, actions 0x84,
-  0x94, 0xd6) appelle `0x0206ec04` (mise à zéro des 2 × 0x80 octets) dans les deux branches
-  où la piste change de chapitre (`Track_ClearFlags`) ou, au même chapitre, d'étape
-  (`Track_ClearStepFlags`), et seulement quand la progression avance. Une nouvelle
-  sous-étape seule ne remet rien à zéro. Les compteurs sont communs aux cinq pistes :
-  avancer n'importe laquelle les vide tous.
-- **Action 0x6a** (`Trig_RunAction` cas 6, `0x02061c14`) : `0x0206ecf8(table, PNJ)` sur
-  chacun des deux tableaux efface le quartet du PNJ `arg` (octet `PNJ / 2`, quartet haut
-  pour un numéro pair) ; un numéro ≥ 256 sort du tableau et part en erreur (`0x0209954c`).
+- **New chapter or new step**: `Track_Advance` (`0x020703d8`, actions 0x84,
+  0x94, 0xd6) calls `0x0206ec04` (zeroing of the 2 × 0x80 bytes) in both branches
+  where the track changes chapter (`Track_ClearFlags`) or, within the same chapter, step
+  (`Track_ClearStepFlags`), and only when progress moves forward. A new
+  substep alone resets nothing. The counters are shared by the five tracks:
+  advancing any of them clears them all.
+- **Action 0x6a** (`Trig_RunAction` case 6, `0x02061c14`): `0x0206ecf8(table, NPC)` on
+  each of the two arrays clears the quartet of NPC `arg` (byte `NPC / 2`, high quartet
+  for an even number); a number ≥ 256 falls outside the array and errors (`0x0209954c`).
 
-Emplacements observés : 0–3, 16–22 (groupe 0), 64–72 (test 4), 80–131 (groupe 1), 176–177,
-192–223 (groupe 2, valeurs exactes).
+Observed slots: 0–3, 16–22 (group 0), 64–72 (test 4), 80–131 (group 1), 176–177,
+192–223 (group 2, exact values).
 
-### Choix
+### Choice
 
-Toutes les répliques sont examinées dans l'ordre ; la **dernière** acceptée gagne, mais
-certaines acceptations bloquent les types suivants :
+All lines are examined in order; the **last** accepted one wins, but
+some acceptances block the following types:
 
 ```mermaid
 flowchart LR
-    q6[type 6 retenu] -->|bloque| t5[type 5] & t2[type 2] & t34[types 3/4] & t1[type 1]
-    q5[type 5 retenu] -->|bloque| t2 & t34 & t1
-    q2[type 2 retenu] -->|bloque| t34 & t1
-    q34[type 3/4 retenu] -->|bloque| t1
+    q6[type 6 kept] -->|blocks| t5[type 5] & t2[type 2] & t34[types 3/4] & t1[type 1]
+    q5[type 5 kept] -->|blocks| t2 & t34 & t1
+    q2[type 2 kept] -->|blocks| t34 & t1
+    q34[type 3/4 kept] -->|blocks| t1
 ```
 
-Entre quêtes (types 2 et 6, chacun avec sa propre mémoire `g_TalkQuestLine`), une réplique
-de la quête `q` ne remplace celle de la quête `Q` déjà retenue que si `q == Q`, si `q` est
-dans l'état 1 ou 2, ou si `Q` et `q` sont dans l'état 3 avec `q >= Q`. La mémoire est un
-octet signé : une quête > 127 retenue se relit comme « aucune » (bizarrerie conservée).
+Between quests (types 2 and 6, each with its own memory `g_TalkQuestLine`), a line
+of quest `q` only replaces the one of quest `Q` already kept if `q == Q`, if `q` is
+in state 1 or 2, or if `Q` and `q` are in state 3 with `q >= Q`. The memory is a
+signed byte: a kept quest > 127 reads back as "none" (quirk preserved).
 
-Sans réplique retenue, la conversation est abandonnée.
+With no line kept, the conversation is abandoned.
 
-Test `dialogue_selection_follows_quest_state` : George (`M02M0/018_en`) dit « Those
-betterflies are always hangin' about… » quand la quête 11 est acceptée, « I suppose those
-monsters… » quand elle est terminée.
+Test `dialogue_selection_follows_quest_state`: George (`M02M0/018_en`) says "Those
+betterflies are always hangin' about…" when quest 11 is accepted, "I suppose those
+monsters…" when it is completed.
 
-## Contexte de conversation
+## Conversation context
 
-Champ `+0x124` de la tâche de conversation. `Talk_Start` (`ov_017::021a4cf0`) passe d'abord
-l'événement « parler au PNJ » aux **triggers de la carte** (`trigger.md`) avec la zone
-calculée par `Talk_NearestNpc` (`ov_017::021a4e88`) : identifiant de la **zone de
-conversation** du PNJ qui contient le héros (rectangles x/z attachés au PNJ), 0 hors zone.
-Les zones viennent des enregistrements de type 6 de `<carte>place.bin`
-(`[pnj, x0, z0, x1, z1, id]`, `id` ∈ {0, 80, 192}).
+Field `+0x124` of the conversation task. `Talk_Start` (`ov_017::021a4cf0`) first passes
+the "talk to NPC" event to the **map triggers** (`trigger.md`) with the zone
+computed by `Talk_NearestNpc` (`ov_017::021a4e88`): identifier of the NPC's **conversation
+zone** that contains the hero (x/z rectangles attached to the NPC), 0 outside a zone.
+The zones come from the type 6 records of `<map>place.bin`
+(`[npc, x0, z0, x1, z1, id]`, `id` ∈ {0, 80, 192}).
 
-- Si un trigger s'applique, ses actions s'exécutent ; l'action 0x76 lance la conversation
-  avec le contexte qu'elle porte (0, 80–131, 160, 176, 192–223). C'est ainsi que sont
-  atteintes les 20 023 répliques anglaises (sur 37 988) des emplacements exacts 192–223
-  (offres et récompenses de quêtes…).
-- Sinon, le contexte est la zone.
+- If a trigger applies, its actions run; action 0x76 starts the conversation
+  with the context it carries (0, 80–131, 160, 176, 192–223). This is how the
+  20,023 English lines (out of 37,988) of the exact slots 192–223 are reached
+  (quest offers and rewards…).
+- Otherwise, the context is the zone.
 
-Deux autres appelants imposent `0xd7` et `0xc4`.
+Two other callers impose `0xd7` and `0xc4`.
 
-## `<carte>.npc` (NARC)
+## `<map>.npc` (NARC)
 
-Deux tables d'enregistrements :
+Two record tables:
 
-- `<carte>npc.bin`, type 3 : `[id, genre, nom japonais (Shift-JIS, souvent absent),
-  modèle (n018a, s006…), ?]`.
-- `<carte>place.bin` : placement par salle (`1200`… = salle). Type 3 :
-  `[salle, pnj, x, y, z, angle]` ; type 5 : placement conditionnel ; type 6 : zone de
-  conversation ; type 19 : `[pnj, modèle .chr, animation]`… **[à documenter]**.
+- `<map>npc.bin`, type 3: `[id, gender, Japanese name (Shift-JIS, often missing),
+  model (n018a, s006…), ?]`.
+- `<map>place.bin`: placement per room (`1200`… = room). Type 3:
+  `[room, npc, x, y, z, angle]`; type 5: conditional placement; type 6: conversation
+  zone; type 19: `[npc, .chr model, animation]`… **[to be documented]**.
 
-## Partenaire : `Talk_NearestNpc` (`ov_017::021a4e88`)
+## Partner: `Talk_NearestNpc` (`ov_017::021a4e88`)
 
-Appelée avec 1 par la touche d'action (`Talk_FindPartner`, `ov_017::021a476c`, paramètre `1`)
-et avec 0 sans elle. Décompilée et relue sur la ROM européenne (constantes des mots littéraux
-`0x021a51a0` = `0x3244`, `0x021a4cdc` = `0x1922`) :
+Called with 1 by the action button (`Talk_FindPartner`, `ov_017::021a476c`, parameter `1`)
+and with 0 without it. Decompiled and re-read on the European ROM (literal word constants
+`0x021a51a0` = `0x3244`, `0x021a4cdc` = `0x1922`):
 
-- **Candidats** : les objets de PNJ (32 emplacements). Un PNJ est candidat quand
-  - **une de ses zones de conversation** (`place.bin` type 6, liste `+0x40` du nœud de
-    placement, dans l'ordre du fichier) contient le héros, **strictement** sur x et z :
-    `x < x_max ∧ z < z_max ∧ x > x_min ∧ z > z_min` (la hauteur n'est pas testée) ; ou
-  - le héros est à moins de `0x1800` (1,5) sur x **et** sur z du PNJ. Si le placement porte un
-    enregistrement de type 20 (`[f2, 0, f3, f1]`, `+0x5c` du nœud), le centre est décalé de
-    `(f2, f3)` et la portée devient `f1 + 0x1000` (portée de distance `f1 + 0x1400`).
-- **Choix** : l'angle entre la direction du héros et celle du PNJ
-  (`ov_017::021a4700` : `FX_Atan2` de la différence normalisée, puis
-  `fix32SignedAngleDistance`, en valeur absolue) doit être ≤ `0x3244` = **π** (`0x6488` =
-  2π) : aucun PNJ n'est donc écarté pour son angle, seul le plus **face** au héros gagne.
-  Un PNJ de zone est accepté dès que son angle n'est pas pire que le meilleur déjà retenu ;
-  un PNJ libre doit en plus avoir un genre ≠ 1 (**les « choses à examiner » ne se parlent que
-  depuis une zone**), être à moins de `0x1c00` (1,75, `VEC_Distance` en 3D) et faire
-  strictement mieux que le meilleur PNJ libre.
-- **Contexte** : l'identifiant de la zone du PNJ retenu, 0 pour un PNJ libre.
-- Les drapeaux de l'objet (`0x200`…) et l'état « héros occupé » (`func_020535c8`…) écartent
-  d'autres cas : **non modélisés**.
+- **Candidates**: the NPC objects (32 slots). An NPC is a candidate when
+  - **one of its conversation zones** (`place.bin` type 6, list `+0x40` of the placement
+    node, in file order) contains the hero, **strictly** on x and z:
+    `x < x_max ∧ z < z_max ∧ x > x_min ∧ z > z_min` (height is not tested); or
+  - the hero is less than `0x1800` (1.5) from the NPC on x **and** on z. If the placement carries a
+    type 20 record (`[f2, 0, f3, f1]`, `+0x5c` of the node), the center is offset by
+    `(f2, f3)` and the range becomes `f1 + 0x1000` (distance range `f1 + 0x1400`).
+- **Choice**: the angle between the hero's direction and the NPC's
+  (`ov_017::021a4700`: `FX_Atan2` of the normalized difference, then
+  `fix32SignedAngleDistance`, in absolute value) must be ≤ `0x3244` = **π** (`0x6488` =
+  2π): no NPC is therefore excluded for its angle, only the one most **facing** the hero wins.
+  A zone NPC is accepted as soon as its angle is no worse than the best already kept;
+  a free NPC must in addition have a gender ≠ 1 (**"things to examine" can only be talked to
+  from a zone**), be less than `0x1c00` away (1.75, `VEC_Distance` in 3D) and be
+  strictly better than the best free NPC.
+- **Context**: the identifier of the kept NPC's zone, 0 for a free NPC.
+- The object flags (`0x200`…) and the "hero busy" state (`func_020535c8`…) exclude
+  other cases: **not modeled**.
 
-`dq9_core::talk::nearest` reprend ces règles, avec deux écarts : la distance de 1,75 est
-mesurée au sol (les hauteurs des PNJ de l'application sont celles des placements, non
-recalées), et `local_b4` (la portée de distance) n'est pas conservée d'un PNJ au
-suivant (le jeu ne la réinitialise pas dans sa boucle : un PNJ à enregistrement 20 élargit
-la portée des suivants, une bizarrerie non reproduite). Pas de marqueur `port:` : la fonction
-n'est pas entièrement réimplémentée. Test `the_partner_is_in_range_and_the_most_faced` et
-`zones_give_the_context_and_things_need_them` (données synthétiques).
+`dq9_core::talk::nearest` reproduces these rules, with two deviations: the 1.75 distance is
+measured on the ground (the application's NPC heights are those of the placements, not
+re-snapped), and `local_b4` (the distance range) is not kept from one NPC to the
+next (the game does not reset it in its loop: an NPC with record 20 widens
+the range of the following ones, a quirk not reproduced). No `port:` marker: the function
+is not fully reimplemented. Tests `the_partner_is_in_range_and_the_most_faced` and
+`zones_give_the_context_and_things_need_them` (synthetic data).
 
-### Lancement de la conversation (`Talk_Start`, `ov_017::021a4cf0`)
+### Starting the conversation (`Talk_Start`, `ov_017::021a4cf0`)
 
-Le PNJ retenu est mis en `GameState+0x5724`, puis `Trig_Fire(événement 0)` reçoit
-`[0] = PNJ`, `[5] = contexte`. Aucun trigger ne tient (`Trig_Fire` rend 0) : la tâche de
-conversation démarre avec le contexte de la zone. Un trigger tient : seules ses actions
-différées s'exécutent, et c'est l'action `0x76` qui lance la conversation (avec son propre
-contexte). `dq9_core::field::Field::talk` rend `NoTrigger`, `Fired(événements)` ou
-`Unsupported(condition)` ; l'application démarre la conversation sur `NoTrigger` et sur un
-`Request::Talk` du PNJ, et transmet les autres événements (changement de carte, demandes
-non supportées avant l'interpréteur `.stb`).
+The kept NPC is stored in `GameState+0x5724`, then `Trig_Fire(event 0)` receives
+`[0] = NPC`, `[5] = context`. No trigger holds (`Trig_Fire` returns 0): the conversation
+task starts with the zone's context. A trigger holds: only its deferred actions
+run, and it is action `0x76` that starts the conversation (with its own
+context). `dq9_core::field::Field::talk` returns `NoTrigger`, `Fired(events)` or
+`Unsupported(condition)`; the application starts the conversation on `NoTrigger` and on a
+`Request::Talk` of the NPC, and forwards the other events (map change, requests
+unsupported before the `.stb` interpreter).
 
-## Fenêtre de message
+## Message window
 
-Sources : `MsgWin_Show` (`0x0204501c`), `MsgWin_Update` (`0x020659a0`, l'interpréteur des
-codes `0xFFxx`), `MsgWin_WrapLines` (`0x0206b984`), `MsgWin_ParseSpeakerName`
-(`0x0206ad84`), `Msg_ConsumeLeadingTags` (`0x0206a3d0`), `MsgWin_LoadFrames` (`0x0202f25c`) ;
-wiki Text-Markup (adresses USA, vérifiées une à une sur la ROM EU : EU = USA + `0x10`).
+Sources: `MsgWin_Show` (`0x0204501c`), `MsgWin_Update` (`0x020659a0`, the interpreter of
+`0xFFxx` codes), `MsgWin_WrapLines` (`0x0206b984`), `MsgWin_ParseSpeakerName`
+(`0x0206ad84`), `Msg_ConsumeLeadingTags` (`0x0206a3d0`), `MsgWin_LoadFrames` (`0x0202f25c`);
+Text-Markup wiki (USA addresses, checked one by one on the EU ROM: EU = USA + `0x10`).
 
-### Géométrie (écran 256 × 192)
+### Geometry (256 × 192 screen)
 
-| Fait | Source |
+| Fact | Source |
 |---|---|
-| fenêtre `(x, y, l, h) = (2, 0x74, 0xfc, 0x4a)` = `(2, 116, 252, 74)` ; 3 lignes (`+0x9a4 = 3`, `<GYOU=n>`) de 20 pixels (`+0x1864 = 0x14`), cellule de police 12 × 16 (`<MOJI=w,h>`) | `MsgWin_Show` (`MsgWin_SetRect(win, 2, 0x74, 0xfc, 0x4a)`) |
-| variante sans cadre : rectangle `(2, 0x92, 0xfc, 0x4a)`, `+0x19b1 = 0` | `MsgWin_SetFramelessRect` |
-| cadre = **8 morceaux 8 × 8** `data/ani/win0..7.spr` : coin haut-gauche, bord haut, coin haut-droit, bord droit, coin bas-droit, bord bas, coin bas-gauche, bord gauche ; palette de 4 couleurs par morceau, indice 0 transparent | `MsgWin_LoadFrames` (`sprintf("ARC:win%d.spr")`), contenu des fichiers |
-| chaque morceau a une marge transparente d'un pixel : ils se posent **tous les 6 pixels** (bords) sous les coins | motifs des 8 fichiers |
-| plaque de nom (`//Nom//`) : largeur `a + 26 − (a & 7)` avec `a` = avance du nom (somme des `largeur + 1`), hauteur 22 | `MsgWin_ParseSpeakerName` (`+0x934`, `+0x936`) |
-| `<CEN>` : octet `+0x19b8` ; `<WIN>` : `+0x19b1 = 0` (cadre non dessiné) ; `<RECT=x,y,l,h>` : rectangle (x ≤ 256, y ≤ 192, l et h négatifs → reste de l'écran) ; `<COLOR=r,g,b>` : couleur du texte en BGR555 (composantes bornées à 255, négative → 255) ; `<SKIP>` : `+0x19bb = 0` | `Msg_ConsumeLeadingTags` |
+| window `(x, y, w, h) = (2, 0x74, 0xfc, 0x4a)` = `(2, 116, 252, 74)`; 3 lines (`+0x9a4 = 3`, `<GYOU=n>`) of 20 pixels (`+0x1864 = 0x14`), font cell 12 × 16 (`<MOJI=w,h>`) | `MsgWin_Show` (`MsgWin_SetRect(win, 2, 0x74, 0xfc, 0x4a)`) |
+| frameless variant: rectangle `(2, 0x92, 0xfc, 0x4a)`, `+0x19b1 = 0` | `MsgWin_SetFramelessRect` |
+| frame = **8 pieces 8 × 8** `data/ani/win0..7.spr`: top-left corner, top edge, top-right corner, right edge, bottom-right corner, bottom edge, bottom-left corner, left edge; 4-color palette per piece, index 0 transparent | `MsgWin_LoadFrames` (`sprintf("ARC:win%d.spr")`), file contents |
+| each piece has a one-pixel transparent margin: they are laid **every 6 pixels** (edges) under the corners | patterns of the 8 files |
+| name plate (`//Name//`): width `a + 26 − (a & 7)` with `a` = name advance (sum of `width + 1`), height 22 | `MsgWin_ParseSpeakerName` (`+0x934`, `+0x936`) |
+| `<CEN>`: byte `+0x19b8`; `<WIN>`: `+0x19b1 = 0` (frame not drawn); `<RECT=x,y,w,h>`: rectangle (x ≤ 256, y ≤ 192, negative w and h → rest of the screen); `<COLOR=r,g,b>`: text color in BGR555 (components clamped to 255, negative → 255); `<SKIP>`: `+0x19bb = 0` | `Msg_ConsumeLeadingTags` |
 
-**[Hypothèses, non lues]** : marges du texte dans la fenêtre (12 et 10 pixels), largeur de
-césure (228), position de la plaque (6 pixels du bord gauche, 4 pixels de recouvrement),
-position et taille de la fenêtre Oui/Non, couleur de fond (bleu nuit translucide), choix de
-`arrow2.spr` pour la flèche d'attente, sens exact de `<CEN>` (boîte centrée verticalement,
-lignes centrées : `MessageCountLines` multiplie `lignes − 1` par la hauteur de ligne pour
-centrer la fenêtre). La capture d'une fenêtre dans melonDS n'a pas été faite : ces choix se
-corrigent d'après une capture, ils sont des constantes de `dq9-app/src/talk.rs`.
+**[Hypotheses, not read]**: text margins inside the window (12 and 10 pixels), wrap
+width (228), plate position (6 pixels from the left edge, 4 pixels of overlap),
+position and size of the Yes/No window, background color (translucent midnight blue), choice of
+`arrow2.spr` for the wait arrow, exact meaning of `<CEN>` (box vertically centered,
+lines centered: `MessageCountLines` multiplies `lines − 1` by the line height to
+center the window). A capture of a window in melonDS has not been done: these choices are
+to be corrected from a capture, they are constants of `dq9-app/src/talk.rs`.
 
-`*:` n'est **pas** retiré du flux : il est dessiné (glyphes `*` de 7 pixels puis `:` de 1
-pixel de la police). `MsgWin_ParseSpeakerName` cherche `//`, `*:` et `*<:>` : avec `//`, le nom
-et l'espace qui suit sont sautés ; avec `*:` seul l'octet `+0x912` vaut 3 (animation de la
-flèche **[inconnu]**). Le nom est lu à chaque page : il apparaît après `<PAGE>`
+`*:` is **not** removed from the stream: it is drawn (glyphs `*` of 7 pixels then `:` of 1
+pixel from the font). `MsgWin_ParseSpeakerName` looks for `//`, `*:` and `*<:>`: with `//`, the name
+and the following space are skipped; with `*:` only byte `+0x912` is set to 3 (arrow
+animation **[unknown]**). The name is read on each page: it appears after `<PAGE>`
 (`//Cap<1>n Max Meddlin//` …).
 
-### Mise en page (`MsgWin_WrapLines`)
+### Layout (`MsgWin_WrapLines`)
 
-Avance d'un glyphe = crénage + largeur + 1 ; un espace = largeur des espaces + 1. Quand le
-glyphe suivant dépasserait la largeur (`largeur_max < x + crénage + largeur`) et qu'une
-coupure a été vue, la ligne est coupée à la **dernière coupure** — après une espace (qui
-disparaît) ou après un glyphe `-` — et la fin passe à la ligne suivante. Sans coupure
-possible, le mot déborde. `\n`, `<PAGE>` et `//…// ` remettent la position à zéro.
-La quatrième ligne d'une page **fait défiler** la fenêtre (`+0x19b4`, `+0x1868`) : un pixel
-par tick jusqu'à la hauteur de ligne (20) puis `func_0206b61c` (EU `0x0206b62c`), sans
-attendre de touche **[hypothèse : un pixel par tick]**. `dq9-core` attend 20 pas, puis
-fait remonter les lignes d'un coup (pas de défilement lissé).
+Glyph advance = kerning + width + 1; a space = space width + 1. When the
+next glyph would exceed the width (`max_width < x + kerning + width`) and a
+break has been seen, the line is broken at the **last break** — after a space (which
+disappears) or after a `-` glyph — and the rest moves to the next line. With no possible
+break, the word overflows. `\n`, `<PAGE>` and `//…// ` reset the position to zero.
+The fourth line of a page **scrolls** the window (`+0x19b4`, `+0x1868`): one pixel
+per tick up to the line height (20) then `func_0206b61c` (EU `0x0206b62c`), without
+waiting for a button **[hypothesis: one pixel per tick]**. `dq9-core` waits 20 steps, then
+moves the lines up at once (no smooth scrolling).
 
-### Codes et états d'attente (`+0x9a0`)
+### Codes and wait states (`+0x9a0`)
 
-| Code | Effet lu dans `MsgWin_Update` |
+| Code | Effect read in `MsgWin_Update` |
 |---|---|
-| `0xFF01` `<END>`, `0xFF02` | état 0 : le texte reste, le jeu attend la touche puis ferme |
-| `0xFF03` `<CLOSE>` | état 0 puis fermeture immédiate (`func_02043204`, `func_02043124`) |
-| `0xFF0A` `<ADD>` | état 3 : la fenêtre reste pour le message suivant de la scène |
-| `0xFF0B` `<AUTO=n>` | état 4 : compte à rebours puis page suivante |
-| `0xFF0C`, `0xFF0D` | état 1 : attente de la touche (flèche), puis la page est effacée |
-| `0xFF1A` `<TIME=n>` | compte `+0x186c + 4 × slot` décrémenté à chaque tick |
-| `0xFF1D`, `0xFF1E`, `0xFF1F` | état 2 : attente de la touche (avec ou sans curseur) |
-| `0xFF04`–`0xFF07`, `0xFF08` | état 6 : choix ; `0xFF05` (`<NOYES>`) place le curseur sur Non ; réponse dans `+0x954` (haut/bas déplacent, A valide, B annule = −2) |
-| `0xFF14`–`0xFF17` | **aucune arme** dans l'interpréteur : simples repères |
-| `0xFF26`/`0xFF27`, `0xFF28`/`0xFF29` | `+0x19b1` (cadre) et `+0x19b8` (centrage) |
-| `0xFF2A`…`0xFF2F`, `0xFF0E`, `0xFF10`–`0xFF13`, `0xFF34`–`0xFF48`, `0xFF4B`… | tours du PNJ, ballons, secousse, quêtes, sons : **non modélisés** |
+| `0xFF01` `<END>`, `0xFF02` | state 0: the text stays, the game waits for the button then closes |
+| `0xFF03` `<CLOSE>` | state 0 then immediate close (`func_02043204`, `func_02043124`) |
+| `0xFF0A` `<ADD>` | state 3: the window stays for the scene's next message |
+| `0xFF0B` `<AUTO=n>` | state 4: countdown then next page |
+| `0xFF0C`, `0xFF0D` | state 1: wait for the button (arrow), then the page is cleared |
+| `0xFF1A` `<TIME=n>` | counter `+0x186c + 4 × slot` decremented on each tick |
+| `0xFF1D`, `0xFF1E`, `0xFF1F` | state 2: wait for the button (with or without cursor) |
+| `0xFF04`–`0xFF07`, `0xFF08` | state 6: choice; `0xFF05` (`<NOYES>`) places the cursor on No; answer in `+0x954` (up/down move, A confirms, B cancels = −2) |
+| `0xFF14`–`0xFF17` | **no handler** in the interpreter: plain markers |
+| `0xFF26`/`0xFF27`, `0xFF28`/`0xFF29` | `+0x19b1` (frame) and `+0x19b8` (centering) |
+| `0xFF2A`…`0xFF2F`, `0xFF0E`, `0xFF10`–`0xFF13`, `0xFF34`–`0xFF48`, `0xFF4B`… | NPC turns, balloons, shake, quests, sounds: **not modeled** |
 
-Sons du choix (détail et preuves dans [`sdat.md`](sdat.md)) : ouverture, effet 5 ; réponse,
-effet 1, sauf `<YESNO_NOTSE>` (`0xFF06`, aucune réponse) et `<YESNO_NOTSE_IIE>` (`0xFF07`,
-seconde réponse) ; B est silencieux. Le déplacement haut/bas ne joue aucun effet.
+Choice sounds (details and evidence in [`sdat.md`](sdat.md)): opening, effect 5; answer,
+effect 1, except `<YESNO_NOTSE>` (`0xFF06`, no answer) and `<YESNO_NOTSE_IIE>` (`0xFF07`,
+second answer); B is silent. Moving up/down plays no effect.
 
-**Les repères `<YES>`/`<NO>` sont des cibles de saut [hypothèse étayée]** : l'interpréteur
-les ignore en lecture linéaire, et les textes en alternent les branches (`<YESNO><YES>A<END>
-<NO>B<END>`, `<YESNO><NO>B<END><YES>A`). Après la réponse, `dq9-core` reprend la lecture
-**après le premier repère de la réponse qui suit la question**, la boîte effacée ; sans repère,
-elle reprend au prochain `<END>`. `<JP_x>` saute après `<LB_x>` (le moteur recherche le
-code `0xFFD0 + n` dans tout le flux) : des questions reviennent par ce moyen (« Voulez-vous
-une explication ? »). Test réel `every_npc_line_plays_to_its_end` : les 37 988 répliques
-anglaises (toutes les lignes de `<carte><lettre>0.gp2`) se compilent, se mettent en page et
-se jouent jusqu'à la fermeture, en répondant Oui et Non tour à tour (775 n'affichent aucun
-glyphe : `<END>` seul, `<ADD>`…).
+**The `<YES>`/`<NO>` markers are jump targets [supported hypothesis]**: the interpreter
+ignores them in linear reading, and the texts alternate their branches (`<YESNO><YES>A<END>
+<NO>B<END>`, `<YESNO><NO>B<END><YES>A`). After the answer, `dq9-core` resumes reading
+**after the first marker of the answer that follows the question**, the box cleared; with no marker,
+it resumes at the next `<END>`. `<JP_x>` jumps after `<LB_x>` (the engine searches for the
+code `0xFFD0 + n` in the whole stream): some questions repeat this way ("Do you want
+an explanation?"). Real test `every_npc_line_plays_to_its_end`: the 37,988 English
+lines (all the lines of `<map><letter>0.gp2`) compile, lay out and
+play until closing, answering Yes and No in turn (775 display no
+glyph: `<END>` alone, `<ADD>`…).
 
-### Vitesse du texte **[hypothèse]**
+### Text speed **[hypothesis]**
 
-`MsgWin_Update` avance de `ticks` caractères par appel (`+0x80 += ticks × 0x10`, retenue
-`>> 4`) ; `ticks` = `GetTickCount` (2 par mise à jour de 33 ms, `stb-natives.md`) : un
-glyphe par tick de 1/60 s. La touche d'action pendant la frappe affiche le texte jusqu'à
-la prochaine attente (hypothèse d'après `+0x19c5`, qui force 16 caractères par appel).
+`MsgWin_Update` advances `ticks` characters per call (`+0x80 += ticks × 0x10`, carry
+`>> 4`); `ticks` = `GetTickCount` (2 per 33 ms update, `stb-natives.md`): one
+glyph per 1/60 s tick. The action button during typing shows the text up to
+the next wait (hypothesis based on `+0x19c5`, which forces 16 characters per call).
 
-## Implémentation
+## Implementation
 
-- `dq9_formats::message::leading_tags` : balises de tête (`Msg_ConsumeLeadingTags`).
-- `dq9_core::talk` : `nearest`, `TalkCounts` (compteurs `NpcTalkCount`, remis à zéro de
-  la carte à l'entrée d'une carte, tous par `Track_Advance` sur un nouveau chapitre ou une
-  nouvelle étape, ceux d'un PNJ par l'action 0x6a ; portés par `trigger::State::talk_counts`),
-  `compile_message`/`layout`/`prepare` (les six passes avec
-  l'identité du héros — son nom et son sexe tirés de la sauvegarde, sinon « Hero » homme —
-  et les conditions sexe/solo, puis mise en page), `Dialogue::step` (une touche par pas fixe
-  de 60 Hz) et `Dialogue::view`.
-- Identité du héros : `dq9-app` la lit dans le slot courant de la sauvegarde
-  (`Save::current_slot`) et chez le premier personnage du groupe (indice `standby_count`),
-  comme le modèle du héros : nom `+0x140` en indices de glyphes de la police de message,
-  sexe `+0x174` bit 0 (0 homme, 1 femme, `characters.md`). `Talk::set_identity` reconstruit
-  les `Names` en reprenant le texte des glyphes, donc `<HERO>`, `<LEADER>` et `<ADDRESSEE>`
-  portent le nom du joueur et `<IF_HERO_MALE>`/`<IF_MALE>` suivent son sexe. Sans sauvegarde,
-  pour une nouvelle partie ou après une sauvegarde remplacée (rechargement Web), l'identité
-  par défaut « Hero » homme revient. Contrôlé sur les octets de la sauvegarde de démonstration
-  (`save.md`) : fiche `standby_count` 0, les indices de `+0x140` se décodent en « Adenine »
-  dans `fi_me.bin` et `+0x174` bit 0 vaut 1.
-- `dq9_render::ui` : atlas (police en alpha, morceaux de cadre, flèche), quads en pixels DS,
-  pipeline wgpu dessinant sur l'image 3D finie, dans le plus grand 4:3 de la cible.
-- `dq9-app/src/talk.rs` : choix de la réplique (`<carte><lettre>0.gp2`, `NNN_en.bin`,
-  `dialogue::select` avec l'état des triggers : étape, sous-étape, quêtes, jour/nuit), fenêtre,
-  plaque de nom, fenêtre Oui/Non ; entrées `Entrée`/`Espace`/`Z` (A), `Retour`/`X` (B),
-  haut/bas ; `--input` pour les captures.
+- `dq9_formats::message::leading_tags`: leading tags (`Msg_ConsumeLeadingTags`).
+- `dq9_core::talk`: `nearest`, `TalkCounts` (`NpcTalkCount` counters, the map's reset
+  on entering a map, all of them by `Track_Advance` on a new chapter or a
+  new step, an NPC's by action 0x6a; carried by `trigger::State::talk_counts`),
+  `compile_message`/`layout`/`prepare` (the six passes with
+  the hero's identity — name and gender taken from the save, otherwise male "Hero" —
+  and the gender/solo conditions, then layout), `Dialogue::step` (one button per fixed
+  60 Hz step) and `Dialogue::view`.
+- Hero identity: `dq9-app` reads it from the save's current slot
+  (`Save::current_slot`) and from the first party character (index `standby_count`),
+  like the hero model: name `+0x140` as glyph indices of the message font,
+  gender `+0x174` bit 0 (0 male, 1 female, `characters.md`). `Talk::set_identity` rebuilds
+  the `Names` from the glyph text, so `<HERO>`, `<LEADER>` and `<ADDRESSEE>`
+  carry the player's name and `<IF_HERO_MALE>`/`<IF_MALE>` follow their gender. Without a save,
+  for a new game or after a replaced save (Web reload), the default identity
+  male "Hero" comes back. Checked on the bytes of the demo save
+  (`save.md`): record `standby_count` 0, the indices of `+0x140` decode to "Adenine"
+  in `fi_me.bin` and `+0x174` bit 0 is 1.
+- `dq9_render::ui`: atlas (font in alpha, frame pieces, arrow), quads in DS pixels,
+  wgpu pipeline drawing over the finished 3D image, in the largest 4:3 of the target.
+- `dq9-app/src/talk.rs`: line choice (`<map><letter>0.gp2`, `NNN_en.bin`,
+  `dialogue::select` with the trigger state: step, substep, quests, day/night), window,
+  name plate, Yes/No window; inputs `Enter`/`Space`/`Z` (A), `Backspace`/`X` (B),
+  up/down; `--input` for captures.
 
-## Reste
+## Remaining
 
-- PNJ immobiles et tournés vers le héros pendant la conversation (`<N_TURN>` et
-  `TextConsumeLeadingTags` les gèrent : la rotation est `func_02033834`, l'objet modèle n'a pas
-  d'API d'orientation dans `AnimatedScene`) ; ballons `<EXC>`/`<QES>`.
-- Services (`<INN=n>`, `<SHOP=n>`…), quêtes (`<QUEST=n>`), sons, secousse, `<AUTO>`,
-  `<PAGE_T>` (attend la touche ici), `<ALL_RECOVER>`.
-- Les constantes de mise en page ci-dessus à confirmer sur une capture melonDS ; la langue
-  est l'anglais (`NNN_en.bin`), le nom du héros vient du slot courant de la sauvegarde
-  (défaut « Hero » sans sauvegarde) ; les conditions `<IF_…>` autres que sexe/solo prennent
-  leur première branche.
-- `<TC#>`, `<PLTT=#>`, `<W=#>`, `<CURSOR=#>`, `<TRI-L/R>`, `<LG>` : comptées dans les textes
-  anglais (`dq9re text --lang en`), `<TC…>` et `<TRI…>` n'y apparaissent jamais, `<PLTT=>`
-  4 fois, `<CURSOR=>` et `<LG>` 1 fois, `<W=>` 5 fois, toutes dans des chaînes de menus
-  (`profstr`, `str_bres`, `str_da12`…) : hors du chemin des répliques de PNJ et des textes
-  d'événements du prologue, non prises en charge ; la balise de tête réellement utilisée
-  par le prologue est `<CEN>`.
+- NPCs still and turned towards the hero during the conversation (`<N_TURN>` and
+  `TextConsumeLeadingTags` handle them: the rotation is `func_02033834`, the model object has no
+  orientation API in `AnimatedScene`); balloons `<EXC>`/`<QES>`.
+- Services (`<INN=n>`, `<SHOP=n>`…), quests (`<QUEST=n>`), sounds, shake, `<AUTO>`,
+  `<PAGE_T>` (waits for the button here), `<ALL_RECOVER>`.
+- The layout constants above to be confirmed on a melonDS capture; the language
+  is English (`NNN_en.bin`), the hero's name comes from the save's current slot
+  (default "Hero" without a save); `<IF_…>` conditions other than gender/solo take
+  their first branch.
+- `<TC#>`, `<PLTT=#>`, `<W=#>`, `<CURSOR=#>`, `<TRI-L/R>`, `<LG>`: counted in the English
+  texts (`dq9re text --lang en`), `<TC…>` and `<TRI…>` never appear there, `<PLTT=>`
+  4 times, `<CURSOR=>` and `<LG>` once, `<W=>` 5 times, all in menu strings
+  (`profstr`, `str_bres`, `str_da12`…): off the path of NPC lines and of the
+  prologue's event texts, not supported; the leading tag actually used
+  by the prologue is `<CEN>`.

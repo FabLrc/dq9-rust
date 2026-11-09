@@ -1037,7 +1037,7 @@ pub enum Request {
     /// 0x78: start the scripted battle `n` (the `eventbattle.bin` record whose index is `n`). The
     /// game fills the battle task `+0x3718` (`Trig_RunDeferred` case 0x78, `0x0206f82c`: battle
     /// number in `+0x28`, `n + 0x8005` in `+0x24`); its end fires trigger event 15 (won) or 16
-    /// (lost) with `n` in word 6 (`docs/re/trigger.md`, § Combats scriptés).
+    /// (lost) with `n` in word 6 (`docs/re/trigger.md`, § Scripted battles).
     Battle(u16),
     /// 0x79/0x89/0xe1 (room) and 0x85/0x8a/0xe2 (room and entry): leave for `room` (save
     /// `+0x3f8`, read back by condition 0x1fb); 0x7a/0x7b give the position (fixed point,

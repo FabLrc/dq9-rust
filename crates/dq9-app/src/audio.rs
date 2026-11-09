@@ -37,7 +37,7 @@ const EFFECT_CACHE: usize = 8;
 /// Handles of the scripts' effects (natives 728, 732).
 const HANDLES: usize = 16;
 /// The game's durations count 1/60 s (`GetEffectiveDeltaTime` is in milliseconds for the
-/// jingle's waits, the fades of the scripts are in frames **[hypothèse]**).
+/// jingle's waits, the fades of the scripts are in frames **[hypothesis]**).
 const TICK: f32 = 1.0 / 60.0;
 /// Ticks the music takes to fade before a jingle (`0x0209c850`: 20 frames), the wait before
 /// the jingle starts (800 ms), the wait after it ends (500 ms) and the fade back in (30

@@ -479,7 +479,7 @@ impl AnimatedScene {
     }
 
     /// Times the map NPC's scripted motion reached its end since it started. A sprite's
-    /// loops are not counted: its motion is taken as ended at once **[hypothèse]**.
+    /// loops are not counted: its motion is taken as ended at once **[hypothesis]**.
     pub fn npc_wraps(&self, id: u16) -> u32 {
         match self.npc_rigs.iter().find(|r| r.id == id) {
             Some(rig) => self

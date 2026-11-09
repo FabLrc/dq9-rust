@@ -1,333 +1,331 @@
-# SDAT : musique, jingles et effets sonores (séquenceur SSEQ, archives SSAR, banques, ondes)
+# SDAT: music, jingles and sound effects (SSEQ sequencer, SSAR archives, banks, waves)
 
-Statut : le conteneur, les SSEQ/SBNK/SWAR de `bgm.sdat`, les archives de séquences (SSAR) des
-effets de `se_norm.sdat`/`se_btl.sdat`, les joueurs et les groupes, le choix de la séquence jouée
-par une carte et les natives de son des scripts sont lus et vérifiés sur la ROM européenne
-(`YDQP`). Le séquenceur de `dq9-audio` est un port logiciel du pilote son de la DS, écrit
-d'après la documentation publiée ; **il n'a pas été comparé à l'oreille ni à melonDS** (voir
-« Non établi »).
+Status: the container, the SSEQ/SBNK/SWAR of `bgm.sdat`, the sequence archives (SSAR) of the
+effects in `se_norm.sdat`/`se_btl.sdat`, the players and groups, the choice of the sequence
+played by a map and the scripts' sound natives are read and verified on the European ROM
+(`YDQP`). The `dq9-audio` sequencer is a software port of the DS sound driver, written from
+the published documentation; **it has not been compared by ear nor against melonDS** (see
+"Not established").
 
-Code : `crates/dq9-formats/src/sdat.rs` (conteneur et fichiers), `bgm.rs` (quelle séquence pour
-quelle carte), `crates/dq9-audio` (séquenceur, mixeur multi-séquences, WAV),
-`crates/dq9-app/src/audio.rs` (gestionnaire de son), `cargo dq9re sseq|sdat|se` (rendu hors
-ligne et inspection).
+Code: `crates/dq9-formats/src/sdat.rs` (container and files), `bgm.rs` (which sequence for
+which map), `crates/dq9-audio` (sequencer, multi-sequence mixer, WAV),
+`crates/dq9-app/src/audio.rs` (sound manager), `cargo dq9re sseq|sdat|se` (offline rendering
+and inspection).
 
 ## Sources
 
-Dans l'ordre de `docs/ressources-externes.md` :
+In the order of `docs/external-resources.md`:
 
-- page [SDAT](https://github.com/DQIX/wiki/blob/main/SDAT.md) du wiki DQIX : conteneur, SYMB,
-  INFO, FAT, SSEQ, SBNK, SWAR, banques et ondes de `bgm.sdat` (sans licence : lue, pas copiée) ;
-- GBATEK « DS Sound » (formats et ADPCM) ; spécification Nitro Studio 2 de Gota7 (jeu de
-  commandes SSEQ) ;
-- [SSEQPlayer](https://github.com/kode54/SSEQPlayer) (kode54) et [FSS](https://github.com/fincs/FSS)
-  (fincs), tous deux WTFPL : tables de conversion (décibels, attaque, chute) et sémantique des
-  commandes, adaptées avec mention dans `tables.rs` et `player.rs` ;
-- la bibliothèque son de Nintendo liée au jeu est de la plate-forme : remplacée, pas traduite.
+- the [SDAT](https://github.com/DQIX/wiki/blob/main/SDAT.md) page of the DQIX wiki: container,
+  SYMB, INFO, FAT, SSEQ, SBNK, SWAR, banks and waves of `bgm.sdat` (no license: read, not
+  copied);
+- GBATEK "DS Sound" (formats and ADPCM); Gota7's Nitro Studio 2 specification (SSEQ command
+  set);
+- [SSEQPlayer](https://github.com/kode54/SSEQPlayer) (kode54) and [FSS](https://github.com/fincs/FSS)
+  (fincs), both WTFPL: conversion tables (decibels, attack, decay) and command semantics,
+  adapted with attribution in `tables.rs` and `player.rs`;
+- Nintendo's sound library linked into the game is platform code: replaced, not translated.
 
-## Ce que nous avons vérifié sur la ROM
+## What we verified on the ROM
 
-`crates/dq9-formats/tests/real_sdat.rs` (ignoré sans ROM) :
+`crates/dq9-formats/tests/real_sdat.rs` (ignored without ROM):
 
-| contrôle | résultat |
+| check | result |
 |---|---|
-| `data/sound/bgm.sdat` s'analyse ; séquences avec fichier | 64 |
-| chaîne séquence → banque → archives d'ondes | 64 / 64 se résolvent |
-| notes PCM des banques (toutes ADPCM IMA) | 2 079, toutes sur une onde existante qui se décode |
-| `mapbgm.bin` | 67 entrées (l'enregistrement de tête en annonce 67) |
-| musique de chaque carte du `maplist9.bin`, 4 heures du jour, drapeaux éteints/allumés | toujours une séquence qui a un fichier, ou aucune |
+| `data/sound/bgm.sdat` parses; sequences with a file | 64 |
+| sequence → bank → wave archives chain | 64 / 64 resolve |
+| PCM notes of the banks (all IMA ADPCM) | 2,079, all on an existing wave that decodes |
+| `mapbgm.bin` | 67 entries (the header record announces 67) |
+| music of every map in `maplist9.bin`, 4 times of day, flags off/on | always a sequence that has a file, or none |
 
-`crates/dq9-audio/tests/real_rom.rs` : chacune des 64 séquences produit, sur ses 10 premières
-secondes, des échantillons finis, sous la pleine échelle, et n'est pas silencieuse.
+`crates/dq9-audio/tests/real_rom.rs`: each of the 64 sequences produces, over its first 10
+seconds, finite samples, below full scale, and is not silent.
 
-## Le séquenceur
+## The sequencer
 
-### Temps
+### Timing
 
-Le pilote tourne **192 fois par seconde** ; chaque passage ajoute le tempo (BPM) à un compteur
-et joue un *tick* chaque fois qu'il atteint 240. Un tick vaut 1/48 de noire : à 120 BPM, 96
-ticks par seconde. Les durées de note, les attentes et les glissandos se comptent en ticks ; les
-enveloppes et les modulations se mettent à jour à chacun des 192 passages. Mesuré par test
-(`tempo_sets_the_note_length`) : une noire dure 0,500 s à 120 BPM et 0,250 s à 240.
+The driver runs **192 times per second**; each pass adds the tempo (BPM) to a counter and
+plays a *tick* each time it reaches 240. A tick is 1/48 of a quarter note: at 120 BPM, 96
+ticks per second. Note lengths, waits and glides are counted in ticks; envelopes and
+modulations update on each of the 192 passes. Measured by test
+(`tempo_sets_the_note_length`): a quarter note lasts 0.500 s at 120 BPM and 0.250 s at 240.
 
-### Commandes (octet de commande, arguments)
+### Commands (command byte, arguments)
 
-Tous les arguments multi-octets sont en petit-boutiste, sauf la longueur variable (7 bits par
-octet, poids fort d'abord, bit 7 = suite). Les décalages de saut comptent depuis le début du flux
-(`0x18` du fichier, soit `0x1C` sur toutes les séquences de la ROM).
+All multi-byte arguments are little-endian, except the variable length (7 bits per byte,
+most significant first, bit 7 = continuation). Jump offsets count from the start of the
+stream (`0x18` of the file, i.e. `0x1C` on all sequences of the ROM).
 
-| commande | rôle |
+| command | role |
 |---|---|
-| `00..7F n v d` | note de touche `n`, vélocité `v`, durée `d` (longueur variable) ; si « attente de note » est active la piste attend `d` ticks. **`d = 0` : la note est tenue** jusqu'à la fin de la séquence [hypothèse, voir plus bas] |
-| `80 d` | silence |
-| `81 p` | programme (instrument de la banque) |
-| `93 t o₂₄` | ouvre la piste `t` au décalage `o` |
-| `94 o₂₄` / `95 o₂₄` / `FD` | saut / appel / retour (8 niveaux) |
-| `D4 n` / `FC` | début de boucle (`n` passages, 0 = infini) / fin de boucle |
-| `FE m₁₆` | masque des pistes utilisées (ignoré : les pistes s'ouvrent par `93`) |
-| `FF` | fin de la piste |
-| `A0 min₁₆ max₁₆`, `A1 v`, `A2` | préfixes : dernier argument tiré au hasard, lu dans une variable ; `A2` n'exécute la commande suivante que si la condition est vraie |
-| `B0..B6 v x₁₆` | variable : =, +, −, ×, ÷, décalage, aléatoire ; `B8..BD` : comparaisons (==, ≥, >, ≤, <, ≠) qui posent la condition de `A2` |
-| `C0` / `C1` / `D5` | pan (0..127, 64 = centre) / volume de piste / expression |
-| `C2` | volume général de la séquence |
-| `C3` / `C4` / `C5` | transposition / pitch bend (signés) / amplitude du bend (demi-tons) |
-| `C7` / `C8` | attente de note / liaison (notes liées sur une même voix) |
-| `C9` / `CE` / `CF` | touche de portamento / portamento actif / durée du portamento |
-| `CA..CD`, `E0` | modulation : profondeur, vitesse, type (0 hauteur, 1 volume, 2 pan), amplitude, délai |
-| `D0..D3` | attaque, chute, maintien, relâche qui remplacent ceux de l'instrument |
+| `00..7F n v d` | note of key `n`, velocity `v`, length `d` (variable length); if "note wait" is active the track waits `d` ticks. **`d = 0`: the note is held** until the end of the sequence [hypothesis, see below] |
+| `80 d` | rest |
+| `81 p` | program (bank instrument) |
+| `93 t o₂₄` | opens track `t` at offset `o` |
+| `94 o₂₄` / `95 o₂₄` / `FD` | jump / call / return (8 levels) |
+| `D4 n` / `FC` | loop start (`n` passes, 0 = infinite) / loop end |
+| `FE m₁₆` | mask of used tracks (ignored: tracks open via `93`) |
+| `FF` | end of track |
+| `A0 min₁₆ max₁₆`, `A1 v`, `A2` | prefixes: last argument drawn at random, read from a variable; `A2` executes the next command only if the condition is true |
+| `B0..B6 v x₁₆` | variable: =, +, −, ×, ÷, shift, random; `B8..BD`: comparisons (==, ≥, >, ≤, <, ≠) that set the `A2` condition |
+| `C0` / `C1` / `D5` | pan (0..127, 64 = center) / track volume / expression |
+| `C2` | sequence master volume |
+| `C3` / `C4` / `C5` | transpose / pitch bend (signed) / bend range (semitones) |
+| `C7` / `C8` | note wait / tie (tied notes on the same voice) |
+| `C9` / `CE` / `CF` | portamento key / portamento on / portamento time |
+| `CA..CD`, `E0` | modulation: depth, speed, type (0 pitch, 1 volume, 2 pan), range, delay |
+| `D0..D3` | attack, decay, sustain, release overriding the instrument's |
 | `E1` | tempo (BPM, 16 bits) |
-| `E3` | balayage de hauteur |
-| `C6`, `D6` | priorité, affichage de variable : lus, sans effet |
+| `E3` | pitch sweep |
+| `C6`, `D6` | priority, variable print: read, no effect |
 
-Une commande inconnue arrête la piste ; une piste qui exécuterait 100 000 commandes dans un seul
-tick sans attendre est arrêtée (garde contre les boucles sans attente). Un flux aléatoire ne
-panique ni ne bloque (`garbage_streams_end_without_panic`).
+An unknown command stops the track; a track that would execute 100,000 commands in a single
+tick without waiting is stopped (guard against loops without waits). A random stream neither
+panics nor hangs (`garbage_streams_end_without_panic`).
 
-### Voix, enveloppe, volume
+### Voices, envelope, volume
 
-- Une voix par note, 32 au plus ; au-delà on reprend la plus silencieuse en relâche, sinon la
-  plus ancienne. L'instrument vient de la banque : note unique, jeu de percussions (une note par
-  touche) ou répartition par plages de touches (`Instrument::note`).
-- **Enveloppe** (unités 1/128 de 1/10 dB, de −723 × 128 à 0) : attaque `a ← a × taux / 256` avec
-  `taux = 255 − attaque` (table pour attaque ≥ 109), chute `a −= chute` jusqu'au niveau de
-  maintien, relâche `a −= relâche` jusqu'à −723 × 128 où la voix meurt. Chute et relâche :
-  `127 → 0xFFFF`, `126 → 0x3C00`, `< 50 → 2v + 1`, sinon `0x1E00 / (126 − v)`.
-- **Volume** : somme en 1/10 dB des `decibel_square` de la vélocité, du volume de piste, de
-  l'expression, du volume de la séquence (enregistrement INFO) et du volume général, plus
-  l'enveloppe et la modulation ; le gain linéaire est `10^(dB/200)`. `decibel_square(v)` =
-  `400·log10(v/127)` avec le plancher −722 (la table du SDK : −722, −721, −651, −601, −562…
-  retrouvés par test). **Pan** linéaire, centre à −6 dB sur chaque côté.
-- **Hauteur** : en 1/64 de demi-ton autour de la touche de base de l'onde ; pitch bend,
-  balayage et modulation s'y ajoutent. Mesuré par test : une onde de 32 échantillons à 32 728,5 Hz
-  sonne à 1 022,8 Hz sur sa touche de base et exactement une octave plus haut 12 touches
-  au-dessus (`notes_sound_at_their_pitch`).
-- **Ondes** : IMA-ADPCM décodé une fois par `Song::load` (toutes les ondes de la banque), lu en
-  interpolation linéaire, rebouclé au point de boucle. **PSG** : carré à 8 pas par cycle,
-  rapport cyclique 1/8 à 7/8, fréquence de la touche 60 = `16756991 / (8 × 0x1F46)` ;
-  **bruit** : registre à décalage 15 bits cadencé comme le PSG.
-- **Mixage** : les voix s'additionnent en `f32` stéréo au taux de l'hôte ; les gains de chaque
-  voix sont rampés linéairement entre deux mises à jour du pilote (pas de clic). La sortie
-  reçoit un gain de marge de 0,6 (−4,4 dB) puis un limiteur doux à partir de 0,8.
+- One voice per note, 32 at most; beyond that the quietest one in release is reused,
+  otherwise the oldest. The instrument comes from the bank: single note, drum set (one note
+  per key) or key-range split (`Instrument::note`).
+- **Envelope** (units of 1/128 of 1/10 dB, from −723 × 128 to 0): attack `a ← a × rate / 256`
+  with `rate = 255 − attack` (table for attack ≥ 109), decay `a −= decay` down to the sustain
+  level, release `a −= release` down to −723 × 128 where the voice dies. Decay and release:
+  `127 → 0xFFFF`, `126 → 0x3C00`, `< 50 → 2v + 1`, otherwise `0x1E00 / (126 − v)`.
+- **Volume**: sum in 1/10 dB of the `decibel_square` of velocity, track volume, expression,
+  sequence volume (INFO record) and master volume, plus envelope and modulation; linear gain
+  is `10^(dB/200)`. `decibel_square(v)` = `400·log10(v/127)` with floor −722 (the SDK table:
+  −722, −721, −651, −601, −562… recovered by test). Linear **pan**, center at −6 dB on each
+  side.
+- **Pitch**: in 1/64 semitone around the wave's base key; pitch bend, sweep and modulation
+  add to it. Measured by test: a 32-sample wave at 32,728.5 Hz sounds at 1,022.8 Hz on its
+  base key and exactly one octave higher 12 keys above (`notes_sound_at_their_pitch`).
+- **Waves**: IMA-ADPCM decoded once by `Song::load` (all waves of the bank), read with linear
+  interpolation, looped at the loop point. **PSG**: square wave with 8 steps per cycle, duty
+  cycle 1/8 to 7/8, key 60 frequency = `16756991 / (8 × 0x1F46)`; **noise**: 15-bit shift
+  register clocked like the PSG.
+- **Mixing**: voices are summed in stereo `f32` at the host rate; each voice's gains are
+  ramped linearly between two driver updates (no click). The output gets a headroom gain of
+  0.6 (−4.4 dB) then a soft limiter from 0.8.
 
-### Rendu hors ligne
+### Offline rendering
 
 ```powershell
-cargo dq9re sseq                                   # liste les séquences de bgm.sdat
-cargo dq9re sseq 5 --wav build/audio/bg005.wav     # intro + une boucle + 2 s de fondu
+cargo dq9re sseq                                   # lists the sequences of bgm.sdat
+cargo dq9re sseq 5 --wav build/audio/bg005.wav     # intro + one loop + 2 s fade
 cargo dq9re sseq --map 1100 --time 0 --wav build/audio/af-night.wav
 ```
 
-Mesures (release, 32 728 Hz, une passe de boucle puis 2 s de fondu) :
+Measurements (release, 32,728 Hz, one loop pass then 2 s fade):
 
-| séquence | tempo | pistes | octets de commandes | boucle atteinte à | durée du WAV | crête du mixage* | crête écrite | RMS | échantillons à pleine échelle |
+| sequence | tempo | tracks | command bytes | loop reached at | WAV length | mix peak* | written peak | RMS | full-scale samples |
 |---|---|---|---|---|---|---|---|---|---|
-| `BG_005` (Angel Falls, jour) | 90 BPM | 13 | 20 848 | 80,35 s | 82,35 s | 1,519 | 0,901 | 0,133 | 0 |
-| `BG_006` (Angel Falls, nuit) | 70 BPM | 13 | 7 656 | 58,32 s | 60,32 s | 0,820 | 0,492 | 0,095 | 0 |
+| `BG_005` (Angel Falls, day) | 90 BPM | 13 | 20,848 | 80.35 s | 82.35 s | 1.519 | 0.901 | 0.133 | 0 |
+| `BG_006` (Angel Falls, night) | 70 BPM | 13 | 7,656 | 58.32 s | 60.32 s | 0.820 | 0.492 | 0.095 | 0 |
 
-\* Avant gain de marge, à l'échelle du mixeur de la DS (1,0 = écrêtage matériel). Sur l'ensemble
-des séquences essayées, de 0,35 (`ME_005`) à 2,04 (`BG_007`) : la DS écrête sur les plus fortes,
-ce que le gain de marge et le limiteur évitent ici. L'équivalence exacte de nos gains avec le
-mélange matériel (diviseurs de volume des canaux) est **[hypothèse]**.
+\* Before headroom gain, at the DS mixer scale (1.0 = hardware clipping). Over all sequences
+tried, from 0.35 (`ME_005`) to 2.04 (`BG_007`): the DS clips on the loudest ones, which the
+headroom gain and the limiter avoid here. The exact equivalence of our gains with the
+hardware mix (channel volume dividers) is **[hypothesis]**.
 
-## Quelle séquence joue sur une carte
+## Which sequence plays on a map
 
-Trouvé dans le code ARM9 (Ghidra, adresses européennes) :
+Found in the ARM9 code (Ghidra, European addresses):
 
-1. `0x0209cd60` (`Bgm_SequenceForMap`) reçoit l'id de carte. Cas particulier des ids
-   5900 à 5999 : si l'octet `+0x2788` de l'objet de zone vaut 0 et que son demi-mot `+0x2786`
-   vaut 1900, l'id devient 1900 : **non modélisé** **[inconnu]** (ce que sont ces champs n'est
-   pas lu).
-2. Il lit l'enregistrement de la carte (`0x02099960`, voir `maplist.md`) : `+0xD` bits 0-6, la
-   **fente musique** (slot 6), passe par `0x0209cb00` (`Bgm_SlotToSequence`).
-3. `0x0209cb00` : fente ≥ 47 → −1 ; fente → `g_BgmSlotTable` (`0x020e8ee8`, 47 octets signés, vérifiés
-   sur la ROM : l'identité sauf 0, 9, 25, 39 et 42 qui valent −1) ; **la nuit** (heure du jour 0
-   dans `LightingManager+0x98`) 3 devient 4 et 5 devient 6 ; la fente 14 (régions de champ)
-   devient 16 sous une condition globale (`0x0202ae28`/`0x0202b7e8`, objet non identifié)
-   **[inconnu]** : `dq9-formats` garde 14.
-4. Enfin `0x0209cc4c` (`Bgm_FindOverride`) parcourt `data/bin/mapbgm.bin` : une entrée est un mot
-   de 32 bits (id de carte bits 0-15, séquence bits 16-21, drapeau d'histoire bits 22-30,
-   bit 31 « de nuit seulement ») ; la première entrée de la carte dont le drapeau d'histoire est
-   levé remplace la séquence (0 = silence). Totalement réimplémenté : `bgm::Overrides::find`.
-5. Le chargeur `0x0209c3c4` (`Bgm_Select`) reçoit cet id tel quel : rien si c'est déjà la
-   séquence en cours, sinon il arrête l'ancienne et charge la nouvelle. L'id est l'indice dans
-   la liste des séquences de l'INFO de `bgm.sdat`, comme le wiki le déduisait de `maplist9.bin`
-   (ici confirmé par le code, plus seulement par les valeurs). La native 736
-   (`ov_001::02163aec`) enchaîne ces deux appels pour le lieu courant.
+1. `0x0209cd60` (`Bgm_SequenceForMap`) receives the map id. Special case of ids 5900 to
+   5999: if byte `+0x2788` of the zone object is 0 and its halfword `+0x2786` is 1900, the
+   id becomes 1900: **not modeled** **[unknown]** (what these fields are is not read).
+2. It reads the map record (`0x02099960`, see `maplist.md`): `+0xD` bits 0-6, the **music
+   slot** (slot 6), goes through `0x0209cb00` (`Bgm_SlotToSequence`).
+3. `0x0209cb00`: slot ≥ 47 → −1; slot → `g_BgmSlotTable` (`0x020e8ee8`, 47 signed bytes,
+   verified on the ROM: identity except 0, 9, 25, 39 and 42 which are −1); **at night** (time
+   of day 0 in `LightingManager+0x98`) 3 becomes 4 and 5 becomes 6; slot 14 (field regions)
+   becomes 16 under a global condition (`0x0202ae28`/`0x0202b7e8`, unidentified object)
+   **[unknown]**: `dq9-formats` keeps 14.
+4. Finally `0x0209cc4c` (`Bgm_FindOverride`) walks `data/bin/mapbgm.bin`: an entry is a
+   32-bit word (map id bits 0-15, sequence bits 16-21, story flag bits 22-30, bit 31 "night
+   only"); the first entry for the map whose story flag is set replaces the sequence
+   (0 = silence). Fully reimplemented: `bgm::Overrides::find`.
+5. The loader `0x0209c3c4` (`Bgm_Select`) receives this id as is: nothing if it is already the
+   current sequence, otherwise it stops the old one and loads the new one. The id is the index
+   in the sequence list of the `bgm.sdat` INFO, as the wiki deduced from `maplist9.bin` (here
+   confirmed by the code, no longer only by the values). Native 736 (`ov_001::02163aec`)
+   chains these two calls for the current location.
 
-Angel Falls : la carte 1100 (`M01`, fente 5) joue `BG_005` de jour et `BG_006` de nuit ; son
-église (1106, fente 10) `BG_010` ; la région autour (fente 14) `BG_014`. L'application prend
-l'heure `--time`/`--clock` (nuit par défaut : `BG_006`).
+Angel Falls: map 1100 (`M01`, slot 5) plays `BG_005` by day and `BG_006` by night; its church
+(1106, slot 10) `BG_010`; the surrounding region (slot 14) `BG_014`. The application takes the
+time from `--time`/`--clock` (night by default: `BG_006`).
 
-Ce qui n'est pas lu : l'appel du chargeur depuis le champ (`ov_017`, trois appels à
-`0x0209c3c4` en `0x0219efe4`, `0x021b19c8`, `0x021bcd34`) n'a pas été décompilé : l'application
-choisit la séquence à chaque chargement de carte, ce qui est l'effet attendu de 736, sans avoir
-prouvé que le jeu l'appelle au même instant.
+What is not read: the loader call from the field (`ov_017`, three calls to `0x0209c3c4` at
+`0x0219efe4`, `0x021b19c8`, `0x021bcd34`) has not been decompiled: the application chooses
+the sequence on each map load, which is the expected effect of 736, without having proven
+that the game calls it at the same moment.
 
-## Archives, joueurs et groupes (`se_norm.sdat`, `se_btl.sdat`)
+## Archives, players and groups (`se_norm.sdat`, `se_btl.sdat`)
 
-`dq9re sdat <bgm|se_norm|se_btl> [liste [indice]]` liste les huit listes d'enregistrements de
-l'INFO avec leurs noms (`Sdat::record`, `Sdat::name`). Relevé sur la ROM (cases / remplies) :
+`dq9re sdat <bgm|se_norm|se_btl> [list [index]]` lists the eight INFO record lists with their
+names (`Sdat::record`, `Sdat::name`). Read from the ROM (slots / filled):
 
-| liste | `bgm.sdat` | `se_norm.sdat` | `se_btl.sdat` |
+| list | `bgm.sdat` | `se_norm.sdat` | `se_btl.sdat` |
 |---|---|---|---|
-| séquences (SSEQ) | 82 / 64 | 0 | 0 |
-| archives de séquences (SSAR) | 0 | 462 / 279 | 936 / 481 |
-| banques | 82 / 60 | 462 / 279 | 936 / 481 |
-| archives d'ondes | 81 / 59 | 108 / 3 | 105 / 5 |
-| joueurs | 8 / 7 | 16 / 6 (numéros 10 à 15) | 17 / 5 (10 à 13 et 16) |
-| groupes | 82 / 64 | 462 / 279 | 936 / 481 |
+| sequences (SSEQ) | 82 / 64 | 0 | 0 |
+| sequence archives (SSAR) | 0 | 462 / 279 | 936 / 481 |
+| banks | 82 / 60 | 462 / 279 | 936 / 481 |
+| wave archives | 81 / 59 | 108 / 3 | 105 / 5 |
+| players | 8 / 7 | 16 / 6 (numbers 10 to 15) | 17 / 5 (10 to 13 and 16) |
+| groups | 82 / 64 | 462 / 279 | 936 / 481 |
 
-- **Enregistrement de séquence** (12 octets) : `+0` fichier, `+4` banque, `+6` volume, `+7`
-  priorité des canaux, `+8` priorité du joueur, `+9` **numéro du joueur**. Le wiki DQIX les
-  décale d'un cran (« pression polyphonique » en `+8`, « priorité du joueur » en `+9`) ; sur
-  la ROM `+9` vaut 2 pour `BG_001` et 0 pour `BG_002` à `BG_005`, et `+8` vaut 0 : seul le
-  décalage du SDK (`SNDSeqParam` : `cpr`, `ppr`, `ply`) donne des numéros de joueur existants
-  (10 à 15 pour tous les effets). Corrigé dans `SequenceInfo` (`channel_priority`,
-  `player_priority`, `player`).
-- **Joueur** (8 octets) : `+0` nombre de séquences simultanées (u16), `+2` masque des canaux
-  matériels (u16), `+4` tas (u32). `se_norm.sdat` : `PLAYER_NM` 4 séquences canaux 0-3,
-  `PLAYER_FT` 1 (0-3), `PLAYER_SR` 8 (canaux 4-15), `PLAYER_NN` 1, `PLAYER_EV` 4, `PLAYER_PO`
-  1 ; `bgm.sdat` : `PLAYER_BG12` 1 séquence (canaux 4-15), `BG16` 2 (0-15), `BG14` 2 (2-15),
-  `BGR` 1, `ME12` 1, `ME16` 2, `ME14` 2. Les numéros des joueurs de `bgm.sdat` (0 à 7) et de
-  `se_norm.sdat` (10 à 15) ne se recoupent pas : ils forment un seul espace de numérotation.
-- **Groupe** : un compte puis des entrées de 8 octets `{type u8, indicateurs u8, 0, 0, indice
-  u32}` ; types 0 séquence, 1 banque, 2 archive d'ondes, 3 archive de séquences, indicateurs
-  bit 0 le fichier, bit 1 la banque, bit 2 les ondes. Le groupe `n` de `se_norm.sdat` charge la
-  banque `n` et l'archive de séquences `n` (vérifié sur `GRP_SY_001` = 100 et `GRP_SP_ev05121` =
-  278) : la native 726 appelée avec un seul argument joue donc l'archive de même numéro.
-- **Archive de séquences (SSAR)** : `0x18` début du flux, `0x1C` nombre d'entrées, puis des
-  entrées de 12 octets `{décalage u32, banque u16, volume u8, priorité des canaux u8, priorité
-  du joueur u8, joueur u8, 0, 0}` ; un décalage `0xFFFFFFFF` marque une case vide. Les
-  décalages de piste et de saut se comptent depuis le début du flux (même repère que les
-  entrées). `Ssar::parse`. L'archive de base du champ, `se_norm.sdat` n° 100, a 205 cases dont 54
-  remplies (banque 100 pour toutes, priorité des canaux 96, priorité du joueur 64 sauf l'effet
-  152 à 54, joueurs 10 à 15) ; ses effets 200 à 204 sont ceux des portes (voir plus bas).
-- **Notes de longueur 0** : les effets s'écrivent `81 p  n 7f 00  ff` (programme, touche,
-  vélocité, longueur 0, fin de piste). Avec « tenue jusqu'à la fin de la séquence puis
-  relâchée » ces effets s'éteignaient aussitôt (rendu muet de l'effet 12, 10, 18, 200…). Le
-  séquenceur laisse donc jouer jusqu'au bout les notes tenues dont l'onde ne boucle pas ; une
-  onde qui boucle est relâchée à la fin des pistes **[hypothèse]**. Sur la ROM les 54 effets de
-  l'archive 100 sonnent et finissent d'eux-mêmes en moins de 20 s (test
-  `field_effects_sound_and_end`), les mesurés durent de 0,05 à 0,65 s.
+- **Sequence record** (12 bytes): `+0` file, `+4` bank, `+6` volume, `+7` channel priority,
+  `+8` player priority, `+9` **player number**. The DQIX wiki shifts them by one ("polyphonic
+  pressure" at `+8`, "player priority" at `+9`); on the ROM `+9` is 2 for `BG_001` and 0 for
+  `BG_002` to `BG_005`, and `+8` is 0: only the SDK layout (`SNDSeqParam`: `cpr`, `ppr`,
+  `ply`) gives existing player numbers (10 to 15 for all effects). Fixed in `SequenceInfo`
+  (`channel_priority`, `player_priority`, `player`).
+- **Player** (8 bytes): `+0` number of simultaneous sequences (u16), `+2` hardware channel
+  mask (u16), `+4` heap (u32). `se_norm.sdat`: `PLAYER_NM` 4 sequences channels 0-3,
+  `PLAYER_FT` 1 (0-3), `PLAYER_SR` 8 (channels 4-15), `PLAYER_NN` 1, `PLAYER_EV` 4,
+  `PLAYER_PO` 1; `bgm.sdat`: `PLAYER_BG12` 1 sequence (channels 4-15), `BG16` 2 (0-15),
+  `BG14` 2 (2-15), `BGR` 1, `ME12` 1, `ME16` 2, `ME14` 2. The player numbers of `bgm.sdat`
+  (0 to 7) and `se_norm.sdat` (10 to 15) do not overlap: they form a single numbering space.
+- **Group**: a count then 8-byte entries `{type u8, flags u8, 0, 0, index u32}`; types 0
+  sequence, 1 bank, 2 wave archive, 3 sequence archive, flags bit 0 the file, bit 1 the bank,
+  bit 2 the waves. Group `n` of `se_norm.sdat` loads bank `n` and sequence archive `n`
+  (verified on `GRP_SY_001` = 100 and `GRP_SP_ev05121` = 278): native 726 called with a
+  single argument therefore plays the archive with the same number.
+- **Sequence archive (SSAR)**: `0x18` stream start, `0x1C` number of entries, then 12-byte
+  entries `{offset u32, bank u16, volume u8, channel priority u8, player priority u8, player
+  u8, 0, 0}`; an offset of `0xFFFFFFFF` marks an empty slot. Track and jump offsets count from
+  the stream start (same reference as the entries). `Ssar::parse`. The field's base archive,
+  `se_norm.sdat` no. 100, has 205 slots of which 54 are filled (bank 100 for all, channel
+  priority 96, player priority 64 except effect 152 at 54, players 10 to 15); its effects 200
+  to 204 are the door ones (see below).
+- **Length-0 notes**: effects are written `81 p  n 7f 00  ff` (program, key, velocity,
+  length 0, end of track). With "held until the end of the sequence then released" these
+  effects died immediately (muted rendering of effects 12, 10, 18, 200…). The sequencer
+  therefore lets held notes whose wave does not loop play to the end; a looping wave is
+  released at the end of the tracks **[hypothesis]**. On the ROM the 54 effects of archive
+  100 sound and end on their own in under 20 s (test `field_effects_sound_and_end`), the
+  measured ones last 0.05 to 0.65 s.
 
-## Gestionnaire de son du jeu (natives 712 à 738)
+## The game's sound manager (natives 712 to 738)
 
-Le gestionnaire est le singleton `0x02108760`. Champs lus dans `Se_*` et `Bgm_*`
-(`re/symbols.txt`, section « Sound ») : `+0xb4` archive de base (100 sur le terrain, 101 en
-combat), `+0xbc` archive chargée par 730, `+0xc4` archive chargée par 726, `+0xc8` bits de
-verrou (bit 2 : native 735), `+0xc9` état du jingle, `+0xce` séquence du jingle.
+The manager is the singleton `0x02108760`. Fields read in `Se_*` and `Bgm_*`
+(`re/symbols.txt`, "Sound" section): `+0xb4` base archive (100 in the field, 101 in battle),
+`+0xbc` archive loaded by 730, `+0xc4` archive loaded by 726, `+0xc8` lock bits (bit 2:
+native 735), `+0xc9` jingle state, `+0xce` jingle sequence.
 
-| native | rôle | reproduit par |
+| native | role | reproduced by |
 |---|---|---|
-| 726 / 730 `(groupe[, archive])` | charge le groupe puis choisit l'archive (par défaut le numéro du groupe) à `+0xc4` / `+0xbc` (`Se_LoadGroup` `0x0205eb64`, `Se_LoadSecondaryGroup` `0x0205eae0`) | `Sound::LoadEffects` : l'archive est décodée (banque et ondes) et mise en cache |
-| 727 / 731 | rend le tas de DS | sans effet : les archives décodées restent en cache |
-| 728 / 732 `(indice[, &poignée])` | joue l'effet `indice` de l'archive `+0xc4` / `+0xbc` (`Se_PlayLoaded` `0x0205eba0`, `Se_PlaySecondary` `0x0205eb34`) sur une des 16 poignées des scripts (ou sur celle du gestionnaire sans adresse) | `Sound::PlayEffect`, `handle` −1 sans adresse |
-| 712 `(indice)` | joue sur l'archive **de base** (`Se_PlayBase` `0x0205eab0`) ; avec une adresse, même chose que 728 (`ov_001::02163564`) | `Sound::PlayBaseEffect` / `PlayEffect` |
-| 729 / 723 `(poignée, durée)`, 733 `(poignée)` | arrête l'effet, avec ou sans fondu | `Sound::StopEffect` |
-| 713 `(séquence)` | `Bgm_Select` puis arrêt | `Sound::SelectBgm` |
-| 714 | relance la séquence choisie au volume 127 (`Bgm_Restart` `0x0209c5f8`) | `Sound::RestartBgm` |
-| 715 `(volume, durée)` | volume de la musique et des joueurs 5 à 7 (`Bgm_SetVolume` `0x0209c2f0`), durée en images **[hypothèse]** | `Sound::BgmVolume`, fondu linéaire |
-| 721 `(durée)` | arrêt avec fondu (`Bgm_Stop` `0x0209c688`) | `Sound::StopBgm` |
-| 720 `(séquence)`, 725 `(&occupé)` | **jingle** : voir ci-dessous ; 725 est vrai tant que le jingle n'a pas fini | `Sound::Jingle`, `Signal::JingleEnded` |
-| 736 | `Bgm_SequenceForMap` du lieu puis `Bgm_Select` | `Sound::ZoneBgm` |
-| 737 `(séquence)` | arrête la musique et joue la séquence seule, sans reprise (`Bgm_PlaySequence` `0x0209c6e8`) ; ids observés 67 (`ME_018`) et 55 (`ME_006`) | `Sound::PlaySequence` |
-| 738 | remet tout à zéro, volume 127 (`Bgm_Reset` `0x0209c21c`) | `Sound::ResetBgm` |
-| 735 `(activé)` | verrou : sélection, relance et arrêt sont sans effet | `Sound::BgmEnabled` |
-| 734 `(mode)` | mode de mémoire audio (tas BGM `0x57000` / `0xa2000`, ouvre ou ferme l'archive de base) | sans équivalent (mémoire de la DS) |
-| 554 `(voix)` | `W+0x99c` : voix du bip du texte (0, 1, 2) | `Sound::TextVoice` |
+| 726 / 730 `(group[, archive])` | loads the group then selects the archive (by default the group number) at `+0xc4` / `+0xbc` (`Se_LoadGroup` `0x0205eb64`, `Se_LoadSecondaryGroup` `0x0205eae0`) | `Sound::LoadEffects`: the archive is decoded (bank and waves) and cached |
+| 727 / 731 | releases the DS heap | no effect: decoded archives stay cached |
+| 728 / 732 `(index[, &handle])` | plays effect `index` of archive `+0xc4` / `+0xbc` (`Se_PlayLoaded` `0x0205eba0`, `Se_PlaySecondary` `0x0205eb34`) on one of the scripts' 16 handles (or on the manager's own without an address) | `Sound::PlayEffect`, `handle` −1 without an address |
+| 712 `(index)` | plays on the **base** archive (`Se_PlayBase` `0x0205eab0`); with an address, same as 728 (`ov_001::02163564`) | `Sound::PlayBaseEffect` / `PlayEffect` |
+| 729 / 723 `(handle, duration)`, 733 `(handle)` | stops the effect, with or without fade | `Sound::StopEffect` |
+| 713 `(sequence)` | `Bgm_Select` then stop | `Sound::SelectBgm` |
+| 714 | restarts the selected sequence at volume 127 (`Bgm_Restart` `0x0209c5f8`) | `Sound::RestartBgm` |
+| 715 `(volume, duration)` | volume of the music and of players 5 to 7 (`Bgm_SetVolume` `0x0209c2f0`), duration in frames **[hypothesis]** | `Sound::BgmVolume`, linear fade |
+| 721 `(duration)` | stop with fade (`Bgm_Stop` `0x0209c688`) | `Sound::StopBgm` |
+| 720 `(sequence)`, 725 `(&busy)` | **jingle**: see below; 725 is true until the jingle has finished | `Sound::Jingle`, `Signal::JingleEnded` |
+| 736 | `Bgm_SequenceForMap` of the location then `Bgm_Select` | `Sound::ZoneBgm` |
+| 737 `(sequence)` | stops the music and plays the sequence alone, without resume (`Bgm_PlaySequence` `0x0209c6e8`); observed ids 67 (`ME_018`) and 55 (`ME_006`) | `Sound::PlaySequence` |
+| 738 | resets everything, volume 127 (`Bgm_Reset` `0x0209c21c`) | `Sound::ResetBgm` |
+| 735 `(enabled)` | lock: select, restart and stop have no effect | `Sound::BgmEnabled` |
+| 734 `(mode)` | audio memory mode (BGM heap `0x57000` / `0xa2000`, opens or closes the base archive) | no equivalent (DS memory) |
+| 554 `(voice)` | `W+0x99c`: text blip voice (0, 1, 2) | `Sound::TextVoice` |
 
-**Jingle** (720, `Bgm_UpdateJingle` `0x0209c850`, états 1 à 3 de `+0xc9`) : à la demande la
-musique descend à 0 en 20 images ; après 800 ms elle est mise en pause (non arrêtée) et la
-séquence du jingle démarre ; quand elle a fini, 500 ms plus tard la musique reprend avec un
-fondu de 30 images et `+0xc9` revient à 0 (c'est là que 725 passe à faux). `Audio::step`
-refait cette suite (48, 30 et 30 images de 1/60 s). Muet ou sans périphérique, la demande
-est terminée aussitôt (sinon le script attendrait pour toujours).
+**Jingle** (720, `Bgm_UpdateJingle` `0x0209c850`, states 1 to 3 of `+0xc9`): on request the
+music goes down to 0 in 20 frames; after 800 ms it is paused (not stopped) and the jingle
+sequence starts; when it has finished, 500 ms later the music resumes with a 30-frame fade
+and `+0xc9` goes back to 0 (that is when 725 becomes false). `Audio::step` replays this
+sequence (48, 30 and 30 frames of 1/60 s). Muted or without a device, the request is
+finished immediately (otherwise the script would wait forever).
 
-Sons des scripts du prologue (`dq9-app --stage 1.1 --headless-steps 30000 --press-every 20
---sound-wav build/audio/open.wav`, journal du son) : `ME_018` (id 67, native 737) pendant
-`ev21507` ; des effets 0 à 20 des archives chargées par les groupes de chaque scène (278 pour
-`ev01130`, effet 12) ; la musique `BG_005` relancée. Le WAV fait 123 s, crête 0,948. L'ordre et
-les durées ne sont pas comparés à melonDS.
+Sounds of the prologue scripts (`dq9-app --stage 1.1 --headless-steps 30000 --press-every 20
+--sound-wav build/audio/open.wav`, sound log): `ME_018` (id 67, native 737) during
+`ev21507`; effects 0 to 20 of the archives loaded by each cutscene's groups (278 for
+`ev01130`, effect 12); the music `BG_005` restarted. The WAV is 123 s long, peak 0.948. Order
+and durations are not compared against melonDS.
 
-### Sons du champ (archive de base, `se_norm.sdat` n° 100)
+### Field sounds (base archive, `se_norm.sdat` no. 100)
 
-Trouvés en décompilant les appelants de `Se_PlayBase` (`0x0205eab0`, une centaine de sites) :
+Found by decompiling the callers of `Se_PlayBase` (`0x0205eab0`, about a hundred sites):
 
-| indice | quand | où |
+| index | when | where |
 |---|---|---|
-| 10, 12, 11 | bip d'un caractère tapé, selon la voix (0, 1, 2) ; coupé quand `+0x19b2` vaut 0 (native 413, « texte muet » d'après le wiki) | `MsgWin_PlayTextBlip` `0x02045608`, appelée par `MsgWin_Update` quand le compteur `+0x912` dépasse 3 pendant la frappe : un bip tous les 4 pas **[hypothèse : un caractère par pas]** |
-| 6, 28 | `<EXC>` (`0xFF2E`) et `<QES>` (`0xFF2F`) ; le jeu fixe ensuite `+0x1959` à 60 (bulle, attente probable) : **attente non reproduite** | `MsgWin_Update` `0x020659a0` |
-| 5 | ouverture d'un choix (`<YESNO>`, `<UKEYAME>`…) | `MsgWin_Update` |
-| 1 | réponse à un choix : première et seconde réponses pour `0xFF04`/`0xFF05`/`0xFF08` ; aucune pour `<YESNO_NOTSE>` (`0xFF06`) ; première seulement pour `<YESNO_NOTSE_IIE>` (`0xFF07`) ; B (annulation, −2) est silencieux | `MsgWin_AnswerYesNo` `0x020678cc` (`0xFF04`..`0xFF07`) et `MsgWin_AnswerAcceptDecline` `0x020679e4` (`0xFF08`), appelés par la table `0x020f08b8` de `MsgWin_UpdatePrompt` `0x020676f0` |
-| 101 | `<ST=…>` (`0xFF1C`) avec un choix valide **[hypothèse]** | `MsgWin_Update`, non branché |
-| 14 | code `0xFF4B` (non nommé) | `MsgWin_Update`, non branché |
-| 200 à 204 | porte d'une région : `g_DoorSeTable[indicateurs & 0xF]` (`0x020e6e84`) | `Region_Fire` `0x02018310` **[hypothèse : le rôle de porte]** ; non branché (le passage de porte de l'application ne passe pas par cette fonction) |
-| 18, 19 (`0x12`, `0x13`) | ouverture et fermeture d'une porte animée (wiki, `func_02015554`) | non branché : la tâche de porte n'existe pas encore |
-| 50 (`0x32`) | nuage d'un PNJ qui disparaît | `0x020486a0`, non branché |
-| 96 (`0x60`) | changement d'état d'un objet du champ | `0x02034054`, non branché |
+| 10, 12, 11 | blip of a typed character, depending on the voice (0, 1, 2); cut when `+0x19b2` is 0 (native 413, "mute text" according to the wiki) | `MsgWin_PlayTextBlip` `0x02045608`, called by `MsgWin_Update` when counter `+0x912` exceeds 3 during typing: one blip every 4 steps **[hypothesis: one character per step]** |
+| 6, 28 | `<EXC>` (`0xFF2E`) and `<QES>` (`0xFF2F`); the game then sets `+0x1959` to 60 (bubble, probable wait): **wait not reproduced** | `MsgWin_Update` `0x020659a0` |
+| 5 | opening of a choice (`<YESNO>`, `<UKEYAME>`…) | `MsgWin_Update` |
+| 1 | answer to a choice: first and second answers for `0xFF04`/`0xFF05`/`0xFF08`; none for `<YESNO_NOTSE>` (`0xFF06`); first only for `<YESNO_NOTSE_IIE>` (`0xFF07`); B (cancel, −2) is silent | `MsgWin_AnswerYesNo` `0x020678cc` (`0xFF04`..`0xFF07`) and `MsgWin_AnswerAcceptDecline` `0x020679e4` (`0xFF08`), called through table `0x020f08b8` of `MsgWin_UpdatePrompt` `0x020676f0` |
+| 101 | `<ST=…>` (`0xFF1C`) with a valid choice **[hypothesis]** | `MsgWin_Update`, not wired |
+| 14 | code `0xFF4B` (unnamed) | `MsgWin_Update`, not wired |
+| 200 to 204 | region door: `g_DoorSeTable[flags & 0xF]` (`0x020e6e84`) | `Region_Fire` `0x02018310` **[hypothesis: the door role]**; not wired (the application's door transition does not go through this function) |
+| 18, 19 (`0x12`, `0x13`) | opening and closing of an animated door (wiki, `func_02015554`) | not wired: the door task does not exist yet |
+| 50 (`0x32`) | puff of an NPC that disappears | `0x020486a0`, not wired |
+| 96 (`0x60`) | state change of a field object | `0x02034054`, not wired |
 
-**Choix d'un message** : `MsgWin_UpdatePrompt` (`0x020676f0`) rend 0 (A sur la première
-réponse), 1 (A sur la seconde) ou −2 (B), puis appelle le gestionnaire du type de choix par la
-table statique `0x020f08b8` (deux entrées : `0x020678cc` pour `<YESNO>`, `<NOYES>`,
-`<YESNO_NOTSE>` et `<YESNO_NOTSE_IIE>` ; `0x020679e4` pour `<UKEYAME>`). Le premier lit le
-code du prompt dans le flux (`0xFF04` à `0xFF07`) et joue l'effet 1 de l'archive de base :
-`0xFF06` ne joue pour aucune réponse ; `0xFF07` joue pour la première et reste silencieux pour
-la seconde ; `0xFF04` et `0xFF05` jouent pour les deux. Le second (`<UKEYAME>`) joue
-toujours. Les deux sautent le bloc sonore pour B (−2), qui répond « non » sans effet. La case
-1 de l'archive 100 est bien remplie (décalage `0x144` du flux, banque 100, volume 61). Le
-déplacement haut/bas (`0x0205cedc` → `0x0205c580` → `0x0205bb94`, ou `0x02045750` quand
-`+0x19bc` est posé) ne joue aucun effet : aucun appelant de `Se_PlayBase` dans ce chemin.
+**Message choice**: `MsgWin_UpdatePrompt` (`0x020676f0`) returns 0 (A on the first answer),
+1 (A on the second) or −2 (B), then calls the handler of the choice type through the static
+table `0x020f08b8` (two entries: `0x020678cc` for `<YESNO>`, `<NOYES>`, `<YESNO_NOTSE>` and
+`<YESNO_NOTSE_IIE>`; `0x020679e4` for `<UKEYAME>`). The first reads the prompt code from the
+stream (`0xFF04` to `0xFF07`) and plays effect 1 of the base archive: `0xFF06` plays for no
+answer; `0xFF07` plays for the first and stays silent for the second; `0xFF04` and `0xFF05`
+play for both. The second (`<UKEYAME>`) always plays. Both skip the sound block for B (−2),
+which answers "no" without an effect. Slot 1 of archive 100 is indeed filled (stream offset
+`0x144`, bank 100, volume 61). Up/down movement (`0x0205cedc` → `0x0205c580` → `0x0205bb94`,
+or `0x02045750` when `+0x19bc` is set) plays no effect: no caller of `Se_PlayBase` on that
+path.
 
-**Pas** : `Object3D::AdvanceAnimations` (`0x02034ea0`) joue l'effet dont l'indice figure dans
-une liste liée de l'animation (`animation + 0x20`), sur l'archive `objet + 0x7a`, quand
-l'image dépasse l'image de la note : ce sont les bruits de pas et de gestes, portés par les
-données d'animation. Ni le format de cette liste ni l'archive de chaque personnage ne sont lus
-**[inconnu]** : les pas ne sont pas reproduits.
+**Footsteps**: `Object3D::AdvanceAnimations` (`0x02034ea0`) plays the effect whose index is
+in a linked list of the animation (`animation + 0x20`), on archive `object + 0x7a`, when the
+frame passes the note's frame: these are the footstep and gesture sounds, carried by the
+animation data. Neither the format of this list nor each character's archive is read
+**[unknown]**: footsteps are not reproduced.
 
-Ces effets se rendent par `dq9re se <indice> [--archive 100]` ; mesures (32 728 Hz, crête avant
-limiteur) : 5 (0,645 s, 0,327), 6 (0,609 s, 0,452), 10 (0,056 s, 0,183), 12 (0,073 s, 0,299),
-20 (0,151 s, 0,380), 28 (0,340 s, 0,325), 152 (0,071 s, 0,007).
+These effects are rendered by `dq9re se <index> [--archive 100]`; measurements (32,728 Hz,
+peak before limiter): 5 (0.645 s, 0.327), 6 (0.609 s, 0.452), 10 (0.056 s, 0.183), 12
+(0.073 s, 0.299), 20 (0.151 s, 0.380), 28 (0.340 s, 0.325), 152 (0.071 s, 0.007).
 
-## Sortie dans `dq9-app`
+## Output in `dq9-app`
 
-- `audio.rs` : au chargement d'une carte, `Audio::set_map` choisit la séquence (heure de la
-  phase du jour, drapeaux d'histoire de l'état des triggers), charge la chanson (cache de 6) et
-  la confie au mixeur ; une séquence déjà jouée n'est pas relancée ; un changement fait
-  disparaître l'ancienne en 0,4 s. Le moteur (`Engine`) est derrière un `Mutex` et produit le
-  mixage (`dq9_audio::Mixer`) dans le rappel du périphérique, au taux du périphérique ; si
-  celui-ci diffère de 48 kHz, le mixeur est refait et la musique relancée à l'ouverture.
-- `Mixer` : plusieurs `Player` à la fois (musique, jingle, effets), chacun sur le joueur de
-  son enregistrement. Un joueur plein (`PLAYER` : séquences simultanées) laisse sa place à la
-  séquence de priorité la plus faible, la plus ancienne à égalité ; si toutes celles qui jouent
-  ont une priorité strictement plus forte, la nouvelle est refusée **[hypothèse : la règle du
-  SDK n'est pas relue]**. Les canaux matériels (masques) ne sont pas modélisés.
-- Événements : `EventPlayer` rend `Outcome::Sound` ; `Audio::script_sound` l'exécute. Le texte
-  des messages (`dq9_core::talk::Sound`) passe par `Talk::take_sounds` puis `Audio::talk_sound`.
-  Chaque pas fixe appelle `Audio::step` (attentes du jingle).
-- `--sound-wav f.wav` avec `--headless-steps N` : le son est mixé hors ligne à 32 728 Hz
-  (aucun périphérique) et écrit en WAV ; le journal liste chaque effet de script.
-- Natif : `cpal` (flux ouvert au premier besoin ; `--mute` n'ouvre aucun périphérique ; `M`
-  coupe et rétablit). Web : `AudioContext` + `ScriptProcessorNode` créés et repris au premier
-  geste (clavier, souris) ; `?mute=1`.
+- `audio.rs`: on map load, `Audio::set_map` chooses the sequence (time of the day phase,
+  story flags from the trigger state), loads the song (cache of 6) and hands it to the mixer;
+  a sequence already playing is not restarted; a change fades the old one out in 0.4 s. The
+  engine (`Engine`) is behind a `Mutex` and produces the mix (`dq9_audio::Mixer`) in the
+  device callback, at the device rate; if that differs from 48 kHz, the mixer is rebuilt and
+  the music restarted on open.
+- `Mixer`: several `Player`s at once (music, jingle, effects), each on the player of its
+  record. A full player (`PLAYER`: simultaneous sequences) yields its place to the
+  lowest-priority sequence, the oldest on a tie; if all those playing have a strictly higher
+  priority, the new one is refused **[hypothesis: the SDK rule has not been re-read]**.
+  Hardware channels (masks) are not modeled.
+- Events: `EventPlayer` returns `Outcome::Sound`; `Audio::script_sound` executes it. Message
+  text (`dq9_core::talk::Sound`) goes through `Talk::take_sounds` then `Audio::talk_sound`.
+  Each fixed step calls `Audio::step` (jingle waits).
+- `--sound-wav f.wav` with `--headless-steps N`: sound is mixed offline at 32,728 Hz (no
+  device) and written as WAV; the log lists each script effect.
+- Native: `cpal` (stream opened on first need; `--mute` opens no device; `M` mutes and
+  unmutes). Web: `AudioContext` + `ScriptProcessorNode` created and resumed on the first
+  gesture (keyboard, mouse); `?mute=1`.
 
-## Non établi
+## Not established
 
-- **Écoute et comparaison** : aucune comparaison à l'oreille ni à une capture melonDS ; les
-  mesures ci-dessus sont des propriétés objectives (hauteur, durée, niveaux).
-- **Note de longueur 0** : tenue jusqu'à la fin de la séquence pour une onde qui boucle, jusqu'à
-  la fin de l'onde sinon. `BG_100` et `BG_101` n'ont de sens qu'ainsi (note `30 7f 00` suivie
-  de `C4` qui balaye la hauteur) ; la sémantique du SDK pour une longueur 0 n'a pas été relue
-  dans son code **[hypothèse]**.
-- Canaux matériels (16 ; PSG sur 8-13, bruit sur 14-15 non reproduits : 32 voix quelconques par
-  séquence), priorité des canaux (`C6`, `+7` des enregistrements), règle exacte de remplacement
-  d'un joueur plein, réglage du joueur (volumes 0..4, table `{0, 0.378, 0.669, 0.850, 1.0}` à
-  `0x020e8ec4` : on joue au maximum), unité des durées des fondus (prises en images de 1/60 s),
-  flux STRM, effets de combat (`se_btl.sdat`, archive de base 101).
-- Sons du champ non branchés : portes, bulles `<EXC>`/`<QES>` (attente de 60 images), pas et
-  gestes (listes de sons des animations). La validation d'un choix est branchée (effet 1) ;
-  le déplacement du curseur est silencieux d'après l'absence d'appelant de `Se_PlayBase` dans
-  son chemin, sans écoute pour le confirmer.
-- Portamento et balayage : durées prises sur la longueur de la note quand la durée est 0 ; la
-  formule exacte du SDK en pas de pilote n'est pas vérifiée **[hypothèse]**.
-- Les 25 maps de fente 80 donnent `BG_100` ; la fente 25 (sans fichier, 2 cartes) donne le
-  silence, comme dans la table.
+- **Listening and comparison**: no comparison by ear nor against a melonDS capture; the
+  measurements above are objective properties (pitch, duration, levels).
+- **Length-0 note**: held until the end of the sequence for a looping wave, until the end of
+  the wave otherwise. `BG_100` and `BG_101` only make sense that way (note `30 7f 00` followed
+  by `C4` sweeping the pitch); the SDK semantics for a length of 0 have not been re-read in
+  its code **[hypothesis]**.
+- Hardware channels (16; PSG on 8-13, noise on 14-15 not reproduced: 32 arbitrary voices per
+  sequence), channel priority (`C6`, `+7` of the records), exact replacement rule for a full
+  player, player setting (volumes 0..4, table `{0, 0.378, 0.669, 0.850, 1.0}` at
+  `0x020e8ec4`: we play at maximum), unit of fade durations (taken as 1/60 s frames), STRM
+  streams, battle effects (`se_btl.sdat`, base archive 101).
+- Field sounds not wired: doors, `<EXC>`/`<QES>` bubbles (60-frame wait), footsteps and
+  gestures (animation sound lists). Choice confirmation is wired (effect 1); cursor movement
+  is silent based on the absence of a `Se_PlayBase` caller on its path, without listening to
+  confirm it.
+- Portamento and sweep: durations taken from the note length when the duration is 0; the
+  SDK's exact formula in driver steps is not verified **[hypothesis]**.
+- The 25 maps with slot 80 give `BG_100`; slot 25 (no file, 2 maps) gives silence, as in the
+  table.

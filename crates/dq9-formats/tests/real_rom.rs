@@ -898,7 +898,7 @@ fn sprite_sheets_read() {
 }
 
 /// Every face and hair item (9020..=9033, 9000..=9013) names a part of `chara_pc.gp2` for both
-/// sexes, and the default hero's outfit is fully present (`docs/re/characters.md` § « Le héros »).
+/// sexes, and the default hero's outfit is fully present (`docs/re/characters.md` § "The hero").
 #[test]
 fn hero_parts_resolve() {
     use dq9_formats::hero::{HeroLook, ItemModels, Outfit, Sex};

@@ -11,7 +11,7 @@
 #
 # Only files with one of `-Extensions` (default: savestates) that are older than `-Days` and
 # at least `-MinSizeMB` are candidates. `-Keep` matches the file name or its path relative to
-# `-Root` with PowerShell wildcards. Files listed in any `build/evidence/<lot>/manifest.json`
+# `-Root` with PowerShell wildcards. Files listed in any `build/evidence/<batch>/manifest.json`
 # of the repository (written by scripts/evidence.ps1) are always kept, whatever `-Root`.
 # The script never deletes `.sav`, `.nds`, `.json`, `.jsonl` or images, and refuses a root
 # that is the repository itself.
@@ -29,16 +29,16 @@ $RootPath = (Resolve-Path (Join-Path $Repo $Root) -ErrorAction Stop).Path
 if ($RootPath -eq $Repo) { throw 'give a subdirectory such as build, not the repository root' }
 $Cutoff = (Get-Date).AddDays(-$Days)
 $MinBytes = [int64]($MinSizeMB * 1MB)
-# Evidence cited by the docs: every file listed in a lot manifest is protected.
+# Evidence cited by the docs: every file listed in a batch manifest is protected.
 $Evidence = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 $EvidenceRoot = Join-Path (Join-Path $Repo 'build') 'evidence'
 if (Test-Path -LiteralPath $EvidenceRoot -PathType Container) {
-    foreach ($LotDir in Get-ChildItem -LiteralPath $EvidenceRoot -Directory) {
-        $ManifestPath = Join-Path $LotDir.FullName 'manifest.json'
+    foreach ($BatchDir in Get-ChildItem -LiteralPath $EvidenceRoot -Directory) {
+        $ManifestPath = Join-Path $BatchDir.FullName 'manifest.json'
         if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) { continue }
         $Manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         foreach ($Entry in @($Manifest.files)) {
-            $Path = Join-Path $LotDir.FullName ($Entry.path -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+            $Path = Join-Path $BatchDir.FullName ($Entry.path -replace '/', [System.IO.Path]::DirectorySeparatorChar)
             [void]$Evidence.Add([System.IO.Path]::GetFullPath($Path))
         }
     }

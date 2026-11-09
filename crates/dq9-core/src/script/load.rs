@@ -1,6 +1,6 @@
 //! From an event number (action 0x77 of a trigger) to its script: the archive
 //! `data/event/evNNNNN.gp2` or `data/evspt_lv5/evNNNNN.gp2` and the entry numbers of the
-//! event lists (`docs/re/stb.md`, § Fichiers). No I/O: the files come from a [`Files`].
+//! event lists (`docs/re/stb.md`, § Files). No I/O: the files come from a [`Files`].
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -122,7 +122,7 @@ const SCENE_FLAG_IDS: std::ops::Range<u32> = 0x5208..0x9c40;
 /// `ctx+0x46` from the `Tbl_Run` counter (`EventRecord_Build`, `0x02071218`) and
 /// `EventRecord_Parse` (`0x02071498`) adds the base; the same value is read back from
 /// `ctx+0x52` on real melonDS states (21500 → 540 → flag 1450, …, 21596 → 551 → 1461;
-/// `docs/re/trigger.md`, § « Drapeaux globaux posés à l'ouverture »).
+/// `docs/re/trigger.md`, § "Global flags set at the opening").
 pub fn scene_flag(files: &dyn Files, event: u16) -> Option<u16> {
     let (_, _, rank) = event_record(files, event)?;
     scene_flag_of(event, rank)
@@ -232,13 +232,13 @@ pub fn stage_events(
     events
 }
 
-/// Where an event happens, from its event-list record (`stb.md`, § Fichiers).
+/// Where an event happens, from its event-list record (`stb.md`, § Files).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EventPlace {
     /// Map id (record value 4).
     pub map: u16,
     /// Position and angle of the record (values 12 to 15; all zero when the event has none,
-    /// the script then places everyone itself) **[hypothèse]**: the hero's start.
+    /// the script then places everyone itself) **[hypothesis]**: the hero's start.
     pub position: Option<([f32; 3], f32)>,
     /// Record value 21 (0 when the record is shorter), which `EventRecord_Build`
     /// (`0x02071218`) copies to the event task's `+0x50`.
@@ -251,7 +251,7 @@ impl EventPlace {
     /// down (`ov_017::021a316c`) when `+0x50` has bit 0 or bit 2, and `EventTask_Update`
     /// (`ov_017::021bc77c`) rebuilds it (`ov_017::021a2fa0`) before trigger event 11. Both
     /// skip bit 0 while `TestFlags00(0x1000)` is set, a flag not modelled (taken as clear,
-    /// **[hypothèse]**).
+    /// **[hypothesis]**).
     pub fn keeps_cast(&self) -> bool {
         self.flags & 0b101 != 0
     }

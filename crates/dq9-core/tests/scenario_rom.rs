@@ -1,5 +1,5 @@
 //! What chains the scenes of the prologue, on the real game data; skipped when the ROM is
-//! absent (`docs/re/trigger.md`, § Combats scriptés).
+//! absent (`docs/re/trigger.md`, § Scripted battles).
 
 use dq9_core::field::{self, Event, Field};
 use dq9_core::scenario;

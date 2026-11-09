@@ -103,7 +103,7 @@ impl TexelOp {
 /// `(block entry, placement id)` turns around its own origin. The handler sets the target
 /// angle to the placement's angle ± 90° (`g_DoorSwingAngle` 6434) and a speed of 409 angle
 /// units per update (`0x02018748`, `0x02018750`); the update that consumes them was not
-/// found, so the per-update interpolation is **[hypothèse]**.
+/// found, so the per-update interpolation is **[hypothesis]**.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Door {
     /// `Zone3D` block entry the door belongs to (the doorway's class).

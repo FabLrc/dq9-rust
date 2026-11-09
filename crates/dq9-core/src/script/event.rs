@@ -3,7 +3,7 @@
 //! read them (`docs/re/stb-natives.md`, `ov_001::0215ae1c…`); units are the game's.
 
 /// A display engine of the DS, as the fade natives address them (`docs/re/stb-natives.md`,
-/// § Temps et unités). Which one is the top screen is **[unknown]**.
+/// § Time and units). Which one is the top screen is **[unknown]**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Both,

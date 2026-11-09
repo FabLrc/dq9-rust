@@ -1,206 +1,206 @@
-# Fichiers 3D NITRO (`BMD0`, `BTX0` et animations)
+# NITRO 3D files (`BMD0`, `BTX0` and animations)
 
-Les modèles et textures des cartes sont des fichiers G3D du NITRO-System de Nintendo, rangés
-compressés (LZ10) dans les NARC `data/map/<code>.ambl` (textures `.nsbtx`) et
-`data/map/<code>.amdj` (modèles `.nsbmd`, animations `.nsbca`/`.nsbta`/`.nsbtp`/`.nsbma`).
-Les archives de personnages `data/**/*.chr` (NARC) rangent les mêmes fichiers **non
-compressés** (modèle, mouvements `.nsbca`, `.nsbma`, `.nsbta`, `.nsbtp`).
-Implémentation : `nds_rom::g3d` (sans E/S, wasm) ; `cargo dq9re model <fichier ou NARC>
-[--member NOM] [--anim MEMBRE --frame N] --out DIR` écrit chaque texture en PNG et chaque
-modèle en `.obj` + `.mtl`, posé et animé par `--anim` à l'image `N`.
+Map models and textures are G3D files of Nintendo's NITRO-System, stored
+compressed (LZ10) in the NARCs `data/map/<code>.ambl` (textures `.nsbtx`) and
+`data/map/<code>.amdj` (models `.nsbmd`, animations `.nsbca`/`.nsbta`/`.nsbtp`/`.nsbma`).
+The character archives `data/**/*.chr` (NARC) store the same files **uncompressed**
+(model, motions `.nsbca`, `.nsbma`, `.nsbta`, `.nsbtp`).
+Implementation: `nds_rom::g3d` (no I/O, wasm); `cargo dq9re model <file or NARC>
+[--member NAME] [--anim MEMBER --frame N] --out DIR` writes each texture as PNG and each
+model as `.obj` + `.mtl`, posed and animated by `--anim` at frame `N`.
 
 ## Sources
 
-- **[apicula](https://github.com/scurest/apicula)** (0BSD) : porté module par module (voir
-  l'en-tête de `crates/nds-rom/src/g3d/mod.rs`) : conteneur, dictionnaires, `MDL0`, `TEX0`,
-  `PAT0`, commandes de rendu, matrices « pivot » et « basis », décodage des textures,
-  commandes GPU, assemblage des primitives, disposition des pistes `JNT0`.
-- **Décompilation USA** (Unlicense), `src/NitroSDK/NSBXX/` : la bibliothèque G3D telle que le
-  jeu la lie (`JAC.cpp`, `MAT.cpp`, `MAM.cpp`, `PatternAnimation.cpp`,
-  `RenderCommandProcs.cpp`, `RenderCommands.cpp`) : évaluation des courbes, règles d'échelle,
-  matrices de texture. Adresses européennes dans `re/symbols.txt` (section « NITRO G3D
-  animation library ») et en commentaire du code.
-- **Ghidra sur l'ARM9 européen** : `VEC_Normalize` (`0x020c2f28` : diviseur matériel
-  `2^56 / |v|²`, racine `sqrt(4 |v|²)`) et `FX_DivAsync`/`FX_GetDivResult` (`0x020c2d00`,
-  `0x020c2c6c` : `(a << 32) / b`, arrondi à `2^-12`) ; tables d'indices des matrices pivot
-  `0x020e9270` (modèles) et `0x020e9294` (animations), identiques entre elles et à apicula.
-- **GBATEK** (« DS 3D Geometry Commands », « DS 3D Texture Formats », « DS 3D Texture
-  Coordinates ») : commandes GPU, formats de texture, matrice de texture en mode « source
-  coordonnées de texture », diviseur et racine matériels.
-- Noms des champs d'en-tête (`posScale`, `boxPosScale`, `sbcType`…) : structures
-  `NNSG3dResMdlInfo`, `NNSG3dResMatData` du SDK NITRO, tels que documentés par apicula et
-  sa documentation [nsbmd_docs](https://github.com/scurest/nsbmd_docs).
+- **[apicula](https://github.com/scurest/apicula)** (0BSD): ported module by module (see
+  the header of `crates/nds-rom/src/g3d/mod.rs`): container, dictionaries, `MDL0`, `TEX0`,
+  `PAT0`, render commands, "pivot" and "basis" matrices, texture decoding,
+  GPU commands, primitive assembly, `JNT0` track layout.
+- **USA decompilation** (Unlicense), `src/NitroSDK/NSBXX/`: the G3D library as the
+  game links it (`JAC.cpp`, `MAT.cpp`, `MAM.cpp`, `PatternAnimation.cpp`,
+  `RenderCommandProcs.cpp`, `RenderCommands.cpp`): curve evaluation, scaling rules,
+  texture matrices. European addresses in `re/symbols.txt` (section "NITRO G3D
+  animation library") and in code comments.
+- **Ghidra on the European ARM9**: `VEC_Normalize` (`0x020c2f28`: hardware divider
+  `2^56 / |v|²`, root `sqrt(4 |v|²)`) and `FX_DivAsync`/`FX_GetDivResult` (`0x020c2d00`,
+  `0x020c2c6c`: `(a << 32) / b`, rounded to `2^-12`); pivot matrix index tables
+  `0x020e9270` (models) and `0x020e9294` (animations), identical to each other and to apicula.
+- **GBATEK** ("DS 3D Geometry Commands", "DS 3D Texture Formats", "DS 3D Texture
+  Coordinates"): GPU commands, texture formats, texture matrix in "texture coordinate
+  source" mode, hardware divider and root.
+- Header field names (`posScale`, `boxPosScale`, `sbcType`…): NITRO SDK structures
+  `NNSG3dResMdlInfo`, `NNSG3dResMatData`, as documented by apicula and
+  its documentation [nsbmd_docs](https://github.com/scurest/nsbmd_docs).
 
-Tout ceci est du format et du code de bibliothèque Nintendo : cité par adresse, jamais
-compté comme fonction du jeu portée (pas de marqueur `port:`).
+All of this is Nintendo format and library code: cited by address, never
+counted as a ported game function (no `port:` marker).
 
-## Ce qui est lu
+## What is read
 
-| Élément | Type | Contenu |
+| Item | Type | Contents |
 |---|---|---|
-| Conteneur | `G3dFile` | en-tête NITRO (`BMD0`, `BTX0`, `BCA0`, `BTA0`, `BTP0`, `BMA0`), sections ; noms des animations (`AnimSection`) |
-| Dictionnaire | `read_dict` | arbre Patricia ignoré, entrées de taille fixe + noms de 16 octets (`Name`) |
-| `MDL0` | `Model` | en-tête complet (`up_scale`/`down_scale`, règle d'échelle, mode de matrice de texture, comptes, boîte englobante et `box_pos_scale`), matériaux, maillages, objets, matrices de liaison inverses, commandes de rendu, hiérarchie (`object_links`) |
-| Matériau | `Material` | `DIF_AMB`, `SPE_EMI`, `POLYGON_ATTR` + masque, `TEXIMAGE_PARAM` + masque, base de palette, taille de texture, `magW`/`magH`, matrice de texture (`tex_srt()`, `tex_matrix()`), noms de texture et de palette |
-| Objet | `Object` | translation, rotation 3×3 ou « pivot » compressée, échelle et son inverse ; `matrix()` = T·R·S |
-| Pose | `ObjectTransform`, `Model::rest_pose`, `Model::pose_matrices` | transformation exacte par objet puis matrice selon la règle d'échelle du modèle |
-| Commandes de rendu | `RenderOp` | charger/stocker une matrice, multiplier par un objet, peau (`Skin`), `ScaleUp`/`ScaleDown`, lier un matériau, dessiner un maillage |
-| Liste d'affichage | `DisplayList` → `GpuCmd` | toutes les commandes GPU de GBATEK ; positions en virgule fixe exacte (`Fx12`), normales 1.0.9, coordonnées de texture 1.11.4, couleurs RGB555 |
-| Géométrie | `Geometry` | `build` (pose de repos), `build_posed` (matrices d'objets données) : triangles indexés en espace modèle, normales, couleurs, UV normalisées brutes ; `apply_tex_matrices` |
-| `TEX0` | `Tex0` | textures (`TextureParams`, données, index des blocs 4×4) et palettes |
-| Décodage | `decode_texture` | RGBA8 pour les 7 formats : A3I5, 4, 16, 256 couleurs, 4×4 compressé, A5I3, direct |
-| `JNT0` | `JointAnimation` | pistes par objet, `track_transform`, `transforms`, `pose`/`pose_at` |
-| `SRT0` | `TexSrtAnimation` | pistes par matériau (échelle, rotation, translation), `srt`, `matrix` |
-| `MAT0` | `MaterialAnimation` | pistes par matériau (diffuse, ambiante, spéculaire, émission, alpha), `colors` |
-| `PAT0` | `Pattern` | noms de textures/palettes et images clés par matériau, `keyframe`, `at` |
-| Matrice de texture | `TexMatrix` | les 6 termes utiles de la matrice GPU, `apply` (texels), `normalized` (UV normalisées) |
+| Container | `G3dFile` | NITRO header (`BMD0`, `BTX0`, `BCA0`, `BTA0`, `BTP0`, `BMA0`), sections; animation names (`AnimSection`) |
+| Dictionary | `read_dict` | Patricia tree ignored, fixed-size entries + 16-byte names (`Name`) |
+| `MDL0` | `Model` | full header (`up_scale`/`down_scale`, scaling rule, texture matrix mode, counts, bounding box and `box_pos_scale`), materials, meshes, objects, inverse bind matrices, render commands, hierarchy (`object_links`) |
+| Material | `Material` | `DIF_AMB`, `SPE_EMI`, `POLYGON_ATTR` + mask, `TEXIMAGE_PARAM` + mask, palette base, texture size, `magW`/`magH`, texture matrix (`tex_srt()`, `tex_matrix()`), texture and palette names |
+| Object | `Object` | translation, 3×3 or compressed "pivot" rotation, scale and its inverse; `matrix()` = T·R·S |
+| Pose | `ObjectTransform`, `Model::rest_pose`, `Model::pose_matrices` | exact per-object transform then matrix according to the model's scaling rule |
+| Render commands | `RenderOp` | load/store a matrix, multiply by an object, skin (`Skin`), `ScaleUp`/`ScaleDown`, bind a material, draw a mesh |
+| Display list | `DisplayList` → `GpuCmd` | every GBATEK GPU command; positions in exact fixed-point (`Fx12`), normals 1.0.9, texture coordinates 1.11.4, RGB555 colors |
+| Geometry | `Geometry` | `build` (rest pose), `build_posed` (given object matrices): indexed triangles in model space, normals, colors, raw normalized UVs; `apply_tex_matrices` |
+| `TEX0` | `Tex0` | textures (`TextureParams`, data, 4×4 block index) and palettes |
+| Decoding | `decode_texture` | RGBA8 for the 7 formats: A3I5, 4, 16, 256 colors, compressed 4×4, A5I3, direct |
+| `JNT0` | `JointAnimation` | per-object tracks, `track_transform`, `transforms`, `pose`/`pose_at` |
+| `SRT0` | `TexSrtAnimation` | per-material tracks (scale, rotation, translation), `srt`, `matrix` |
+| `MAT0` | `MaterialAnimation` | per-material tracks (diffuse, ambient, specular, emission, alpha), `colors` |
+| `PAT0` | `Pattern` | texture/palette names and keyframes per material, `keyframe`, `at` |
+| Texture matrix | `TexMatrix` | the 6 useful terms of the GPU matrix, `apply` (texels), `normalized` (normalized UVs) |
 
-Différences avec apicula :
+Differences from apicula:
 
-- toutes les valeurs restent en virgule fixe exacte, `cgmath` est remplacé par `Fx12` et
-  `Mat4` (f32, convention vecteurs colonnes d'apicula) ; les animations suivent l'arithmétique
-  32/64 bits de la bibliothèque (interpolations, normalisation, produits vectoriels) ;
-- une section illisible fait échouer le fichier (apicula l'ignore) ; aucune lecture n'est
-  hors bornes : les échantillons sont lus à l'évaluation, une lecture hors du fichier rend une
-  erreur ;
-- `Material::params()` rend le `TEXIMAGE_PARAM` du matériau (apicula le masque par le masque
-  de `POLYGON_ATTR`, ce qui semble une erreur) ;
-- les commandes GPU de matrice (`MTX_PUSH/POP/STORE/IDENTITY/LOAD/MULT/TRANS`) sont aussi
-  exécutées, et la palette d'une couleur hors palette lit 0 comme chez apicula ;
-- l'échantillonnage des courbes d'apicula (« I made this up ») est remplacé par celui de la
-  bibliothèque ; `SRT0` (incomplet chez apicula) et `MAT0` (absent) sont complets.
+- all values stay in exact fixed-point, `cgmath` is replaced by `Fx12` and
+  `Mat4` (f32, apicula's column-vector convention); animations follow the library's
+  32/64-bit arithmetic (interpolations, normalization, cross products);
+- an unreadable section fails the file (apicula ignores it); no read is
+  out of bounds: samples are read at evaluation, a read outside the file returns an
+  error;
+- `Material::params()` returns the material's `TEXIMAGE_PARAM` (apicula masks it with the
+  `POLYGON_ATTR` mask, which looks like a bug);
+- GPU matrix commands (`MTX_PUSH/POP/STORE/IDENTITY/LOAD/MULT/TRANS`) are also
+  executed, and the palette of an out-of-palette color reads 0 as in apicula;
+- apicula's curve sampling ("I made this up") is replaced by the
+  library's; `SRT0` (incomplete in apicula) and `MAT0` (missing) are complete.
 
-Non porté : mélange de plusieurs animations d'articulations sur un même objet
-(`ProcessJointAnimationsOnBoneMatrix`, `0x020b3bbc`), animations de visibilité (`V\0AV`,
-absentes des fichiers lus ici), panneaux (billboards, commandes de rendu `0x07`/`0x08`),
-placage d'environnement (`TEXIMAGE_PARAM` génération 2 et 3), éclairage, export
-COLLADA/glTF, choix des animations par le jeu.
+Not ported: blending of several joint animations on one object
+(`ProcessJointAnimationsOnBoneMatrix`, `0x020b3bbc`), visibility animations (`V\0AV`,
+absent from the files read here), billboards (render commands `0x07`/`0x08`),
+environment mapping (`TEXIMAGE_PARAM` generation 2 and 3), lighting,
+COLLADA/glTF export, animation selection by the game.
 
 ## `up_scale`
 
-`posScale` (`up_scale`) n'est appliqué que par la commande de rendu `0x0b` (`ScaleUp`), que
-le convertisseur émet seulement quand l'échelle diffère de 1 : les modèles à `up_scale`
-= 1 n'en ont pas (M08M08F4, S14M01E1). Les sommets de M01M0003 sont stockés à 1/8.
+`posScale` (`up_scale`) is only applied by render command `0x0b` (`ScaleUp`), which
+the converter emits only when the scale differs from 1: models with `up_scale`
+= 1 have none (M08M08F4, S14M01E1). M01M0003's vertices are stored at 1/8.
 
-## Règles d'échelle (`scaling_rule`)
+## Scaling rules (`scaling_rule`)
 
-La commande de rendu `0x06` porte `(objet, parent, drapeaux)` ; la bibliothèque calcule la
-transformation de l'objet (`RenderCommand_6`, `0x020b4c9c` : animation ou pose de repos) puis
-l'envoie selon la règle du modèle (`BoneMatrixScaleCalculationProc_Type0/1/2` et
-`BoneMatrixDataSubmissionProc_Type0/1/2`, `0x020b9a3c`..`0x020ba3a0`) :
+Render command `0x06` carries `(object, parent, flags)`; the library computes the
+object's transform (`RenderCommand_6`, `0x020b4c9c`: animation or rest pose) then
+submits it according to the model's rule (`BoneMatrixScaleCalculationProc_Type0/1/2` and
+`BoneMatrixDataSubmissionProc_Type0/1/2`, `0x020b9a3c`..`0x020ba3a0`):
 
-- 0 (standard) : `T·R·S` ;
-- 1 (Maya, compensation d'échelle de segment) : un objet au drapeau 1 annule l'échelle de
-  son parent (`T·S(parent⁻¹)·R·S`), le drapeau 2 mémorise l'inverse de sa propre échelle ;
-- 2 (Softimage, « classic scale off ») : l'échelle cumulée des ancêtres est retirée puis
-  réappliquée dans le repère local, `S(cumul⁻¹)·T(t∘cumul)·R·S(cumul)·S`, en suivant la
-  hiérarchie dans l'ordre des commandes ; l'objet 0 démarre avec une échelle cumulée
-  identité (`SetUpRenderCommandHandler`, `0x020b4078`).
+- 0 (standard): `T·R·S`;
+- 1 (Maya, segment scale compensation): an object with flag 1 cancels the scale of
+  its parent (`T·S(parent⁻¹)·R·S`), flag 2 stores the inverse of its own scale;
+- 2 (Softimage, "classic scale off"): the accumulated ancestor scale is removed then
+  reapplied in the local frame, `S(acc⁻¹)·T(t∘acc)·R·S(acc)·S`, following the
+  hierarchy in command order; object 0 starts with an identity accumulated
+  scale (`SetUpRenderCommandHandler`, `0x020b4078`).
 
-Le fichier stocke chaque échelle avec son inverse (6 `fx32`). Dans la ROM : 6 113 modèles en
-règle 2, 126 en règle 0, aucun en règle 1. La règle 2 explique les deux modèles qui
-débordaient de leur boîte d'en-tête en `T·R·S` : M10M0600 et S14M01E1 imbriquent des objets
-mis à l'échelle ; avec la règle, tous les modèles tiennent dans leur boîte.
+The file stores each scale with its inverse (6 `fx32`). In the ROM: 6,113 models with
+rule 2, 126 with rule 0, none with rule 1. Rule 2 explains the two models that
+overflowed their header box with `T·R·S`: M10M0600 and S14M01E1 nest scaled
+objects; with the rule, every model fits in its box.
 
-## Animations d'articulations (`JNT0`, bloc `J\0AC`)
+## Joint animations (`JNT0`, block `J\0AC`)
 
-En-tête : nombre d'images (`u16`), de pistes (`u16`), drapeaux (`u32` : bit 0 interpoler
-entre images, bit 1 la dernière image revient vers la première ; vus : 0, 1, 3), décalages
-des matrices pivot et « basis », puis un décalage `u16` par piste. La piste `i` anime
-l'objet `i` ; l'octet haut de son mot de drapeaux désigne la piste réellement lue (toujours
-`i` dans la ROM). Drapeaux : bit 0 aucune composante (identité) ; translation bits 1-2
-(1 : absente, 2 : pose de repos, aucun : animée) et 3-5 constante par axe ; rotation bits 6-7
-(absente, repos) et 8 constante ; échelle bits 9-10 et 11-13 constante par axe.
+Header: frame count (`u16`), track count (`u16`), flags (`u32`: bit 0 interpolate
+between frames, bit 1 the last frame wraps to the first; seen: 0, 1, 3), offsets
+of the pivot and "basis" matrices, then one `u16` offset per track. Track `i` animates
+object `i`; the high byte of its flag word designates the track actually read (always
+`i` in the ROM). Flags: bit 0 no component (identity); translation bits 1-2
+(1: absent, 2: rest pose, none: animated) and 3-5 constant per axis; rotation bits 6-7
+(absent, rest) and 8 constant; scale bits 9-10 and 11-13 constant per axis.
 
-Une valeur animée est une constante (translation `fx32`, échelle `fx32` + inverse, rotation
-un indice) ou une courbe `(info, décalage)` : `info` bits 16-28 dernière image échantillonnée
-au pas réduit, 29 échantillons 16 bits, 30-31 `log2` du pas (1, 2 ou 4 images). Avec un pas
-de 2 ou 4, les images intermédiaires sont la moyenne de deux échantillons ou un mélange 3:1 ;
-les images au-delà de la dernière image réduite sont stockées une par une. Un indice de
-rotation désigne une matrice pivot (bit 15) ou « basis » (5 `u16` : deux lignes de 13 bits,
-la troisième par produit vectoriel). Les rotations mélangées sont renormalisées par
-`VEC_Normalize`. Un temps fractionnaire (1.19.12 images) n'est interpolé que si le bit 0 est
-mis, sinon il est arrondi à l'image inférieure ; le temps est borné à `[0, images)`
+An animated value is a constant (translation `fx32`, scale `fx32` + inverse, rotation
+an index) or a curve `(info, offset)`: `info` bits 16-28 last frame sampled
+at the reduced step, 29 16-bit samples, 30-31 `log2` of the step (1, 2 or 4 frames). With a step
+of 2 or 4, intermediate frames are the average of two samples or a 3:1 blend;
+frames past the last reduced frame are stored one by one. A rotation
+index designates a pivot matrix (bit 15) or a "basis" one (5 `u16`: two 13-bit rows,
+the third by cross product). Blended rotations are renormalized by
+`VEC_Normalize`. A fractional time (1.19.12 frames) is interpolated only if bit 0 is
+set, otherwise it is rounded down to the lower frame; time is clamped to `[0, frames)`
 (`JACAnimationProcessingCallback`, `0x020b78cc`).
 
-## Matrices de texture et `SRT0` (bloc `M\0AT`)
+## Texture matrices and `SRT0` (block `M\0AT`)
 
-Un matériau à `flags` bit 0 porte une échelle, une rotation (`sin`, `cos`) et une translation
-(en tailles de texture) ; dans la ROM, ces matériaux (2 297) et seulement eux ont la génération
-de coordonnées 1 (« source coordonnées de texture »). La bibliothèque en fait la matrice GPU
-selon `tex_mtx_mode` (`MaterialTextureMatrixLoadProc_Type0..3`) ; chaque variante spécialisée
-(sans rotation, sans échelle…) est la formule générale avec l'identité, d'où une formule par
-mode dans `TexMatrix::new`. Les 6 239 modèles de la ROM utilisent le mode 3 (Softimage XSI :
-rotation puis translation puis échelle, centrées sur le coin bas-gauche). `magW`/`magH`
-multiplient ensuite la première et la seconde ligne. Coordonnées en texels :
+A material with `flags` bit 0 carries a scale, a rotation (`sin`, `cos`) and a translation
+(in texture sizes); in the ROM, these materials (2,297) and only they have coordinate
+generation 1 ("texture coordinate source"). The library turns this into the GPU matrix
+according to `tex_mtx_mode` (`MaterialTextureMatrixLoadProc_Type0..3`); each specialized variant
+(no rotation, no scale…) is the general formula with identity, hence one formula per
+mode in `TexMatrix::new`. All 6,239 models of the ROM use mode 3 (Softimage XSI:
+rotation then translation then scale, centered on the bottom-left corner). `magW`/`magH`
+then multiply the first and second rows. Coordinates in texels:
 `s' = a s + c t + e/16`, `t' = b s + d t + f/16`.
 
-`SRT0` : nombre d'images, mot d'en-tête (`0x300`, `0x301`, `0x303` ; bits 0-1 comme `JNT0`
-**[hypothèse]**, `0x300` **[inconnu]**), puis un dictionnaire de pistes nommées par matériau,
-cinq courbes `(info, valeur)` : échelle s, échelle t, rotation, translation s, t. `info` :
-bits 0-15 dernière image au pas réduit, 28 échantillons 16 bits, 29 constante (dans
-`valeur`), 30-31 pas. L'animation remplace la transformation du matériau et force la
-génération 1 (`MATAnimationProcessingCallback`, `0x020b9668`).
+`SRT0`: frame count, header word (`0x300`, `0x301`, `0x303`; bits 0-1 as in `JNT0`
+**[hypothesis]**, `0x300` **[unknown]**), then a dictionary of tracks named by material,
+five curves `(info, value)`: scale s, scale t, rotation, translation s, t. `info`:
+bits 0-15 last frame at reduced step, 28 16-bit samples, 29 constant (in
+`value`), 30-31 step. The animation replaces the material transform and forces
+generation 1 (`MATAnimationProcessingCallback`, `0x020b9668`).
 
-## Couleurs (`MAT0`, bloc `M\0AM`)
+## Colors (`MAT0`, block `M\0AM`)
 
-Nombre d'images, mot d'en-tête (0, 1, 3), pistes par matériau : cinq mots (diffuse,
-ambiante, spéculaire, émission, alpha) : bits 0-15 décalage des échantillons ou valeur
-constante, 16-28 dernière image au pas réduit, 29 constante, 30-31 pas. Couleurs RGB555 en
-`u16`, mélangées canal par canal ; alpha en `u8` (0..31). Le résultat remplace `DIF_AMB`,
-`SPE_EMI` (en gardant le bit 15) et l'alpha de `POLYGON_ATTR` (`MaterialColors::apply`).
+Frame count, header word (0, 1, 3), per-material tracks: five words (diffuse,
+ambient, specular, emission, alpha): bits 0-15 sample offset or constant
+value, 16-28 last frame at reduced step, 29 constant, 30-31 step. RGB555 colors as
+`u16`, blended channel by channel; alpha as `u8` (0..31). The result replaces `DIF_AMB`,
+`SPE_EMI` (keeping bit 15) and the alpha of `POLYGON_ATTR` (`MaterialColors::apply`).
 
-## Motifs (`PAT0`)
+## Patterns (`PAT0`)
 
-Par piste : nombre d'images clés (`u16`), un `u16` inutilisé, un rapport (images clés par
-image, 1.3.12) et le décalage des clés. La recherche part de `rapport × image` puis recule et
-avance jusqu'à la dernière clé commençant au plus tard à l'image (`0x020b77a8`) ; nous
-bornons ce premier essai au nombre de clés, ce que la bibliothèque ne fait pas. Un indice de
-palette `0xFF` garde la palette courante.
+Per track: keyframe count (`u16`), an unused `u16`, a ratio (keyframes per
+frame, 1.3.12) and the key offset. The search starts at `ratio × frame` then steps back and
+forward to the last key starting no later than the frame (`0x020b77a8`); we
+clamp this first guess to the key count, which the library does not do. A palette
+index `0xFF` keeps the current palette.
 
-## Contrôles sur la ROM
+## Checks on the ROM
 
-`crates/nds-rom/tests/real_rom.rs`, `map_g3d_files` (tous les `.nsbmd`, `.nsbtx`, `.nsbtp`
-des NARC `data/map/*.ambl`, `*.amdj`, décompressés) :
+`crates/nds-rom/tests/real_rom.rs`, `map_g3d_files` (every `.nsbmd`, `.nsbtx`, `.nsbtp`
+of the NARCs `data/map/*.ambl`, `*.amdj`, decompressed):
 
-- 4 328 `BMD0` (un modèle chacun, sans `TEX0` intégré dans aucun), 737 `BTX0`, 525 `BTP0`
-  (525 animations de motif) : tout se lit ;
-- 36 632 maillages, 31 297 matériaux ; toutes les listes d'affichage s'exécutent :
-  1 365 561 sommets, 748 435 triangles ;
-- 22 827 textures, 22 822 palettes, toutes décodées (69 462 528 texels) : 15 532 en 16
-  couleurs, 3 498 A3I5, 3 445 A5I3, 331 en 256 couleurs, 16 en 4 couleurs, 5 directes,
-  aucune 4×4 compressée ;
-- palette d'une texture : `<nom>_pl`, sinon celle qu'un matériau ou une animation de
-  motif lui associe ; seule `c04m01gds28` (C04M05) n'en a aucune **[hypothèse]** texture
-  inutilisée ;
-- la boîte d'en-tête (× `box_pos_scale`, à 2 unités de virgule fixe près) contient les
-  sommets en pose de repos de tous les modèles (règle d'échelle appliquée).
+- 4,328 `BMD0` (one model each, none with an embedded `TEX0`), 737 `BTX0`, 525 `BTP0`
+  (525 pattern animations): everything parses;
+- 36,632 meshes, 31,297 materials; every display list executes:
+  1,365,561 vertices, 748,435 triangles;
+- 22,827 textures, 22,822 palettes, all decoded (69,462,528 texels): 15,532 in 16
+  colors, 3,498 A3I5, 3,445 A5I3, 331 in 256 colors, 16 in 4 colors, 5 direct,
+  no compressed 4×4;
+- a texture's palette: `<name>_pl`, otherwise the one a material or pattern
+  animation associates with it; only `c04m01gds28` (C04M05) has none **[hypothesis]** unused
+  texture;
+- the header box (× `box_pos_scale`, within 2 fixed-point units) contains the
+  rest-pose vertices of every model (scaling rule applied).
 
-`animation_files` (toutes les animations des NARC de cartes et des 2 683 `.chr`) :
+`animation_files` (every animation of the map NARCs and of the 2,683 `.chr`):
 
-- cartes : 299 `.nsbca`, 873 `.nsbta`, 512 `.nsbma`, 525 `.nsbtp` (compressés) ; `.chr` :
-  5 347 `.nsbca`, 692 `.nsbta`, 1 594 `.nsbma`, 45 `.nsbtp` (non compressés) ; une animation
-  par fichier : 5 646 `JNT0`, 1 565 `SRT0`, 2 106 `MAT0`, 570 `PAT0`, 98 684 pistes ;
-- chaque image de chaque piste s'évalue sans erreur, plus la demi-image des animations
-  interpolées : 6 732 887 évaluations ;
-- la piste `i` lit toujours ses propres données ;
-- chaque animation d'articulations pose les modèles de sa propre archive qui ont assez
-  d'objets : 2 965 poses (règle 2 avec matrices de texture en mode 3 : 2 955 ; règle 0 : 10),
-  toutes construites.
+- maps: 299 `.nsbca`, 873 `.nsbta`, 512 `.nsbma`, 525 `.nsbtp` (compressed); `.chr`:
+  5,347 `.nsbca`, 692 `.nsbta`, 1,594 `.nsbma`, 45 `.nsbtp` (uncompressed); one animation
+  per file: 5,646 `JNT0`, 1,565 `SRT0`, 2,106 `MAT0`, 570 `PAT0`, 98,684 tracks;
+- every frame of every track evaluates without error, plus the half-frame of interpolated
+  animations: 6,732,887 evaluations;
+- track `i` always reads its own data;
+- every joint animation poses the models of its own archive that have enough
+  objects: 2,965 poses (rule 2 with mode-3 texture matrices: 2,955; rule 0: 10),
+  all built.
 
-Essais de bout en bout :
+End-to-end runs:
 
-- `cargo dq9re model data/map/M01.amdj --member M01M0003.nsbmd` (village d'Angel Falls)
-  donne 17 objets, 39 matériaux, 50 maillages, 1 304 sommets, 692 triangles, boîte
-  x −44,1..0,76, y −2,5..15, z −22,6..36 (unités du monde) ; vue de dessus, l'OBJ montre les
-  chemins, l'herbe et les toits bleus. Les PNG de `M01M00T1.nsbtx` (`.ambl`) sont des
-  textures cohérentes (tuiles de toit, herbe, porte).
-- `--member M01M0001.nsbmd --anim M01M0001.nsbca --frame N` (la cascade : objets `fall`,
-  `nami_*`, `shibuki*`, `spr_*`, 181 images) : l'image 0 rend la pose de repos (boîte
-  x −10,46..18,51, z −21,70..−16,05) ; aux images 30 et 60, les gerbes `spr_*` glissent de
-  plusieurs unités (jusqu'à 5,9 entre les images 0 et 60) et la boîte s'étend à
-  z ..−15,84 puis ..−14,98.
-- `data/chara_sub/s000.chr --anim walk.nsbca` (personnage à peau, 15 objets, marche de
-  9 images bouclée) : pose de repos bras écartés (x ±9,39) ; images 0 et 4 en foulées
-  symétriques (x −7,61..7,66 puis −7,66..7,61), tous les sommets bougent (jusqu'à
-  5,9 unités) ; l'image 8 revient sur l'image 0.
+- `cargo dq9re model data/map/M01.amdj --member M01M0003.nsbmd` (Angel Falls village)
+  gives 17 objects, 39 materials, 50 meshes, 1,304 vertices, 692 triangles, box
+  x −44.1..0.76, y −2.5..15, z −22.6..36 (world units); seen from above, the OBJ shows the
+  paths, the grass and the blue roofs. The PNGs of `M01M00T1.nsbtx` (`.ambl`) are coherent
+  textures (roof tiles, grass, door).
+- `--member M01M0001.nsbmd --anim M01M0001.nsbca --frame N` (the waterfall: objects `fall`,
+  `nami_*`, `shibuki*`, `spr_*`, 181 frames): frame 0 renders the rest pose (box
+  x −10.46..18.51, z −21.70..−16.05); at frames 30 and 60, the `spr_*` sprays slide by
+  several units (up to 5.9 between frames 0 and 60) and the box extends to
+  z ..−15.84 then ..−14.98.
+- `data/chara_sub/s000.chr --anim walk.nsbca` (skinned character, 15 objects, looping
+  9-frame walk): rest pose arms spread (x ±9.39); frames 0 and 4 in symmetric
+  strides (x −7.61..7.66 then −7.66..7.61), every vertex moves (up to
+  5.9 units); frame 8 returns to frame 0.

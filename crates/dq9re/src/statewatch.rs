@@ -9,7 +9,7 @@
 //! appears at a frame can be tied to the scene or the input of that frame without another
 //! emulator run.
 //!
-//! The block layout is the save block one (`docs/re/save.md`, § « Bloc d'événements »):
+//! The block layout is the save block one (`docs/re/save.md`, § "Event block"):
 //! five tracks of `0x1c` bytes (chapter, step, substep, 13 chapter-flag bytes, 12
 //! step-flag bytes), `0x234` global-flag bytes, `0x66` quest-nibble bytes and the current
 //! track at `+0x332`.

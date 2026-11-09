@@ -1,35 +1,35 @@
-# Prompt de dispatch d'un worker
+# Worker dispatch prompt
 
-Le prompt est volontairement court : il renvoie aux fichiers versionnés (`regles-worker.md`,
-spec du lot) au lieu de recopier les règles, pour ne jamais dériver d'eux. Remplacer les champs
-`<lot>`, `<modèle>`, `<sha de base>`, `<chemin absolu de la spec>`, puis copier le bloc tel quel.
+The prompt is deliberately short: it points to the versioned files (`worker-rules.md`,
+batch spec) instead of copying the rules, so it never drifts from them. Replace the fields
+`<batch>`, `<model>`, `<base sha>`, `<absolute spec path>`, then copy the block as is.
 
 ```text
-Lot <lot> — harness OMP, modèle imposé : <modèle> (ne pas en changer ; sous-agents via `task`).
+Batch <batch> — OMP harness, mandatory model: <model> (do not change it; subagents via `task`).
 
-1. Lire d'abord docs/orchestration/regles-worker.md : il fait foi en cas de conflit.
-2. Lire la spec du lot, en lecture seule, par chemin absolu (fichier ignoré par git, absent du
-   worktree) : <chemin absolu de la spec>
-   (ex. C:\Users\hiroc\Documents\ProjetsDev\dq9-online\build\lots\<lot>.md).
-3. Lire AGENTS.md puis docs/status.md. Ne pas lire toute docs/roadmap.md.
+1. First read docs/orchestration/worker-rules.md: it prevails in case of conflict.
+2. Read the batch spec, read-only, by absolute path (file ignored by git, absent from the
+   worktree): <absolute spec path>
+   (e.g. <main-checkout>\build\batches\<batch>.md).
+3. Read AGENTS.md then docs/status.md. Do not read the whole docs/roadmap.md.
 
-Règles :
-- Partir de <sha de base>. Ne rebaser sur main que si le coordinateur le demande.
-- Ne modifier que les fichiers couverts par le bloc ```owns de la spec. Jamais rom/, tools/,
-  build/ (hors preuves), *.nds, *.sav, docs/status.md, docs/roadmap.md, README.md.
-- Pendant le travail : ./scripts/verify.ps1 -Fast. Une fois à la fin :
-  ./scripts/verify.ps1 -RequireRom (doit passer ; commiter le bloc d'avancement du README.md
-  s'il a été régénéré).
-- Preuves sous build/evidence/<lot>/, puis
-  ./scripts/evidence.ps1 -Lot <lot> -Command '<commande>' -Note '<contexte>'.
-- Commits sur la branche du worktree uniquement ; ne pas pousser, ne pas fusionner.
-- Bloqué ou plafond atteint : un seul `ask` au coordinateur, puis arrêt.
-- Terminer par `worker_done` au format de regles-worker.md § 5.
+Rules:
+- Start from <base sha>. Rebase on main only if the coordinator asks for it.
+- Only change files covered by the spec's ```owns block. Never rom/, tools/,
+  build/ (except evidence), *.nds, *.sav, docs/status.md, docs/roadmap.md, README.md.
+- While working: ./scripts/verify.ps1 -Fast. Once at the end:
+  ./scripts/verify.ps1 -RequireRom (must pass; commit the README.md progress block
+  if it was regenerated).
+- Evidence under build/evidence/<batch>/, then
+  ./scripts/evidence.ps1 -Batch <batch> -Command '<command>' -Note '<context>'.
+- Commits on the worktree branch only; do not push, do not merge.
+- Blocked or cap reached: one single `ask` to the coordinator, then stop.
+- Finish with `worker_done` in the format of worker-rules.md § 5.
 ```
 
-Lancement (depuis le checkout principal) :
+Launch (from the main checkout):
 
 ```powershell
-orca orchestration worker-start --spec "<prompt rempli>" --worktree new-top-level `
-  --repo id:8ef45a12-a7ec-4e6c-b9dc-c85007817f63 --name <lot> --model <modèle>
+orca orchestration worker-start --spec "<filled prompt>" --worktree new-top-level `
+  --repo id:8ef45a12-a7ec-4e6c-b9dc-c85007817f63 --name <batch> --model <model>
 ```

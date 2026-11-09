@@ -133,7 +133,7 @@ struct Cli {
     #[arg(long, requires = "headless")]
     auto: bool,
     /// With `--auto`: at each free control, have the conversation (or take the exit) that moves
-    /// the story on, instead of stopping: a player's stand-in (docs/app.md, § Nouvelle partie).
+    /// the story on, instead of stopping: a player's stand-in (docs/app.md, § New game).
     #[arg(long, requires = "auto")]
     pilot: bool,
     /// With `--auto`: writes the story state at every checkpoint as JSONL (the field names of

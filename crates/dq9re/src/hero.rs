@@ -1,5 +1,5 @@
 //! `dq9re hero`: the parts a character is drawn with (`dq9_formats::hero`,
-//! `docs/re/characters.md` § « Le héros »).
+//! `docs/re/characters.md` § "The hero").
 
 use std::path::PathBuf;
 

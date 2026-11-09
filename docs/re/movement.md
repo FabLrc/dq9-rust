@@ -1,255 +1,255 @@
-# Déplacement et sol du héros
+# Hero movement and ground
 
-`dq9-core` reproduit le déplacement du chef de groupe à pied, tel que le code de `ov_017` le
-calcule : arithmétique `fx32` (4096 = 1,0) au bit près, un pas par mise à jour du jeu, sans
-E/S. Quatre modules : [`fx`](../../crates/dq9-core/src/fx.rs) (diviseur et racine matériels,
-vecteurs,
-angles), [`movement`](../../crates/dq9-core/src/movement.rs) (`Hero`, d-pad, vitesse, glissement),
-[`collision`](../../crates/dq9-core/src/collision.rs) (maillages `.col2`, grille, rayon du sol,
-sphère contre les murs) et [`camera`](../../crates/dq9-core/src/camera.rs) (rotation `L`/`R`).
-La résolution ROM et NARC est fournie par l'appelant. Les ressources de la carte viennent de
-[`collision.md`](collision.md) (format) ; les portes, aires et warps sont testés par
-`dq9_core::field` ([`map-archive.md`](map-archive.md), « Portes, zones et changements de
-carte »), qui reçoit la pose du héros après `Hero::step`.
+`dq9-core` reproduces the on-foot movement of the party leader as the `ov_017` code computes
+it: bit-exact `fx32` arithmetic (4096 = 1.0), one step per game update, no
+I/O. Four modules: [`fx`](../../crates/dq9-core/src/fx.rs) (hardware divider and square root,
+vectors,
+angles), [`movement`](../../crates/dq9-core/src/movement.rs) (`Hero`, d-pad, speed, sliding),
+[`collision`](../../crates/dq9-core/src/collision.rs) (`.col2` meshes, grid, floor ray,
+sphere against walls) and [`camera`](../../crates/dq9-core/src/camera.rs) (`L`/`R` rotation).
+ROM and NARC resolution is supplied by the caller. Map resources come from
+[`collision.md`](collision.md) (format); doors, regions and warps are tested by
+`dq9_core::field` ([`map-archive.md`](map-archive.md), "Doors, zones and map
+changes"), which receives the hero's pose after `Hero::step`.
 
-## Ce qui est porté
+## What is ported
 
-Un `Hero::step(monde, touches, yaw_caméra, ticks)` suit `ov_017::0218e210` pour le chef de
-groupe, dans l'ordre du jeu :
+A `Hero::step(world, keys, camera_yaw, ticks)` follows `ov_017::0218e210` for the party
+leader, in game order:
 
-1. **Mise à jour générique** (`PartyMember_Update` `0x02037d98` → `Character_Update`
-   `0x020332bc`) : le modèle tourne vers le cap voulu de `0x324` par tick (arrêt exact sur la
-   cible, `0x02033720`) ; la vitesse monte de `0x28` par tick jusqu'à `0x189` (ou redescend
-   vers 0) ; **le déplacement du tick utilise la vitesse du tick précédent**, limitée à
-   `0x189 × (1 − |écart modèle/cap| / π)`, le long du cap voulu (pas de l'angle du modèle :
-   le drapeau `0x100` du héros) ; enfin la gravité retire `+0xac` à `y`
+1. **Generic update** (`PartyMember_Update` `0x02037d98` → `Character_Update`
+   `0x020332bc`): the model turns toward the wanted heading by `0x324` per tick (exact stop on
+   the target, `0x02033720`); speed rises by `0x28` per tick up to `0x189` (or falls back
+   toward 0); **the tick's displacement uses the previous tick's speed**, limited to
+   `0x189 × (1 − |model/heading gap| / π)`, along the wanted heading (not the model angle:
+   the hero's `0x100` flag); finally gravity subtracts `+0xac` from `y`
    (`0x0203349c`).
-2. **Lecture du pavé** (`Hero_ReadDirectionInput` `0x02038148`), *après* le mouvement : une
-   touche pressée ne déplace donc le héros qu'au tick suivant. Cap = `table[direction] + yaw
-   de la caméra`, table `0x020e90b8`. Les diagonales ont priorité, puis haut, bas, gauche,
-   droite (haut + bas = haut). Aucune touche : état au repos, la vitesse décroît.
-3. **Collision avec la carte** (`ov_017::0219344c`, voir plus bas), en deux demi-passes
-   lorsque le héros a parcouru plus de `0x333` (0,2 unité) pendant le tick ;
-   le jeu y arrive à 3 ticks : `0x189 × 3 = 0x497`, alors que 2 ticks (`0x312`) restent
-   sous le seuil.
-4. **Glissement le long du mur touché** : si le mur touché (triangle mémorisé en `+0xe4`) et
-   le déplacement restent supérieurs à `0x27`, le cap du mur (`FX_Atan2` de sa normale) est
-   comparé au cap voulu : à moins de ≈ 145° (`10294,4`) on garde ce cap ; au-delà de 90°
-   (`0x1922`) le cap devient celui du mur ± 6772,6 (≈ 95°) ; si le déplacement réel est à
-   moins de 643,4 (≈ 9°) de ce cap, le cap voulu devient celui-là (`0x0218e4a0`–`0x0218e5a4`,
-   flottants lus sur la ROM).
-5. **Bornes du déplacement** : un mouvement inférieur à 5 sur chaque axe est annulé ; la
-   distance parcourue après collision ne dépasse pas celle d'avant (`0x0218e5a8`–`0x0218e658`).
+2. **D-pad read** (`Hero_ReadDirectionInput` `0x02038148`), *after* the movement: a pressed
+   key therefore only moves the hero on the next tick. Heading = `table[direction] + camera
+   yaw`, table `0x020e90b8`. Diagonals have priority, then up, down, left,
+   right (up + down = up). No key: idle state, speed decreases.
+3. **Map collision** (`ov_017::0219344c`, see below), in two half-passes
+   when the hero has covered more than `0x333` (0.2 unit) during the tick;
+   the game gets there at 3 ticks: `0x189 × 3 = 0x497`, while 2 ticks (`0x312`) stay
+   below the threshold.
+4. **Sliding along the hit wall**: if the hit wall (triangle stored at `+0xe4`) and
+   the displacement remain above `0x27`, the wall heading (`FX_Atan2` of its normal) is
+   compared to the wanted heading: below ≈ 145° (`10294.4`) that heading is kept; beyond 90°
+   (`0x1922`) the heading becomes the wall's ± 6772.6 (≈ 95°); if the actual displacement is
+   within 643.4 (≈ 9°) of that heading, the wanted heading becomes it (`0x0218e4a0`–`0x0218e5a4`,
+   floats read from the ROM).
+5. **Displacement bounds**: a movement below 5 on each axis is cancelled; the
+   distance covered after collision does not exceed the one before (`0x0218e5a8`–`0x0218e658`).
 
-`ticks` est le nombre d'images écoulées depuis la dernière mise à jour du jeu
-(`GameState+0x3c4`, plafonné à 3, 2 au départ) : la logique du champ tourne à 30 Hz, 2 ticks
-par mise à jour. La boucle externe de `dq9-app` reste à 60 Hz (VBlanks) ; à chaque VBlank
-`App::run_steps` incrémente `tick` puis ne fait tourner `Hero::step(..., 2)`, `Field::step`,
-la démarche et l'instance de rendu que sur les `tick` impairs, la pose étant tenue à l'image
-intermédiaire. Audio, portes, messages, VM d'événements, caméra et `runtime.step` restent à
-60 Hz. `tick` est la phase VBlank libre du jeu : il n'est remis à 0 que par
-`start_new_game`, jamais par un chargement de carte, une sauvegarde ou un retour de
-contrôle. La vitesse en régime est la même (5,76 unités/s) et la montée en vitesse, par
-`0x28` par tick, aussi.
+`ticks` is the number of frames elapsed since the last game update
+(`GameState+0x3c4`, capped at 3, 2 at start): field logic runs at 30 Hz, 2 ticks
+per update. The outer loop of `dq9-app` stays at 60 Hz (VBlanks); on each VBlank
+`App::run_steps` increments `tick` then runs `Hero::step(..., 2)`, `Field::step`,
+the gait and the render instance only on odd `tick`s, the pose being held on the
+intermediate frame. Audio, doors, messages, event VM, camera and `runtime.step` stay at
+60 Hz. `tick` is the game's free-running VBlank phase: it is reset to 0 only by
+`start_new_game`, never by a map load, a save or a return of
+control. Steady-state speed is the same (5.76 units/s), and so is the speed ramp-up of
+`0x28` per tick.
 
-Cette cadence est vérifiée sur la ROM réelle par
-`field_cadence_holds_the_pose_and_matches_the_original_every_vblank` (`app.rs`) : à partir de
-la pose `(1,756 ; −3,041)`, angle brut 0, vitesse 0 de `X01M05`, les pas impairs donnent les
-angles bruts exacts 0, 1608, 3216, …, 12868 et les `z` fx de la capture originale, les pas
-pairs tenant la pose octet pour octet (caméra comprise). Le premier VBlank ne lit que le
-pavé, le premier déplacement est au troisième pas de champ (VBlank 5) et le demi-tour se
-cale sur la cible au VBlank 19 (revue
+This cadence is checked on the real ROM by
+`field_cadence_holds_the_pose_and_matches_the_original_every_vblank` (`app.rs`): from
+the pose `(1.756; −3.041)`, raw angle 0, speed 0 in `X01M05`, odd steps give the
+exact raw angles 0, 1608, 3216, …, 12868 and the fx `z` of the original capture, even
+steps holding the pose byte for byte (camera included). The first VBlank only reads the
+d-pad, the first displacement is on the third field step (VBlank 5) and the U-turn settles
+on the target at VBlank 19 (review
 `build/v01-20261107/review/cadence-30hz-field-review.md` §7).
 
-**[hypothèse]** `Field::step` (donc `step_doorways`) tourne lui aussi une fois par mise à
-jour, comme `Field_CheckRegions` : le compteur d'approche d'une porte, à
-`APPROACH_FRAMES = 3`, déclenche alors l'événement 17 au 4e appel, soit 8 VBlanks. La chaîne
-d'appel statique (`0x020d6cb4` → `ov_017::0218b688` → `0218cbd4` → `Field_CheckRegions`) ne
-donne pas la cadence de la boucle principale ; la mesure melonDS (4 VBlanks ⇒ champ à 60 Hz,
-8 ⇒ 30 Hz) reste à faire. Ne pas régater `field.step` seul sans cette mesure.
+**[hypothesis]** `Field::step` (hence `step_doorways`) also runs once per
+update, like `Field_CheckRegions`: the door approach counter, at
+`APPROACH_FRAMES = 3`, then fires event 17 on the 4th call, i.e. 8 VBlanks. The static call
+chain (`0x020d6cb4` → `ov_017::0218b688` → `0218cbd4` → `Field_CheckRegions`) does not
+give the main loop cadence; the melonDS measurement (4 VBlanks ⇒ field at 60 Hz,
+8 ⇒ 30 Hz) is still to be done. Do not re-gate `field.step` alone without that measurement.
 
-**`--screenshot`/`--frame`** ([`outils.md`](outils.md)) est une voie d'aperçu hors
-`App::run_steps` : elle garde `Hero::step(..., 1)` par image demandée et ne prétend pas
-reproduire la cadence. Les chemins de jeu (fenêtre, Web, pilote, rejeu) passent tous par
+**`--screenshot`/`--frame`** ([`tools.md`](tools.md)) is a preview path outside
+`App::run_steps`: it keeps `Hero::step(..., 1)` per requested frame and does not claim to
+reproduce the cadence. Game paths (window, Web, driver, replay) all go through
 `run_steps`.
 
-**[hypothèse]** les écarts d'échelonnage (hystérésis du sol de `0x28`, arrondis des demi-passes)
-sont négligeables à cette cadence.
+**[hypothesis]** scaling discrepancies (`0x28` ground hysteresis, half-pass rounding)
+are negligible at this cadence.
 
 ### Collision (`CollisionWorld::resolve`, `ov_017::0219344c` / `02192b48`)
 
-- Une *pièce* est un `.col2` placé (position et angle du placement). Le jeu travaille dans le
-  repère de la pièce : position − origine de la pièce, tournée de −angle (`MTX_RotY33_`,
-  `MTX_MultVec33`), sommets = entiers du fichier `<< shift`.
-- **Sélection des triangles** (`0x0204c040`, `Collision::query`) : boîte de la requête
-  `[x ± rayon/2, y − 10 … y + hauteur, z ± rayon/2]` (rayon `0x1000`, hauteur `0x1800` du héros,
-  `ov_017::0218f064`) ; test contre les bornes du maillage, puis cellules de la grille (voir
-  [`collision.md`](collision.md)) et boîte de chaque triangle (six quartets de son mot
-  d'attributs) ; 0x60 triangles au plus. La boîte n'est pas tournée avec la pièce (comme dans
-  le jeu) : **[hypothèse]** les pièces de sol n'ont pas d'angle.
-- **Sol** : rayon vertical de `y + 0x1800` à `y − 0xa000` contre les faces de normale `y >
-  0x800` ; la plus haute (hauteur interpolée), puis le point exact sur son plan (`0x02032090`,
-  t en 12 bits : quelques unités de bruit sur `y`, comme le jeu) + `0x199`. Le héros prend le
-  sol le plus haut des pièces s'il est à moins de `0x800` (0,5) sous lui, ou moins de `0x1000`
-  au-dessus ; `y` ne change que si l'écart dépasse `0x28`. Un sol plus de 0,5 sous lui ne le
-  porte pas : huit rayons de 0,25 unité autour confirment qu'il n'y a pas de sol proche, le
-  héros tombe (`+0xac` croît de `0x51` par image jusqu'à `0x1000` ; ramené à 0 au sol).
-  Aucun sol du tout : le héros reste en place (pas de chute dans le vide).
-- **Murs** (`0x020315c8`) : sphère de rayon `0x800` centrée à `y + 0x800`, contre les faces de
-  normale `y ≤ 0x800` ; première passe : segment du centre le long de −normale (rayon de la
-  sphère) ; si il traverse le triangle, le centre est poussé à `rayon` du plan ; seconde passe :
-  point le plus proche du triangle (`0x02031d30`) pour les bords et sommets. Un piège de coin
-  (normales presque égales, `0x800 < n·n' < 0xfd7`) renvoie la sphère à sa position précédente.
-- Les valeurs de `0x021d62d8`, `0x021d62f8` (huit rayons de bord), `0x020319e0`/`e4`, les
-  flottants du glissement et la table des caps sont lues par `tests/movement_rom.rs`.
+- A *piece* is a placed `.col2` (position and angle of the placement). The game works in the
+  piece frame: position − piece origin, rotated by −angle (`MTX_RotY33_`,
+  `MTX_MultVec33`), vertices = file integers `<< shift`.
+- **Triangle selection** (`0x0204c040`, `Collision::query`): query box
+  `[x ± radius/2, y − 10 … y + height, z ± radius/2]` (hero radius `0x1000`, height `0x1800`,
+  `ov_017::0218f064`); test against the mesh bounds, then grid cells (see
+  [`collision.md`](collision.md)) and the box of each triangle (six nibbles of its attribute
+  word); at most 0x60 triangles. The box is not rotated with the piece (as in
+  the game): **[hypothesis]** floor pieces have no angle.
+- **Ground**: vertical ray from `y + 0x1800` to `y − 0xa000` against faces with normal `y >
+  0x800`; the highest one (interpolated height), then the exact point on its plane (`0x02032090`,
+  12-bit t: a few units of noise on `y`, like the game) + `0x199`. The hero takes the
+  highest ground of the pieces if it is less than `0x800` (0.5) below him, or less than `0x1000`
+  above; `y` only changes if the gap exceeds `0x28`. A ground more than 0.5 below him does not
+  carry him: eight rays at 0.25 unit around confirm there is no nearby ground, the
+  hero falls (`+0xac` grows by `0x51` per frame up to `0x1000`; reset to 0 on the ground).
+  No ground at all: the hero stays in place (no falling into the void).
+- **Walls** (`0x020315c8`): sphere of radius `0x800` centered at `y + 0x800`, against faces with
+  normal `y ≤ 0x800`; first pass: segment from the center along −normal (sphere
+  radius); if it crosses the triangle, the center is pushed to `radius` from the plane; second pass:
+  closest point on the triangle (`0x02031d30`) for edges and vertices. A corner trap
+  (nearly equal normals, `0x800 < n·n' < 0xfd7`) sends the sphere back to its previous position.
+- The values at `0x021d62d8`, `0x021d62f8` (eight edge rays), `0x020319e0`/`e4`, the
+  sliding floats and the heading table are read by `tests/movement_rom.rs`.
 
-### Caméra de terrain (`dq9_core::camera::FieldCamera`, `0x020a213c`)
+### Field camera (`dq9_core::camera::FieldCamera`, `0x020a213c`)
 
-`L` (`0x200`) ajoute au yaw, `R` (`0x100`) retire, de `trunc(0,0015 × Δms × 4096)` (202 à 33 ms) ;
-le yaw ne peut pas entrer dans la bande `(π/4, 7π/4)` : il s'arrête sur son bord. `L` et `R`
-ensemble ramènent le yaw au yaw de base à `0,00225 × Δms × 4096` par mise à jour (arrêt à
-`0x28`). L'application (`Q`/`E` en orbite) mesure le yaw depuis celui de l'entrée sur la carte.
-L'application initialise l'orbite aux valeurs du constructeur (`0x0202df78`) : distance 11,
-œil 6 unités au-dessus de la cible, champ vertical 30°. La cible suit la position du héros
-+ la moitié de sa hauteur (0,75), comme `FieldCamera_Update` (`0x020a213c`). Le cadrage des
-bornes de toute la carte reste réservé au vol libre (`F`) ; `F` en orbite rétablit le suivi.
+`L` (`0x200`) adds to the yaw, `R` (`0x100`) subtracts, by `trunc(0.0015 × Δms × 4096)` (202 at 33 ms);
+the yaw cannot enter the band `(π/4, 7π/4)`: it stops at its edge. `L` and `R`
+together bring the yaw back to the base yaw at `0.00225 × Δms × 4096` per update (stop at
+`0x28`). The application (`Q`/`E` in orbit) measures the yaw from the one on map entry.
+The application initializes the orbit with the constructor values (`0x0202df78`): distance 11,
+eye 6 units above the target, vertical field of view 30°. The target follows the hero's position
++ half his height (0.75), like `FieldCamera_Update` (`0x020a213c`). Framing the
+bounds of the whole map remains reserved for free flight (`F`); `F` in orbit restores following.
 
-Une scène garde les paramètres de la caméra de terrain ; un changement de carte dans la
-chaîne remplace ce point de retour par celui de la destination. Le dernier état de scène est
-appliqué **avant** la restitution, puis la cible rejoint le héros à sa pose finale : aucune
-présentation inactive ne peut réinstaller le dernier gros plan. Le vol libre, lui, retrouve
-son point de vue sans suivre le héros. La projection des caméras cinématiques reste séparée.
+A cutscene keeps the field camera parameters; a map change in the
+chain replaces that return point with the destination's. The last cutscene state is
+applied **before** restoration, then the target joins the hero at his final pose: no
+inactive presentation can reinstall the last close-up. Free flight, for its part, recovers
+its viewpoint without following the hero. The projection of cinematic cameras stays separate.
 
-### Hors périmètre (non porté)
+### Out of scope (not ported)
 
-Personnages poussant le chef de groupe (`ov_017::0218df50`, `0218dfd8`), colliders de 8 triangles
-des objets de zone (`ov_017::02193290`), cartes `0x1131` et `10000`, record de terrain copié
-sur le personnage (`02033f6c`), mode grotte (`+0x23b8`), branche véhicule de `0x02017da0`,
-aimantation sur les zones orientées (`0x0201e90c`), stylet, échelles (`0x020385a8`), événements
-qui prennent la main, animations (états autres que repos et marche), rayon de mur élargi du drapeau `0x20`.
+Characters pushing the party leader (`ov_017::0218df50`, `0218dfd8`), 8-triangle colliders
+of zone objects (`ov_017::02193290`), maps `0x1131` and `10000`, terrain record copied
+onto the character (`02033f6c`), cave mode (`+0x23b8`), vehicle branch of `0x02017da0`,
+snapping on oriented zones (`0x0201e90c`), stylus, ladders (`0x020385a8`), events
+that take control, animations (states other than idle and walk), widened wall radius of flag `0x20`.
 
-## Position de départ
+## Starting position
 
-Une sauvegarde normale ne stocke pas la position du héros : elle donne la carte (id `11476`,
-par ex. 109 = `C01M09`) et le jeu pose le groupe au point de départ de la carte,
-l'enregistrement `0x6e` de son `.bmbl` (`Party_Place`, `ov_017::0219c598` ;
-[`save.md`](save.md) § « Position à la reprise »). `dq9_core::state::GameState` en déduit la
-pose (`hero_pose`) et `dq9-app --save` y place le héros (`Hero::at`), recalé sur le sol trouvé
-par `CollisionWorld::ground_height` (`0x02018fcc`, `0x199` au-dessus, comme le jeu). Le jeu
-pose le cap voulu et l'angle du modèle sur l'angle de départ (`0x020399c0` → `0x02033874`) et
-met la vitesse à 0 : `Hero::place` fait de même. Une carte sans enregistrement, une pose d'une
-autre carte ou l'absence de sauvegarde gardent le point provisoire calculé depuis les collisions
-(`CollisionWorld::spawn`). Position et cap sont égaux à ceux de melonDS sur la démo (109) et sur
-la même sauvegarde repointée sur la carte 100.
+A normal save does not store the hero's position: it gives the map (id `11476`,
+e.g. 109 = `C01M09`) and the game places the party at the map's starting point,
+record `0x6e` of its `.bmbl` (`Party_Place`, `ov_017::0219c598`;
+[`save.md`](save.md) § "Position on resume"). `dq9_core::state::GameState` derives the
+pose from it (`hero_pose`) and `dq9-app --save` places the hero there (`Hero::at`), snapped to the ground found
+by `CollisionWorld::ground_height` (`0x02018fcc`, `0x199` above, like the game). The game
+sets the wanted heading and the model angle to the starting angle (`0x020399c0` → `0x02033874`) and
+sets speed to 0: `Hero::place` does the same. A map without a record, a pose from another
+map or no save keep the provisional point computed from the collisions
+(`CollisionWorld::spawn`). Position and heading equal melonDS's on the demo (109) and on
+the same save repointed to map 100.
 
-## Analyse du code
+## Code analysis
 
-Obtenue avec `scripts/ghidra-dump.ps1` (décompilation de `ov_017` et de l'ARM9 dans
-`build/decomp/`). Adresses européennes ; noms dans `re/symbols.txt`.
+Obtained with `scripts/ghidra-dump.ps1` (decompilation of `ov_017` and the ARM9 into
+`build/decomp/`). European addresses; names in `re/symbols.txt`.
 
-### Qui déplace le héros
+### Who moves the hero
 
-- `ov_017::0218d8cc` ne déplace pas le héros : elle fabrique `field+0x4438` (direction du pavé
-  dans le monde), lu par les échelles et le dialogue.
-- Le déplacement du chef de groupe passe par `ov_017::0218e674` (boucle sur les membres) →
+- `ov_017::0218d8cc` does not move the hero: it builds `field+0x4438` (d-pad direction
+  in world space), read by ladders and dialogue.
+- The party leader's movement goes through `ov_017::0218e674` (loop over members) →
   `ov_017::0218e210`.
-- `0x020a654c` → `0x020a75fc` (touches + `Character_Update`) agit sur l'objet `GameState+0x32c`,
-  **nul** dans l'état `field.ml1` : ce n'est pas le héros à pied (**[inconnu]** : véhicule ?).
-- Ordre de `PartyMember_Update` (`0x02037d98`) : `0x02052af8` (mise à jour générique,
-  `Character_Update` par une table de sauts à `0x02048144`) puis `Hero_ReadDirectionInput`
-  puis `0x020385a8` (échelle).
+- `0x020a654c` → `0x020a75fc` (keys + `Character_Update`) acts on the object `GameState+0x32c`,
+  **null** in the `field.ml1` state: it is not the hero on foot (**[unknown]**: vehicle?).
+- Order of `PartyMember_Update` (`0x02037d98`): `0x02052af8` (generic update,
+  `Character_Update` via a jump table at `0x02048144`) then `Hero_ReadDirectionInput`
+  then `0x020385a8` (ladder).
 
-### Entrée → cap (`0x02038148`)
+### Input → heading (`0x02038148`)
 
-- Code de direction `+0x250` : Haut+Gauche `0xc`, Haut+Droite `0xd`, Bas+Gauche `0xe`,
-  Bas+Droite `0xf`, Haut 8, Bas 9, Gauche 10, Droite 11 (touches `0x40`, `0x80`, `0x20`,
+- Direction code `+0x250`: Up+Left `0xc`, Up+Right `0xd`, Down+Left `0xe`,
+  Down+Right `0xf`, Up 8, Down 9, Left 10, Right 11 (keys `0x40`, `0x80`, `0x20`,
   `0x10`).
-- Cap = `table[code-8] + yaw caméra`, réduit à [0, 2π] ; table `0x020e90b8` en radians fx32
-  (4096 = 1 rad, π = `0x3244`, 2π = `0x6488`) : Haut π, Bas 0, Gauche `0x4b66` (3π/2), Droite
-  `0x1922` (π/2), Haut+Gauche `0x3ed5`, Haut+Droite `0x25b3`, Bas+Gauche `0x57f7`, Bas+Droite
-  `0x0c91`. Convention : direction = (sin θ, 0, cos θ) ; la caméra à yaw 0 regarde vers −z.
-- Avec touche : état 1 (marche), `Character_SetFacing` (`+0xae` = cap). Sans : état 0.
+- Heading = `table[code-8] + camera yaw`, reduced to [0, 2π]; table `0x020e90b8` in fx32 radians
+  (4096 = 1 rad, π = `0x3244`, 2π = `0x6488`): Up π, Down 0, Left `0x4b66` (3π/2), Right
+  `0x1922` (π/2), Up+Left `0x3ed5`, Up+Right `0x25b3`, Down+Left `0x57f7`, Down+Right
+  `0x0c91`. Convention: direction = (sin θ, 0, cos θ); the camera at yaw 0 looks toward −z.
+- With a key: state 1 (walk), `Character_SetFacing` (`+0xae` = heading). Without: state 0.
 
 ### `Character_Update` (`0x020332bc`)
 
-Champs : `+0x44` position fx32 ×3, `+0x54` angle du modèle, `+0xac` vitesse de chute,
-`+0xae` cap voulu, `+0xb0` vitesse de rotation, `+0xb2` vitesse courante, `+0xb4` vitesse
-max, `+0xb6` accélération, `+0xbe` état. Valeurs d'initialisation (`0x02032e68`, lues dans la
-ROM ; `ov_017::0218f064` écrit `0x324` et `0x189` pour les membres du groupe) : rotation
-**`0x324`** (≈ 0,196 rad / tick), vitesse max **`0x189`** (393/4096 = 0,096 unité/tick =
-**5,76 unités/s** à 60 ticks/s), accélération **`0x28`**.
+Fields: `+0x44` position fx32 ×3, `+0x54` model angle, `+0xac` fall speed,
+`+0xae` wanted heading, `+0xb0` rotation speed, `+0xb2` current speed, `+0xb4` max
+speed, `+0xb6` acceleration, `+0xbe` state. Initialization values (`0x02032e68`, read from the
+ROM; `ov_017::0218f064` writes `0x324` and `0x189` for party members): rotation
+**`0x324`** (≈ 0.196 rad / tick), max speed **`0x189`** (393/4096 = 0.096 unit/tick =
+**5.76 units/s** at 60 ticks/s), acceleration **`0x28`**.
 
-La vitesse est lue **avant** sa mise à jour (`ldrsh r4, [r8, #0xb2]` en `0x0203355c`, puis
-écriture sans relecture) ; elle monte de l'accélération sans plafonner (`0x190` après dix
-ticks), puis retombe à `0x189` quand l'excédent est inférieur à l'accélération. La
-décélération peut passer sous 0 sur un tick (mouvement nul : le déplacement exige une vitesse
-> 0). Gravité : `y −= +0xac` ; au-dessous de `−0x32000`, `y` est remis à `+0x32000`.
+Speed is read **before** its update (`ldrsh r4, [r8, #0xb2]` at `0x0203355c`, then
+written without re-reading); it rises by the acceleration without capping (`0x190` after ten
+ticks), then drops back to `0x189` when the excess is less than the acceleration.
+Deceleration can go below 0 for one tick (zero movement: displacement requires a speed
+> 0). Gravity: `y −= +0xac`; below `−0x32000`, `y` is reset to `+0x32000`.
 
-### Caméra de terrain
+### Field camera
 
-Objet caméra : `+4` œil, `+0x10` cible, `+0x70` yaw, `+0x74` dy, `+0x78` distance. Défaut
-(`0x0202df78`) : yaw 0, dy `0x6000`, distance `0xb000`. `Camera_SetOrbit` (`0x0202e5e8`) :
-œil = cible + RotY(yaw) · (0, dy, √(dist² − dy²)). `FieldCamera_Update` (`0x020a213c`) : la
-cible est la position du personnage `+0x21c` + hauteur/2 + décalage `+0x22c`. Constantes
-(`0x020a2708`…`0x020a2724`) : `0x020a270c` = 0,00225, `0x020a2714` = 0,0015, `0x020a2710` = 4096,
-bande `0xc91`/`0x57f7`, `0x020a2720` = `0xccc`, `0x020a2724` = `−13516`.
+Camera object: `+4` eye, `+0x10` target, `+0x70` yaw, `+0x74` dy, `+0x78` distance. Default
+(`0x0202df78`): yaw 0, dy `0x6000`, distance `0xb000`. `Camera_SetOrbit` (`0x0202e5e8`):
+eye = target + RotY(yaw) · (0, dy, √(dist² − dy²)). `FieldCamera_Update` (`0x020a213c`): the
+target is the character's position `+0x21c` + height/2 + offset `+0x22c`. Constants
+(`0x020a2708`…`0x020a2724`): `0x020a270c` = 0.00225, `0x020a2714` = 0.0015, `0x020a2710` = 4096,
+band `0xc91`/`0x57f7`, `0x020a2720` = `0xccc`, `0x020a2724` = `−13516`.
 
-### Arithmétique
+### Arithmetic
 
-`FX_Div` = `((a << 32) / b + 0x80000) >> 20` (diviseur matériel, troncature ; diviseur nul : 0),
+`FX_Div` = `((a << 32) / b + 0x80000) >> 20` (hardware divider, truncation; zero divisor: 0),
 `VEC_Mag`/`VEC_Distance` = `(⌊√(4 Σ v²)⌋ + 1) >> 1`, `VEC_Normalize` = `⌊√(4 Σ v²)⌋ ×
-⌊2⁵⁶ / Σ v²⌋` puis `(· · v >> 32 + 0x1000) >> 13`, produit et scalaire `(a·b + 0x800) >> 12`,
-`VEC_DotProduct` et produit vectoriel arrondis une fois sur la somme, `FX_Atan2` par la
-table de 129 entrées `0x020ed460` (`round(4096 · atan(i/128))`, vérifiée), sin/cos par
-`0x020e9460`. La rotation de pièce (`0x020c3260`/`32f8`) est un sinus/cosinus 64 bits tronqué
-à `fx32` après conversion flottante ; le port évalue `sin`/`cos` en `f64` sur l'argument
-`0x6487 − angle` (un de moins qu'un tour, comme le jeu) : **[hypothèse]** identique au bit près,
-écart possible d'une unité sur les pièces tournées.
+⌊2⁵⁶ / Σ v²⌋` then `(· · v >> 32 + 0x1000) >> 13`, product and scalar `(a·b + 0x800) >> 12`,
+`VEC_DotProduct` and cross product rounded once on the sum, `FX_Atan2` via the
+129-entry table `0x020ed460` (`round(4096 · atan(i/128))`, verified), sin/cos via
+`0x020e9460`. The piece rotation (`0x020c3260`/`32f8`) is a 64-bit sine/cosine truncated
+to `fx32` after float conversion; the port evaluates `sin`/`cos` in `f64` on the argument
+`0x6487 − angle` (one less than a full turn, like the game): **[hypothesis]** bit-identical,
+possible one-unit discrepancy on rotated pieces.
 
-## Comparaison melonDS
+## melonDS comparison
 
-Les états existants `build/melonds/before.ml1` et `moved.ml1`, produits dans `C01M09`, exposent
-le compteur VBlank et la position du héros : (0,210 ; 0,120 ; −1,380), puis (−2,853 ; 0,106 ;
-3,854), à 1969 VBlank d'écart ; ils ne sont pas alignés et ne valident pas la vitesse.
+The existing states `build/melonds/before.ml1` and `moved.ml1`, produced in `C01M09`, expose
+the VBlank counter and the hero's position: (0.210; 0.120; −1.380), then (−2.853; 0.106;
+3.854), 1969 VBlanks apart; they are not aligned and do not validate speed.
 
-**Mesure de vitesse** (`scripts/melonds-state.ps1 -Save build/sav/demo.sav -Settle 8 -Keys
-"A:0.2,idle:1.5 ×4, B:0.2,idle:1.5 ×3, Down:0.4"`) : les quatre `A` font défiler le dialogue de
-l'église de Stornway jusqu'au menu, les trois `B` le ferment ; le héros, à (0,210 ; −1,380)
-face au nord, reçoit `Bas` pendant 0,4 s puis 0,5 s de repos avant l'état. Position lue en RAM
-(`GameState+0x3ac` → objet, `+0x44`) : **Δz = 2,361**, cap final 0 (face au sud). Le port, même
-position et même cap de départ, mêmes entrées : Δz = 2,095 pour 24 images de touche à 60 Hz
-(2,287 pour 26) et 2,168 à 2,360 pour 11 à 13 mises à jour à 30 Hz (`ticks = 2`) : l'écart à la
-mesure est de l'ordre de l'image de gigue des messages postés (0,096 unité par image) ; le
-modèle provisoire (4 unités/s, sans accélération ni demi-tour) donnait 1,6. Une seconde mesure
-(`Bas` 0,9 s) n'a pas bougé le héros (le dialogue n'a pas été fermé à temps) : **une seule
-mesure, de ± 1 image** ; la validation image par image reste à faire.
+**Speed measurement** (`scripts/melonds-state.ps1 -Save build/sav/demo.sav -Settle 8 -Keys
+"A:0.2,idle:1.5 ×4, B:0.2,idle:1.5 ×3, Down:0.4"`): the four `A` scroll the Stornway church
+dialogue up to the menu, the three `B` close it; the hero, at (0.210; −1.380)
+facing north, receives `Down` for 0.4 s then 0.5 s of idle before the state. Position read from RAM
+(`GameState+0x3ac` → object, `+0x44`): **Δz = 2.361**, final heading 0 (facing south). The port, same
+starting position and heading, same inputs: Δz = 2.095 for 24 key frames at 60 Hz
+(2.287 for 26) and 2.168 to 2.360 for 11 to 13 updates at 30 Hz (`ticks = 2`): the gap to the
+measurement is on the order of the jitter frame of posted messages (0.096 unit per frame); the
+provisional model (4 units/s, no acceleration or U-turn) gave 1.6. A second measurement
+(`Down` 0.9 s) did not move the hero (the dialogue was not closed in time): **a single
+measurement, ± 1 frame**; frame-by-frame validation is still to be done.
 
-## Reste à faire
+## Remaining work
 
-Toutes les entrées non portées de « Hors périmètre » ; le suivi lissé et les zones de caméra
-(l'orbite par défaut et le suivi direct du héros sont appliqués) ; une comparaison position
-par position à nombre d'images égal sous melonDS.
+All non-ported entries of "Out of scope"; smoothed following and camera zones
+(the default orbit and direct hero following are applied); a position-by-position
+comparison at equal frame count under melonDS.
 
-Le pilote juge désormais ses points de passage et son but en **3D** (§ « Retour de 1.2.1 ») ;
-la grille ne relie deux cellules voisines que si l'écart d'étage reste sous `STEP_HEIGHT`
-(0,75), donc une rampe ou un escalier continus, jamais deux coursives empilées ; l'arête est en
-plus validée par `Hero::step`. Une cellule peut porter plusieurs étages. Restent : la
-comparaison à melonDS du parcours de retour et la mesure de la cadence de `Field::step` pour
-les portes (§ « Ce qui est porté »). La sonde de connectivité du pilote (`edge_pass`) garde
-`ticks = 1` : c'est un test de franchissement, pas la cadence du champ.
+The driver now judges its waypoints and goal in **3D** (§ "Return from 1.2.1");
+the grid links two neighboring cells only if the floor height gap stays below `STEP_HEIGHT`
+(0.75), so a continuous ramp or staircase, never two stacked walkways; the edge is
+additionally validated by `Hero::step`. A cell can carry several floors. Remaining: the
+melonDS comparison of the return route and the measurement of the `Field::step` cadence for
+doors (§ "What is ported"). The driver's connectivity probe (`edge_pass`) keeps
+`ticks = 1`: it is a traversal test, not the field cadence.
 
-`cargo dq9re map --reach` ([`map-archive.md`](map-archive.md#voir-la-collision-dq9re-map---image---reach))
-rejoue `Hero::step` sur une grille de 0,5 unité et rend les composantes par hauteur visibles :
-c'est l'outil à employer avant d'annoncer une route, plutôt qu'un BFS qui ne compare que
-`x/z`. Deux précautions : la grille du remplissage est ancrée sur son point de départ, donc un
-`--to` très précis peut manquer une cellule déjà atteinte (comparer des points ronds ou
-relancer depuis l'autre extrémité) ; et la commande charge la carte **statique**, sans les
-demandes `0x95`/`0x96` d'un trigger.
+`cargo dq9re map --reach` ([`map-archive.md`](map-archive.md#viewing-the-collision-dq9re-map---image---reach))
+replays `Hero::step` on a 0.5-unit grid and renders the components by visible height:
+it is the tool to use before announcing a route, rather than a BFS that only compares
+`x/z`. Two caveats: the fill grid is anchored on its starting point, so a very precise
+`--to` can miss an already-reached cell (compare round points or
+rerun from the other end); and the command loads the **static** map, without the
+`0x95`/`0x96` requests of a trigger.
 
-## Parcours joueur réel du prologue (preuve de marche)
+## Real player run of the prologue (walking evidence)
 
-Le pilote headless marche (`Hero::step`, collisions, portes, recherche de partenaire) et la
-trace de ses entrées est rejouable sans lui :
+The headless driver walks (`Hero::step`, collisions, doors, partner search) and the
+trace of its inputs can be replayed without it:
 
 ```powershell
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot `
@@ -258,45 +258,45 @@ cargo run -p dq9-app --release -- --new-game --headless `
   --replay build/inputs.jsonl --checkpoints build/replay.jsonl
 ```
 
-- **22 670 pas fixes** dans `inputs.jsonl` (pavé et touche action par image) ; le rejeu sans
-  pilote donne **les mêmes checkpoints octet pour octet** (sha256
-  `3da80263943fe45ab8bde29c4b23657bc2b82102fea2de09d2fb4db59f57e2a8`) jusqu'à l'histoire 1.1.2.
-- Le lot tour (main `8d41723`) porte la trace à **26 681 pas fixes** et à l'histoire
-  **1.2.1** (fin de 21510 à 391,12 s), enregistrée dans
-  `build/v01-20261107/tower/coordinator-fixed-pilot-inputs.jsonl` et ses points
-  `…-checkpoints.jsonl` (journal `…stdout.txt`, erreurs `…stderr.txt`). Le pilote y arrive
-  sur `4101` à 407,67 s par le warp 0 de `4103`, puis s'arrête à 444,7 s : c'est le retour
-  décrit plus bas.
-- **Premier contrôle** à 210,42 s : `X01M05`, aire 4100, 1.1.1, drapeaux globaux
-  `{337, 1450, 1451, 1452, 1453, 1454, 1461, 2721, 2751}`, drapeaux d'étape `{1}`, héros
-  `(0,660, -0,250, -3,610)` — les six drapeaux de scène et les deux de carte concordent avec
-  l'état melonDS `build/orca/oracle/bat6.ml1` ; neuf drapeaux globaux restent inconnus
-  (`trigger.md`, § « Reste inconnu »).
-- Étapes marchées : conversations 1140 et 1130 à `X01M05` (210–295 s), warp 9 vers `X01M07`
-  (312 s), double porte de bibliothèque poussée puis ouverte (deux vantaux, 331–334 s), aire 2
-  ajoutée par l'événement 20 (événement 1150), NPC 130 (1600), retour par la porte vers
-  `X01M01` (356 s), NPC 127 (1170) à 369,8 s → **histoire 1.1.2**.
-- Le pilote s'arrêtait à 377,8 s sur `X01M01` : ses **sondes dans les huit directions** depuis
-  y 8,25 et y 11,25 plafonnent à y 11,25. Ce n'est pas seulement la sonde : une marche
-  exhaustive depuis la pose d'histoire (`(2,77 ; 11,25 ; 18,19)`) **et** depuis le point de
-  départ de la carte (`(0 ; 8,25 ; 30)`), avec des arêtes validées en 3D (`Hero::step`, montée
-  ≤ 1,0, chute ≤ 10), plafonne aussi à y 11,25. Le mur fin `X01A01S1` (bloc 0, instance 16,
-  normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`, `y 9..14`) sépare la terrasse du pied de
-  la rampe menant au warp `0x72` **type 0** (n° 9) vers `X01M03`. Les zones `0x73` de
-  **type 1** sont **inertes** (aucun lecteur dans `Field_CheckRegions`, voir
-  `map-archive.md`) : ce n'est ni un monte-charge ni une tâche 8. La cause n'est pas une
-  connexion manquante mais une **barrière scriptée** que le port n'appliquait pas
-  (§ suivant). `NavGrid` collecte tous les sols d'une colonne
-  (`CollisionWorld::floors`) et valide chaque arête en 3D (`Hero::step`, distance 3D au
-  voisin) : une arête qui ne fait que glisser sous une terrasse est rejetée.
-- Limite de la trace : le pilote donne les directions avec la caméra du jeu à l'angle 0 et le
-  rejeu force ce même cap ; elle prouve le parcours headless dans notre moteur, pas un rejeu à
-  la manette melonDS avec caméra manuelle.
+- **22,670 fixed steps** in `inputs.jsonl` (d-pad and action key per frame); the replay without
+  driver gives **the same checkpoints byte for byte** (sha256
+  `3da80263943fe45ab8bde29c4b23657bc2b82102fea2de09d2fb4db59f57e2a8`) up to story 1.1.2.
+- The tower batch (main `8d41723`) extends the trace to **26,681 fixed steps** and to story
+  **1.2.1** (end of 21510 at 391.12 s), recorded in
+  `build/v01-20261107/tower/coordinator-fixed-pilot-inputs.jsonl` and its points
+  `…-checkpoints.jsonl` (log `…stdout.txt`, errors `…stderr.txt`). The driver arrives there
+  on `4101` at 407.67 s via warp 0 of `4103`, then stops at 444.7 s: that is the return
+  described below.
+- **First player control** at 210.42 s: `X01M05`, area 4100, 1.1.1, global flags
+  `{337, 1450, 1451, 1452, 1453, 1454, 1461, 2721, 2751}`, step flags `{1}`, hero
+  `(0.660, -0.250, -3.610)` — the six cutscene flags and the two map flags match the
+  melonDS state `build/orca/oracle/bat6.ml1`; nine global flags remain unknown
+  (`trigger.md`, § "Remaining unknowns").
+- Walked steps: conversations 1140 and 1130 in `X01M05` (210–295 s), warp 9 to `X01M07`
+  (312 s), library double door pushed then opened (two leaves, 331–334 s), area 2
+  added by event 20 (event 1150), NPC 130 (1600), return through the door to
+  `X01M01` (356 s), NPC 127 (1170) at 369.8 s → **story 1.1.2**.
+- The driver stopped at 377.8 s on `X01M01`: its **probes in the eight directions** from
+  y 8.25 and y 11.25 cap at y 11.25. It is not only the probe: an exhaustive walk
+  from the story pose (`(2.77; 11.25; 18.19)`) **and** from the map's starting
+  point (`(0; 8.25; 30)`), with edges validated in 3D (`Hero::step`, climb
+  ≤ 1.0, drop ≤ 10), also caps at y 11.25. The thin wall `X01A01S1` (block 0, instance 16,
+  normal `+x`, `x 0.018..0.105`, `z 15.42..18.99`, `y 9..14`) separates the terrace from the foot of
+  the ramp leading to the `0x72` warp **type 0** (no. 9) to `X01M03`. The `0x73` zones of
+  **type 1** are **inert** (no reader in `Field_CheckRegions`, see
+  `map-archive.md`): it is neither a lift nor a task 8. The cause is not a
+  missing connection but a **scripted barrier** the port did not apply
+  (next §). `NavGrid` collects all floors of a column
+  (`CollisionWorld::floors`) and validates each edge in 3D (`Hero::step`, 3D distance to the
+  neighbor): an edge that only slides under a terrace is rejected.
+- Limit of the trace: the driver gives directions with the game camera at angle 0 and the
+  replay forces that same heading; it proves the headless route in our engine, not a
+  melonDS controller replay with manual camera.
 
-### Barrière de la rampe (actions 0x95/0x96, placement 16)
+### Ramp barrier (actions 0x95/0x96, placement 16)
 
-La barrière `X01A01S1` est le **placement 16** du bloc 0 (id d'instance, pas le numéro de
-ressource 12). Le déclencheur qui la lève est dans `data/scenario/triggerX01.bin` :
+The barrier `X01A01S1` is **placement 16** of block 0 (instance id, not resource
+number 12). The trigger that lifts it is in `data/scenario/triggerX01.bin`:
 
 ```
 $ cargo dq9re triggers X01 --story 1.1
@@ -306,177 +306,177 @@ room 4101 1.1..1.1 event 20: if 0x9(4101) 0x23(1) then 0x96(show_object,0,104857
 room 4101 1.1..1.1 event 20: if 0x9(4101) 0x23(2) then 0x95(hide_object,0,1048576)
 ```
 
-L'opérande `1048576 = 0x00100000` porte l'id de placement dans sa moitié haute : `16`. La
-décompilation européenne (`Trig_RunAction` `0x02061c14`, cas `0x31`/`0x32` = actions
-`0x95`/`0x96`) appelle `Zone3D_FindPlacement` (`0x02019518`, entrée de bloc = `arg`, id =
-moitié haute) puis `func_02013390(placement, arg, 0|1)`, qui pose ou efface le bit `0x4` de
-`placement+2` et pose le bit `0x40` : exactement ce que fait la native 574
-(`StbNat_SetPlacementHidden`). La requête de collision lit ce bit : `Zone3D_PieceTriangles`
-(`0x02017da0`, `iVar3+0x28` = parent) rend 0 triangles si le nœud de la pièce, ou un de ses
-parents, a le bit `0x4` de `+2` (`(*(ushort *)(iVar3 + 2) & 4) == 0` puis la boucle sur les
-parents), exactement l'état que notre `piece_hidden` parcourt. L'événement 11 de fin de 1170
-cache donc la barrière **juste avant** d'avancer la piste à 1.1.2 ; l'événement 20 de
-chargement la montre à la sous-étape 1 et la cache à la sous-étape 2. Le chargement de la
-carte est fidèle : sur l'état melonDS `build/melonds-height/probe.ml1`,
-`cargo dq9re map X01M01 --state …` compare les 17 instances (placement 16 compris, à
-l'origine) et conclut « the loaded blocks match the assembly » ; seul l'effet du trigger
-manquait.
+The operand `1048576 = 0x00100000` carries the placement id in its high half: `16`. The
+European decompilation (`Trig_RunAction` `0x02061c14`, cases `0x31`/`0x32` = actions
+`0x95`/`0x96`) calls `Zone3D_FindPlacement` (`0x02019518`, block entry = `arg`, id =
+high half) then `func_02013390(placement, arg, 0|1)`, which sets or clears bit `0x4` of
+`placement+2` and sets bit `0x40`: exactly what native 574
+(`StbNat_SetPlacementHidden`) does. The collision query reads that bit: `Zone3D_PieceTriangles`
+(`0x02017da0`, `iVar3+0x28` = parent) returns 0 triangles if the piece's node, or one of its
+parents, has bit `0x4` of `+2` (`(*(ushort *)(iVar3 + 2) & 4) == 0` then the loop over the
+parents), exactly the state our `piece_hidden` walks. Event 11 at the end of 1170
+therefore hides the barrier **just before** advancing the track to 1.1.2; load event 20
+shows it at substep 1 and hides it at substep 2. Map loading
+is faithful: on the melonDS state `build/melonds-height/probe.ml1`,
+`cargo dq9re map X01M01 --state …` compares the 17 instances (placement 16 included, at
+the origin) and concludes "the loaded blocks match the assembly"; only the trigger's effect
+was missing.
 
-Correctif : `CollisionWorld::set_placement_hidden(bloc, id, caché)` rend le placement et son
-sous-arbre invisibles aux requêtes (sol, murs, `floors`, `resolve`), avec un compteur
-`revision()` ; `set_placement_position` déplace le sous-arbre pour la native 575. L'action
-`0x95`/`0x96` produit une demande `Request::SetPlacementHidden` (immédiate, avant les actions
-différées) que l'application traite sur la collision et sur les instances dessinées ; les
-natives 574/575 suivent le même chemin pour les placements de collision, y compris depuis le
-rapport `--events-report`, et le pilote jette sa grille de sol quand `revision()` change ou
-quand il entre dans une carte (sa collision neuve repart de la révision 0). Les tests de
-collision couvrent cacher/montrer, le bloc qui ne correspond pas, le parent qui cache son
-descendant, le déplacement du sous-arbre et la rotation d'un parent déplacé ; les tests sur la
-ROM jouent la vraie demande de l'événement 11 puis la marche continue jusqu'à `X01M03`.
+Fix: `CollisionWorld::set_placement_hidden(block, id, hidden)` makes the placement and its
+subtree invisible to queries (ground, walls, `floors`, `resolve`), with a
+`revision()` counter; `set_placement_position` moves the subtree for native 575. Action
+`0x95`/`0x96` produces a `Request::SetPlacementHidden` request (immediate, before deferred
+actions) that the application applies to the collision and to the drawn instances; natives
+574/575 follow the same path for collision placements, including from the
+`--events-report` report, and the driver drops its ground grid when `revision()` changes or
+when it enters a map (its fresh collision restarts at revision 0). The collision
+tests cover hide/show, the non-matching block, the parent hiding its
+descendant, subtree movement and rotation of a moved parent; the ROM tests
+play the real request of event 11 then the continued walk to `X01M03`.
 
-Vérification : `fmt`, `clippy --all-targets`, les tests de l'espace de travail sur la vraie ROM
-et la compilation wasm sont verts (dont les 28 tests de l'application, exécutés avec la ROM
-et une sauvegarde explicites). Preuve de collision, sans téléport ni mur abaissé :
+Verification: `fmt`, `clippy --all-targets`, the workspace tests on the real ROM
+and the wasm build are green (including the application's 28 tests, run with the ROM
+and an explicit save). Collision evidence, no teleport and no lowered wall:
 
 ```powershell
-# Contrôle NÉGATIF : la carte statique garde S1 (le placement 16 n'est caché que par
-# l'événement 11 de fin de 1170, que cette commande ne joue pas) ; « not reached » est
-# donc attendu et ne prouve pas un défaut du port.
+# NEGATIVE control: the static map keeps S1 (placement 16 is only hidden by
+# event 11 at the end of 1170, which this command does not play); "not reached" is
+# therefore expected and does not prove a port defect.
 cargo dq9re map X01M01 --reach=2.77,11.25,18.19 --to=-8.226,13.97,16.379
-# 9320 nœuds, y 4.249..11.251, « not reached » — contrôle négatif sur la carte statique
+# 9320 nodes, y 4.249..11.251, "not reached" — negative control on the static map
 
-# Depuis l'ouest de S1, sur la rampe, le remplissage 3D atteint le warp et monte à y 23,118
-# (toujours la carte statique : S1 est encore là, la rampe est du bon côté).
+# From the west of S1, on the ramp, the 3D fill reaches the warp and climbs to y 23.118
+# (still the static map: S1 is still there, the ramp is on the right side).
 cargo dq9re map X01M01 --reach=-1.25,12.42,17.5 --to=-8.226,13.97,16.379
-# 9542 nœuds, y 4.249..23.118, « reached »
+# 9542 nodes, y 4.249..23.118, "reached"
 
-# Contrôle POSITIF du cache : le test d'application joue la vraie demande de l'événement 11
-# (placement 16) puis la marche réelle du héros jusqu'à X01M03 :
+# POSITIVE control of hiding: the application test plays the real request of event 11
+# (placement 16) then the hero's real walk to X01M03:
 cargo test -p dq9-app trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot
-# observé : 1170 finit à 334,45 s (histoire 1.1.2) ; la carte 4103 est atteinte à
-# 336,40 s par le warp n° 9, puis 4109 -> 4103 -> 4104 ; 21510 (PNJ 199) finit à
-# 391,12 s (histoire 1.2.1). Le retour depuis 1.2.1 est décrit ci-dessous.
+# observed: 1170 ends at 334.45 s (story 1.1.2); map 4103 is reached at
+# 336.40 s via warp no. 9, then 4109 -> 4103 -> 4104; 21510 (NPC 199) ends at
+# 391.12 s (story 1.2.1). The return from 1.2.1 is described below.
 ```
 
-Le contrôle négatif et le test d'application ne mesurent pas la même chose : le premier
-charge la carte **statique** (S1 visible, aucune demande `0x95`), le second joue la demande
-réelle de l'événement 11 et la marche du héros. Aucune option CLI `--reach` ne cache un
-placement : ne pas présenter la carte statique comme l'état du jeu après 1170.
+The negative control and the application test do not measure the same thing: the first
+loads the **static** map (S1 visible, no `0x95` request), the second plays the real
+request of event 11 and the hero's walk. No `--reach` CLI option hides a
+placement: do not present the static map as the game state after 1170.
 
-## Retour de 1.2.1 vers le bas de l'Observatoire
+## Return from 1.2.1 to the bottom of the Observatory
 
-Le pilote atteint l'histoire **1.2.1** à 391,12 s (fin de 21510 sur `4104`), revient par
-`4103` puis arrive sur `4101` à 407,67 s à `(-3,9 ; 12,47 ; 16,75)`, sur la rampe haute.
-Il s'y arrêtait à 444,7 s. La cause est **dans le pilote**, pas dans la collision :
+The driver reaches story **1.2.1** at 391.12 s (end of 21510 on `4104`), comes back through
+`4103` then arrives on `4101` at 407.67 s at `(-3.9; 12.47; 16.75)`, on the upper ramp.
+It used to stop there at 444.7 s. The cause is **in the driver**, not in the collision:
 
-- le plan mène au warp `0x72` n° 8 de `4101` (boîte `(0 ; 5 ; 29)`, 4×4×2 → `y 3..7`) dont le
-  sol de station est à `y 4,25`. Le suiveur testait ses points de passage et son but en
-  **`x/z` seulement** : arrivé à `(-0,16 ; 8,25 ; 28,97)`, à 0,26 du but en `x/z` mais **4
-  unités au-dessus**, il déclarait le but atteint, poussait le cap nul du warp pendant 20
-  images puis abandonnait (« no way out at Vec3(0.01, 4.25, 29.17) », stderr de
-  `build/v01-20261107/tower/coordinator-fixed-pilot.stderr.txt`) ;
-- la connexion existe : le palier `4,25` communique avec la terrasse (`--reach` depuis
-  `0,4.25,29` couvre `y 4.249..11.251`), et le warp n° 8 s'atteint depuis le palier en
-  traversant la double porte `class 0, number 3` (`4101`, enregistrement `0x74` #14, zone
-  `0x73` #13 centrée `(0 ; 5 ; 30,5)`, drapeau `8` = `FLAG_WARP`) ;
-- les sorties vers `4105` de `4101` (`0x72` n° 7 en `(0 ; 1 ; 34)`, portes 0/6 et 0/7 en
-  `(0 ; 1 ; 35)`) sont **sous** le palier (boîtes `y -1..3` et `-0,5..2,5`) : aucun plan
-  n'atteint leurs cellules depuis `4,25`, et ce n'est pas un défaut à corriger en élargissant
-  la tolérance de hauteur. Le retour passe par `4107` ;
-- le carnet de sorties était indexé par `(carte, destination, histoire)` : **une** sortie
-  échouée vers `4107` interdisait aussi les portes vers `4107`, d'où l'oscillation
-  `4101 ↔ 4103 ↔ 4109 ↔ 4104` puis « no walkable way back through map 4101 to 4105 ».
+- the plan leads to `0x72` warp no. 8 of `4101` (box `(0; 5; 29)`, 4×4×2 → `y 3..7`) whose
+  standing ground is at `y 4.25`. The follower tested its waypoints and goal in
+  **`x/z` only**: arriving at `(-0.16; 8.25; 28.97)`, 0.26 from the goal in `x/z` but **4
+  units above**, it declared the goal reached, pushed the warp's zero heading for 20
+  frames then gave up ("no way out at Vec3(0.01, 4.25, 29.17)", stderr of
+  `build/v01-20261107/tower/coordinator-fixed-pilot.stderr.txt`);
+- the connection exists: the `4.25` landing connects with the terrace (`--reach` from
+  `0,4.25,29` covers `y 4.249..11.251`), and warp no. 8 is reachable from the landing by
+  going through the double door `class 0, number 3` (`4101`, record `0x74` #14, zone
+  `0x73` #13 centered `(0; 5; 30.5)`, flag `8` = `FLAG_WARP`);
+- the exits to `4105` from `4101` (`0x72` no. 7 at `(0; 1; 34)`, doors 0/6 and 0/7 at
+  `(0; 1; 35)`) are **below** the landing (boxes `y -1..3` and `-0.5..2.5`): no plan
+  reaches their cells from `4.25`, and it is not a defect to fix by widening
+  the height tolerance. The return goes through `4107`;
+- the exit log was keyed by `(map, destination, story)`: **one** failed exit
+  to `4107` also forbade the doors to `4107`, hence the oscillation
+  `4101 ↔ 4103 ↔ 4109 ↔ 4104` then "no walkable way back through map 4101 to 4105".
 
-Correctifs (`crates/dq9-app/src/app/auto.rs`, code tenu pour les contrôles centraux) :
+Fixes (`crates/dq9-app/src/app/auto.rs`, code held for central checks):
 
-- `LEVEL_REACH = 0,8` : un point de passage ou un but n'est atteint que si `|Δy|` est
-  inférieur, en plus de la distance `x/z`. Une tolérance plus large (1,5 avait été essayé)
-  laissait le héros « atteindre » la première marche d'un escalier depuis la rampe au-dessus
-  d'elle, puis pousser vers l'est sans jamais descendre ; 0,8 couvre la demi-montée d'une
-  arête (≤ 0,625) et la hauteur de station (0,0999) ;
-- les cellules bloquées après un coincement sont mémorisées par **nœud** `(cellule, étage)`
-  et non par cellule : une coursive au-dessus d'un passage n'est plus interdite avec lui ;
-- le carnet de sorties distingue chaque sortie (`class`/`number`, position, destination) :
-  une sortie en échec n'interdit plus les autres vers la même carte ;
-- un point d'appui « devant la porte » doit être sur l'étage de la porte (`|Δy| < 1,5` par
-  rapport au centre du volume) : le palier au-dessus d'une porte du dessous n'est plus
-  proposé ;
-- une route épuisée sans que le but soit atteint n'est **plus** prise pour une arrivée : le
-  pilote replanifie depuis sa position ; si la grille refuse le plan, le but est abandonné.
-  Avant, une route vide faisait compter les 20 images de sortie et concluait « no way out »
-  alors que le héros était encore quatre unités au-dessus du but ;
-- un coincement n'arrête plus la course : le but est abandonné et noté comme essayé (même
-  carnet que les sorties), le pilote en choisit un autre, et `Stop::Stuck` n'est rendu que
-  lorsqu'il ne reste plus rien à tenter. Un seul replan par fenêtre de 45 images
-  (`stall` remis à zéro), pour que les cellules apprises diffèrent au lieu d'épuiser les huit
-  replans en huit images ; le replan bloque le **nœud où le héros est coincé**, pas le point
-  de passage (déjà validé par la sonde), pour ne pas interdire le but lui-même ;
-- une sortie dont la marche a échoué est retenue **hors de l'histoire**
-  (`failed_exits` : carte, destination, clé de sortie) : un objectif qui échoue n'est pas
-  rejoué indéfiniment après chaque changement de drapeau ; les autres sorties vers la même
-  carte restent tentables.
+- `LEVEL_REACH = 0.8`: a waypoint or goal is only reached if `|Δy|` is
+  below it, in addition to the `x/z` distance. A wider tolerance (1.5 was tried)
+  let the hero "reach" the first step of a staircase from the ramp above
+  it, then push east without ever descending; 0.8 covers the half-climb of an
+  edge (≤ 0.625) and the standing height (0.0999);
+- cells blocked after getting stuck are remembered per **node** `(cell, floor)`
+  and not per cell: a walkway above a passage is no longer forbidden along with it;
+- the exit log distinguishes each exit (`class`/`number`, position, destination):
+  a failed exit no longer forbids the others to the same map;
+- a "in front of the door" support point must be on the door's floor (`|Δy| < 1.5`
+  relative to the volume center): the landing above a door below is no longer
+  proposed;
+- a route exhausted without reaching the goal is **no longer** taken as an arrival: the
+  driver replans from its position; if the grid refuses the plan, the goal is abandoned.
+  Before, an empty route made it count the 20 exit frames and conclude "no way out"
+  while the hero was still four units above the goal;
+- getting stuck no longer stops the run: the goal is abandoned and noted as tried (same
+  log as exits), the driver picks another one, and `Stop::Stuck` is only returned
+  when nothing is left to try. A single replan per 45-frame window
+  (`stall` reset to zero), so that learned cells differ instead of exhausting the eight
+  replans in eight frames; the replan blocks the **node where the hero is stuck**, not the
+  waypoint (already validated by the probe), so as not to forbid the goal itself;
+- an exit whose walk failed is remembered **independently of the story**
+  (`failed_exits`: map, destination, exit key): a failing objective is not
+  replayed indefinitely after each flag change; the other exits to the same
+  map remain attemptable.
 
-Ces règles sont génériques : aucune exception par carte, par étape ou par porte.
+These rules are generic: no exception per map, per step or per door.
 
-Régression corrigée : le test
-`trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03` part d'un pilote neuf sur
-`4101` à 1.1.2 ; la première sortie essayée est le warp n° 8 vers `4107`, dont la salle est
-**derrière** la double porte (la zone du warp ne contient que `z 28..30`) et dont le plan de
-grille s'avère impraticable. Avec le test d'arrivée en 3D seul, le suiveur suivait ce plan et
-se bloquait à `(17,0 ; 6,24 ; 28,73)` ; l'ancien suiveur s'arrêtait plus tôt (arrivée en `x/z`)
-et passait au warp n° 9 vers `4103`. Désormais le but est abandonné et la sortie suivante
-(`4103`) est prise, ce que le test exige.
+Regression fixed: the test
+`trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03` starts from a fresh driver on
+`4101` at 1.1.2; the first exit tried is warp no. 8 to `4107`, whose room is
+**behind** the double door (the warp zone only contains `z 28..30`) and whose grid plan
+turns out to be impassable. With the 3D arrival test alone, the follower followed that plan and
+got stuck at `(17.0; 6.24; 28.73)`; the old follower stopped earlier (arrival in `x/z`)
+and moved on to warp no. 9 to `4103`. Now the goal is abandoned and the next exit
+(`4103`) is taken, which the test requires.
 
-Preuve de descente physique, sans `NavGrid`, sans téléport, sans drapeau forcé : le préfixe
-du parcours du pilote jusqu'à l'image 24 460 (qui pose le héros sur `4101` à
-`(-3,9 ; 12,47 ; 16,75)`) suivi de 450 images de pavé seulement (droite 90, bas+droite 60,
-gauche 150, haut 150) traverse la carte par le bas est, le palier et la porte :
+Physical descent evidence, without `NavGrid`, without teleport, without forced flag: the prefix
+of the driver's run up to frame 24,460 (which puts the hero on `4101` at
+`(-3.9; 12.47; 16.75)`) followed by 450 frames of d-pad only (right 90, down+right 60,
+left 150, up 150) crosses the map through the bottom east, the landing and the door:
 
 ```powershell
-# entrées : build/v01-20261107/return/replay-descent-4107.jsonl (25 442 images, aucune touche A)
+# inputs: build/v01-20261107/return/replay-descent-4107.jsonl (25,442 frames, no A key)
 cargo run -p dq9-app --release -- --new-game --headless `
   --replay build/v01-20261107/return/replay-descent-4107.jsonl `
   --checkpoints build/v01-20261107/return/replay-descent-4107-cp.jsonl
-# observé : image 24 460, carte 4101, héros (-3,9 ; 12,47 ; 16,75), histoire 1.2.1 ;
-# image 25 299, carte 4107, héros (0 ; 0,17 ; 16,9), histoire 1.2.1, cause
-# « Doorway { class: 0, number: 3 } ». sha256 c15c6b54… (entrées) et 192881e1… (points).
+# observed: frame 24,460, map 4101, hero (-3.9; 12.47; 16.75), story 1.2.1;
+# frame 25,299, map 4107, hero (0; 0.17; 16.9), story 1.2.1, cause
+# "Doorway { class: 0, number: 3 }". sha256 c15c6b54… (inputs) and 192881e1… (points).
 ```
 
-Résultat du pilote corrigé sur l'état 1.2.1, avec le plafond de pas demandé :
+Result of the fixed driver on the 1.2.1 state, with the requested step cap:
 
 ```powershell
 cargo run -p dq9-app --release -- --map X01M01 --chapter 1 --step 2 --substep 1 `
   --headless --auto --pilot --headless-steps 30000 --mute
-# observé : 4101 -> 4107 par « Doorway { class: 0, number: 3 } » à 44,6 s ; PNJ 139 (Apus) ;
-# 4107 -> 4105 par le warp 1 à 59,9 s ; puis 4105/4106 et 4105/4107/4101 ; arrêt à 207,8 s
-# sur 4101. Aucun téléport.
+# observed: 4101 -> 4107 via "Doorway { class: 0, number: 3 }" at 44.6 s; NPC 139 (Apus);
+# 4107 -> 4105 via warp 1 at 59.9 s; then 4105/4106 and 4105/4107/4101; stop at 207.8 s
+# on 4101. No teleport.
 
-# Pilote complet depuis la nouvelle partie, mêmes règles, deux minutes de jeu :
+# Full driver from a new game, same rules, two minutes of play:
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot `
   --checkpoints build/v01-20261107/return/full-return-cp.jsonl `
   --trace-inputs build/v01-20261107/return/full-return-inputs.jsonl
-# observé : 407,7 s retour sur 4101 (1.2.1) ; 475,7 s sortie vers 4107, arrivée à 485,8 s
-# par la porte 0/3 ; Apus (PNJ 139) ; 4105 à 500,9 s par le warp 1 ; gardien 101 à 514,1 s ;
-# 21591 de 519,7 à 526,3 s puis carte 1100 (Angel Falls) par le warp du trigger 11 ;
-# 21592, 1380, 1390, 1370 (scènes du village) ; M01M08 à 582,4 s ; arrêt à 665,2 s en
-# contrôle libre sur 1108, héros (-2,20 ; 0,10 ; 0,78). Historique 1.2.1, drapeaux de piste
-# 0 {4, 7} et {0, 1, 3, 12, 13}. Aucun téléport, aucun drapeau forcé.
+# observed: 407.7 s return to 4101 (1.2.1); 475.7 s exit to 4107, arrival at 485.8 s
+# via door 0/3; Apus (NPC 139); 4105 at 500.9 s via warp 1; guardian 101 at 514.1 s;
+# 21591 from 519.7 to 526.3 s then map 1100 (Angel Falls) via the warp of trigger 11;
+# 21592, 1380, 1390, 1370 (village cutscenes); M01M08 at 582.4 s; stop at 665.2 s in
+# free control on 1108, hero (-2.20; 0.10; 0.78). Story 1.2.1, track flags
+# 0 {4, 7} and {0, 1, 3, 12, 13}. No teleport, no forced flag.
 ```
 
-Le chemin physique correspondant : descendre le flanc est (`8,25 → 6,14 → 4,25`), longer le
-`4,25` vers l'ouest jusqu'au palier `(0 ; 4,25 ; 31,1)`, entrer vers le sud dans la double
-porte → `4107`. Dans `4107`, Apus (PNJ 139, événement 0 : `0x68(set_track_flag,0)`), puis le
-warp `0x72` n° 8 en `(0 ; 0 ; 9,5)` vers `4105`, le gardien (PNJ 101, événement 1 :
-`0xb(193) 0x10(0)` → `0x77` 21591), et 21591 → `0xe1` warp vers `1100`.
+The corresponding physical path: go down the east flank (`8.25 → 6.14 → 4.25`), follow
+`4.25` west to the landing `(0; 4.25; 31.1)`, enter south into the double
+door → `4107`. In `4107`, Apus (NPC 139, event 0: `0x68(set_track_flag,0)`), then
+`0x72` warp no. 8 at `(0; 0; 9.5)` to `4105`, the guardian (NPC 101, event 1:
+`0xb(193) 0x10(0)` → `0x77` 21591), and 21591 → `0xe1` warp to `1100`.
 
-Limites : le code reste à committer après les contrôles centraux ; la preuve de descente est
-un rejeu de nos entrées dans **notre** moteur, pas un rejeu melonDS ; l'ordre et les durées ne
-sont pas comparés ; la suite à `1100` (quêtes du village) appartient aux lots village et
-scènes.
+Limits: the code is still to be committed after the central checks; the descent evidence is
+a replay of our inputs in **our** engine, not a melonDS replay; order and durations are
+not compared; what follows at `1100` (village quests) belongs to the village and
+cutscene batches.
 
-Les compteurs de pas, temps et positions ci-dessus ont été mesurés avant la cadence de champ
-30 Hz de `run_steps`. Depuis, le pilote avance toujours d'un pas fixe de 60 Hz mais la logique
-de champ ne consomme le pavé qu'un VBlank sur deux : les trajectoires restent dans le moteur,
-mais les numéros d'image et les points de contrôle peuvent se décaler et doivent être
-re-mesurés par le lot de vérification, sans changer les entrées du pilote.
+The step counts, times and positions above were measured before the 30 Hz field
+cadence of `run_steps`. Since then, the driver still advances by a fixed 60 Hz step but field
+logic only consumes the d-pad every other VBlank: trajectories stay in the engine,
+but frame numbers and checkpoints may shift and must be
+re-measured by the verification batch, without changing the driver's inputs.

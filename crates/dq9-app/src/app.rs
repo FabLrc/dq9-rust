@@ -64,7 +64,7 @@ pub enum UserEvent {
     /// Layout picked in the page.
     #[cfg(target_arch = "wasm32")]
     Layout(Layout),
-    /// "Nouvelle partie" clicked in the page: starts the prologue (now, or once the ROM is read).
+    /// "New game" clicked in the page: starts the prologue (now, or once the ROM is read).
     #[cfg(target_arch = "wasm32")]
     NewGame,
 }
@@ -92,7 +92,7 @@ pub struct Options {
     pub story: dq9_formats::cast::Story,
     /// Explicit chapter/step/substep overrides for a loaded save.
     pub story_override: [Option<u8>; 3],
-    /// Start a new game: the first scene of the story (`docs/app.md`, § Nouvelle partie).
+    /// Start a new game: the first scene of the story (`docs/app.md`, § New game).
     pub new_game: bool,
 }
 
@@ -1868,7 +1868,7 @@ mod tests {
         );
     }
 
-    /// The web bug: after "Nouvelle partie", picking a save must load that save, not start
+    /// The web bug: after "New game", picking a save must load that save, not start
     /// the prologue again. Exercises the same `set_save` path with a real save and ROM,
     /// through the proxy-less headless constructor.
     #[test]

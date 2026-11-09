@@ -5,20 +5,20 @@
 //! what the application knows (the ground, which animations ended, the poses it starts from).
 //!
 //! * **Time.** [`Cutscene::tick`] is one tick of 1/60 s. Timed moves, turns, scale and alpha
-//!   changes of the actors last `2 × duration` ticks (`docs/re/stb-natives.md`, § Temps et
-//!   unités: the game compares a counter that advances by `numTicks_` = 2 per update to
-//!   `2 × duration`). Camera and path durations take the same unit **[hypothèse]**; fades are
+//!   changes of the actors last `2 × duration` ticks (`docs/re/stb-natives.md`, § Time and
+//!   units: the game compares a counter that advances by `numTicks_` = 2 per update to
+//!   `2 × duration`). Camera and path durations take the same unit **[hypothesis]**; fades are
 //!   counted in ticks.
 //! * **Targets.** A script addresses an actor controller (0 to 23) that is bound to a binding
 //!   slot (natives 202, 205), which designates a character or an object. Here the cast
 //!   declared by 566 binds the declaration's `attach` index as slot *and* actor, which is what
-//!   the data shows (`ev01130`: actor 1 is the NPC declared with `attach 1`) **[hypothèse]**.
+//!   the data shows (`ev01130`: actor 1 is the NPC declared with `attach 1`) **[hypothesis]**.
 //!   A [`Target`] is what the application draws: the hero, a map NPC, a model the script
 //!   loaded, a cast member that has its own model, a map object.
 //! * **Channels.** The game queues the commands of an actor on eight channels and the actor
 //!   is busy until all are empty (native 204). The channel of each command is not read from
 //!   the game: the commands are grouped as position, rotation, animation, scale, alpha and
-//!   radius **[hypothèse]**; within a channel they run in order.
+//!   radius **[hypothesis]**; within a channel they run in order.
 //!
 //! No game function is ported whole here; the behaviours cite their origin in comments.
 
@@ -190,7 +190,7 @@ impl Engine {
 }
 
 /// The screen brightness: the engine drawing the 3D scene (`Main`) and the other one.
-/// Which physical screen is which is **[inconnu]** (`event.rs`, [`Screen`]).
+/// Which physical screen is which is **[unknown]** (`event.rs`, [`Screen`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fades {
     pub main: Engine,
@@ -1024,7 +1024,7 @@ impl Cutscene {
             Event::CameraToField { duration } => {
                 // `0215e14c`: the standing of the field camera (`020a2b48`) as a move of both
                 // eye and target. It follows the hero, which is where it was at the start of
-                // the event **[hypothèse]** (the game recomputes it from its own state).
+                // the event **[hypothesis]** (the game recomputes it from its own state).
                 let hero = self
                     .nodes
                     .get(&Target::Hero)
@@ -1107,7 +1107,7 @@ impl Cutscene {
     }
 
     /// Native 566: the cast member `attach` (`Event_BuildScene` binds it to the slot and the
-    /// actor of the same number **[hypothèse]**).
+    /// actor of the same number **[hypothesis]**).
     fn declare(&mut self, mode: i32, path: Option<&str>, reference: Option<i32>, attach: i32) {
         let Some(slot) = usize::try_from(attach).ok().filter(|s| *s < SLOTS) else {
             return;
@@ -1129,7 +1129,7 @@ impl Cutscene {
         if let Target::Cast(_) = target {
             node.model = path.map(str::to_owned);
             // Characters are drawn at the size of the map's; effects are sized by the script
-            // **[hypothèse]**.
+            // **[hypothesis]**.
             node.pose.scale = if path.is_some_and(|p| p.starts_with("effect/")) {
                 Vec3::ONE
             } else {
@@ -1609,7 +1609,7 @@ fn step_lane(
             let points = std::mem::take(&mut actor.path);
             if points.len() >= 2 {
                 let length: f32 = points.windows(2).map(|w| w[0].distance(w[1])).sum();
-                // The divisor of the segment lengths (`021579ac`); its unit is **[inconnu]**.
+                // The divisor of the segment lengths (`021579ac`); its unit is **[unknown]**.
                 let speed = actor.path_speed.max(1) as f32;
                 let units = (length / speed).ceil().max(1.0) as i32;
                 if let Some(timer) = Timer::units(units) {
@@ -1634,7 +1634,7 @@ fn start_animation(node: &mut Node, serial: &mut u32, name: &str, flags: i32, sp
     });
 }
 
-/// Catmull-Rom point of a path at `t` in `0..=1` (the game's spline type is **[hypothèse]**,
+/// Catmull-Rom point of a path at `t` in `0..=1` (the game's spline type is **[hypothesis]**,
 /// `docs/re/stb-natives.md`, native 217).
 fn spline(points: &[Vec3], t: f32) -> (Vec3, Vec3) {
     let segments = points.len() - 1;

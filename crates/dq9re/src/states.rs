@@ -1,5 +1,5 @@
-//! `dq9re states`: catalogue of oracle states, so that « which state is at 1.1.2 ? » is
-//! answered without loading every file (`docs/re/melonds-state.md`, § « Catalogue »).
+//! `dq9re states`: catalog of oracle states, so that "which state is at 1.1.2?" is
+//! answered without loading every file (`docs/re/melonds-state.md`, § "Catalog").
 //!
 //! `index` scans a directory of `.ml1` savestates and raw 4 MiB main-RAM images (as
 //! `scripts/melondsds_host.py --dump-ram` writes), reads them through

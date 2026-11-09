@@ -82,6 +82,6 @@ jobs:
       - name: Check the README progress block
         run: |
           if ! git diff --exit-code -- README.md; then
-            echo "::error file=README.md::bloc d'avancement périmé : lancer scripts/verify.ps1 en local et commiter README.md"
+            echo "::error file=README.md::stale progress block: run scripts/verify.ps1 locally and commit README.md"
             exit 1
           fi

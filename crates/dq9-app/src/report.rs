@@ -1,5 +1,5 @@
 //! Headless playback of events (native only): the loop shared by `--screenshot --event` and
-//! the coverage report `--events-report` (`docs/app.md`, § Événements).
+//! the coverage report `--events-report` (`docs/app.md`, § Events).
 
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
@@ -89,11 +89,11 @@ pub fn play(
     Ok(played)
 }
 
-/// What the report does not count against an event (`docs/re/stb-natives.md`, § « Sans effet
-/// dans le rendu »): 815 (an integrity probe), 560 (a subsystem test),
+/// What the report does not count against an event (`docs/re/stb-natives.md`, § "No effect
+/// in rendering"): 815 (an integrity probe), 560 (a subsystem test),
 /// 571 (a bit of `Object3D::flags_` nothing reads); 581 and 582 (which NPCs the shadows
 /// are drawn for) and 809 (shows two objects of the hero's angel form), whose targets the
-/// renderer does not draw **[hypothèse]**; and the motions a model has no name for (a no-op in
+/// renderer does not draw **[hypothesis]**; and the motions a model has no name for (a no-op in
 /// the game). A script that changes a collision placement (574, 575) **is** counted: the walls
 /// and the floor change even though no image shows them.
 const NO_VISIBLE_EFFECT: [&str; 7] = [

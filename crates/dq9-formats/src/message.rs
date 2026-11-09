@@ -630,8 +630,8 @@ pub struct LeadingTags {
     pub question: bool,
     /// `<WIN>`: window byte `+0x19b1` cleared, i.e. the frame is not drawn.
     pub frameless: bool,
-    /// `<CEN>`: window byte `+0x19b8` set, the window of narration cards **[hypothèse :
-    /// boîte et lignes centrées]**.
+    /// `<CEN>`: window byte `+0x19b8` set, the window of narration cards **[hypothesis:
+    /// centred box and lines]**.
     pub centered: bool,
     /// `<SKIP>`: window byte `+0x19bb` cleared.
     pub no_skip: bool,

@@ -1,5 +1,5 @@
 # Drives a portable melonDS with posted window messages, for the differential oracle
-# (docs/re/melonds-state.md, § « Oracle différentiel »). No focus needed; do not resize the
+# (docs/re/melonds-state.md, § "Differential oracle"). No focus needed; do not resize the
 # window (default scale 1, screens stacked).
 #
 # Usage:

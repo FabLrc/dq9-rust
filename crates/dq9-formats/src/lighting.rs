@@ -89,7 +89,7 @@ pub enum LightingMode {
 /// State filled by a lighting script (`LightingInfo`, sizeof 0x30c in the game).
 ///
 /// The game stores `basic_` and `advanced_` in a union; here both are kept, so a script
-/// that writes both keeps both values. [inconnu] whether the game ever relies on the
+/// that writes both keeps both values. [unknown] whether the game ever relies on the
 /// aliasing (no ROM script found that mixes both blocks; see `docs/re/lighting.md`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct LightingInfo {

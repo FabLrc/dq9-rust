@@ -1,63 +1,63 @@
-# État du projet
+# Project status
 
-Réécrit par le coordinateur à chaque intégration ; ne pas y ajouter de journal.
-Plan et jalons : [`roadmap.md`](roadmap.md) ; règles de travail : [`../AGENTS.md`](../AGENTS.md).
+Rewritten by the coordinator at each integration; do not add a log here.
+Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`](../AGENTS.md).
 
-## État au 8 novembre 2026 (`main` après la reconstruction du cast 0x8d)
+## Status as of November 8, 2026 (`main` after the 0x8d cast rebuild)
 
-- **v0.1 fonctionnelle en natif** : `cargo run -p dq9-app --release -- --new-game` joue
-  l'ouverture, le prologue de l'Observatoire, le retour physique à Angel Falls (1100) et les
-  scènes du village ; tâches 1.2 (anneau, veuve, écurie), verrou de sortie, aire 12 et retour
-  1.4.1 couverts par des tests réels (`keepsake_ring_task_…`, `widow_task_…`,
+- **v0.1 functional natively**: `cargo run -p dq9-app --release -- --new-game` plays
+  the opening, the Observatory prologue, the physical return to Angel Falls (1100) and the
+  village cutscenes; tasks 1.2 (ring, widow, stable), exit lock, area 12 and return
+  1.4.1 covered by real tests (`keepsake_ring_task_…`, `widow_task_…`,
   `stable_pickups_…`, `house_exit_requires_both_task_flags_…`,
-  `village_area_12_plays_1410_…`). Combats substitués (« gagné »).
-- **Progression sur place** : les actions différées rechargent les triggers (événement 20) et
-  0x8d reconstruit le cast de la carte sans la recharger (`re/trigger.md`, § Rechargements) ;
-  une scène marquée dans sa liste d'événements rend en fin les poses et retraits d'avant elle
-  (instantané des PNJ, `re/characters.md`) ; un changement d'étape remet les compteurs de
-  conversation à zéro (`re/dialogue.md`). Le rejeu du pilote redonne ses 615 points de
-  contrôle octet pour octet jusqu'à `M01M08`.
-- **Cadence** : boucle fixe à 60 Hz ; héros, `Field::step` et pose du modèle à 30 Hz
-  (images impaires, `Hero::step(ticks = 2)`, `7db7f41`, test
+  `village_area_12_plays_1410_…`). Battles substituted ("won").
+- **In-place progression**: deferred actions reload triggers (event 20) and
+  0x8d rebuilds the map cast without reloading it (`re/trigger.md`, § Reloads);
+  a cutscene marked in its event list renders at its end the poses and removals from before it
+  (NPC snapshot, `re/characters.md`); a stage change resets conversation counters
+  to zero (`re/dialogue.md`). The driver replay reproduces its 615 checkpoints
+  byte for byte up to `M01M08`.
+- **Cadence**: fixed 60 Hz loop; hero, `Field::step` and model pose at 30 Hz
+  (odd frames, `Hero::step(ticks = 2)`, `7db7f41`, test
   `field_cadence_holds_the_pose_and_matches_the_original_every_vblank`).
-- **Parité mesurée** : premier contrôle et point de contrôle libre 1.1.2 identiques à
-  l'original sauf `4135`, butin aléatoire du combat 26 (écart accepté, `re/item.md`).
-- **Navigateur** (Pages, build `21e1e42`) : ouverture, premier contrôle, 1140, 1130 et hall
-  surélevé ; pas de session continue jusqu'à 4107, la tour ou Angel Falls (`app.md`,
-  § Vérification).
+- **Measured parity**: first player control and free checkpoint 1.1.2 identical to
+  the original except `4135`, random loot from battle 26 (accepted deviation, `re/item.md`).
+- **Browser** (Pages, build `21e1e42`): opening, first player control, 1140, 1130 and raised
+  hall; no continuous session up to 4107, the tower or Angel Falls (`app.md`,
+  § Verification).
 
-## Lots actifs
+## Active batches
 
-Aucun. Seule `main` reste, en local comme sur `origin` : les branches intégrées ont été
-supprimées, `v01-init-flags` après report de `Party_FlagEquippedItems` (`re/item.md`).
+None. Only `main` remains, locally and on `origin`: integrated branches have been
+deleted, `v01-init-flags` after carrying over `Party_FlagEquippedItems` (`re/item.md`).
 
-## Blocages et prochaines étapes
+## Blockers and next steps
 
-1. **Référence originale au-delà de `X01M09`** : le retour bas `X01M01` → `X01M05` n'est
-   pas obtenu dans l'original (**[inconnu]**) et le rejeu direct des pads natifs est
-   falsifié (`re/melonds-state.md`, § Portes du retour). Il faut des positions ou points de
-   passage monde, pas des pads.
-2. **Parité au-delà de 1.1.2** : produire avec le harnais les références d'Angel Falls,
-   des tâches du village et de la fin du prologue, puis les rejouer par
+1. **Original reference beyond `X01M09`**: the low return `X01M01` → `X01M05` is
+   not obtained in the original (**[unknown]**) and direct replay of native pads is
+   falsified (`re/melonds-state.md`, § Return doors). World positions or waypoints
+   are needed, not pads.
+2. **Parity beyond 1.1.2**: produce with the harness the references for Angel Falls,
+   the village tasks and the end of the prologue, then replay them through
    `scripts/parity.ps1`.
-3. **Cadence des portes** : `Field::step` à 30 Hz (événement 17 en 8 VBlanks) reste
-   **[hypothèse]** ; mesure melonDS 4 contre 8 VBlanks à faire (`re/movement.md`).
-4. **Certification navigateur de bout en bout** : session continue sur Pages jusqu'à
-   Angel Falls et les tâches du village, à la main (le pilote n'est pas un critère produit).
-5. **J4, combat** : le butin du combat 26 doit sortir de sa propre règle pour lever `4135`.
-6. **Distribution, non modélisé** : le fondu et l'écran noir de la tâche 0x30, le démontage du
-   cast pendant la scène, la liste `questorder3.bin`, ce que `021a2fa0` reconstruit en plus
-   (monstres, objets : **[inconnu]**) ; `TestFlags00(0x1000)` supposé nul. Aucun état original
-   à 4104 en 1.2 ne confirme encore le PNJ 99 sans changement de carte.
+3. **Door cadence**: `Field::step` at 30 Hz (event 17 in 8 VBlanks) remains
+   **[hypothesis]**; melonDS measurement of 4 vs 8 VBlanks still to do (`re/movement.md`).
+4. **End-to-end browser certification**: continuous session on Pages up to
+   Angel Falls and the village tasks, by hand (the driver is not a product criterion).
+5. **J4, battle**: battle 26 loot must come from its own rule to clear `4135`.
+6. **Cast, not modeled**: the fade and black screen of task 0x30, the teardown of the
+   cast during the cutscene, the `questorder3.bin` list, what `021a2fa0` rebuilds in addition
+   (monsters, objects: **[unknown]**); `TestFlags00(0x1000)` assumed zero. No original state
+   at 4104 in 1.2 yet confirms NPC 99 without a map change.
 
-## Preuves
+## Evidence
 
-Locales, jamais commitées. Nouveaux lots : `build/evidence/<lot>/manifest.json`
-(`scripts/evidence.ps1`). Anciennes racines : `build/v01-20261107/` et `build/orca/` ;
-les notes `docs/re/*.md` et `app.md` citent chemins et empreintes.
+Local, never committed. New batches: `build/evidence/<batch>/manifest.json`
+(`scripts/evidence.ps1`). Old roots: `build/v01-20261107/` and `build/orca/`;
+the `docs/re/*.md` notes and `app.md` cite paths and hashes.
 
-## Comparaison à l'original
+## Comparison with the original
 
-`scripts/parity.ps1` rejoue les références (`build/evidence/parity/references.json`) sur
-le runtime headless ; écarts acceptés listés dans la référence avec leur justification.
-`scripts/compare-runs.ps1` et `dq9re state diff/watch` servent au diagnostic.
+`scripts/parity.ps1` replays the references (`build/evidence/parity/references.json`) on
+the headless runtime; accepted deviations are listed in the reference with their justification.
+`scripts/compare-runs.ps1` and `dq9re state diff/watch` are used for diagnosis.

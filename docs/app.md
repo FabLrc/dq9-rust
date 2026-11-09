@@ -1,53 +1,53 @@
-# Application `dq9-app` et rendu `dq9-render`
+# Application `dq9-app` and renderer `dq9-render`
 
-L'application commune native/Web affiche une carte, ses modèles, textures, animations, PNJ et le
-héros animé (pièces de `chara_pc.gp2` assemblées, repos/marche/course selon la vitesse ;
-[`re/characters.md`](re/characters.md) § « Le héros »). `dq9-core` consomme les collisions `.col2`
-([`re/collision.md`](re/collision.md)) pour un déplacement de terrain expérimental ;
-`dq9_core::field` teste les portes, aires et warps des `.bmbl` à chaque pas
-([`re/map-archive.md`](re/map-archive.md)) et `dq9-app` charge la carte de destination qu'il
-renvoie ; l'éclairage de la carte, le brouillard et l'heure du jour sont appliqués
+The shared native/Web application displays a map, its models, textures, animations, NPCs and the
+animated hero (pieces of `chara_pc.gp2` assembled, idle/walk/run depending on speed;
+[`re/characters.md`](re/characters.md) § "The hero"). `dq9-core` consumes the `.col2` collisions
+([`re/collision.md`](re/collision.md)) for experimental terrain movement;
+`dq9_core::field` tests the doors, areas and warps of the `.bmbl` at each step
+([`re/map-archive.md`](re/map-archive.md)) and `dq9-app` loads the destination map it
+returns; the map's lighting, fog and time of day are applied
 ([`re/lighting.md`](re/lighting.md)).
 
-- `crates/dq9-core` (sans E/S, compile en wasm) : `lighting` (horloge du jour `DayClock`,
-  phase `TimeOfDay`, choix et mélange de l'entrée `.bats`, registres de brouillard, vecteurs
-  de lumière) ; `CollisionWorld` assemble les `.col2` des
-  placements visibles ; `Hero` avance au pas fixe, recale le sol et bloque les faces verticales.
-  Vitesse et départ sont provisoires ([`re/movement.md`](re/movement.md)).
-- `crates/dq9-render` (sans E/S, compile en wasm) : `Scene::build(map, fichier)` reste
-  disponible pour une scène statique ; `AnimatedScene::build(map, id, code, story, fichier)`
-  ajoute les animations et les PNJ. `step(camera)` avance d'un pas de 60 Hz ;
-  `face_camera` et `upload` préparent le rendu. `Renderer` conserve les ressources GPU ;
-  `Camera` est la caméra libre.
-- `crates/dq9-app` (winit + wgpu) : seule crate qui touche au système. Lit la ROM (fichier en
-  natif, `<input type=file>` sur le Web), ouvre la fenêtre, fait tourner la boucle : mises à
-  jour à pas fixes de 60 Hz (accumulateur), un rendu par image affichée.
+- `crates/dq9-core` (no I/O, compiles to wasm): `lighting` (day clock `DayClock`,
+  phase `TimeOfDay`, selection and blending of the `.bats` entry, fog registers, light
+  vectors); `CollisionWorld` assembles the `.col2` of the
+  visible placements; `Hero` advances at the fixed step, snaps to the ground and is blocked by vertical faces.
+  Speed and start are provisional ([`re/movement.md`](re/movement.md)).
+- `crates/dq9-render` (no I/O, compiles to wasm): `Scene::build(map, file)` remains
+  available for a static scene; `AnimatedScene::build(map, id, code, story, file)`
+  adds animations and NPCs. `step(camera)` advances by one 60 Hz step;
+  `face_camera` and `upload` prepare rendering. `Renderer` holds the GPU resources;
+  `Camera` is the free camera.
+- `crates/dq9-app` (winit + wgpu): the only crate that touches the system. Reads the ROM (file in
+  native, `<input type=file>` on the Web), opens the window, runs the loop: fixed-step 60 Hz
+  updates (accumulator), one render per displayed frame.
 
-## Lancer en natif
+## Running natively
 
 ```powershell
-cargo run -p dq9-app --release -- --map M01            # ROM : --rom, DQ9_ROM, ou le seul *.nds de rom/
+cargo run -p dq9-app --release -- --map M01            # ROM: --rom, DQ9_ROM, or the single *.nds in rom/
 cargo run -p dq9-app --release -- --map C01M09 --time morning --layout side
 cargo run -p dq9-app --release -- --map F01 --clock 389 --screenshot build/scratch/app/f01-dusk.png
-cargo run -p dq9-app --release -- --save rom/dq9.sav   # carte, position, cap et heure de la sauvegarde
-# Une image hors écran en PNG, sans fenêtre, puis sortie :
+cargo run -p dq9-app --release -- --save rom/dq9.sav   # map, position, heading and time from the save
+# One offscreen PNG frame, no window, then exit:
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/m01.png
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/village.png `
     --size 1024x768 --eye=-5,20,40 --target=-20,0,5
 cargo run -p dq9-app --release -- --map M01 --frame 60 --screenshot build/scratch/app/m01-f60.png
 cargo run -p dq9-app --release -- --map C01M09 --chapter 19 --step 2 --substep 1 --night
-# Sans fenêtre : marcher selon un script (axes du monde, secondes) et journaliser les cartes
-# et positions, portes comprises (entrer dans une maison d'Angel Falls et en sortir) :
+# No window: walk following a script (world axes, seconds) and log maps
+# and positions, doors included (enter a house in Angel Falls and leave it):
 cargo run -p dq9-app --release -- --map M01 --start=-19.5,-9 --walk "-z:3,+z:3,idle:0.5"
-# Une capture après des entrées : marcher puis parler au PNJ en face (« Conversations ») :
+# A screenshot after inputs: walk then talk to the NPC in front ("Conversations"):
 cargo run -p dq9-app --release -- --map M01 --step 2 --start=5.4,2.5 `
     --input "+x:0.05,a,idle:1.2" --eye=4,3,14 --target=6,-2.5,2.5 --layout top `
     --screenshot build/scratch/app/hugo.png
 ```
 
-Avec `--screenshot`, `--walk` et `--start` pilotent le héros pendant les `--frame N` pas fixes
-(le script court depuis le pas 0, puis le héros reste immobile) : la capture montre l'allure
-choisie par sa vitesse, par exemple la marche vers l'ouest depuis Angel Falls :
+With `--screenshot`, `--walk` and `--start` drive the hero during the `--frame N` fixed steps
+(the script runs from step 0, then the hero stays still): the screenshot shows the gait
+chosen from its speed, for example walking west from Angel Falls:
 
 ```powershell
 cargo run -p dq9-app --release -- --map M01 --walk "-x:5" --start=-1.74,1.22 --frame 20 `
@@ -56,14 +56,14 @@ cargo run -p dq9-app --release -- --map M01 --frame 10 `
     --eye=-1.74,0.3,-3.5 --target=-1.74,-0.5,1.22 --screenshot build/scratch/app/hero.png
 ```
 
-`--walk` joue le **même pas fixe que la fenêtre** (`App::run_steps` : `Hero::step` avec les
-touches du pavé que la direction demande, caméra au yaw 0, puis `Field::step`, portes et
-demandes du champ) : `+x`, `-x`, `+z`, `-z` (deux axes font une diagonale : `+x-z`) ou
-`idle`, deux points et une durée ; `--start x,z` pose le héros au sol de ce point (aussi avec
-`--screenshot`, face à +z). Les positions et tronçons sont écrits sur la sortie standard ;
-les chargements de carte et ouvertures de porte sur la sortie d'erreur. Si la carte ne se
-charge pas, la commande échoue au lieu de réussir avec « no map ». Une porte interne
-s'ouvre comme en jeu, par exemple la double porte de la bibliothèque de `X01M07` :
+`--walk` plays the **same fixed step as the window** (`App::run_steps`: `Hero::step` with the
+D-pad keys the direction asks for, camera at yaw 0, then `Field::step`, doors and
+field requests): `+x`, `-x`, `+z`, `-z` (two axes make a diagonal: `+x-z`) or
+`idle`, a colon and a duration; `--start x,z` puts the hero on the ground at that point (also with
+`--screenshot`, facing +z). Positions and segments are written to standard output;
+map loads and door openings to standard error. If the map does not
+load, the command fails instead of succeeding with "no map". An internal door
+opens as in game, for example the double door of the library in `X01M07`:
 
 ```powershell
 cargo run -p dq9-app --release -- --map X01M07 --start -8.6,-6 --walk=-z:2 --mute
@@ -74,729 +74,729 @@ cargo run -p dq9-app --release -- --map X01M07 --start -8.6,-6 --walk=-z:2 --mut
 
 ### Conversations
 
-Dans la fenêtre : `Entrée`, `Espace` ou `Z` (touche A) parle au PNJ en face du héros (le plus
-« regardé » à moins de 1,5 unité, ou dans sa zone de conversation : `dq9_core::talk::nearest`),
-avance dans le texte (pendant la frappe, affiche jusqu'à la prochaine attente) et ferme à la
-fin ; `Retour` ou `X` (touche B) répond Non ; `↑`/`↓` ou `W`/`S` déplacent le curseur des
-questions. Le héros ne bouge pas pendant une conversation. La réplique est celle que le jeu
-choisit (`dialogue.md`) pour la carte, le chapitre, l'étape, les quêtes et le moment du jour de
-l'état de l'application, en anglais. Sur le Web la ROM chargée suffit : mêmes touches.
+In the window: `Enter`, `Space` or `Z` (A button) talks to the NPC in front of the hero (the most
+"looked at" within 1.5 units, or inside its conversation zone: `dq9_core::talk::nearest`),
+advances the text (while typing, shows up to the next wait) and closes at the
+end; `Backspace` or `X` (B button) answers No; `↑`/`↓` or `W`/`S` move the cursor of
+questions. The hero does not move during a conversation. The line is the one the game
+chooses (`dialogue.md`) for the map, chapter, step, quests and time of day of the
+application state, in English. On the Web the loaded ROM is enough: same keys.
 
-`--input "SCRIPT"` (avec `--screenshot`) joue des entrées avant la capture, avec les mêmes pas
-fixes : les tronçons de `--walk` (`+x:0.5`, `idle:2`) et les boutons `a` (action : parler,
-avancer), `b` (annuler), `up`, `down`, chacun d'un pas. Le héros reste à sa dernière position
-(le repère orange de la capture) ; un script qui change de carte est une erreur. Exemple : la
-capture de Hugo ci-dessus (étape 2 d'Angel Falls, `<N_TURN>//Hugo// …`).
+`--input "SCRIPT"` (with `--screenshot`) plays inputs before the screenshot, with the same fixed
+steps: `--walk` segments (`+x:0.5`, `idle:2`) and the buttons `a` (action: talk,
+advance), `b` (cancel), `up`, `down`, one step each. The hero stays at its last position
+(the orange marker in the screenshot); a script that changes map is an error. Example: the
+Hugo screenshot above (step 2 of Angel Falls, `<N_TURN>//Hugo// …`).
 
-Le dessin du cadre, du nom, du texte et de la flèche vient de `dq9_render::ui` ; les
-constantes de mise en page sont celles de `MsgWin_Show` quand elles ont été lues, sinon des
-hypothèses (`dialogue.md`, § « Fenêtre de message »). La fenêtre est dessinée sur l'écran du haut,
-dans la zone qu'il occupe (`screens.rs`).
+The drawing of the frame, name, text and arrow comes from `dq9_render::ui`; the
+layout constants are those of `MsgWin_Show` where they have been read, otherwise
+hypotheses (`dialogue.md`, § "Message window"). The window is drawn on the top screen,
+within the area it occupies (`screens.rs`).
 
-`--map` : code (`M01`, `C01M09`) ou id (`1100`) de la liste des cartes ; il prévaut sur la
-carte lue dans `--save`. En l'absence des deux options, la carte reste `M01`. `--save` lit un
-`.sav` local et sélectionne la carte du premier slot normal valide ; aucune donnée n'est envoyée
-au réseau. Le héros commence à la position et au cap que le jeu donne après « Continue » (point
-de départ de la carte, `re/save.md` § « Position à la reprise »), posé sur le sol ; l'écran
-`--screenshot` imprime cette pose (`hero: …`) et centre la caméra dessus. `--time` : moment de la
-journée `night`, `morning`, `day`, `evening` ou 0 à 3 (`LightingManager+0x98` : choix des
-variantes, des instances visibles et de l'entrée d'éclairage), par défaut la phase de l'horloge de
-la sauvegarde, sinon la nuit ; `--clock S` : seconde du jour de 420 s (nuit 0, matin 180, jour 210,
-soir 390) ; sa phase remplace `--time`, et les deux dernières secondes d'une phase se fondent
-dans la suivante en zone avancée (champ) ; `--fog OFFSET,SHIFT,COLOR,D0..D31` remplace le
-brouillard (comparaisons à melonDS) ;
-`--layout stacked|side|top` : disposition des écrans DS (section « Écrans DS »).
+`--map`: code (`M01`, `C01M09`) or id (`1100`) from the map list; it takes precedence over the
+map read from `--save`. Without either option, the map stays `M01`. `--save` reads a
+local `.sav` and selects the map of the first valid normal slot; no data is sent
+over the network. The hero starts at the position and heading the game gives after "Continue" (the
+map's start point, `re/save.md` § "Position on resume"), placed on the ground; the
+`--screenshot` output prints this pose (`hero: …`) and centers the camera on it. `--time`: time of
+day `night`, `morning`, `day`, `evening` or 0 to 3 (`LightingManager+0x98`: selection of
+variants, of visible instances and of the lighting entry), by default the phase of the save's
+clock, otherwise night; `--clock S`: second of the 420 s day (night 0, morning 180, day 210,
+evening 390); its phase replaces `--time`, and the last two seconds of a phase blend
+into the next one in an advanced zone (field); `--fog OFFSET,SHIFT,COLOR,D0..D31` replaces the
+fog (comparisons with melonDS);
+`--layout stacked|side|top`: DS screen layout (section "DS screens").
 
-La distribution suit la piste de scénario courante de la sauvegarde quand elle est chargée :
-progression, drapeaux et quêtes sont restaurés. Sinon, elle est celle du prologue `1.1.1` de jour.
-`--chapter`, `--step`, `--substep` remplacent explicitement les champs correspondants ;
-`--night` force les placements et conversations de nuit, indépendamment de `--time`.
-Avec `--map`, la sauvegarde ne fournit pas la position ni la progression. Le reste du groupe et
-le sac ne sont pas chargés. `--frame N` évalue exactement N pas fixes depuis le début des
-mouvements avant la capture (0 par défaut), sans dépendre du temps de chargement du GPU.
-Les sprites sont orientés vers la caméra de `--eye`/`--target` avant cette évaluation.
+The cast follows the save's current scenario track when one is loaded:
+progress, flags and quests are restored. Otherwise, it is that of the prologue `1.1.1` by day.
+`--chapter`, `--step`, `--substep` explicitly replace the corresponding fields;
+`--night` forces night placements and conversations, independently of `--time`.
+With `--map`, the save provides neither the position nor the progress. The rest of the party and
+the bag are not loaded. `--frame N` evaluates exactly N fixed steps from the start of
+motions before the screenshot (0 by default), without depending on GPU load time.
+Sprites are oriented toward the `--eye`/`--target` camera before this evaluation.
 
-Commandes : glisser avec le bouton gauche pour tourner, molette pour zoomer. En mode orbite,
-`ZQSD`/`WASD` (touches physiques) ou flèches sont le pavé du jeu : le héros tourne, accélère et
-marche à 5,76 unités/s comme `Character_Update`, bloqué par les murs et posé sur le sol de la
-carte ([`re/movement.md`](re/movement.md)) ; `Q`/`E` (physiques `A`/`E` en AZERTY) sont les
-boutons `L`/`R` du jeu : ils tournent la caméra de ± 45° au plus autour de son yaw d'entrée sur
-la carte, ensemble ils la ramènent. `Tab` passe en vol libre, où les touches de déplacement
-déplacent la caméra et `Q`/`E` la cible vers le bas/haut ; `Maj` accélère la caméra. `F` rétablit
-l'orbite de terrain autour du héros (distance 11, hauteur relative 6, cible à mi-hauteur), ou
-cadre toute la carte en vol libre. `R` change la disposition des écrans (`stacked`, `side`, `top`),
-`T` moment suivant (liste « Moment » sur le Web), `M` coupe/rétablit la musique, `PageHaut`/`PageBas` carte précédente/suivante, `Entrée`/`Espace` parler, `Échap` quitter.
+Controls: drag with the left button to rotate, wheel to zoom. In orbit mode,
+`ZQSD`/`WASD` (physical keys) or arrows are the game's D-pad: the hero turns, accelerates and
+walks at 5.76 units/s like `Character_Update`, blocked by walls and placed on the ground of the
+map ([`re/movement.md`](re/movement.md)); `Q`/`E` (physical `A`/`E` on AZERTY) are the
+game's `L`/`R` buttons: they rotate the camera by at most ± 45° around its yaw on entering
+the map, together they reset it. `Tab` switches to free flight, where the movement keys
+move the camera and `Q`/`E` move the target down/up; `Shift` speeds up the camera. `F` restores
+the terrain orbit around the hero (distance 11, relative height 6, target at mid-height), or
+frames the whole map in free flight. `R` changes the screen layout (`stacked`, `side`, `top`),
+`T` next time of day ("Time" list on the Web), `M` mutes/unmutes the music, `PageUp`/`PageDown` previous/next map, `Enter`/`Space` talk, `Esc` quit.
 
-**Son** : à chaque chargement de carte, `dq9-app` joue la séquence de `bgm.sdat` que le jeu
-choisit pour elle (`re/sdat.md` : fente musique de `maplist9.bin`, variante de nuit, surcharges de
-`mapbgm.bin`), par `cpal` en natif et par WebAudio sur le Web (le navigateur n'autorise le son
-qu'après un geste : la musique démarre au premier clic ou à la première touche). Les scripts
-d'événement jouent leurs effets (natives 712 à 738), jingles (`ME_`, la musique baisse puis
-reprend) et changements de musique ; la fenêtre de message joue le bip de frappe, `<EXC>`,
-`<QES>` et l'ouverture des choix. `--mute` (`?mute=1` sur le Web) n'ouvre aucun périphérique
-audio ; `dq9re sseq <n> --wav f.wav` rend une séquence, `dq9re se <n> --wav f.wav` un effet
-sans fenêtre ; `--event N --headless-steps S --sound-wav f.wav` écrit le son mixé d'un événement
-(le journal liste les effets demandés par les scripts).
+**Sound**: on each map load, `dq9-app` plays the `bgm.sdat` sequence the game
+chooses for it (`re/sdat.md`: music slot of `maplist9.bin`, night variant, overrides from
+`mapbgm.bin`), through `cpal` natively and through WebAudio on the Web (the browser only allows sound
+after a gesture: the music starts on the first click or first key press). Event
+scripts play their effects (natives 712 to 738), jingles (`ME_`, the music ducks then
+resumes) and music changes; the message window plays the typing beep, `<EXC>`,
+`<QES>` and the opening of choices. `--mute` (`?mute=1` on the Web) opens no audio
+device; `dq9re sseq <n> --wav f.wav` renders a sequence, `dq9re se <n> --wav f.wav` an effect
+without a window; `--event N --headless-steps S --sound-wav f.wav` writes the mixed sound of an event
+(the log lists the effects requested by the scripts).
 
-## Événements (scènes `.stb`)
+## Events (`.stb` cutscenes)
 
-Les scènes du jeu (cinématiques du prologue, dialogues scriptés) sont des scripts `.stb`
-([`re/stb.md`](re/stb.md)) que `dq9-app` joue à l'écran :
+The game's cutscenes (prologue cinematics, scripted dialogues) are `.stb` scripts
+([`re/stb.md`](re/stb.md)) that `dq9-app` plays on screen:
 
 ```powershell
-# Le prologue : première scène de l'étape 1.1 (`21500`, Angel Falls, « Opening (Background) »),
-# puis, par la native 538, `21507`. Dans la fenêtre ; Entrée/Espace lit les messages.
+# The prologue: first cutscene of stage 1.1 (`21500`, Angel Falls, "Opening (Background)"),
+# then, via native 538, `21507`. In the window; Enter/Space reads the messages.
 cargo run -p dq9-app --release -- --stage 1.1
-cargo run -p dq9-app --release -- --event 1130          # une scène seule, sur sa carte
-# Une capture après N pas de 60 Hz (le script, les fondus, les messages et la caméra rejoués
-# depuis le début), avec l'action pressée tous les 100 pas pour lire les messages :
+cargo run -p dq9-app --release -- --event 1130          # a single cutscene, on its map
+# A screenshot after N 60 Hz steps (script, fades, messages and camera replayed
+# from the start), with action pressed every 100 steps to read the messages:
 cargo run -p dq9-app --release -- --stage 1.1 --frame 420 --press-every 100 `
     --size 512x384 --screenshot build/scratch/ev/hello.png
-# La logique du jeu sans fenêtre (déclencheurs, changements de carte, scènes), journalisée :
+# Game logic without a window (triggers, map changes, cutscenes), logged:
 cargo run -p dq9-app --release -- --stage 1.1 --headless-steps 60000 --press-every 100
-# Ce que joue chaque scène d'une plage d'étapes (tableau ci-dessous) :
+# What each cutscene of a range of stages plays (table below):
 cargo run -p dq9-app --release -- --events-report 1.1-3
 ```
 
-`--stage MAJEUR.MINEUR` choisit le point de l'histoire et la première scène de l'étape dans
-`eventlist_lv5.bin` (`dq9_core::script::load::stage_opening`) ; `--event N` une scène du
-numéro de `data/event` ou `data/evspt_lv5`. Une scène se joue sur la carte que son
-enregistrement de la liste des événements désigne (valeur 4), le héros à la position de
-l'enregistrement quand elle en a une : l'application charge cette carte si elle est ailleurs.
-Sur le Web, `?event=N`. Dans la fenêtre, un déclencheur qui demande `Request::Event` (actions
-`0x77`, `0x80`, `0x9b` : entrer dans une zone, parler) met l'événement en file ; à la fin d'un
-événement l'application tire l'événement 11 des triggers (`Field::event_ended`), comme
+`--stage MAJOR.MINOR` chooses the story point and the first cutscene of the stage in
+`eventlist_lv5.bin` (`dq9_core::script::load::stage_opening`); `--event N` a cutscene by
+number from `data/event` or `data/evspt_lv5`. A cutscene plays on the map its
+event-list record designates (value 4), the hero at the record's position
+when it has one: the application loads that map if it is elsewhere.
+On the Web, `?event=N`. In the window, a trigger that requests `Request::Event` (actions
+`0x77`, `0x80`, `0x9b`: entering a zone, talking) queues the event; at the end of an
+event the application fires trigger event 11 (`Field::event_ended`), like
 `EventTask_Update`.
 
-**Architecture.** `dq9_core::cutscene` tient l'état de la scène que le script a produit (acteurs,
-caméra, fondus) sans E/S ; `dq9-app/src/event.rs` (`EventPlayer`) fait tourner le `Director`,
-applique cet état au rendu et renvoie les `Signal` au script ; `dq9_render::AnimatedScene`
-fournit les acteurs (`add_actor`, `play_actor`, `actor_bone`, `play_hero`, `set_npc_angle`), les
-mouvements des PNJ (`play_npc`), les feuilles `.spr` de script (`add_sprite`) et la palette
+**Architecture.** `dq9_core::cutscene` holds the cutscene state the script produced (actors,
+camera, fades) without I/O; `dq9-app/src/event.rs` (`EventPlayer`) runs the `Director`,
+applies this state to rendering and returns the `Signal`s to the script; `dq9_render::AnimatedScene`
+provides the actors (`add_actor`, `play_actor`, `actor_bone`, `play_hero`, `set_npc_angle`), the
+NPC motions (`play_npc`), the script `.spr` sheets (`add_sprite`) and the palette
 (`tint_hero`, `tint_actor`, `tint_npc`).
 
-- **Cadence.** Un pas fixe de 60 Hz est un tick ; le script avance toutes les deux ticks (une
-  mise à jour du jeu, [`re/stb-natives.md`](re/stb-natives.md) § « Temps et unités »), la scène à
-  chaque tick. Déplacements, rotations, échelle et alpha chronométrés durent `2 × durée` ticks ;
-  les fondus comptent des ticks.
-- **Modèles.** Avant de jouer une scène, l'application la joue à blanc (toutes les attentes
-  finissent aussitôt) pour savoir quels `.chr` chaque personnage charge (natives 200, 228, 229,
-  233, 566, 567), les ajoute à la scène et envoie la scène au GPU une fois. Un modèle sans
-  polygone (les caméras du prologue, `ev01000cc000.chr`) n'a pas d'instance : il garde son
-  squelette et ses mouvements. Mouvements d'un acteur : table `BCFG` de son archive et des
-  paquets ajoutés (`LoadModelArchive`), un mouvement sans fichier propre jouant une tranche du
-  fichier du paquet de type 0. Le héros joue les mouvements des paquets `evNNNNNp000.chr`.
-- **Caméra.** Œil, cible, orbite, champ de vision (demi-angle, 15° par défaut), roulis, secousses,
-  suivi d'un acteur, caméra portée par deux os d'un modèle (native 572) et caméra à trois os
-  (native 552 : `eye`/`lookat` de la source, `foot` qui porte la cible) sont celles du script ;
-  la caméra de terrain reprend à la fin, recentrée sur la
-  pose finale du héros sans garder le gros plan, le roulis ou le champ de la scène. Si la chaîne
-  a changé de carte, elle reprend l'orbite de la destination ; le vol libre retrouve sa vue
-  indépendante. Une scène est cadrée en 4:3 sur l'écran haut (`screens.rs`).
-- **Messages.** La fenêtre de conversation (`talk.rs`) affiche le texte de la table de la scène ;
-  sans balise de fin elle attend l'action (`Dialogue::for_event`) ; la native 401 la ferme, la
-  native 410 en retire le cadre. Les natives 409, 411 et 413 en font une **légende** : alpha
-  temporisé (`W+0x9a8`, fondu d'une seconde, maintien, fondu), texte centré verticalement sous
-  `(192 − (lignes−1)×20 − 8)/2 − 16` quand le cadre est retiré, et bip de frappe coupé. Pendant
-  la légende, le compteur de message est gelé (`020657c8`) : l'action ne peut ni avancer ni
-  fermer la fenêtre avant 401, donc 405 ne tombe pas avant la fin du fondu. Le joueur est
-  verrouillé (pas de marche, pas de conversation).
-- **Fondus.** Un rectangle noir ou blanc sur tout l'écran 3D, de niveau −16 à +16 ; un moteur
-  verrouillé (`112`, `114`, `116`) ignore les fondus simples. L'écran « principal » est pris pour
-  l'écran 3D **[hypothèse]** ; le fondu de l'autre moteur est ignoré. L'échange d'écrans
-  (109/110) conserve `POWCNT1` bit 15 dans `Cutscene` ; `app.rs` et le chemin capture utilisent
-  `screens::field/overlay` pour placer le champ et la fenêtre sur l'autre écran, le panneau
-  remplissant l'écran libéré (Top : pas de panneau).
+- **Cadence.** A 60 Hz fixed step is a tick; the script advances every two ticks (one
+  game update, [`re/stb-natives.md`](re/stb-natives.md) § "Time and units"), the scene on
+  every tick. Timed moves, rotations, scale and alpha last `2 × duration` ticks;
+  fades count ticks.
+- **Models.** Before playing a cutscene, the application dry-runs it (every wait
+  finishes immediately) to learn which `.chr` each character loads (natives 200, 228, 229,
+  233, 566, 567), adds them to the scene and uploads the scene to the GPU once. A model without
+  polygons (the prologue cameras, `ev01000cc000.chr`) has no instance: it keeps its
+  skeleton and motions. An actor's motions: `BCFG` table of its archive and of the added
+  packages (`LoadModelArchive`), a motion without its own file playing a slice of the
+  file of the type-0 package. The hero plays the motions of the `evNNNNNp000.chr` packages.
+- **Camera.** Eye, target, orbit, field of view (half-angle, 15° by default), roll, shakes,
+  following an actor, camera carried by two bones of a model (native 572) and three-bone camera
+  (native 552: `eye`/`lookat` of the source, `foot` carrying the target) are those of the script;
+  the terrain camera resumes at the end, recentered on the
+  hero's final pose without keeping the cutscene's close-up, roll or field of view. If the chain
+  changed map, it resumes the destination's orbit; free flight gets back its independent
+  view. A cutscene is framed in 4:3 on the top screen (`screens.rs`).
+- **Messages.** The conversation window (`talk.rs`) shows text from the cutscene's table;
+  without an end tag it waits for action (`Dialogue::for_event`); native 401 closes it,
+  native 410 removes its frame. Natives 409, 411 and 413 make it a **caption**: timed
+  alpha (`W+0x9a8`, one-second fade, hold, fade), text vertically centered under
+  `(192 − (lines−1)×20 − 8)/2 − 16` when the frame is removed, and typing beep muted. During
+  the caption, the message counter is frozen (`020657c8`): action can neither advance nor
+  close the window before 401, so 405 does not fire before the end of the fade. The player is
+  locked (no walking, no conversation).
+- **Fades.** A black or white rectangle over the whole 3D screen, level −16 to +16; a
+  locked engine (`112`, `114`, `116`) ignores simple fades. The "main" screen is taken to be
+  the 3D screen **[hypothesis]**; the other engine's fade is ignored. The screen swap
+  (109/110) keeps `POWCNT1` bit 15 in `Cutscene`; `app.rs` and the screenshot path use
+  `screens::field/overlay` to place the field and the window on the other screen, the panel
+  filling the freed screen (Top: no panel).
 
-**Résultat sur le prologue** (`--events-report 1.1-3`, ROM EU, textes anglais ; les 30 scripts
-vont à leur terme, aucune scène « non jouée » ; le son est joué par `audio.rs` et rapporté nulle
-part). « Complet » : tout ce que le script demande est exécuté, aux natives sans effet rendu
-près (559, 560, 571, 815 ; 581, 582, 809 dont les objets ne sont pas dessinés ; mouvements dont
-le modèle n'a pas le nom :
-[`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)). Les **placements de
-collision** (574/575) ne sont plus exclus : le rapport les compte depuis le lot « scènes
-restantes ». Avant le chantier J3-effets : **22 scènes partielles sur 30** (18 lignes du
-rapport) ; après : **2 scènes partielles** (1 ligne).
+**Result on the prologue** (`--events-report 1.1-3`, EU ROM, English text; all 30 scripts
+run to completion, no "not played" cutscene; sound is played by `audio.rs` and reported
+nowhere). "Complete": everything the script asks for is executed, except for natives with no rendered
+effect (559, 560, 571, 815; 581, 582, 809 whose objects are not drawn; motions whose
+model lacks the name:
+[`re/stb-natives.md`](re/stb-natives.md#effects-executed-on-screen-j3)). **Collision
+placements** (574/575) are no longer excluded: the report counts them since the "remaining
+cutscenes" batch. Before the J3-effects work: **22 partial cutscenes out of 30** (18 report
+rows); after: **2 partial cutscenes** (1 row).
 
-| Scène(s) | Cartes | Résultat | Ce qui manque |
+| Cutscene(s) | Maps | Result | What is missing |
 |---|---|---|---|
-| 1130, 1140, 1150, 1160, 1170, 1310, 1320, 1340, 1350, 1360, 1370, 1380, 1390, 1410, 1600, 1610 | `X01M05`, `X01M07`, `X01M01`, `M01`, `M01M04` | complet | — |
-| 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | complet | — |
-| 21591, 21592, 21593, 21594, 21595, 21597 | `X01M05`, `M01`, `X01M04` | complet | — |
-| 1330 | `M01M06` | complet | — |
-| 21510 | `X01M04` | complet | — |
-| 21500 + 21507 | `M01M12` | partiel | collision placement ×7 (murs/sol non modifiés), door sound ×1 (index non lu), motion absent ×1, 547 (transition de combat, J4), 571 (sans lecteur) |
+| 1130, 1140, 1150, 1160, 1170, 1310, 1320, 1340, 1350, 1360, 1370, 1380, 1390, 1410, 1600, 1610 | `X01M05`, `X01M07`, `X01M01`, `M01`, `M01M04` | complete | — |
+| 21520 → 21521 → 21522 → 21596 | `F01M01`, `X01`, `X01M01`, `X01M05` | complete | — |
+| 21591, 21592, 21593, 21594, 21595, 21597 | `X01M05`, `M01`, `X01M04` | complete | — |
+| 1330 | `M01M06` | complete | — |
+| 21510 | `X01M04` | complete | — |
+| 21500 + 21507 | `M01M12` | partial | collision placement ×7 (walls/floor not modified), door sound ×1 (index not read), motion absent ×1, 547 (battle transition, J4), 571 (no reader) |
 
-La chaîne du prologue se joue de bout en bout sans intervention : `21500 → 21507` (native 538),
-puis le trigger 11 de `M01` lance le combat scripté 26 (action `0x78`), dont la victoire (trigger
-15) lance `21520 → 21521 → 21522 → 21596` (natives 538), voir « Nouvelle partie » ci-dessous.
+The prologue chain plays end to end without intervention: `21500 → 21507` (native 538),
+then trigger 11 of `M01` launches scripted battle 26 (action `0x78`), whose victory (trigger
+15) launches `21520 → 21521 → 21522 → 21596` (natives 538), see "New game" below.
 
-**Effets de scène** (J3, `dq9_core::cutscene`, `dq9-app/src/event.rs`, détail et preuves dans
-[`re/stb-natives.md`](re/stb-natives.md#effets-exécutés-à-lécran-j3)) :
+**Cutscene effects** (J3, `dq9_core::cutscene`, `dq9-app/src/event.rs`, details and evidence in
+[`re/stb-natives.md`](re/stb-natives.md#effects-executed-on-screen-j3)):
 
-- **Lumière et heure.** 578 (échelle de lumière avec fondu), 588/589 (phase de la scène), 548/549,
-  804 (brouillard) construisent l'`Environment` du rendu par `dq9_app::lighting::scene_environment`
-  (`Lighting::select` : l'échelle pondère les lumières, le fond et le brouillard, comme
-  `lightRGBScale_`) ; 579 et 808 arrêtent ou règlent l'horloge du jour. Les captures
-  `--screenshot` appliquent les mêmes états ; en fenêtre l'environnement est remplacé quand le
-  script le change et rendu à la carte à la fin.
-- **Attachements d'os (235/236).** Un modèle accroché à l'os `head` ou `chest` du héros (halo,
-  ailes) ou d'un acteur suit la pose de cet os (`AnimatedScene::hero_bone`, `actor_bone`).
-- **PNJ de la carte.** Mouvements nommés des PNJ à modèle (`play_npc`, archive du PNJ, paquet
-  supplémentaire et paquets d'événement) ; `walk`/`stand` des sprites ; bulles « ! » (541/561/542) ;
-  feuilles `.spr` créées par script (521/522) ; placements cachés, montrés ou déplacés (574/575) ;
-  palette des personnages (238) ; retour de la caméra au héros (328).
-- **Légendes (409/411/413).** La fenêtre de message devient une légende : alpha temporisé (fondu
-  de 60 ticks, maintien `W+0x9a8`, fondu de 60), texte centré verticalement lorsque 410 a retiré
-  le cadre, bip de frappe filtré. Captures : `21500` image 420 (alpha partiel, texte pâle) et 600
-  (plein, sans cadre, centré).
-- **Caméra à trois os (552).** `eye`/`lookat` d'un modèle-caméra donnent l'œil et la visée, son os
-  `foot` porte le personnage cible ; capture `21507` image 1820 (point de vue haut dans le ciel),
-  contre 1780 avant l'installation.
-- **Porte (584).** Le placement `(entrée de bloc, identifiant)` tourne de 90° en 16 updates ;
-  captures `21500` images 2900/2960, où le panneau change d'orientation. Le son reste rapporté
-  tant que l'index (`g_DoorSeTable[quartet bas]`, 200–204) n'est pas branché.
-- **Échange d'écrans (109/110).** L'état `POWCNT1` bit 15 est partagé avec le layout ; six
-  échanges dans l'ouverture font passer le champ et la fenêtre d'un écran à l'autre. Captures
-  `stacked`/`side`/`top` avant/après le premier 109 (images 100 et 5000 de 21500).
+- **Light and time.** 578 (light scale with fade), 588/589 (cutscene phase), 548/549,
+  804 (fog) build the rendering `Environment` via `dq9_app::lighting::scene_environment`
+  (`Lighting::select`: the scale weights the lights, background and fog, like
+  `lightRGBScale_`); 579 and 808 stop or set the day clock. `--screenshot`
+  captures apply the same states; in the window the environment is replaced when the
+  script changes it and given back to the map at the end.
+- **Bone attachments (235/236).** A model attached to the `head` or `chest` bone of the hero (halo,
+  wings) or of an actor follows that bone's pose (`AnimatedScene::hero_bone`, `actor_bone`).
+- **Map NPCs.** Named motions of model NPCs (`play_npc`, NPC archive, extra
+  package and event packages); `walk`/`stand` of sprites; "!" bubbles (541/561/542);
+  `.spr` sheets created by script (521/522); placements hidden, shown or moved (574/575);
+  character palette (238); camera return to the hero (328).
+- **Captions (409/411/413).** The message window becomes a caption: timed alpha (fade
+  of 60 ticks, hold `W+0x9a8`, fade of 60), text vertically centered when 410 has removed
+  the frame, typing beep filtered. Screenshots: `21500` frame 420 (partial alpha, pale text) and 600
+  (full, no frame, centered).
+- **Three-bone camera (552).** `eye`/`lookat` of a camera model give the eye and the aim, its
+  `foot` bone carries the target character; screenshot `21507` frame 1820 (viewpoint high in the sky),
+  versus 1780 before the setup.
+- **Door (584).** The placement `(block entry, identifier)` rotates by 90° in 16 updates;
+  screenshots `21500` frames 2900/2960, where the panel changes orientation. The sound stays reported
+  as long as the index (`g_DoorSeTable[low nibble]`, 200–204) is not wired.
+- **Screen swap (109/110).** The `POWCNT1` bit 15 state is shared with the layout; six
+  swaps in the opening move the field and the window from one screen to the other. Screenshots
+  `stacked`/`side`/`top` before/after the first 109 (frames 100 and 5000 of 21500).
 
-`--eye`/`--target` avec `--event` et `--screenshot` regardent la scène que le script a laissée
-(ils remplacent la caméra du script) : utile pour inspecter un acteur.
+`--eye`/`--target` with `--event` and `--screenshot` look at the scene the script left
+(they replace the script's camera): useful to inspect an actor.
 
-**Limites et hypothèses.** Voir aussi [`re/stb.md`](re/stb.md), § « Exécution » : liaison par défaut
-du membre déclaré `n` au créneau et à l'acteur `n`, canaux des acteurs, sens du roulis, unité des
-durées de la caméra et de la lumière, pose de la caméra du terrain pour 328, bulle posée dans le
-monde. Le héros du jeu a des ailes et un halo (forme ailée) que le rendu ne dessine pas ; hors
-événement, les PNJ gardent leur mouvement initial ; les ombres des PNJ ne sont pas dessinées. Les
-modèles ne sont pas encore comparés à melonDS. Pour 584, le son et les branches
-coulissante/inverse ne sont pas lus (le quartet bas de la zone est la seule source de l'index) ;
-pour 552, le byte `+0x265` de 839 n'est pas piloté, 839 n'apparaissant pas dans les scènes du
-prologue (seulement `ev28920`). 571 reste non identifiée : bit `0x10` sans lecteur, sans effet
-visible établi.
+**Limits and hypotheses.** See also [`re/stb.md`](re/stb.md), § "On-screen execution": default binding
+of declared member `n` to slot and actor `n`, actor channels, roll direction, unit of
+camera and light durations, terrain camera pose for 328, bubble placed in the
+world. The game's hero has wings and a halo (winged form) that the renderer does not draw; outside
+events, NPCs keep their initial motion; NPC shadows are not drawn. The
+models are not yet compared with melonDS. For 584, the sound and the sliding/reverse
+branches are not read (the zone's low nibble is the only source of the index);
+for 552, byte `+0x265` of 839 is not driven, 839 not appearing in the
+prologue cutscenes (only `ev28920`). 571 remains unidentified: bit `0x10` with no reader, no established
+visible effect.
 
-## Nouvelle partie (`--new-game`) et parcours automatique
+## New game (`--new-game`) and automatic run
 
 ```powershell
-# Dans la fenêtre : le prologue depuis le début (état d'une nouvelle partie, héros par défaut).
+# In the window: the prologue from the start (new game state, default hero).
 cargo run -p dq9-app --release -- --new-game
-# Sans fenêtre : appuie sur l'action pour lire les messages, journalise cartes, scènes, combats
-# scriptés et avancées de l'histoire, et s'arrête au premier moment où le joueur a la main :
+# No window: presses action to read the messages, logs maps, cutscenes, scripted
+# battles and story progress, and stops at the first moment the player has control:
 cargo run -p dq9-app --release -- --new-game --headless --auto
-# Idem, avec un pilote qui, à chaque prise de contrôle, fait la conversation ou prend la sortie
-# qui fait avancer l'histoire (plafond `--headless-steps`, 200 000 pas par défaut) :
+# Same, with a driver that, at each player control, has the conversation or takes the exit
+# that advances the story (cap `--headless-steps`, 200,000 steps by default):
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot
-# Checkpoints JSONL (mêmes champs que `dq9re state --json`) et entrées image par image :
+# JSONL checkpoints (same fields as `dq9re state --json`) and frame-by-frame inputs:
 cargo run -p dq9-app --release -- --new-game --headless --auto --pilot `
   --checkpoints build/checkpoints.jsonl --trace-inputs build/inputs.jsonl
-# Rejoue la trace sans pilote : mêmes entrées, mêmes checkpoints (octet pour octet) :
+# Replays the trace without a driver: same inputs, same checkpoints (byte for byte):
 cargo run -p dq9-app --release -- --new-game --headless `
   --replay build/inputs.jsonl --checkpoints build/replay.jsonl
 ```
 
-`--checkpoints` écrit un objet JSON par prise de contrôle, changement de carte ou d'histoire,
-début/fin de scène et combat : `tick`, `seconds`, `kind`, `vblank` (= `tick`), `map`, `area`
-(code d'aire numérique), `track`, `daytime`, `tracks` (5 × chapitre/étape/sous-étape et les deux
-jeux de drapeaux), `flags` globaux, `quests` (nibble par quête), `event` (identifiant de la scène en cours, nul entre deux) et
-`hero` (position et cap). Le premier point de contrôle de `--new-game --headless --auto` est
-identique à l'état melonDS au même moment (`X01M05`, 210,42 s, 1.1.1, drapeaux globaux
-`{337, 1450, 1451, 1452, 1453, 1454, 1461, 2721, 2751}`, drapeaux d'étape `{1}`, héros
-`(0,660, -0,250, -3,610)`) : les six drapeaux de scène et les deux de carte concordent ; neuf
-drapeaux globaux restent inconnus (voir `docs/re/trigger.md`).
+`--checkpoints` writes one JSON object per player control, map or story change,
+cutscene start/end and battle: `tick`, `seconds`, `kind`, `vblank` (= `tick`), `map`, `area`
+(numeric area code), `track`, `daytime`, `tracks` (5 × chapter/step/substep and the two
+flag sets), global `flags`, `quests` (nibble per quest), `event` (identifier of the current cutscene, null in between) and
+`hero` (position and heading). The first checkpoint of `--new-game --headless --auto` is
+identical to the melonDS state at the same moment (`X01M05`, 210.42 s, 1.1.1, global flags
+`{337, 1450, 1451, 1452, 1453, 1454, 1461, 2721, 2751}`, stage flags `{1}`, hero
+`(0.660, -0.250, -3.610)`): the six cutscene flags and the two map flags match; nine
+global flags remain unknown (see `docs/re/trigger.md`).
 
-`--trace-inputs` écrit le pavé et la touche action de chaque pas fixe (`frame`, `pad`
-`up/down/left/right`, `a`). `--replay` relit ce fichier sans pilote : chaque ligne alimente le
-pavé et la touche action d'un pas fixe. La trace du parcours du pilote (40 432 pas, de la
-nouvelle partie à `M01M08` en 1.2.1 en passant par 1.1.2, `X01M04` et Angel Falls `M01`)
-rejouée donne **les mêmes 615 checkpoints, octet pour octet** (sha256 `c2b10c767640`,
-`build/cast-reload/`), ce qui est la preuve d'entrées reproductibles : le pilote ne recharge
-plus la carte quand l'histoire avance, il voit la distribution que reconstruit l'action `0x8d`
-du jeu, comme le rejeu et un joueur. Le pilote donne des directions du monde avec la caméra à
-l'angle 0 et `--replay` force le même cap : la trace prouve la preuve du pilote headless dans
-notre moteur, pas un rejeu avec une caméra manuelle arbitraire ni une manette melonDS.
+`--trace-inputs` writes the D-pad and action button of each fixed step (`frame`, `pad`
+`up/down/left/right`, `a`). `--replay` reads this file back without a driver: each line feeds the
+D-pad and action button of one fixed step. The trace of the driver's run (40,432 steps, from the
+new game to `M01M08` in 1.2.1 via 1.1.2, `X01M04` and Angel Falls `M01`)
+replayed gives **the same 615 checkpoints, byte for byte** (sha256 `c2b10c767640`,
+`build/cast-reload/`), which is the evidence of reproducible inputs: the driver no longer reloads
+the map when the story advances, it sees the cast that the game's action `0x8d`
+rebuilds, like the replay and a player. The driver gives world directions with the camera at
+angle 0 and `--replay` forces the same heading: the trace proves the headless driver's evidence in
+our engine, not a replay with an arbitrary manual camera nor a melonDS gamepad.
 
-Sur le Web : bouton « Nouvelle partie » de la page (ou `?newgame=1`), après avoir choisi la ROM.
+On the Web: the page's "New game" button (or `?newgame=1`), after choosing the ROM.
 
-**Départ.** `GameState::new_game` donne la progression 1.1.1, le début du jour et l'horloge qui
-court ; le héros est celui de `HeroLook::new_game` (hypothèse, `re/characters.md`) et la première
-scène est `stage_opening(1, 1)` (`ev21500`, carte `M01M12`). Les cartes se construisent pour la
-progression courante des triggers (`current_story` : piste, drapeaux, quêtes), pas pour les
-options `--chapter/--step`.
+**Start.** `GameState::new_game` gives progress 1.1.1, the start of the day and a running
+clock; the hero is that of `HeroLook::new_game` (hypothesis, `re/characters.md`) and the first
+cutscene is `stage_opening(1, 1)` (`ev21500`, map `M01M12`). Maps are built for the
+current trigger progress (`current_story`: track, flags, quests), not for the
+`--chapter/--step` options.
 
-**Enchaînement.** Rien n'est codé « en dur » : ce sont les mécanismes du jeu.
+**Chaining.** Nothing is "hard-coded": these are the game's mechanisms.
 
-| Maillon | Mécanisme | Où |
+| Link | Mechanism | Where |
 |---|---|---|
-| scène → scène voisine | native 538 | `Director` |
-| fin d'une scène | trigger 11 (mot 2 = événement) : suite, avancée de l'histoire (`0x84`), changement de carte (`0x79`, `0xe1`, `0x85`), combat (`0x78`) | `Field::event_ended` |
-| fin d'un combat scripté | trigger 15 / 16 (mot 6 = numéro) | `Field::battle_ended` |
-| fin d'une conversation | trigger 1 (PNJ, contexte, réponse oui/non) | `Field::talk_ended` |
-| arrivée dans une carte | triggers 20 puis 3 | `Field::enter` |
-| entrée dans une aire, porte, warp | triggers 2, 17, 6 | `Field::step` |
-| avancée de l'histoire sur place | `0x84` : triggers rechargés (aires de 0x8f oubliées, trigger 20 à nouveau) ; `0x8d` : distribution reconstruite | `Field::collect`, `App::reload_cast` |
-| fin d'une scène qui met la distribution de côté (liste d'événements, valeur 21, bit 0 ou 2) | distribution reconstruite avant le trigger 11, poses et retraits d'avant la scène rendus par l'instantané | `App::reload_cast`, `EventPlayer::cast_loaded` |
-| 0x76 hors conversation | fenêtre de dialogue de la réplique du trigger | `App::talk_to` |
+| cutscene → neighbouring cutscene | native 538 | `Director` |
+| end of a cutscene | trigger 11 (word 2 = event): follow-up, story progress (`0x84`), map change (`0x79`, `0xe1`, `0x85`), battle (`0x78`) | `Field::event_ended` |
+| end of a scripted battle | trigger 15 / 16 (word 6 = number) | `Field::battle_ended` |
+| end of a conversation | trigger 1 (NPC, context, yes/no answer) | `Field::talk_ended` |
+| arrival on a map | triggers 20 then 3 | `Field::enter` |
+| entering an area, door, warp | triggers 2, 17, 6 | `Field::step` |
+| in-place story progress | `0x84`: triggers reloaded (0x8f areas forgotten, trigger 20 again); `0x8d`: cast rebuilt | `Field::collect`, `App::reload_cast` |
+| end of a cutscene that sets the cast aside (event list, value 21, bit 0 or 2) | cast rebuilt before trigger 11, pre-cutscene poses and removals restored by the snapshot | `App::reload_cast`, `EventPlayer::cast_loaded` |
+| 0x76 outside a conversation | dialogue window of the trigger's line | `App::talk_to` |
 
-**Combats scriptés.** Il n'y a pas de combat avant J4 : `scenario::stand_in` les déclare gagnés
-aussitôt, ce que le journal écrit en toutes lettres (« stand-in, no battle system yet »). La
-victoire tire le trigger 15, comme le ferait `BattleTask_Update` (`re/trigger.md`, § Combats
-scriptés).
+**Scripted battles.** There is no battle before J4: `scenario::stand_in` declares them won
+immediately, which the log states explicitly ("stand-in, no battle system yet"). The
+victory fires trigger 15, as `BattleTask_Update` would (`re/trigger.md`, § Scripted
+battles).
 
-**Résultat** (`--new-game --headless --auto`, ROM EU, textes anglais ; temps de jeu à 60 Hz) :
+**Result** (`--new-game --headless --auto`, EU ROM, English text; game time at 60 Hz):
 
-| Temps | Carte | Scène / fait |
+| Time | Map | Cutscene / fact |
 |---:|---|---|
-| 0 s | `M01M12` | `21500` « stage_opening » (80 s), puis `21507` (43 s) par la native 538 |
-| 123 s | — | trigger 11 de `21507` → **combat scripté 26** (monstres 290, 292, 290 ; arène 30116), gagné par substitution → trigger 15 → `21520` |
-| 123 s | `F01M01`, `X01`, `X01M01`, `X01M05` | `21520 → 21521 → 21522 → 21596` (natives 538 et changements de carte demandés par les scripts) |
-| 210 s | `X01M05` | **première prise de contrôle** (Observatoire, histoire 1.1.1) |
+| 0 s | `M01M12` | `21500` "stage_opening" (80 s), then `21507` (43 s) via native 538 |
+| 123 s | — | trigger 11 of `21507` → **scripted battle 26** (monsters 290, 292, 290; arena 30116), won by stand-in → trigger 15 → `21520` |
+| 123 s | `F01M01`, `X01`, `X01M01`, `X01M05` | `21520 → 21521 → 21522 → 21596` (natives 538 and map changes requested by the scripts) |
+| 210 s | `X01M05` | **first player control** (Observatory, story 1.1.1) |
 
-Le passage dans Angel Falls même vient après (`--pilot`) : les réponses oui du gardien, 21591
-(`X01M05` → `M01`), 21592, puis l'étape 1.2 se joue dans le village (`M01`, 335 s, histoire
+Angel Falls itself comes after (`--pilot`): the guard's yes answers, 21591
+(`X01M05` → `M01`), 21592, then stage 1.2 plays in the village (`M01`, 335 s, story
 1.2.1).
 
-**Pilote** (`--pilot`, remplaçant d'un joueur, pas une fonction du jeu) : à chaque prise de
-contrôle il simule sur des copies (`Talk::simulate`, `Field::step`) chaque conversation que la
-carte offre (point d'appui et réponse « première » choisis par la recherche de partenaire du
-jeu) et chaque aire de la carte ; il joue celle qui fait le plus avancer l'histoire (progression,
-événement lancé, combat, changement de carte, drapeaux) et, à défaut, prend une sortie de la
-famille de cartes (`X01`, `M01`…) qu'il n'a pas prise, en revenant sur ses pas si besoin.
+**Driver** (`--pilot`, a stand-in for a player, not a game feature): at each player
+control it simulates on copies (`Talk::simulate`, `Field::step`) each conversation the
+map offers (anchor point and "first" answer chosen by the game's partner
+search) and each area of the map; it plays the one that advances the story the most (progress,
+event launched, battle, map change, flags) and, failing that, takes an exit of the
+map family (`X01`, `M01`…) it has not taken, backtracking if needed.
 
-Il **marche réellement** : à chaque pas fixe il donne au pavé une direction du monde, `Hero::step`
-tourne et accélère le héros, la collision de la carte le pousse, et seul `Field::step` décide
-qu'une aire, une porte ou une zone de conversation est atteinte. Les trajets viennent d'une
-grille de sol construite en sondant la collision avec le rayon et la sphère du héros
-(`CollisionWorld`), multi-étages (jusqu'à huit sols par colonne), avec des arêtes validées en
-faisant marcher un héros de cellule en cellule ; un déplacement qui coince est appris et évité.
-La touche action est pressée quand `Talk_NearestNpc` voit le PNJ visé ; une porte interne sans
-destination est poussée, ouverte par le champ (native 584, `trigger.md`) et la grille est
-reconstruite. L'état des portes est unique (`EventPlayer::doors()`) : la scène et la collision
-lisent le même angle (`angle_fx`). Aucun téléport n'entre dans la preuve.
+It **really walks**: at each fixed step it gives the D-pad a world direction, `Hero::step`
+turns and accelerates the hero, the map's collision pushes it, and only `Field::step` decides
+that an area, a door or a conversation zone is reached. Paths come from a
+ground grid built by probing the collision with the hero's ray and sphere
+(`CollisionWorld`), multi-level (up to eight floors per column), with edges validated by
+walking a hero from cell to cell; a move that gets stuck is learned and avoided.
+The action button is pressed when `Talk_NearestNpc` sees the targeted NPC; an internal door without
+destination is pushed, opened by the field (native 584, `trigger.md`) and the grid is
+rebuilt. Door state is single (`EventPlayer::doors()`): the scene and the collision
+read the same angle (`angle_fx`). No teleport enters the evidence.
 
-Parcours vérifié sur la ROM européenne, à 60 Hz (`--new-game --headless --auto --pilot`) :
+Run verified on the European ROM, at 60 Hz (`--new-game --headless --auto --pilot`):
 
-| Temps | Carte | Fait |
+| Time | Map | Fact |
 |---:|---|---|
-| 210 s | `X01M05` | première main ; conversations 1140 et 1130 en marchant |
-| 295–312 s | `X01M05`/`X01M06`/`X01M07` | sorties et warp 9 réels |
-| 331–334 s | `X01M07` | porte de bibliothèque (deux vantaux 2 et 3) poussée, ouverte, traversée |
-| 334 s | `X01M07` | aire 2 (ajoutée par l'événement 20) atteinte à pied → `1150` |
-| 356 s | `X01M01` | retour par la porte de la bibliothèque |
-| 370 s | `X01M01` | NPC 127, `1170` → histoire **1.1.2** |
-| 378 s | `X01M01` | arrêt : le warp vers `X01M03` (y 15,5) n'est pas joignable à pied |
+| 210 s | `X01M05` | first control; conversations 1140 and 1130 while walking |
+| 295–312 s | `X01M05`/`X01M06`/`X01M07` | real exits and warp 9 |
+| 331–334 s | `X01M07` | library door (two leaves 2 and 3) pushed, opened, crossed |
+| 334 s | `X01M07` | area 2 (added by event 20) reached on foot → `1150` |
+| 356 s | `X01M01` | back through the library door |
+| 370 s | `X01M01` | NPC 127, `1170` → story **1.1.2** |
+| 378 s | `X01M01` | stop: the warp to `X01M03` (y 15.5) is not reachable on foot |
 
-Limite précise : sur `X01M01` (tour de l'Observatoire), la terrasse haute n'est pas reliée à
-la pose d'histoire par la collision de marche. Une exploration **3D** (arêtes validées par
-`Hero::step` avec la hauteur atteinte, montée ≤ 1,0, chute ≤ 10) depuis la pose d'histoire
-comme depuis le départ de la carte plafonne à **y 11,25** ; le warp `X01M03` est à y 15,5. Le
-mur fin `X01A01S1` (bloc 0, placement 12, normale `+x`, `x 0,018..0,105`, `z 15,42..18,99`,
-`y 9..14`) sépare la terrasse du pied de la rampe. Les zones `0x73` de **type 1** (43 sur la
-ROM, trois sur `X01M01`) sont **inertes** : aucune routine de `Field_CheckRegions` ne lit leur
-liste, ce n'est ni un monte-charge ni une tâche 8. La connexion manquante (placement de
-collision déplacé, plateforme animée ou changement de carte scénarisé) est **[inconnue]**, à
-établir sur melonDS. Le pilote s'arrête donc à 1.1.2 ; le chapitre 2 n'est pas atteint et
-aucun téléport n'entre dans la preuve.
+Precise limit: on `X01M01` (Observatory tower), the upper terrace is not connected to
+the story pose by the walking collision. A **3D** exploration (edges validated by
+`Hero::step` with the height reached, climb ≤ 1.0, drop ≤ 10) from the story pose
+as from the map's start plateaus at **y 11.25**; the `X01M03` warp is at y 15.5. The
+thin wall `X01A01S1` (block 0, placement 12, normal `+x`, `x 0.018..0.105`, `z 15.42..18.99`,
+`y 9..14`) separates the terrace from the foot of the ramp. The `0x73` zones of **type 1** (43 in the
+ROM, three on `X01M01`) are **inert**: no routine of `Field_CheckRegions` reads their
+list, it is neither a lift nor a task 8. The missing connection (moved collision
+placement, animated platform or scripted map change) is **[unknown]**, to be
+established on melonDS. The driver therefore stops at 1.1.2; chapter 2 is not reached and
+no teleport enters the evidence.
 
-**S'arrête où et pourquoi** (journal de fin de `--pilot`) : prise de contrôle sans rien qui fasse
-avancer l'histoire d'après la simulation (conversations qui ne changent plus ni progression ni
-drapeaux, aires déjà prises), ou plafond de pas atteint. Limites connues :
+**Stops where and why** (end log of `--pilot`): player control with nothing that
+advances the story according to the simulation (conversations that no longer change progress or
+flags, areas already taken), or step cap reached. Known limits:
 
-- Les combats ne se jouent pas (substitut) ; l'expérience, l'équipe et les objets ne sont pas
-  modélisés, donc des triggers qui en dépendent (conditions `0x24`, `0x31`, `0x32`…) peuvent donner
-  d'autres branches que le jeu réel : seule la tenue d'ouverture du héros est posée dans l'état.
-- `0x8d` (fin de `21510`, `21595`, `21593`, `1340`…) reconstruit la distribution de la carte
-  courante sans la recharger (`re/trigger.md`, § « Rechargements après les actions
-  différées ») ; son fondu n'est pas modélisé. Les natives sans effet (`stb.md`) sont
-  journalisées mais ne font rien.
-- Le pilote ne recharge plus la carte quand l'histoire avance : il voit ce qu'un joueur voit
-  (triggers rechargés par `0x84`, distribution par `0x8d`), et ce que le rejeu de sa trace
-  d'entrées refait à l'identique.
-- Le pilote rejoue parfois la même conversation (`2110`) tant que son déclencheur change un drapeau.
-- Les zones de type 1 de l'Observatoire sont inertes ; la connexion de hauteur manquante
-  reste à établir (voir la limite ci-dessus).
-- L'ordre et les durées ne sont pas comparés à melonDS.
+- Battles are not played (stand-in); experience, party and items are not
+  modeled, so triggers that depend on them (conditions `0x24`, `0x31`, `0x32`…) can give
+  other branches than the real game: only the hero's opening outfit is set in the state.
+- `0x8d` (end of `21510`, `21595`, `21593`, `1340`…) rebuilds the cast of the current
+  map without reloading it (`re/trigger.md`, § "Reloads after deferred
+  actions"); its fade is not modeled. Natives without effect (`stb.md`) are
+  logged but do nothing.
+- The driver no longer reloads the map when the story advances: it sees what a player sees
+  (triggers reloaded by `0x84`, cast by `0x8d`), and what the replay of its input
+  trace redoes identically.
+- The driver sometimes replays the same conversation (`2110`) as long as its trigger changes a flag.
+- The Observatory's type-1 zones are inert; the missing height connection
+  remains to be established (see the limit above).
+- Order and durations are not compared with melonDS.
 
-## Lancer dans un navigateur
+## Running in a browser
 
-### Démo hébergée (GitHub Pages)
+### Hosted demo (GitHub Pages)
 
-Ouvrir **https://fablrc.github.io/dq9-rust/?newgame=1**, choisir sa ROM européenne `YDQP01` :
-le bouton « Nouvelle partie » s'active dès que la ROM est lue, et le clavier est rendu au jeu
-sans clic supplémentaire. Flèches : marcher ; Entrée/Espace : parler et avancer les messages ;
-Q/E : caméra ; M : son. Une sauvegarde DS est facultative.
-Les fichiers sont lus localement : aucune ROM ni sauvegarde n'est envoyée à GitHub.
-Un ordinateur avec clavier et un navigateur récent WebGPU ou WebGL 2 sont recommandés.
-Les limites de la preuve technique restent applicables : combats sautés, effets incomplets
-et écran inférieur provisoire.
+Open **https://fablrc.github.io/dq9-rust/?newgame=1**, choose your European ROM `YDQP01`:
+the "New game" button becomes active as soon as the ROM is read, and the keyboard is given back to the game
+without an extra click. Arrows: walk; Enter/Space: talk and advance messages;
+Q/E: camera; M: sound. A DS save is optional.
+Files are read locally: no ROM or save is sent to GitHub.
+A computer with a keyboard and a recent browser with WebGPU or WebGL 2 are recommended.
+The limits of the technical proof still apply: battles skipped, incomplete effects
+and provisional bottom screen.
 
-Les champs ROM/sauvegarde et les sélecteurs restent désactivés pendant le téléchargement et
-l'initialisation du moteur. « Nouvelle partie » reste désactivé jusqu'à ce que les octets de
-la ROM soient mis en file pour la boucle du jeu : l'ordre ROM puis nouvelle partie est donc
-garanti, et le champ ROM est désactivé pendant sa lecture (pas de lectures concurrentes). Si
-le chargement échoue, la page affiche une erreur au lieu d'accepter un fichier qu'elle ne
-pourrait pas lire.
+The ROM/save fields and the selectors stay disabled during the download and
+initialization of the engine. "New game" stays disabled until the bytes of
+the ROM are queued for the game loop: the order ROM then new game is therefore
+guaranteed, and the ROM field is disabled while it is being read (no concurrent reads). If
+loading fails, the page shows an error instead of accepting a file it could
+not read.
 
-Le clavier revient au canevas après le choix d'un fichier, un clic sur « Nouvelle partie »,
-un changement de moment ou de disposition ; cliquer dans l'image le reprend aussi. Les
-touches du jeu ne sortent pas du canevas : hors des champs, sélecteurs et boutons de la page,
-les flèches, Espace, Page haut/bas et Début/Fin ne font pas défiler la page. Une perte de
-focus de la fenêtre (changement d'onglet, boîte de dialogue de fichier) relâche les touches
-tenues : `web.rs` retire le focus du canevas, winit émet `Focused(false)` et `App` vide son
-ensemble de touches, donc le héros ne continue pas à marcher. Les erreurs (fichier illisible,
-ROM qui n'est pas `YDQP01`, moteur graphique absent) s'affichent en rouge dans `#status` ;
-une ROM refusée désactive de nouveau « Nouvelle partie ».
+The keyboard returns to the canvas after choosing a file, a click on "New game",
+a change of time of day or layout; clicking in the image also takes it back. Game
+keys do not leave the canvas: outside the page's fields, selectors and buttons,
+arrows, Space, Page Up/Down and Home/End do not scroll the page. A loss of
+window focus (tab change, file dialog) releases held
+keys: `web.rs` removes focus from the canvas, winit emits `Focused(false)` and `App` clears its
+key set, so the hero does not keep walking. Errors (unreadable file,
+ROM that is not `YDQP01`, missing graphics engine) are shown in red in `#status`;
+a rejected ROM disables "New game" again.
 
-Les champs ROM et sauvegarde sont vidés dès qu'un fichier est lu : choisir de nouveau le même
-chemin (même ROM après une erreur, même sauvegarde après « Nouvelle partie ») déclenche donc
-un nouveau `change` et remplace la partie en cours. Sans cela le navigateur ne renvoie aucun
-événement et le fichier reste celui de la session précédente.
+The ROM and save fields are cleared as soon as a file is read: choosing the same
+path again (same ROM after an error, same save after "New game") therefore triggers
+a new `change` and replaces the current game. Without this the browser sends no
+event and the file stays the one from the previous session.
 
-Le workflow `.github/workflows/pages.yml` compile la version wasm optimisée à chaque push
-sur `main` qui touche le binaire web (`crates/**`, `Cargo.toml`, `Cargo.lock`,
-`rust-toolchain*`) ou le workflow lui-même, ainsi que sur lancement manuel : un commit de
-documentation ne redéploie rien. Il installe la version de `wasm-bindgen-cli` de `Cargo.lock`
-et déploie uniquement `index.html` et les bindings JavaScript/WebAssembly dans GitHub Pages.
-Une liste blanche vérifie l'artefact avant l'envoi (seuls `index.html` et
-`pkg/*.js`/`pkg/*.wasm`) : toute ROM, sauvegarde, capture ou autre fichier fait échouer le
-job. Le déploiement est conditionné à `refs/heads/main`, donc un lancement manuel sur une
-branche ne publie rien. Le dépôt reste privé ; le site et le programme compilé sont publics.
-Le chemin relatif `./pkg/dq9-app.js` permet de servir la page sous `/dq9-rust/` sans nom de
-domaine personnalisé. Aucune donnée du jeu n'entre dans l'artefact Pages.
+The `.github/workflows/pages.yml` workflow builds the optimized wasm version on each push
+to `main` that touches the web binary (`crates/**`, `Cargo.toml`, `Cargo.lock`,
+`rust-toolchain*`) or the workflow itself, as well as on manual dispatch: a
+documentation commit redeploys nothing. It installs the `wasm-bindgen-cli` version from `Cargo.lock`
+and deploys only `index.html` and the JavaScript/WebAssembly bindings to GitHub Pages.
+An allowlist checks the artifact before upload (only `index.html` and
+`pkg/*.js`/`pkg/*.wasm`): any ROM, save, screenshot or other file fails the
+job. Deployment is conditioned on `refs/heads/main`, so a manual dispatch on a
+branch publishes nothing. The repository remains private; the site and the compiled program are public.
+The relative path `./pkg/dq9-app.js` lets the page be served under `/dq9-rust/` without a custom
+domain name. No game data enters the Pages artifact.
 
-### Compilation et serveur local
+### Build and local server
 
 ```powershell
 cargo build -p dq9-app --release --target wasm32-unknown-unknown
-# Une fois : la version de wasm-bindgen-cli doit être celle de Cargo.lock.
+# Once: the wasm-bindgen-cli version must match Cargo.lock.
 cargo install wasm-bindgen-cli --version 0.2.130 --locked --root tools/wasm-bindgen
 tools/wasm-bindgen/bin/wasm-bindgen --target web --no-typescript `
     --out-dir crates/dq9-app/web/pkg target/wasm32-unknown-unknown/release/dq9-app.wasm
-python -m http.server 8000 -d crates/dq9-app/web     # ou tout serveur de fichiers statiques
+python -m http.server 8000 -d crates/dq9-app/web     # or any static file server
 ```
 
-Ouvrir `http://localhost:8000/` (paramètres `map`, `time` (nom ou 0 à 3), `clock`, `layout` (`stacked`, `side` ou `top`), `chapter`, `step`,
-`substep`, `night=1`, `mute=1`, `newgame=1`), puis choisir la ROM et, facultativement, une sauvegarde `.sav` dans la
-page. Les deux fichiers sont lus localement dans le navigateur, jamais envoyés ni hébergés ;
-`map` explicite prévaut sur la carte de la sauvegarde. Le bouton « Nouvelle partie » (ou `?newgame=1`)
-lance le prologue (§ « Nouvelle partie ») ; il reste désactivé jusqu'à la lecture de la ROM et
-le clavier revient au canevas ensuite. La page signale les erreurs en rouge et nomme le
-fichier refusé.
-WebGPU quand le navigateur le propose, sinon WebGL 2. `crates/dq9-app/web/pkg/` est généré
-(ignoré par git).
+Open `http://localhost:8000/` (parameters `map`, `time` (name or 0 to 3), `clock`, `layout` (`stacked`, `side` or `top`), `chapter`, `step`,
+`substep`, `night=1`, `mute=1`, `newgame=1`), then choose the ROM and, optionally, a `.sav` save in the
+page. Both files are read locally in the browser, never sent or hosted;
+an explicit `map` takes precedence over the save's map. The "New game" button (or `?newgame=1`)
+launches the prologue (§ "New game"); it stays disabled until the ROM is read and
+the keyboard returns to the canvas afterwards. The page reports errors in red and names the
+rejected file.
+WebGPU when the browser offers it, otherwise WebGL 2. `crates/dq9-app/web/pkg/` is generated
+(ignored by git).
 
-## Boucle de développement
+## Development loop
 
-`scripts/verify.ps1` est la seule source des commandes de vérification : AGENTS.md, les docs
-et la CI l'appellent. Il enchaîne cinq étapes dans cet ordre et s'arrête au premier échec :
+`scripts/verify.ps1` is the single source of verification commands: AGENTS.md, the docs
+and CI call it. It chains five stages in this order and stops at the first failure:
 `fmt` (`cargo fmt --all --check`), `clippy` (`cargo clippy --workspace --all-targets --
--D warnings`), `test` (`cargo test --workspace`), `wasm` (compilation de `nds-rom`,
-`dq9-formats`, `dq9-core`, `dq9-render`, `dq9-audio` et `dq9-app` pour
-`wasm32-unknown-unknown`) et `coverage` (`cargo dq9re coverage --readme README.md`).
+-D warnings`), `test` (`cargo test --workspace`), `wasm` (build of `nds-rom`,
+`dq9-formats`, `dq9-core`, `dq9-render`, `dq9-audio` and `dq9-app` for
+`wasm32-unknown-unknown`) and `coverage` (`cargo dq9re coverage --readme README.md`).
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1                    # les cinq étapes
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1                    # all five stages
 powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast              # fmt + clippy
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only test,wasm    # sous-ensemble
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -RequireRom        # porte d'intégration
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only test,wasm    # subset
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -RequireRom        # integration gate
 ```
 
-`-Fast` sert de passe courte pendant l'édition. `-Only` prend des noms d'étapes (tableau ou
-chaîne séparée par des virgules) et les lance dans l'ordre canonique ; un nom inconnu est une
-erreur, et `-Only` exclut `-Fast`. Le résumé final donne la durée de chaque étape.
+`-Fast` is a short pass while editing. `-Only` takes stage names (array or
+comma-separated string) and runs them in canonical order; an unknown name is an
+error, and `-Only` excludes `-Fast`. The final summary gives each stage's duration.
 
-En local, une ROM fait aussi tourner les tests `tests/real_rom.rs`, que la CI saute. La
-recherche est celle de `crates/testrom` : `DQ9_ROM`, sinon le `*.nds` de `rom/`, sinon celui
-de la racine. `-RequireRom` échoue avant toute étape si cette recherche ne trouve rien
-(ou un `DQ9_ROM` inexistant, ou plusieurs `*.nds` dans le même dossier) et affiche le chemin
-retenu : c'est la porte d'intégration d'un lot, qui garantit que les tests sur la ROM ont
-tourné.
+Locally, a ROM also runs the `tests/real_rom.rs` tests, which CI skips. The
+lookup is that of `crates/testrom`: `DQ9_ROM`, otherwise the `*.nds` in `rom/`, otherwise the one
+at the root. `-RequireRom` fails before any stage if this lookup finds nothing
+(or a nonexistent `DQ9_ROM`, or several `*.nds` in the same folder) and prints the selected
+path: it is a batch's integration gate, which guarantees the ROM tests have
+run.
 
-L'étape `coverage` réécrit en local le bloc d'avancement du README à partir des marqueurs
-`port:` ; le `README.md` mis à jour se commite avec le lot. La CI recalcule le bloc, l'affiche
-dans le résumé du job et échoue s'il diffère du README commité (bloc périmé) ; elle ne commite
-jamais.
+The `coverage` stage rewrites the README's progress block locally from the `port:`
+markers; the updated `README.md` is committed with the batch. CI recomputes the block, shows it
+in the job summary and fails if it differs from the committed README (stale block); it never
+commits.
 
-L'intégration d'une branche (`scripts/integrate.ps1`), le manifeste des preuves
-(`scripts/evidence.ps1`, protégé par `scripts/prune-build.ps1`) et le nettoyage des branches
-(`scripts/prune-branches.ps1`) sont décrits dans `docs/orchestration/README.md`.
+Branch integration (`scripts/integrate.ps1`), the evidence manifest
+(`scripts/evidence.ps1`, protected by `scripts/prune-build.ps1`) and branch cleanup
+(`scripts/prune-branches.ps1`) are described in `docs/orchestration/README.md`.
 
-Les worktrees Orca n'ont pas à recompiler les mêmes crates : il suffit de partager la cible
-de Cargo.
+Orca worktrees need not recompile the same crates: sharing the Cargo target
+is enough.
 
 ```powershell
-$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target"   # cmd : %LOCALAPPDATA%\dq9-target
-# Pour toutes les sessions : setx CARGO_TARGET_DIR "%LOCALAPPDATA%\dq9-target"
+$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target"   # cmd: %LOCALAPPDATA%\dq9-target
+# For all sessions: setx CARGO_TARGET_DIR "%LOCALAPPDATA%\dq9-target"
 ```
 
-Cargo verrouille une cible : deux worktrees qui compilent en même temps s'attendent au lieu de
-se marcher dessus, et le premier build remplit le cache pour les suivants. La cible partagée
-reste hors du dépôt (`build/` ne sert qu'aux sorties du projet : captures, ROM extraite).
-Une cible partagée peut réutiliser un binaire de test compilé dans un autre worktree, même
-supprimé : un chemin figé par `env!("CARGO_MANIFEST_DIR")` y désigne alors ce worktree. Les
-tests lisent donc `CARGO_MANIFEST_DIR` à l'exécution (`crates/testrom`), et
-`verify.ps1 -RequireRom` passe la ROM trouvée aux tests par `DQ9_ROM`.
+Cargo locks a target: two worktrees building at the same time wait for each other instead of
+stepping on each other, and the first build fills the cache for the following ones. The shared target
+stays outside the repository (`build/` is only for project outputs: screenshots, extracted ROM).
+A shared target can reuse a test binary compiled in another worktree, even a
+deleted one: a path frozen by `env!("CARGO_MANIFEST_DIR")` then designates that worktree. The
+tests therefore read `CARGO_MANIFEST_DIR` at runtime (`crates/testrom`), and
+`verify.ps1 -RequireRom` passes the found ROM to the tests through `DQ9_ROM`.
 
-`sccache` est facultatif : il met les invocations de `rustc` en cache, utile quand la cible
-partagée est absente ou jetée (changement de branche, nettoyage), inutile quand elle est
-chaude.
+`sccache` is optional: it caches `rustc` invocations, useful when the shared
+target is absent or discarded (branch change, cleanup), useless when it is
+warm.
 
 ```powershell
 cargo install sccache --locked
 $env:RUSTC_WRAPPER = 'sccache'
 ```
 
-`cargo nextest` est facultatif aussi : il exécute les tests d'intégration et unitaires plus
-vite et nomme les plus lents. La CI garde `cargo test` ; les doctests du workspace ne font pas
-partie d'une exécution nextest et restent couverts par `cargo test --doc`.
+`cargo nextest` is optional too: it runs integration and unit tests
+faster and names the slowest ones. CI keeps `cargo test`; workspace doctests are not
+part of a nextest run and remain covered by `cargo test --doc`.
 
 ```powershell
 cargo install cargo-nextest --locked
 cargo nextest run --workspace
 ```
 
-## Rendu
+## Rendering
 
-Ce que fait `dq9-render`, et ce qui s'écarte du moteur 3D de la DS.
+What `dq9-render` does, and what deviates from the DS 3D engine.
 
-Fidèle à ce que lit le jeu :
+Faithful to what the game reads:
 
-- **Instances** : une par placement modèle et objet (`.nsbmd`), y compris ceux que l'heure
-  choisie cache (`Instance::hidden`) : l'instance cachée a une échelle nulle et garde sa
-  matrice d'origine (`SceneInstance::home`), pour que les natives 574 et 575 la montrent ou la
-  déplacent ; matrice monde = translation, rotation `y`, échelle de `Instance::world`
-  (`0x02013168`). `dq9-core` décompresse les `.col2`, transforme les faces
-  visibles et les utilise pour le sol et les murs (voir `re/movement.md`).
-- **Textures** : toutes les `.nsbtx` de l'`.ambl` (`Zone3D+0x418`), liées aux matériaux par
-  nom de texture et de palette. Quand plusieurs fichiers ont le même nom, le premier de la
-  liste (le plus récent) gagne **[hypothèse]**. Une texture qu'aucun fichier ne fournit
-  (30 sur la ROM, `Scene::unbound_textures`) laisse le matériau sans texture **[hypothèse]**.
-- **Matériaux** : couleurs de sommet, alpha du polygone (`POLYGON_ATTR` bits 16-20), faces
-  cachées (bits 6-7, faces avant dans le sens trigonométrique), modes modulation et décal
-  (bits 4-5 ; tous les matériaux des cartes sont en modulation), répétition et miroir
-  (`TEXIMAGE_PARAM` bits 16-19), matrice de texture du matériau (`Model::tex_matrices`),
-  filtrage au plus proche, aucun pixel d'alpha 0.
-- **Passes** : polygones opaques puis translucides (alpha < 31 ou texture à alpha partiel,
-  A3I5/A5I3) ; les texels d'alpha 31 d'un polygone d'alpha 31 sont dessinés dans la passe
-  opaque, comme les pixels opaques de la DS ; les pixels translucides n'écrivent la
-  profondeur qu'avec le bit 11 ; test de profondeur « égal » (bit 14) après les autres
+- **Instances**: one per model and object placement (`.nsbmd`), including those the chosen
+  time hides (`Instance::hidden`): the hidden instance has a zero scale and keeps its
+  original matrix (`SceneInstance::home`), so that natives 574 and 575 can show or
+  move it; world matrix = translation, `y` rotation, scale from `Instance::world`
+  (`0x02013168`). `dq9-core` decompresses the `.col2`, transforms the visible
+  faces and uses them for floor and walls (see `re/movement.md`).
+- **Textures**: all the `.nsbtx` of the `.ambl` (`Zone3D+0x418`), bound to materials by
+  texture and palette name. When several files have the same name, the first in the
+  list (the most recent) wins **[hypothesis]**. A texture that no file provides
+  (30 in the ROM, `Scene::unbound_textures`) leaves the material untextured **[hypothesis]**.
+- **Materials**: vertex colors, polygon alpha (`POLYGON_ATTR` bits 16-20), culled
+  faces (bits 6-7, front faces counterclockwise), modulation and decal modes
+  (bits 4-5; all map materials are modulation), repeat and mirror
+  (`TEXIMAGE_PARAM` bits 16-19), material texture matrix (`Model::tex_matrices`),
+  nearest filtering, no alpha-0 pixel.
+- **Passes**: opaque polygons then translucent ones (alpha < 31 or texture with partial alpha,
+  A3I5/A5I3); alpha-31 texels of an alpha-31 polygon are drawn in the opaque
+  pass, like the DS's opaque pixels; translucent pixels only write
+  depth with bit 11; "equal" depth test (bit 14) after the other
   opaques.
-- **Caméra** : celle du jeu par défaut (`0x0202df78`) : demi-angle vertical de 15°
-  (`0x0202e9b4`, sinus et cosinus pour `NNS_G3dGlbPerspective`), plans à 1 et 400 ; libre en
-  orbite ou en vol ; option 256×192.
-- **Héros** (`dq9_render::hero`, `AnimatedScene::add_hero`) : corps et jambes sur le gabarit de
-  14 os, animés par `mp0200n`/`mp0200ne` (`stand`, `walk`, `run`), visage, cheveux et couvre-chef
-  posés sur l'os `head`, bras et chaussures par fichiers de texture, fusionnés en un modèle ;
-  orienté selon le cap (`angle_of_yaw`), échelle `0x10a × corpulence` ; l'allure vient de la
-  distance parcourue au pas (`Gait::from_speed`). Apparence : le premier personnage de la
-  sauvegarde (`--save`), sinon un héros par défaut **[hypothèse]** ; ni armes, ni boucliers, ni
-  ailes, ni teints du `palette.bin` ([`re/characters.md`](re/characters.md)).
-- **PNJ** : distribution et placements de `cast::load`, sprites `.spr` décodés une fois
-  (images détourées), noms `stand_*` choisis par `cast::sprite_stand`, panneaux face à la
-  caméra ; variantes assises `sleep_*` avec miroir. Échelles du jeu : sprites `0x8f/4096`
-  par pixel, modèles `0x10a/4096` ; positions `fx32/4096`, rotation en radians.
-  Archives `.chr`, mouvement de `cast::initial_motion` (dont le paquet supplémentaire du
-  type 19), monstres du membre `.mon` de `enemy.gp2` puis premier `.cchr`.
-- **Animations** : fichiers explicitement sélectionnés par les drapeaux des parties de
-  carte, pose G3D (`JNT0`), matrices de texture (`SRT0`), couleurs/alpha (`MAT0`) et
-  changements de texture/palette (`PAT0`). Les modèles simples bouclent sur le nombre
-  complet d'images (`Animation3D::AdvanceTimer`), les objets à paquet BCFG utilisent les
-  bornes et la vitesse du premier mouvement ; les `.chr` par mouvement utilisent sa vitesse
-  et la plage du fichier `[0, images−1[`, pas les anciennes tranches BCFG
-  (voir `characters.md`).
-  Les listes d'affichage sont décodées une fois ; les poses réécrivent seulement les
-  sommets, sans reconstruire les indices ni réallouer les ressources GPU. SRT/PAT seuls ne
-  refont pas la géométrie. L'état CPU animé est distinct de l'API de scène statique.
+- **Camera**: the game's by default (`0x0202df78`): vertical half-angle of 15°
+  (`0x0202e9b4`, sine and cosine for `NNS_G3dGlbPerspective`), planes at 1 and 400; free in
+  orbit or flight; 256×192 option.
+- **Hero** (`dq9_render::hero`, `AnimatedScene::add_hero`): body and legs on the
+  14-bone template, animated by `mp0200n`/`mp0200ne` (`stand`, `walk`, `run`), face, hair and headgear
+  placed on the `head` bone, arms and shoes by texture files, merged into one model;
+  oriented by heading (`angle_of_yaw`), scale `0x10a × build`; the gait comes from the
+  distance covered per step (`Gait::from_speed`). Appearance: the first character of the
+  save (`--save`), otherwise a default hero **[hypothesis]**; no weapons, no shields, no
+  wings, no tints from `palette.bin` ([`re/characters.md`](re/characters.md)).
+- **NPCs**: cast and placements from `cast::load`, `.spr` sprites decoded once
+  (cut-out images), `stand_*` names chosen by `cast::sprite_stand`, billboards facing the
+  camera; seated `sleep_*` variants with mirroring. Game scales: sprites `0x8f/4096`
+  per pixel, models `0x10a/4096`; positions `fx32/4096`, rotation in radians.
+  `.chr` archives, motion from `cast::initial_motion` (including the extra package of
+  type 19), monsters from the `.mon` member of `enemy.gp2` then first `.cchr`.
+- **Animations**: files explicitly selected by the flags of the map
+  parts, G3D pose (`JNT0`), texture matrices (`SRT0`), colors/alpha (`MAT0`) and
+  texture/palette changes (`PAT0`). Simple models loop over the full
+  frame count (`Animation3D::AdvanceTimer`), objects with a BCFG package use the
+  bounds and speed of the first motion; per-motion `.chr` use its speed
+  and the file's range `[0, frames−1[`, not the old BCFG slices
+  (see `characters.md`).
+  Display lists are decoded once; poses only rewrite the
+  vertices, without rebuilding indices or reallocating GPU resources. SRT/PAT alone do not
+  redo the geometry. The animated CPU state is separate from the static scene API.
 
-Approximé ou absent :
+Approximated or absent:
 
-- **Tri des translucides** : du plus loin au plus proche selon la profondeur du centre de
-  chaque maillage × instance ; la DS trie par `Y` à l'écran (ou garde l'ordre d'envoi).
-- **Éclairage** : les modèles de carte sont éclairés au sommet par les deux lumières DS du
-  `.bats` (équation de GBATEK : émission + par lumière `couleur × (diffuse·max(0, −L·N) + ambiante
-  + spéculaire·brillance)`, sur 5 bits ; bits 0-3 de `POLYGON_ATTR`), normales du modèle, ambiante
-  de la zone pour le terrain en mode avancé. Les zones de base n'ont pas de lumière : leurs
-  couleurs de sommets sont transformées (teinte, luminosité, contraste) ; sprites et personnages
-  sont multipliés par la diffuse de la zone ; les personnages gardent une lumière fixe en plus (les
-  vraies lumières de la DS passent par leur propre matrice, non portée). Fond : dégradé vertical
-  centré sur l'horizon ; brouillard de la DS (offset, décalage, table de 32 densités, couleur) sur
-  les matériaux au bit 15 de `POLYGON_ATTR` et les sprites ; marquage des contours. La table de
-  brillance (`SetShininessTable`, bit 15 de `SPE_EMI`) n'est pas portée.
-- **Non rendu** : anticrénelage, polygones d'ombre (mode 3) et fil de fer (alpha 0), panneaux
-  G3D des modèles, mode alpha seul du brouillard et alpha de `FOG_COLOR`, précision de la DS
-  (couleurs 6 bits, profondeur W ; la profondeur du brouillard est recalculée sur 24 bits).
-- **PNJ, limites** : les PNJ ne s'arrêtent ni ne se tournent vers le héros pendant qu'il leur
-  parle (les sprites suivent la caméra ; l'orientation des modèles n'a pas d'API dans
-  `AnimatedScene`) ; les hauteurs des PNJ sont celles des placements ; le snap du sol et le
-  déplacement du héros sont approximatifs (pas d'accélération ni rayon).
-  Les portes, aires et warps suivent `dq9_core::field` (comparés à
-  melonDS sur l'église de Stornway) sans l'animation de la porte ; les triggers de zone sont
-  évalués ; leurs demandes d'événement sont exécutées (§ Événements), les autres demandes
-  seulement journalisées, et les escaliers, chutes et chemins des PNJ ne sont pas exécutés. Les
-  visiteurs réseau, l'accessoire `s069` et la teinte additive des palettes (type 22) restent
-  absents. Le mélange de plusieurs poses, les effets/actions `.beff`/`.bact` et les modes de
-  sprite autres que debout/assis ne sont pas exécutés. Les couleurs MAT sont évaluées ; les
-  sommets à normales restent soumis à la lumière fixe décrite ci-dessus, pas aux lumières DS.
+- **Translucent sorting**: back to front by the depth of the center of
+  each mesh × instance; the DS sorts by on-screen `Y` (or keeps submission order).
+- **Lighting**: map models are lit per vertex by the two DS lights of the
+  `.bats` (GBATEK equation: emission + per light `color × (diffuse·max(0, −L·N) + ambient
+  + specular·shininess)`, on 5 bits; bits 0-3 of `POLYGON_ATTR`), model normals, zone ambient
+  for the terrain in advanced mode. Base zones have no light: their
+  vertex colors are transformed (hue, brightness, contrast); sprites and characters
+  are multiplied by the zone's diffuse; characters keep an extra fixed light (the
+  real DS lights go through their own matrix, not ported). Background: vertical gradient
+  centered on the horizon; DS fog (offset, shift, table of 32 densities, color) on
+  materials with bit 15 of `POLYGON_ATTR` and sprites; edge marking. The shininess
+  table (`SetShininessTable`, bit 15 of `SPE_EMI`) is not ported.
+- **Not rendered**: antialiasing, shadow polygons (mode 3) and wireframe (alpha 0), G3D
+  billboards of models, fog alpha-only mode and `FOG_COLOR` alpha, DS precision
+  (6-bit colors, W depth; fog depth is recomputed on 24 bits).
+- **NPCs, limits**: NPCs neither stop nor turn toward the hero while he talks
+  to them (sprites follow the camera; model orientation has no API in
+  `AnimatedScene`); NPC heights are those of the placements; ground snapping and
+  hero movement are approximate (no acceleration or radius).
+  Doors, areas and warps follow `dq9_core::field` (compared with
+  melonDS on the Stornway church) without the door animation; zone triggers are
+  evaluated; their event requests are executed (§ Events), the other requests
+  only logged, and stairs, falls and NPC paths are not executed. Network
+  visitors, the `s069` accessory and additive palette tint (type 22) remain
+  absent. Blending of several poses, `.beff`/`.bact` effects/actions and sprite
+  modes other than standing/seated are not executed. MAT colors are evaluated;
+  vertices with normals remain subject to the fixed light described above, not to the DS lights.
 
-## Écrans DS
+## DS screens
 
-La fenêtre montre les deux écrans de la DS (`crates/dq9-app/src/screens.rs`) :
+The window shows both DS screens (`crates/dq9-app/src/screens.rs`):
 
-- **Haut** : le champ en 3D, avec la caméra et la projection du jeu (`0x0202df78`, demi-angle
-  vertical de 15°). L'écran fait 256×192 ; seule la taille du rectangle varie avec la fenêtre.
-- **Bas** : fond uni (`dq9_render::Panel`), sans contenu. Le contenu de l'écran tactile n'est
-  pas identifié **[inconnu]** ; aucune donnée de la ROM n'y est affichée.
-- **Fenêtre de message** : dessinée sur l'écran du haut (`talk.rs`, `dialogue.md`).
+- **Top**: the 3D field, with the game's camera and projection (`0x0202df78`, vertical
+  half-angle of 15°). The screen is 256×192; only the rectangle size varies with the window.
+- **Bottom**: plain background (`dq9_render::Panel`), no content. The touch screen content is
+  not identified **[unknown]**; no ROM data is displayed there.
+- **Message window**: drawn on the top screen (`talk.rs`, `dialogue.md`).
 
-Dispositions : `stacked` (défaut, écran du haut au-dessus de celui du bas), `side` (côte à côte),
-`top` (écran du haut seul). Les écrans sont centrés et agrandis ensemble au maximum dans
-l'espace disponible, sans déformer leur rapport 4:3 ; les marges restent noires, indépendamment
-du ciel, du brouillard et des fondus. Sur le Web, le canevas suit la taille disponible sous les
-commandes et la densité de pixels de l'écran. Natif : `--layout`, et `R` passe à la disposition
-suivante. Web : le select « Écrans » ou `?layout=`. Les anciens `--ds-aspect` et `ds=` sont supprimés.
+Layouts: `stacked` (default, top screen above the bottom one), `side` (side by side),
+`top` (top screen alone). The screens are centered and scaled together to the maximum of the
+available space, without distorting their 4:3 ratio; margins stay black, independently
+of sky, fog and fades. On the Web, the canvas follows the available size below the
+controls and the screen's pixel density. Native: `--layout`, and `R` switches to the next
+layout. Web: the "Screens" select or `?layout=`. The old `--ds-aspect` and `ds=` are removed.
 
-## Vérification
+## Verification
 
-- Parcours navigateur sur Pages (7 novembre 2026, preuve partielle, build finale) : déploiement
-  réussi `42384404646`, commit `21e1e42`, URL
-  `https://fablrc.github.io/dq9-rust/?newgame=1&release=21e1e42`, ROM européenne locale
-  de 256 Mio, Chromium piloté, fenêtre 1280 × 900 (DPR 1,25). Après lecture de la ROM, le
-  clavier est actif sur `dq9` ; l'ouverture visuelle atteint les événements `21500`, `21507`,
-  `21520`, `21521`, `21522`, puis `21596` et le premier contrôle sur `X01M05` (4105).
-  Flèches et Espace ouvrent à pied une conversation avec le PNJ 108
-  (`X01A0.gp2/108_en.bin`, enregistrement 0), qui s'avance et se ferme au clavier. Une
-  seconde nouvelle partie rejoue les touches directionnelles du pilote depuis le contrôle
-  4105 : conversation du PNJ 111, événement `1140`, PNJ 105 (contexte 80) et événement `1130`
-  atteints visuellement et dans la console. Après la scène 1130, des pressions brèves au clavier
-  et des captures ont confirmé le franchissement des escaliers jusqu'au chemin de pierre surélevé
-  et l'exploration du hall ; le héros reste toutefois sur 4105, sans événement ni transition 4107,
-  même au bout du chemin devant la bannière. Les captures finales `50` à `61` sont dans
-  `build/v01-20261107/browser/`, avec les captures du chemin surélevé et de l'aile est dans
-  `browser-navigation-addendum.SHA256SUMS`. Aucune sauvegarde, téléportation ou injection d'état
-  interne. Un rejeu accéléré des entrées natives dans la page finale a atteint 4105 et le dialogue
-  du PNJ 101, mais son horloge virtuelle désynchronise les entrées des pas fixes : il ne prouve
-  ni 4107, ni 1170, ni la tour, ni 1.2.1, et n'est pas utilisé comme certification.
-  **Limite finale** : le parcours navigateur complet jusqu'à Angel Falls et les tâches du
-  village n'est pas certifié ; 4107, 1170, la tour, 21510/1.2.1 et 1100 restent vérifiés par
-  le parcours natif et les tests ROM, pas par une session navigateur continue.
-- Chargement d'une sauvegarde après « Nouvelle partie » : scénario natif Windows exercé
-  avec la ROM EU et une sauvegarde locale (`a_save_selected_after_a_new_game_loads_that_save`).
-  `new_game` devient faux et `C01M09` (carte 109) remplace le prologue. Le test couvre un
-  événement encore en attente, puis un prologue actif avec légende ouverte : tâche et
-  dialogue sont annulés et ne reprennent pas pendant les 120 pas fixes suivants. Le test et
-  ses imports sont compilés uniquement sous Windows ; le chemin navigateur reste en wasm.
-- Réinitialisation de session sur le site publié (7 novembre 2026) : page
-  `https://fablrc.github.io/dq9-rust/` (déploiement Pages réussi `42284105022`, tête
-  `9a25199`), ROM européenne locale de 256 Mio
-  (SHA-256 `f305494b…a63b1f`) et `build/sav/demo.sav` (C01M09, SHA-256 `cf0f43b4…1c24a8`),
-  navigateur piloté sans fenêtre, 1280 × 900, DPR 1,25. Un fichier qui n'est pas une ROM
-  affiche l'erreur française et désactive « Nouvelle partie » ; une ROM valide rend le focus
-  à `dq9` et active le bouton. « Nouvelle partie » puis la même sauvegarde aussitôt (avant
-  toute légende) : la console montre `event 21500 queued` puis `event 21500 starts`, suivis de
-  `Sauvegarde lue localement` et `109 C01M09` ; l'église s'affiche sans légende ni scène du
-  prologue, et environ 3 s de flèche haut franchissent la porte (`map change 109 -> 100`)
-  sans qu'aucun `event 21500` ne réapparaisse. Cas légende active de la coordination : légende
-  « Hello? Is there anybody there? » ouverte, sauvegarde chargée, église sans légende, puis
-  120 images de flèche haut avec déplacement du héros. Entrée dans l'église ouvre la
-  conversation du PNJ 25 (`C01Q0/025_en.bin`, « Hi! Welcome »). Captures et manifeste
-  SHA-256 : `build/v01-20261107/web/` (`web-40` à `web-51`, `coordinator-*.png`,
+- Browser run on Pages (November 7, 2026, partial evidence, final build): successful
+  deployment `42384404646`, commit `21e1e42`, URL
+  `https://fablrc.github.io/dq9-rust/?newgame=1&release=21e1e42`, local European ROM
+  of 256 MiB, driven Chromium, window 1280 × 900 (DPR 1.25). After reading the ROM, the
+  keyboard is active on `dq9`; the visual opening reaches events `21500`, `21507`,
+  `21520`, `21521`, `21522`, then `21596` and first control on `X01M05` (4105).
+  Arrows and Space open on foot a conversation with NPC 108
+  (`X01A0.gp2/108_en.bin`, record 0), which is advanced and closed by keyboard. A
+  second new game replays the driver's directional keys from control
+  4105: conversation with NPC 111, event `1140`, NPC 105 (context 80) and event `1130`
+  reached visually and in the console. After cutscene 1130, short key presses
+  and screenshots confirmed climbing the stairs up to the raised stone path
+  and exploring the hall; the hero however stays on 4105, with no event or 4107 transition,
+  even at the end of the path in front of the banner. Final screenshots `50` to `61` are in
+  `build/v01-20261107/browser/`, with the screenshots of the raised path and the east wing in
+  `browser-navigation-addendum.SHA256SUMS`. No save, teleport or injection of internal
+  state. An accelerated replay of the native inputs in the final page reached 4105 and the dialogue
+  of NPC 101, but its virtual clock desynchronizes inputs from fixed steps: it proves
+  neither 4107, nor 1170, nor the tower, nor 1.2.1, and is not used as certification.
+  **Final limit**: the full browser run up to Angel Falls and the village
+  tasks is not certified; 4107, 1170, the tower, 21510/1.2.1 and 1100 remain verified by
+  the native run and the ROM tests, not by a continuous browser session.
+- Loading a save after "New game": native Windows scenario exercised
+  with the EU ROM and a local save (`a_save_selected_after_a_new_game_loads_that_save`).
+  `new_game` becomes false and `C01M09` (map 109) replaces the prologue. The test covers an
+  event still pending, then an active prologue with an open caption: task and
+  dialogue are cancelled and do not resume during the next 120 fixed steps. The test and
+  its imports are compiled only on Windows; the browser path remains in wasm.
+- Session reset on the published site (November 7, 2026): page
+  `https://fablrc.github.io/dq9-rust/` (successful Pages deployment `42284105022`, head
+  `9a25199`), local European ROM of 256 MiB
+  (SHA-256 `f305494b…a63b1f`) and `build/sav/demo.sav` (C01M09, SHA-256 `cf0f43b4…1c24a8`),
+  headless driven browser, 1280 × 900, DPR 1.25. A file that is not a ROM
+  shows the error and disables "New game"; a valid ROM gives focus back
+  to `dq9` and enables the button. "New game" then the same save immediately (before
+  any caption): the console shows `event 21500 queued` then `event 21500 starts`, followed by
+  a "save read locally" line and `109 C01M09`; the church is displayed with no caption or prologue
+  cutscene, and about 3 s of up arrow go through the door (`map change 109 -> 100`)
+  without any `event 21500` reappearing. Active-caption case from the coordinator: caption
+  "Hello? Is there anybody there?" open, save loaded, church with no caption, then
+  120 frames of up arrow with hero movement. Entering the church opens the
+  conversation with NPC 25 (`C01Q0/025_en.bin`, "Hi! Welcome"). Screenshots and SHA-256
+  manifest: `build/v01-20261107/web/` (`web-40` to `web-51`, `coordinator-*.png`,
   `SHA256SUMS`).
-- Même fichier choisi deux fois (défaut observé sur la page publiée) : après « Nouvelle
-  partie », rechoisir le chemin déjà présent dans le champ sauvegarde ne déclenche aucun
-  `change`, donc la sauvegarde n'est pas relue et le prologue reste affiché ; un autre chemin
-  fonctionne. Correctif dans `web.rs` : vider les champs ROM et sauvegarde dès la lecture du
-  fichier. Preuve avant correctif : `web-48-same-save-ignored.png` (ciel du prologue, champ
-  `demo.sav`, aucune ligne `Sauvegarde lue`) contre
-  `web-49-other-save-loads-c01m09.png`. Aucun test natif ne peut exercer la sémantique
-  `change` d'un `<input type=file>` ; le test natif
-  `a_save_selected_after_a_new_game_loads_that_save` couvre l'état arrière (annulation de
-  l'événement et du dialogue), et le correctif navigateur reste contrôlé par le smoke
-  Chromium. Candidat local (wasm release + bindgen, `scripts/verify.ps1` vert en 45,6 s :
-  fmt, clippy, tests du workspace avec ROM réelle, build wasm) servi sur
-  `http://127.0.0.1:8007` : sauvegarde chargée d'abord, puis « Nouvelle partie » jusqu'au
-  ciel d'ouverture, puis le même `demo.sav` rechoisi dans le champ sauvegarde ; l'église
-  C01M09 revient, les deux champs de fichier sont vides, le focus est sur `dq9` et aucune
-  erreur de page n'apparaît. Captures `candidate-save-first.png` (SHA-256
-  `949db6e7…f029d`), `candidate-newgame-between.png` (`23dc84fd…b0ab1`) et
+- Same file chosen twice (defect observed on the published page): after "New
+  game", re-choosing the path already present in the save field triggers no
+  `change`, so the save is not re-read and the prologue stays displayed; another path
+  works. Fix in `web.rs`: clear the ROM and save fields as soon as the
+  file is read. Evidence before the fix: `web-48-same-save-ignored.png` (prologue sky, field
+  `demo.sav`, no "save read" line) versus
+  `web-49-other-save-loads-c01m09.png`. No native test can exercise the `change`
+  semantics of an `<input type=file>`; the native test
+  `a_save_selected_after_a_new_game_loads_that_save` covers the back-end state (cancellation of
+  the event and the dialogue), and the browser fix remains checked by the Chromium
+  smoke. Local candidate (wasm release + bindgen, `scripts/verify.ps1` green in 45.6 s:
+  fmt, clippy, workspace tests with real ROM, wasm build) served on
+  `http://127.0.0.1:8007`: save loaded first, then "New game" up to the
+  opening sky, then the same `demo.sav` re-chosen in the save field; the
+  C01M09 church comes back, both file fields are empty, focus is on `dq9` and no
+  page error appears. Screenshots `candidate-save-first.png` (SHA-256
+  `949db6e7…f029d`), `candidate-newgame-between.png` (`23dc84fd…b0ab1`) and
   `candidate-same-save-reselected.png` (`ef296340…7943`).
-- Portes internes de la version publiée `17bef8c` : sur `X01M07`, ROM choisie localement,
-  marche au clavier autour des colonnes puis ouverture des deux vantaux (`door 0/3 opens`,
-  `door 0/2 opens`) et franchissement visible jusque dans la bibliothèque. Capture conservée
-  hors dépôt : `build/orca/pages-door-crossing-17bef8c.png`. CI Linux `42229577289` et
-  déploiement Pages `42229577139` réussis ; ce smoke ne valide pas tout le prologue.
-- Lot navigateur et chaîne de livraison (6 novembre 2026) : page wasm locale servie par
-  `python -m http.server` (`?newgame=1&mute=1`, Chromium 150, 1929 × 921, DPR 1, WebGPU et
-  WebGL 2 disponibles), ROM européenne locale de 256 Mio lue par `<input type=file>`. Le
-  journal du serveur ne montre que `/`, `pkg/dq9-app.js` et `pkg/dq9-app_bg.wasm` : aucune
-  requête POST, donc aucune ROM ni sauvegarde envoyée. Après la lecture,
-  `document.activeElement` est le canevas, « Nouvelle partie » est actif et `?newgame=1`
-  lance `21500` ; Entrée fait avancer la scène. Une flèche maintenue déplace le héros
-  (captures) ; une perte de focus simulée (`window.blur`) rend le focus au document et arrête
-  le déplacement (deux captures à 1,5 s d'intervalle, même position), car `Focused(false)` vide
-  les touches tenues. Changer la disposition rend le focus au canevas ; une flèche pressée
-  hors du canevas laisse `scrollY` à 0. Un fichier non-ROM affiche « Ce fichier n'est pas une
-  ROM Dragon Quest IX européenne (YDQP01). » en rouge et désactive de nouveau le bouton ;
-  l'erreur reste affichée malgré les lignes de progression du moteur (effets sonores), puis
-  une ROM valide réactive le jeu. La liste blanche de `pages.yml` accepte `index.html` et
-  `pkg/*.js|*.wasm` et rejette un `leak.nds` ajouté à `_site` (essai local des commandes).
-  La CI Linux échouait sur `alsa-sys` faute de `alsa.pc` (run 42212225607) ; les jobs `lint`
-  et `test` installent désormais `libasound2-dev` avant la compilation.
-- Intégration publiée sur GitHub Pages (6 novembre 2026) : le lot Web `aab6daa` a passé
-  les jobs Linux `lint`, `test`, `wasm` et `coverage` (run 42216397722), puis le déploiement
-  Pages 42216397713. Sur le site public, la ROM locale donne immédiatement le focus à
-  `dq9`, active « Nouvelle partie » et lance l'ouverture ; Entrée avance le message.
-  Le parcours clavier de la version précédente atteint `X01M05`, permet de parler aux PNJ
-  108 et 101, de jouer 1130 avec le PNJ 105, puis de monter les escaliers latéraux au sud
-  et le pont central jusqu'au warp `X01M05 → X01M07`. Aucun placement direct du héros
-  n'est utilisé dans ce parcours navigateur.
-- Lot scènes intégré `e6b885b` : CI 42219786799 et déploiement Pages 42219786761 réussis.
-  La capture native de `21500` à l'image 420 montre la légende en cours de fondu.
-  Sur la page publique `?event=21507&time=2&mute=1`, la ROM locale lance la scène,
-  les entrées clavier avancent les messages et `21507` termine après 42,5 s observées ;
-  `21520` démarre ensuite. Le rapport ne liste plus 552 parmi les effets absents ;
-  la vue de la scène est capturée, sans comparaison à melonDS.
-  Ce smoke de scène ne valide pas le parcours manuel complet ni les drapeaux du prologue.
-- Lot J3 (6 novembre 2026) : capture native d'Ivor avec la branche féminine de la sauvegarde
-  de démonstration ; scène 1330 rendue et placements initialement masqués contrôlés par un
-  test réel ; capture `M01` identique pixel pour pixel avant/après ce changement. Événement
-  1160 exécuté jusqu'au terme et mixage écrit en WAV (6,28 s, 32 728 Hz), sans écoute ni
-  comparaison à melonDS. Bundle Web reconstruit : chargement et remplacement de sauvegarde
-  sur `C01M09`, conversation du PNJ 25 et démarrage d'une nouvelle partie contrôlés dans
-  Chromium (1024 × 820, DPR 1,25, son coupé), sans erreur de page observée.
-- Vérification navigateur de la version intégrée (Chromium, 6 novembre 2026, fenêtre
-  1000 × 808, DPR 1,25, son coupé) : ROM et sauvegarde chargées localement, conversation
-  du PNJ 25 sur `C01M09` avec `C01Q0/025_en.bin`, réplique avancée puis fermée ; dispositions
-  superposée, côte à côte et haut seul avec marges noires. Nouvelle partie jouée jusqu'à
-  la fin de `21596` après `21500`, `21507`, `21520`, `21521` et `21522` : retour au héros
-  sur `X01M05`, marche et suivi caméra contrôlés à l'écran. Chargement direct de `M01` :
-  cadrage terrain et marche contrôlés également. Aucune erreur de page observée.
-  Limites conservées : effets non portés signalés dans le journal, écran du bas uni,
-  toits/poutres pouvant masquer le héros ; ce parcours ne vérifie ni le son ni la fidélité
-  image par image à melonDS.
-- `crates/dq9-render/tests/real_rom.rs` : les 738 jeux d'archives distincts (moment 0,
-  environnement de grotte 1) se construisent sans erreur, placements masqués inclus :
-  4 204 modèles, 4 349 instances, 19 557 textures décodées, 697 035 triangles visibles ;
-  30 447 matériaux, dont 48 sans texture et 236 avec une matrice de texture.
-- Captures `--screenshot` de `M01` (Angel Falls : village, cascade, rivière), `C01M09`
-  (église de Stornway) et `F01` (plaine d'Angel Falls) : textures à leur place, feuillages et
-  fleurs détourés, cascade et brume translucides sans trous.
-- Intégration CPU : horloges synthétiques (plage BCFG, vitesse fractionnaire, boucle et
-  fichier d'une seule image) ; poses mises en cache comparées à `Geometry::build_posed`
-  aux images 0, 4 et 8 de `s000/walk`. Test réel
-  `runtime_cast_and_animation_are_deterministic` : mêmes sommets et matériaux après
-  60 pas sur `M01`, `C01M09`, `F01` et `M01M08` (ce dernier avec le monstre de la quête 152),
-  même topologie, nombre de corps conforme à la distribution.
-- Héros : captures `M01` du héros de face au repos et de profil en marche (jambes, bras et
-  cheveux animés, cap suivi) ; test réel `hero_model_follows_its_gait` (modèle déterministe, mouvement
-  différent par allure).
-- Captures natives d'intégration : `M01 --frame 0` et `--frame 60` donnent des PNG
-  différents à caméra identique ; `C01M09 --chapter 19 --step 2 --substep 1 --night`
-  montre les sprites de la religieuse et du prêtre face à une caméra `--eye/--target`.
-  Ce sont des contrôles fonctionnels, pas une comparaison pixel à pixel avec melonDS.
-- Éclairage : captures `M01` (jour, nuit, matin, soir : brouillard et ciel visibles, dégradé
-  différent par moment) ; comparaison à melonDS sur `C01M09` de nuit et brouillard forcé :
-  écart moyen 12,8/255 par canal sans brouillard ; densité de brouillard à 0,01 près sur
-  cinq tables (détail et limites : [`re/lighting.md`](re/lighting.md) § « Comparaison à melonDS »,
-  `scripts/melonds-capture.ps1`). Lumières DS, ciel et fondu de zone avancée non comparés.
-- Navigateur : bundle wasm reconstruit avec `wasm-bindgen`, ROM choisie localement dans
-  la page ; `M01` et `C01M09` affichent la carte et les PNJ, sans erreur JavaScript observée.
-  Les captures natives des images 0 et 60 de `M01` diffèrent sur 41 143 pixels à caméra
-  identique. Le rendu n'a pas encore été comparé image par image à celui de la DS.
+- Internal doors of published version `17bef8c`: on `X01M07`, ROM chosen locally,
+  keyboard walk around the columns then opening of both leaves (`door 0/3 opens`,
+  `door 0/2 opens`) and visible crossing into the library. Screenshot kept
+  outside the repository: `build/orca/pages-door-crossing-17bef8c.png`. Linux CI `42229577289` and
+  Pages deployment `42229577139` successful; this smoke does not validate the whole prologue.
+- Browser batch and delivery chain (November 6, 2026): local wasm page served by
+  `python -m http.server` (`?newgame=1&mute=1`, Chromium 150, 1929 × 921, DPR 1, WebGPU and
+  WebGL 2 available), local European ROM of 256 MiB read through `<input type=file>`. The
+  server log only shows `/`, `pkg/dq9-app.js` and `pkg/dq9-app_bg.wasm`: no
+  POST request, so no ROM or save sent. After reading,
+  `document.activeElement` is the canvas, "New game" is active and `?newgame=1`
+  launches `21500`; Enter advances the cutscene. A held arrow moves the hero
+  (screenshots); a simulated focus loss (`window.blur`) gives focus back to the document and stops
+  movement (two screenshots 1.5 s apart, same position), because `Focused(false)` clears
+  held keys. Changing the layout gives focus back to the canvas; an arrow pressed
+  outside the canvas leaves `scrollY` at 0. A non-ROM file shows the error "This file is not a
+  European Dragon Quest IX ROM (YDQP01)." in red and disables the button again;
+  the error stays displayed despite the engine's progress lines (sound effects), then
+  a valid ROM re-enables the game. The `pages.yml` allowlist accepts `index.html` and
+  `pkg/*.js|*.wasm` and rejects a `leak.nds` added to `_site` (local trial of the commands).
+  Linux CI failed on `alsa-sys` for lack of `alsa.pc` (run 42212225607); the `lint`
+  and `test` jobs now install `libasound2-dev` before building.
+- Integration published on GitHub Pages (November 6, 2026): Web batch `aab6daa` passed
+  the Linux jobs `lint`, `test`, `wasm` and `coverage` (run 42216397722), then Pages
+  deployment 42216397713. On the public site, the local ROM immediately gives focus to
+  `dq9`, enables "New game" and launches the opening; Enter advances the message.
+  The keyboard run of the previous version reaches `X01M05`, allows talking to NPCs
+  108 and 101, playing 1130 with NPC 105, then climbing the side stairs to the south
+  and the central bridge up to the warp `X01M05 → X01M07`. No direct placement of the hero
+  is used in this browser run.
+- Integrated cutscenes batch `e6b885b`: CI 42219786799 and Pages deployment 42219786761 successful.
+  The native screenshot of `21500` at frame 420 shows the caption fading in.
+  On the public page `?event=21507&time=2&mute=1`, the local ROM launches the cutscene,
+  keyboard inputs advance the messages and `21507` ends after 42.5 s observed;
+  `21520` then starts. The report no longer lists 552 among absent effects;
+  the cutscene view is captured, without comparison with melonDS.
+  This cutscene smoke validates neither the full manual run nor the prologue flags.
+- J3 batch (November 6, 2026): native screenshot of Ivor with the female branch of the demo
+  save; cutscene 1330 rendered and initially hidden placements checked by a
+  real test; `M01` screenshot identical pixel for pixel before/after this change. Event
+  1160 executed to completion and mix written to WAV (6.28 s, 32,728 Hz), without listening or
+  comparison with melonDS. Web bundle rebuilt: loading and replacing a save
+  on `C01M09`, conversation with NPC 25 and start of a new game checked in
+  Chromium (1024 × 820, DPR 1.25, sound muted), with no page error observed.
+- Browser verification of the integrated version (Chromium, November 6, 2026, window
+  1000 × 808, DPR 1.25, sound muted): ROM and save loaded locally, conversation
+  with NPC 25 on `C01M09` with `C01Q0/025_en.bin`, line advanced then closed; stacked,
+  side-by-side and top-only layouts with black margins. New game played up to
+  the end of `21596` after `21500`, `21507`, `21520`, `21521` and `21522`: return to the hero
+  on `X01M05`, walking and camera following checked on screen. Direct load of `M01`:
+  terrain framing and walking checked as well. No page error observed.
+  Limits kept: non-ported effects reported in the log, plain bottom screen,
+  roofs/beams that can hide the hero; this run verifies neither sound nor frame-by-frame
+  fidelity to melonDS.
+- `crates/dq9-render/tests/real_rom.rs`: the 738 distinct archive sets (time 0,
+  cave environment 1) build without error, hidden placements included:
+  4,204 models, 4,349 instances, 19,557 decoded textures, 697,035 visible triangles;
+  30,447 materials, of which 48 untextured and 236 with a texture matrix.
+- `--screenshot` captures of `M01` (Angel Falls: village, waterfall, river), `C01M09`
+  (Stornway church) and `F01` (Angel Falls plain): textures in place, foliage and
+  flowers cut out, waterfall and mist translucent without holes.
+- CPU integration: synthetic clocks (BCFG range, fractional speed, loop and
+  single-frame file); cached poses compared with `Geometry::build_posed`
+  at frames 0, 4 and 8 of `s000/walk`. Real test
+  `runtime_cast_and_animation_are_deterministic`: same vertices and materials after
+  60 steps on `M01`, `C01M09`, `F01` and `M01M08` (the latter with the monster of quest 152),
+  same topology, body count consistent with the cast.
+- Hero: `M01` screenshots of the hero idle from the front and walking in profile (legs, arms and
+  hair animated, heading followed); real test `hero_model_follows_its_gait` (deterministic model, motion
+  different per gait).
+- Native integration screenshots: `M01 --frame 0` and `--frame 60` give different
+  PNGs with an identical camera; `C01M09 --chapter 19 --step 2 --substep 1 --night`
+  shows the sprites of the nun and the priest facing a `--eye/--target` camera.
+  These are functional checks, not a pixel-by-pixel comparison with melonDS.
+- Lighting: `M01` screenshots (day, night, morning, evening: fog and sky visible, gradient
+  different per time); comparison with melonDS on `C01M09` at night with forced fog:
+  mean difference 12.8/255 per channel without fog; fog density within 0.01 on
+  five tables (details and limits: [`re/lighting.md`](re/lighting.md) § "Comparison with melonDS",
+  `scripts/melonds-capture.ps1`). DS lights, sky and advanced-zone fade not compared.
+- Browser: wasm bundle rebuilt with `wasm-bindgen`, ROM chosen locally in
+  the page; `M01` and `C01M09` display the map and NPCs, with no JavaScript error observed.
+  Native screenshots of frames 0 and 60 of `M01` differ on 41,143 pixels with an identical
+  camera. Rendering has not yet been compared frame by frame with the DS's.
