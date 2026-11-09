@@ -1,7 +1,7 @@
 //! Glue between the game's lighting model (`dq9_core::lighting`) and the renderer: the `.bats`
 //! script of a map, the day clock the options select, and the renderer's [`Environment`].
 
-use dq9_core::cutscene::{SceneLight, SceneTime};
+use dq9_core::cutscene::{ClockCommand, SceneLight, SceneTime};
 use dq9_core::lighting::{DayState, Lighting, settle_basic_entry};
 use dq9_core::state::{DayClock, TimeOfDay};
 use dq9_formats::lighting::{LightingInfo, LightingMode};
@@ -34,6 +34,15 @@ pub fn phase(index: u32) -> TimeOfDay {
         1 => TimeOfDay::Morning,
         2 => TimeOfDay::Day,
         _ => TimeOfDay::Evening,
+    }
+}
+
+/// Applies one clock command of a running script (579, 588, 589, 808): the day clock starts or
+/// stops, or jumps to a phase.
+pub fn apply_clock_command(clock: &mut DayClock, command: ClockCommand) {
+    match command {
+        ClockCommand::Running(running) => clock.set_running(running),
+        ClockCommand::SetPhase(index) => clock.set_phase(phase(index as u32)),
     }
 }
 

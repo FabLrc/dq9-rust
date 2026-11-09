@@ -7,11 +7,13 @@ use std::path::{Path, PathBuf};
 use crate::screens::{self, Layout};
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
-use dq9_core::Input;
-use dq9_render::{Camera, Gait, Panel, Renderer};
+use dq9_core::state::DayClock;
+use dq9_core::{Hero, Input};
+use dq9_render::{Camera, Environment, Gait, Panel, Renderer};
 use glam::Vec3;
 use winit::event_loop::EventLoop;
 
+use crate::app::headless::PAD_NAMES;
 use crate::app::{App, Options, UserEvent};
 use crate::event::EventPlayer;
 use crate::talk::{self, Talk};
@@ -293,12 +295,11 @@ fn read_inputs(path: &std::path::Path) -> anyhow::Result<Vec<(u8, bool)>> {
             .unwrap_or_default();
         let mut bits = 0u8;
         for name in pad.split(',') {
-            match name.trim().trim_matches('"') {
-                "up" => bits |= 1,
-                "down" => bits |= 2,
-                "left" => bits |= 4,
-                "right" => bits |= 8,
-                _ => {}
+            let name = name.trim().trim_matches('"');
+            for (bit, known) in PAD_NAMES {
+                if known == name {
+                    bits |= bit;
+                }
             }
         }
         frames.push((bits, line.contains("\"a\":true")));
@@ -433,12 +434,27 @@ pub fn main() -> Result<()> {
     Ok(())
 }
 
-/// Renders one frame of the map offscreen and writes it as PNG.
-fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<()> {
+/// What `--screenshot` prepared before rendering: the loaded map, the hero after the inputs,
+/// the day clock, and the event playback's effects on the frame.
+struct Prepared {
+    loaded: load::LoadedMap,
+    hero: Hero,
+    clock: DayClock,
+    event: Option<u16>,
+    script: Option<Vec<walk::Walk>>,
+    talk: Talk,
+    hidden: bool,
+    swapped: bool,
+    event_environment: Option<Environment>,
+}
+
+/// Loads the map of a `--screenshot`, places the hero (`--start`), plays `--input`, and logs
+/// the pose and the map summary.
+fn prepare(cli: &Cli, rom: &[u8], save: Option<&[u8]>) -> Result<Prepared> {
     let event = cli.event_id(rom)?;
     let place = event.and_then(|e| crate::event::place(rom, e));
     let start = load::start(cli.map.as_deref(), save)?;
-    let mut clock = lighting::day_clock(start.state.as_ref().map(|s| s.clock), cli.time, cli.clock);
+    let clock = lighting::day_clock(start.state.as_ref().map(|s| s.clock), cli.time, cli.clock);
     let time = clock.phase().index();
     // An event happens on the map its record names, the hero at its start.
     let (map, spawn) = match place {
@@ -476,9 +492,6 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
         &start.look,
     )?;
     let script = cli.walk.as_deref().map(walk::parse_script).transpose()?;
-    let mut hidden = false;
-    let mut swapped = false;
-    let mut event_environment = None;
     let mut hero = loaded.hero;
     if let Some(at) = cli.start {
         hero = walk::start_hero(&loaded.collision, &start.map, at)?;
@@ -505,55 +518,53 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
             "computed"
         }
     );
-    let s = &loaded.runtime.scene;
-    println!(
-        "{} {} ({}), time {}: {} models, {} textures, {} instances, {} triangles",
-        loaded.entry.id,
-        loaded.entry.code,
-        loaded.label,
-        loaded.time,
-        s.models.len(),
-        s.textures.len(),
-        s.instances.len(),
-        s.triangle_count()
-    );
-    for w in &s.warnings {
-        println!("  warning: {w}");
-    }
-    let (device, queue) = pollster::block_on(async {
-        let instance = gpu::instance().await;
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions::default())
-            .await
-            .context("no GPU adapter")?;
-        let info = adapter.get_info();
-        println!("adapter: {} ({:?})", info.name, info.backend);
-        gpu::device(&adapter).await
-    })?;
-    let format = wgpu::TextureFormat::Rgba8Unorm;
-    let mut camera = Camera::field(
-        hero.position(),
-        if loaded.placed { hero.yaw() } else { 0.0 },
-    );
-    if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
-        camera.look_at(eye, target);
-    }
-    camera.far = camera.far.max(camera.distance * 4.0);
-    loaded.runtime.face_camera(&camera)?;
+    println!("{}", loaded.summary());
+    Ok(Prepared {
+        loaded,
+        hero,
+        clock,
+        event,
+        script,
+        talk,
+        hidden: false,
+        swapped: false,
+        event_environment: None,
+    })
+}
+
+/// Plays the cutscene of `--event` over `--frame` steps, or the `--walk` preview steps, and
+/// leaves the hero instance at the pose the playback ended on.
+fn play_event_or_walk(
+    cli: &Cli,
+    rom: &[u8],
+    prepared: &mut Prepared,
+    camera: &mut Camera,
+) -> Result<()> {
+    let Prepared {
+        loaded,
+        hero,
+        clock,
+        event,
+        script,
+        talk,
+        hidden,
+        swapped,
+        event_environment,
+    } = prepared;
     // The same fixed steps as the window: the hero follows the `--walk` script (standing once
     // it has ended, or without one) and plays the motion its speed asks for; an event plays
     // its script instead.
-    if let Some(event) = event {
+    if let Some(event) = *event {
         talk.set_rom(rom);
         let state = dq9_core::field::initial_state(&cli.story());
         let mut player = EventPlayer::new();
         player.queue(event);
         let played = report::play(
             rom,
-            &mut loaded,
-            &mut hero,
-            &mut camera,
-            &mut talk,
+            loaded,
+            hero,
+            camera,
+            talk,
             &mut player,
             &state,
             Some(cli.frame),
@@ -571,17 +582,12 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
             player.coverage().missing,
             player.unimplemented()
         );
-        hidden = player.hero_hidden();
-        swapped = player.screen_swapped();
+        *hidden = player.hero_hidden();
+        *swapped = player.screen_swapped();
         for command in player.take_clock_commands() {
-            match command {
-                dq9_core::cutscene::ClockCommand::Running(running) => clock.set_running(running),
-                dq9_core::cutscene::ClockCommand::SetPhase(phase) => {
-                    clock.set_phase(lighting::phase(phase as u32));
-                }
-            }
+            lighting::apply_clock_command(clock, command);
         }
-        event_environment = player.environment(loaded.lighting.as_ref(), clock);
+        *event_environment = player.environment(loaded.lighting.as_ref(), *clock);
         // An explicit `--eye`/`--target` looks at the scene the script left, whatever its
         // camera did (to inspect the actors).
         if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
@@ -604,10 +610,10 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
             let moved = hero.position() - before;
             let speed = Vec3::new(moved.x, 0.0, moved.z).length() / crate::app::STEP;
             loaded.runtime.set_hero_gait(Gait::from_speed(speed));
-            loaded.runtime.step(&camera)?;
+            loaded.runtime.step(camera)?;
         }
     }
-    let world = if hidden {
+    let world = if *hidden {
         glam::Mat4::from_scale(Vec3::ZERO)
     } else {
         loaded
@@ -626,23 +632,45 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
             loaded.runtime.hero_gait()
         );
     }
-    loaded.runtime.face_camera(&camera)?;
-    let mut renderer = Renderer::new(&device, &queue, format, &loaded.runtime.scene);
-    renderer.environment =
-        event_environment.unwrap_or_else(|| lighting::environment(loaded.lighting.as_ref(), clock));
+    loaded.runtime.face_camera(camera)?;
+    Ok(())
+}
+
+/// Renders the prepared scene offscreen, writes it as PNG and prints the camera it used.
+fn write_png(
+    cli: &Cli,
+    prepared: &mut Prepared,
+    camera: &Camera,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    out: &Path,
+) -> Result<()> {
+    let Prepared {
+        loaded,
+        clock,
+        talk,
+        swapped,
+        event_environment,
+        ..
+    } = prepared;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let mut renderer = Renderer::new(device, queue, format, &loaded.runtime.scene);
+    renderer.environment = event_environment
+        .take()
+        .unwrap_or_else(|| lighting::environment(loaded.lighting.as_ref(), *clock));
     if let Some(fog) = cli.fog {
         renderer.environment.fog = Some(fog);
     }
     let (w, h) = cli.size;
     let shown = screens::screens(cli.layout, w, h);
-    let field = shown.field(swapped);
-    let panel = Panel::new(&device, format);
+    let field = shown.field(*swapped);
+    let panel = Panel::new(device, format);
     let rgba = renderer
-        .render_to_rgba_with(&device, &queue, (w, h), field, &camera, |encoder, view| {
-            if let Some(overlay) = shown.overlay(swapped) {
+        .render_to_rgba_with(device, queue, (w, h), field, camera, |encoder, view| {
+            if let Some(overlay) = shown.overlay(*swapped) {
                 panel.draw(encoder, view, overlay);
             }
-            talk.draw(&device, &queue, format, encoder, view, field);
+            talk.draw(device, queue, format, encoder, view, field);
         })
         .context("reading the frame back")?;
     if let Some(dir) = out.parent() {
@@ -664,6 +692,36 @@ fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<
     );
     println!("wrote {}", out.display());
     Ok(())
+}
+
+/// Renders one frame of the map offscreen and writes it as PNG.
+fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<()> {
+    let mut prepared = prepare(cli, rom, save)?;
+    let (device, queue) = pollster::block_on(async {
+        let instance = gpu::instance().await;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .context("no GPU adapter")?;
+        let info = adapter.get_info();
+        println!("adapter: {} ({:?})", info.name, info.backend);
+        gpu::device(&adapter).await
+    })?;
+    let mut camera = Camera::field(
+        prepared.hero.position(),
+        if prepared.loaded.placed {
+            prepared.hero.yaw()
+        } else {
+            0.0
+        },
+    );
+    if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
+        camera.look_at(eye, target);
+    }
+    camera.far = camera.far.max(camera.distance * 4.0);
+    prepared.loaded.runtime.face_camera(&camera)?;
+    play_event_or_walk(cli, rom, &mut prepared, &mut camera)?;
+    write_png(cli, &mut prepared, &camera, &device, &queue, out)
 }
 
 /// Writes the recorded sound as a WAV file and reports its length and level.

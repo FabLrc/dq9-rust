@@ -239,6 +239,30 @@ pub struct LoadedMap {
     pub npcs: Vec<Talkable>,
 }
 
+impl LoadedMap {
+    /// The load line the window and `--screenshot` report: map, label, time of day, then the
+    /// counts of the assembled scene, followed by one `  warning: …` line per scene warning.
+    pub fn summary(&self) -> String {
+        let scene = &self.runtime.scene;
+        let mut out = format!(
+            "{} {} ({}), time {}: {} models, {} textures, {} instances, {} triangles",
+            self.entry.id,
+            self.entry.code,
+            self.label,
+            self.time,
+            scene.models.len(),
+            scene.textures.len(),
+            scene.instances.len(),
+            scene.triangle_count()
+        );
+        for warning in &scene.warnings {
+            out.push_str("\n  warning: ");
+            out.push_str(warning);
+        }
+        out
+    }
+}
+
 fn text(s: &[u8]) -> String {
     String::from_utf8_lossy(s).into_owned()
 }
