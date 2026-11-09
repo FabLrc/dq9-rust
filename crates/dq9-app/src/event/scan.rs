@@ -68,9 +68,11 @@ pub(super) struct Scan {
 }
 
 /// Plays `event` headless up to its end, noting the models and packages each target gets.
-pub(super) fn scan(rom: &[u8], event: u16, world: &State) -> Scan {
+/// `guest` is the model of the party's guest, which cast mode 10 binds.
+pub(super) fn scan(rom: &[u8], event: u16, world: &State, guest: Option<String>) -> Scan {
     let files = LazyRom::new(rom);
     let mut director = Director::new(LANGUAGE);
+    director.set_guest(guest);
     director.dispatch(vec![Request::Event(event)]);
     let mut cutscene = Cutscene::new();
     let mut out = Scan::default();

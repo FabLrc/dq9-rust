@@ -377,6 +377,19 @@ pub enum Event {
         id: i32,
         position: [f32; 3],
     },
+    /// 577: the scale of the map placement `(group, id)`: the record's `+0x14`, `+0x18`,
+    /// `+0x1c` (`ov_001::02163f60`), here as the factors on its three axes.
+    PlacementScale {
+        group: i32,
+        id: i32,
+        scale: [f32; 3],
+    },
+    /// 223 (`ov_001::0215c730`): shows or hides the object a type 2 slot (a script sprite) holds
+    /// (`020406c0` hides, `02040678` shows); other slot types are left alone.
+    SlotObjectVisible {
+        slot: i32,
+        visible: bool,
+    },
     /// 541: a balloon sprite of the field (`kind` 14 to 16, `docs/re/stb-natives.md`) over the
     /// actor `actor`, nudged by `offset` DS pixels.
     Balloon {
@@ -470,6 +483,17 @@ pub enum Event {
     SetQuestSignal(u8),
     /// 804: 3D fog.
     Fog(bool),
+    /// 103 (`ov_001::0215b3ac` → `02070910`): the translucent screen cover moves to full
+    /// opacity in `ticks` ticks of 1/60 s, in the 5-bit colour `[r, g, b]`.
+    ScreenCover {
+        color: [i32; 3],
+        ticks: i32,
+    },
+    /// 102 (`ov_001::0215b384` → `020708d8`): the cover moves to its lowest level in `ticks` ticks
+    /// and is switched off there.
+    ScreenUncover {
+        ticks: i32,
+    },
     /// 8, 9: the marker that chains the next map load to the event.
     Chaining(bool),
     /// A native whose effect is not known or not modelled: reported once per id.

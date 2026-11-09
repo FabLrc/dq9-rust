@@ -12,6 +12,7 @@
 //! script headless (every wait completes at once) to learn which `.chr` archives each
 //! character needs, adds them to the scene, and the application uploads the scene once.
 
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use dq9_core::cutscene::{
@@ -33,6 +34,7 @@ use self::placement::Placement;
 use self::scan::{LazyRom, field_sprite, icon_sprite, monster_archive, scan};
 
 mod camera;
+mod guest;
 mod placement;
 mod scan;
 
@@ -83,6 +85,8 @@ pub(crate) fn apply_collision_changes(
                 let position = position.map(|v| (v * 4096.0) as i32);
                 collision.set_placement_position(group as u32, id as u16, position);
             }
+            // Native 577 scales the drawn instance only.
+            PlacementChange::Scaled { .. } => {}
         }
     }
 }
@@ -202,6 +206,12 @@ pub struct EventPlayer {
     /// The cast snapshot an event start took (`0x0203e0b0`), restored by the next cast load
     /// of the same map and consumed by any (`0x0203e2d4`).
     kept_cast: Option<KeptCast>,
+    /// The party's guest: record of the attached-NPC table (`event/guest.rs`), `None` without
+    /// one. Trigger actions 0xcc/0xcd change it; the trigger state does not hold them, so the
+    /// end of each event replays them from the data.
+    guest: Option<u8>,
+    /// What each event's end does to the guest, read from the triggers when first needed.
+    guest_rules: OnceCell<Vec<guest::Rule>>,
 }
 
 impl Default for EventPlayer {
@@ -246,6 +256,8 @@ impl EventPlayer {
             applied_light: SceneLight::default(),
             removed_npcs: BTreeSet::new(),
             kept_cast: None,
+            guest: None,
+            guest_rules: OnceCell::new(),
         }
     }
 
@@ -253,6 +265,18 @@ impl EventPlayer {
     pub fn queue(&mut self, event: u16) {
         status(&format!("event {event} queued"));
         self.director.dispatch(vec![Request::Event(event)]);
+    }
+
+    /// The guest of the party (record of the attached-NPC table), as the events so far left it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn guest(&self) -> Option<u8> {
+        self.guest
+    }
+
+    /// Puts a guest in the party: the state a scene of the middle of the story starts from.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_guest(&mut self, guest: Option<u8>) {
+        self.guest = guest;
     }
 
     /// An event runs or waits: the field is not playable.
@@ -540,7 +564,9 @@ impl EventPlayer {
         self.cutscene.restart();
         self.three_bone = None;
         self.prepared = Some(event);
-        let scanned = scan(rom, event, stage.world);
+        let guest_model = self.guest.and_then(|record| guest::model(rom, record));
+        self.director.set_guest(guest_model.clone());
+        let scanned = scan(rom, event, stage.world, guest_model);
         self.prepared_scene_flag = scanned.scene_flag;
         if let Some(reason) = &scanned.failure {
             status(&format!("event {event}: {reason}"));
@@ -606,7 +632,11 @@ impl EventPlayer {
                 .filter_map(|p| match data(p) {
                     Some(bytes) => Some(bytes),
                     None => {
-                        self.coverage.miss(format!("package {p} not in the ROM"));
+                        // The game's load of a file the ROM lacks fails and the model goes
+                        // without it (scripts list candidate paths, `ev02750`: four for one
+                        // member).
+                        status(&format!("  package {p} not in the ROM"));
+                        self.coverage.miss(ABSENT_PACKAGE);
                         None
                     }
                 })
@@ -809,6 +839,11 @@ impl EventPlayer {
             Event::Ended { event } => {
                 status(&format!("event {event} ended"));
                 outcomes.push(Outcome::Ended(*event));
+                // Trigger actions 0xcc/0xcd of the rules that answer this event's end.
+                let rules = self.guest_rules.get_or_init(|| guest::rules(stage.rom));
+                if let Some(rule) = rules.iter().rev().find(|r| r.event == *event) {
+                    self.guest = rule.change;
+                }
             }
             Event::Sound(sound) => outcomes.push(Outcome::Sound(sound.clone())),
             Event::SetQuestSignal(value) => outcomes.push(Outcome::SetQuestSignal(*value)),
@@ -1095,6 +1130,13 @@ impl EventPlayer {
     }
 }
 
+/// The guest a scene starts with when it plays at the story step `(chapter, step)`, for the
+/// report (`guest::introduced_by`).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn guest_at(rom: &[u8], at: (i32, i32)) -> Option<u8> {
+    guest::introduced_by(&guest::rules(rom), at)
+}
+
 /// Where `event` happens (`dq9_core::script::load::place`).
 pub fn place(rom: &[u8], event: u16) -> Option<dq9_core::script::load::EventPlace> {
     dq9_core::script::load::place(&LazyRom::new(rom), event)
@@ -1132,6 +1174,10 @@ impl EventPlayer {
 /// and nothing changes (`ov_001::02164578` → `Object3D::MaybeSetRegularAnimation`, `02036e44`).
 /// Not counted against an event by the report.
 pub const ABSENT_MOTION: &str = "motion absent from the model";
+
+/// A script declares a motion package (567) whose file the ROM does not hold: the game's load
+/// fails and the model plays without it. Not counted against an event by the report.
+pub const ABSENT_PACKAGE: &str = "package absent from the ROM";
 
 #[cfg(test)]
 mod tests;

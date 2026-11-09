@@ -35,6 +35,8 @@ pub(super) struct Placement {
     pub(super) position: Option<Vec3>,
     /// Rotation around the placement's own origin, radians (native 584).
     pub(super) angle: Option<f32>,
+    /// The factors native 577 put on the placement's axes.
+    pub(super) scale: Option<Vec3>,
 }
 
 impl Placement {
@@ -48,6 +50,7 @@ impl Placement {
             ancestor_hidden: false,
             position: None,
             angle: None,
+            scale: None,
         }
     }
 
@@ -63,6 +66,10 @@ impl Placement {
             // The door turns around the placement's own origin; the home translation and
             // scale stay (native 584 sets the record's angle, `02018310` `+0x34`).
             world *= Mat4::from_rotation_y(angle);
+        }
+        if let Some(scale) = self.scale {
+            // Native 577: the record's scale, applied around the placement's own origin.
+            world *= Mat4::from_scale(scale);
         }
         if let Some(position) = self.position {
             world.w_axis = position.extend(1.0);
@@ -127,7 +134,8 @@ impl EventPlayer {
     ) {
         let (group, id) = match change {
             PlacementChange::Hidden { group, id, .. }
-            | PlacementChange::Moved { group, id, .. } => (group, id),
+            | PlacementChange::Moved { group, id, .. }
+            | PlacementChange::Scaled { group, id, .. } => (group, id),
         };
         let (block, placement) = (group as u32, id as u16);
         let root_instances = placement_instances(&scene.scene, block, placement);
@@ -149,6 +157,18 @@ impl EventPlayer {
         match change {
             PlacementChange::Hidden { hidden, .. } => {
                 self.apply_placement_hidden(scene, hierarchy, block, placement, hidden);
+            }
+            PlacementChange::Scaled { scale, .. } => {
+                for instance in root_instances {
+                    let state = self
+                        .bindings
+                        .placements
+                        .entry(instance)
+                        .or_insert_with(|| Placement::of(&scene.scene.instances[instance]));
+                    state.scale = Some(Vec3::from_array(scale));
+                    let world = state.world();
+                    self.set_world(scene, instance, world);
+                }
             }
             PlacementChange::Moved { position, .. } => {
                 for instance in root_instances {

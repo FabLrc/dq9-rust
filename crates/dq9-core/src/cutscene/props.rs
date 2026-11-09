@@ -17,6 +17,14 @@ pub enum PlacementChange {
         id: i32,
         position: [f32; 3],
     },
+    /// Native 577: the record's scale (`+0x14`, `+0x18`, `+0x1c`), as factors on the axes. The
+    /// drawn instance follows; the collision mesh keeps its size **[hypothesis: the factors in
+    /// the data are 0.97 and 1]**.
+    Scaled {
+        group: i32,
+        id: i32,
+        scale: [f32; 3],
+    },
 }
 
 /// A balloon over a character's head (`ov_017::0219b43c`).

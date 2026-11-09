@@ -55,6 +55,10 @@ pub struct Runtime {
     /// Cast members declared so far, `(attach id, category)` (natives 566, 596).
     cast: Vec<(i32, i32)>,
     next_handle: i32,
+    /// The model of the party's guest (`chara_sub/s017n.chr`), which cast mode 10 binds
+    /// (`ov_001::02160da8` case 10 takes the character the guest task registered); `None`
+    /// without a guest. Set by the application (`Director::set_guest`).
+    pub guest: Option<String>,
     /// Native 725: a jingle asked by 720 has not played out yet.
     pub jingle_playing: bool,
     next_sprite: i32,
@@ -81,6 +85,7 @@ impl Default for Runtime {
             jingle_playing: false,
             next_sprite: 0,
             unimplemented: BTreeMap::new(),
+            guest: None,
         }
     }
 }
@@ -172,6 +177,11 @@ impl Ctx<'_> {
             105 => self.fade(a, Screen::Sub, None, Lock::Keep),
             106 => self.fade(a, Screen::Main, Some(0), Lock::Keep),
             107 => self.fade(a, Screen::Main, None, Lock::Keep),
+            102 => self.events.push(Event::ScreenUncover { ticks: a.int(0) }),
+            103 => self.events.push(Event::ScreenCover {
+                color: [a.int(0), a.int(1), a.int(2)],
+                ticks: a.int(3),
+            }),
             109 => self.events.push(Event::SwapScreens(true)),
             110 => self.events.push(Event::SwapScreens(false)),
             112 => self.fade(a, Screen::Both, None, Lock::Lock),
@@ -513,6 +523,25 @@ impl Ctx<'_> {
                 sound: a.int_or(2, 1) != 0,
                 option: a.int_or(3, 1) != 0,
             }),
+            577 => self.events.push(Event::PlacementScale {
+                group: a.int(0),
+                id: a.int(1),
+                scale: [a.float(2), a.float(3), a.float(4)],
+            }),
+            // Opens the doorway `(block entry, identifier)` with `ov_001::0215fa40`: the same
+            // routine as 584 (`02018310`), reached through the type 2 list instead of the
+            // placement lookup. Its own marks (bit 9 of the record, bit 6 of the object) are
+            // not modelled.
+            540 => self.events.push(Event::OpenDoor {
+                block: a.int(0),
+                placement: a.int(1),
+                sound: a.int_or(2, 1) != 0,
+                option: a.int_or(3, 1) != 0,
+            }),
+            223 => self.events.push(Event::SlotObjectVisible {
+                slot: a.int(0),
+                visible: a.int(1) != 0,
+            }),
             575 => self.events.push(Event::PlacementMove {
                 group: a.int(0),
                 id: a.int(1),
@@ -668,6 +697,9 @@ impl Ctx<'_> {
         let (path, reference, n) = match mode {
             2 | 3 | 6 | 7 => (Some(text(a, 1)), None, 2),
             4 | 5 => (None, Some(a.int(1)), 2),
+            // The guest is an existing character (`0xce`, or the party's first flagged one):
+            // its model comes from the application (`Runtime::guest`).
+            10 => (self.rt.guest.clone(), None, 1),
             _ => (None, None, 1),
         };
         let character = match mode {

@@ -51,6 +51,71 @@ pub struct SceneLight {
     total: u32,
     left: u32,
     clock: Vec<ClockCommand>,
+    cover: Cover,
+}
+
+/// The translucent polygon natives 102/103 put over the 3D screen (the object of
+/// `ov_001::02154da0`'s `0207050c`): its level moves linearly towards a target, and the cover
+/// is switched off when it reaches the lowest level (`020707d8`).
+#[derive(Debug, Clone, PartialEq)]
+struct Cover {
+    active: bool,
+    /// 5-bit colour.
+    color: [i32; 3],
+    /// Alpha out of 31 (`+0xc`).
+    level: f32,
+    from: f32,
+    to: f32,
+    total: u32,
+    left: u32,
+}
+
+impl Default for Cover {
+    /// The level starts at 1, where `102` leaves it (`020707d8` clamps to the target).
+    fn default() -> Self {
+        Self {
+            active: false,
+            color: [0; 3],
+            level: COVER_OFF,
+            from: COVER_OFF,
+            to: COVER_OFF,
+            total: 0,
+            left: 0,
+        }
+    }
+}
+
+/// The lowest and the highest cover level (`102` targets 1, `103` targets `0x1f`).
+const COVER_OFF: f32 = 1.0;
+const COVER_FULL: f32 = 31.0;
+
+impl Cover {
+    fn start(&mut self, target: f32, ticks: i32) {
+        self.active = true;
+        self.from = self.level;
+        self.to = target;
+        self.total = ticks.max(0) as u32;
+        self.left = self.total;
+    }
+
+    /// One tick of `020707d8`: the level moves linearly; a cover that reaches its lowest
+    /// level is off. A length of 0 arrives at the next update.
+    fn tick(&mut self) {
+        if !self.active {
+            return;
+        }
+        if self.left > 1 {
+            self.left -= 1;
+            let done = (self.total - self.left) as f32 / self.total as f32;
+            self.level = self.from + (self.to - self.from) * done;
+            return;
+        }
+        self.left = 0;
+        self.level = self.to;
+        if self.to == COVER_OFF {
+            self.active = false;
+        }
+    }
 }
 
 impl Default for SceneLight {
@@ -65,6 +130,7 @@ impl Default for SceneLight {
             total: 0,
             left: 0,
             clock: Vec::new(),
+            cover: Cover::default(),
         }
     }
 }
@@ -76,6 +142,16 @@ impl SceneLight {
             && self.index_override == other.index_override
             && self.fog == other.fog
             && self.scale == other.scale
+            && self.cover == other.cover
+    }
+
+    /// Colour and alpha of the screen cover natives 102/103 draw, when it is on.
+    pub fn cover(&self) -> Option<[f32; 4]> {
+        let cover = &self.cover;
+        cover.active.then(|| {
+            let [r, g, b] = cover.color.map(|c| c.clamp(0, 31) as f32 / 31.0);
+            [r, g, b, cover.level / COVER_FULL]
+        })
     }
 
     /// `lightRGBScale_ / 4096`: the factor on the light and background colours.
@@ -90,6 +166,7 @@ impl SceneLight {
             && self.fog
             && self.scale == 1.0
             && self.left == 0
+            && !self.cover.active
     }
 
     /// The commands on the game's clock made since the last call.
@@ -116,6 +193,7 @@ impl SceneLight {
 
     /// One tick: the linear part of the fade (`RecomputeAdvancedLighting`, l.912-930).
     pub(super) fn tick(&mut self) {
+        self.cover.tick();
         if self.left == 0 {
             return;
         }
@@ -155,6 +233,11 @@ impl SceneLight {
                     .push(ClockCommand::SetPhase(phase.rem_euclid(4) as usize));
             }
             Event::Fog(enabled) => self.fog = *enabled,
+            Event::ScreenCover { color, ticks } => {
+                self.cover.color = *color;
+                self.cover.start(COVER_FULL, *ticks);
+            }
+            Event::ScreenUncover { ticks } => self.cover.start(COVER_OFF, *ticks),
             _ => return false,
         }
         true
@@ -194,6 +277,33 @@ mod tests {
         intensity(&mut light, 0.25, 0);
         assert_eq!(light.scale(), 0.25);
         intensity(&mut light, 1.0, 0);
+        assert!(light.is_default());
+    }
+
+    /// 103 brings the cover to full opacity over its length and 102 takes it away and switches
+    /// it off (`020707d8`): the cover is seen at the levels in between and gone after.
+    #[test]
+    fn the_screen_cover_fades_in_and_is_switched_off_by_102() {
+        let mut light = SceneLight::default();
+        assert_eq!(light.cover(), None);
+        light.apply(&Event::ScreenCover {
+            color: [0, 31, 0],
+            ticks: 10,
+        });
+        for _ in 0..5 {
+            light.tick();
+        }
+        let [r, g, b, a] = light.cover().unwrap();
+        assert_eq!([r, g, b], [0.0, 1.0, 0.0]);
+        assert!((a - 16.0 / 31.0).abs() < 1e-6, "{a}");
+        for _ in 0..5 {
+            light.tick();
+        }
+        assert_eq!(light.cover().unwrap()[3], 1.0);
+        assert!(!light.is_default());
+        light.apply(&Event::ScreenUncover { ticks: 0 });
+        light.tick();
+        assert_eq!(light.cover(), None);
         assert!(light.is_default());
     }
 

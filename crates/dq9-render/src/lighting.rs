@@ -66,6 +66,9 @@ pub struct Environment {
     pub background: Background,
     /// `EDGE_COLOR` with edge marking on (`DISP3DCNT` bit 5), 5-bit channels.
     pub edge: Option<[u8; 3]>,
+    /// Colour and alpha of the translucent polygon natives 102/103 draw over the whole 3D
+    /// screen (`ov_001::0215b384`, `0207052c`).
+    pub cover: Option<[f32; 4]>,
 }
 
 impl Default for Environment {
@@ -95,6 +98,7 @@ impl Default for Environment {
                 center_offset: 0.0,
             },
             edge: Some([6, 4, 4]),
+            cover: None,
         }
     }
 }

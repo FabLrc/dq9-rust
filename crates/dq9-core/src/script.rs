@@ -212,6 +212,8 @@ pub struct Director {
     /// Scene flag of the last event loaded (from its `EventScript`), for the application.
     scene_flag: Option<u16>,
     unimplemented: BTreeMap<i32, u32>,
+    /// The party's guest model, given to every script's runtime ([`Runtime::guest`]).
+    guest: Option<String>,
 }
 
 impl Director {
@@ -224,12 +226,19 @@ impl Director {
             texts: BTreeMap::new(),
             scene_flag: None,
             unimplemented: BTreeMap::new(),
+            guest: None,
         }
     }
 
     /// Natives called but not implemented since the director was made, with call counts.
     pub fn unimplemented(&self) -> &BTreeMap<i32, u32> {
         &self.unimplemented
+    }
+
+    /// Sets the model of the party's guest (`chara_sub/s017n.chr`) the next events' cast mode
+    /// 10 binds; `None` when the party has no guest.
+    pub fn set_guest(&mut self, model: Option<String>) {
+        self.guest = model;
     }
 
     /// Message table of the running event ([`Text::Id`] keys).
@@ -310,6 +319,7 @@ impl Director {
             let started = load(files, event, &self.lang).and_then(|loaded| {
                 let mut script = Script::new(loaded.stb, loaded.entries)?;
                 script.runtime.messages = Some(loaded.texts.keys().copied().collect());
+                script.runtime.guest = self.guest.clone();
                 self.texts = loaded.texts;
                 self.scene_flag = loaded.scene_flag;
                 Ok(script)

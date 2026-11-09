@@ -10,6 +10,7 @@ use dq9_core::script::Sound;
 use dq9_core::script::load::stage_events;
 use dq9_core::trigger::State;
 use dq9_formats::cast::Story;
+use dq9_formats::maplist::{self, MapList};
 use dq9_render::Camera;
 use nds_rom::Rom;
 
@@ -119,7 +120,10 @@ pub fn play(
 /// renderer does not draw **[hypothesis]**; and the motions a model has no name for (a no-op in
 /// the game). A script that changes a collision placement (574, 575) **is** counted: the walls
 /// and the floor change even though no image shows them.
-const NO_VISIBLE_EFFECT: [&str; 7] = [
+const NO_VISIBLE_EFFECT: [&str; 11] = [
+    "native 509",
+    "native 550",
+    "native 556",
     "native 560",
     "native 571",
     "native 581",
@@ -127,6 +131,7 @@ const NO_VISIBLE_EFFECT: [&str; 7] = [
     "native 809",
     "native 815",
     crate::event::ABSENT_MOTION,
+    crate::event::ABSENT_PACKAGE,
 ];
 
 /// How much of an event is played, from what the player could not execute.
@@ -144,18 +149,118 @@ fn verdict(played: &Played, started: &[u16], missing: &[(String, u32)]) -> &'sta
         .any(|(k, _)| !NO_VISIBLE_EFFECT.contains(&k.as_str()));
     if partial { "partial" } else { "complete" }
 }
+/// The trigger rule that starts an event (`docs/re/trigger.md`): where it is loaded and the NPC
+/// a conversation rule needs on the map.
+#[derive(Debug, Clone, Copy)]
+struct Launch {
+    room: u16,
+    /// First `(chapter, step)` at which the rule is loaded.
+    from: (i32, i32),
+    /// Condition `0x6`: the word 0 of the parameters (the NPC talked to) equals this.
+    npc: Option<u16>,
+}
+
+/// The first rule of every `data/scenario/trigger*.bin` that starts each event (actions `0x77`,
+/// `0x80`, `0x9b`).
+fn launches(files: &Rom) -> std::collections::HashMap<u16, Launch> {
+    let mut found = std::collections::HashMap::new();
+    for file in files
+        .files
+        .files
+        .iter()
+        .filter(|f| f.path.starts_with("data/scenario/trigger") && f.path.ends_with(".bin"))
+    {
+        let Ok(data) = files.file(file.id) else {
+            continue;
+        };
+        let Ok(table) = dq9_formats::Table::parse(data) else {
+            continue;
+        };
+        let Ok(rules) = dq9_formats::trigger::parse(&table) else {
+            continue;
+        };
+        for rule in rules {
+            let npc = rule
+                .conditions
+                .iter()
+                .find(|c| c.code == 0x6)
+                .map(|c| c.arg);
+            for action in &rule.actions {
+                if matches!(action.code, 0x77 | 0x80 | 0x9b)
+                    && let Ok(room) = u16::try_from(rule.room)
+                {
+                    found.entry(action.arg).or_insert(Launch {
+                        room,
+                        from: rule.from,
+                        npc,
+                    });
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The story point at which the report plays `event`: the chapter and step of the rule that
+/// starts it, and the first sub-step at which the NPC the rule talks to stands on its map (the
+/// sub-step is advanced by the end of earlier events, `0x84`; the rules do not name it). An
+/// event no rule starts (chained by native 538 or by a battle) keeps the point of the previous
+/// one **[hypothesis]**.
+fn story_of(files: &Rom, list: &MapList, launch: Option<&Launch>, previous: &Story) -> Story {
+    let Some(launch) = launch else {
+        return previous.clone();
+    };
+    let mut story = Story {
+        chapter: launch.from.0 as u8,
+        step: launch.from.1 as u8,
+        substep: 1,
+        daytime: previous.daytime,
+        ..Story::default()
+    };
+    let Some((npc, record)) = launch
+        .npc
+        .zip(list.records.iter().find(|r| r.id == launch.room))
+    else {
+        return story;
+    };
+    let Some(archive) =
+        dq9_formats::map::rom_file(files, &dq9_formats::cast::archive_path(record.code))
+    else {
+        return story;
+    };
+    for substep in 1..=9 {
+        story.substep = substep;
+        if dq9_formats::cast::load(archive, launch.room, &story)
+            .is_ok_and(|cast| cast.npcs.iter().any(|n| n.member.id == npc))
+        {
+            return story;
+        }
+    }
+    story.substep = 1;
+    story
+}
 
 /// Plays every scene of the stages `major.minor` for the `minors` and prints what ran and
-/// what did not.
-pub fn report(rom: &[u8], major: u32, minors: RangeInclusive<u32>, story: &Story) -> Result<()> {
+/// what did not. Each scene plays at its own story point ([`story_of`]); `base` gives the time
+/// of day and the point of an event no rule starts when it comes first.
+pub fn report(rom: &[u8], major: u32, minors: RangeInclusive<u32>, base: &Story) -> Result<()> {
     let files = Rom::parse(rom).context("parsing the ROM")?;
     let events = stage_events(&files, major, minors);
+    let launches = launches(&files);
+    let list = MapList::parse(
+        &dq9_formats::Table::parse(files.file_by_path(maplist::PATH)?).context("map list")?,
+    )?;
     let mut done: HashSet<u16> = HashSet::new();
+    let mut previous = base.clone();
+    // The guest of the previous scene, for an event no rule starts (`event/guest.rs`).
+    let mut previous_guest = None;
     println!("event(s) | map | steps | result | not executed (count)");
     for (event, name) in events {
         if done.contains(&event) {
             continue;
         }
+        let story = &story_of(&files, &list, launches.get(&event), &previous);
+        previous = story.clone();
         let Some(place) = crate::event::place(rom, event) else {
             println!("{event} ({name}) | ? | 0 | not played | no event-list record");
             continue;
@@ -189,6 +294,11 @@ pub fn report(rom: &[u8], major: u32, minors: RangeInclusive<u32>, story: &Story
         let mut talk = Talk::default();
         talk.set_rom(rom);
         let mut player = EventPlayer::new();
+        player.set_guest(
+            launches
+                .get(&event)
+                .map_or(previous_guest, |l| crate::event::guest_at(rom, l.from)),
+        );
         player.queue(event);
         let mut played = Played::default();
         let mut maps = vec![loaded.entry.code.clone()];
@@ -235,6 +345,7 @@ pub fn report(rom: &[u8], major: u32, minors: RangeInclusive<u32>, story: &Story
                 Err(_) => break,
             }
         }
+        previous_guest = player.guest();
         let started = player.started().to_vec();
         done.extend(started.iter().copied());
         let missing: Vec<(String, u32)> = player

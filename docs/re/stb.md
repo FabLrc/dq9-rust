@@ -225,7 +225,8 @@ fatal. Identifiers outside the table ranges (`0–9`, `100–122`, `200–240`, 
 (`StbNat_GetActorStatus`, `ov_001::02161ab8`) looks up the 566 declaration whose second
 byte equals the argument: category (`byte0 >> 4`, 1 local hero, 2 other character, 0 otherwise)
 and state; absent: -1 and 2. The state of a declared character (0 here) comes from its animation
-controller **[hypothesis]**, modes 9 and 10 of 566 are not modelled **[unknown]**.
+controller **[hypothesis]**. Mode 10 of 566 binds the party's **guest** (`characters.md`, § The guest);
+mode 9 (reads `E+0x116`) is not modelled **[unknown]**.
 
 **Result on the prologue** (`cargo dq9re script 1.1-3`, test `prologue_scripts_run_to_completion`):
 the 30 scripts run to completion, with no machine error, from 56 updates (`ev01140`) to

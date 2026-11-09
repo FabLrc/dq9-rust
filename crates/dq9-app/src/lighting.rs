@@ -104,6 +104,7 @@ pub fn scene_environment(
     if !light.fog {
         environment.fog = None;
     }
+    environment.cover = light.cover();
     environment
 }
 
@@ -140,6 +141,7 @@ pub fn convert(l: &Lighting) -> Environment {
         },
         // The game turns edge marking on at start-up (bit 5 of DISP3DCNT in every melonDS state).
         edge: Some(rgb5(l.edge)),
+        cover: None,
     }
 }
 

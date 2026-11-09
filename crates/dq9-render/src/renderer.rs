@@ -149,6 +149,9 @@ pub struct Renderer {
     edge_buffer: wgpu::Buffer,
     edge_layout: wgpu::BindGroupLayout,
     edge_pipeline: wgpu::RenderPipeline,
+    cover_buffer: wgpu::Buffer,
+    cover_group: wgpu::BindGroup,
+    cover_pipeline: wgpu::RenderPipeline,
     /// The zone's lighting, fog and background, applied at the next [`render`](Self::render).
     pub environment: Environment,
     /// Width of the edge marking in target pixels; `None`: one DS pixel (the viewport height
@@ -367,6 +370,48 @@ fn background_pipeline(
     (buffer, group, pipeline)
 }
 
+/// Uniform buffer, bind group and pipeline of the screen cover (`cover.wgsl`).
+fn cover_pipeline(
+    device: &wgpu::Device,
+    color_format: wgpu::TextureFormat,
+) -> (wgpu::Buffer, wgpu::BindGroup, wgpu::RenderPipeline) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("dq9 cover shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("cover.wgsl").into()),
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("cover"),
+        entries: &[uniform_entry(0, wgpu::ShaderStages::FRAGMENT)],
+    });
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cover"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("cover"),
+        layout: &layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    let pipeline = fullscreen_pipeline(
+        device,
+        "cover",
+        &shader,
+        &[Some(&layout)],
+        None,
+        &[Some(wgpu::ColorTargetState {
+            format: color_format,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })],
+    );
+    (buffer, group, pipeline)
+}
+
 impl Renderer {
     /// Uploads `scene` for drawing into targets of `color_format` (use a non-sRGB format: DS
     /// colours are display values).
@@ -456,6 +501,7 @@ impl Renderer {
             },
         );
         let (edge_buffer, edge_layout, edge_pipeline) = edge_pipeline(device, color_format);
+        let (cover_buffer, cover_group, cover_pipeline) = cover_pipeline(device, color_format);
         let mut renderer = Self {
             color_format,
             shader,
@@ -485,6 +531,9 @@ impl Renderer {
             edge_buffer,
             edge_layout,
             edge_pipeline,
+            cover_buffer,
+            cover_group,
+            cover_pipeline,
             environment: Environment::default(),
             edge_pixels: None,
         };
@@ -1065,6 +1114,23 @@ impl Renderer {
             pass.set_scissor_rect(viewport.x, viewport.y, viewport.width, viewport.height);
             pass.set_pipeline(&self.edge_pipeline);
             pass.set_bind_group(0, &group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        if let Some(color) = self.environment.cover {
+            // The cover of natives 102/103: a translucent polygon over the finished frame.
+            queue.write_buffer(&self.cover_buffer, 0, bytemuck::bytes_of(&color));
+            let mut pass = load_pass(encoder, "cover", target);
+            pass.set_viewport(
+                viewport.x as f32,
+                viewport.y as f32,
+                viewport.width as f32,
+                viewport.height as f32,
+                0.0,
+                1.0,
+            );
+            pass.set_scissor_rect(viewport.x, viewport.y, viewport.width, viewport.height);
+            pass.set_pipeline(&self.cover_pipeline);
+            pass.set_bind_group(0, &self.cover_group, &[]);
             pass.draw(0..3, 0..1);
         }
     }

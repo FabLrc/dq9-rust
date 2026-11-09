@@ -760,6 +760,26 @@ impl Cutscene {
                     position: *position,
                 });
             }
+            Event::PlacementScale { group, id, scale } => {
+                self.props.changes.push(PlacementChange::Scaled {
+                    group: *group,
+                    id: *id,
+                    scale: *scale,
+                });
+            }
+            Event::SlotObjectVisible { slot, visible } => {
+                // `0215c730` only acts on a type 2 slot: a script sprite (`.spr`) or a map object.
+                if let Some(target) = self.slot_target(*slot)
+                    && (matches!(target, Target::Object(_))
+                        || self
+                            .nodes
+                            .get(&target)
+                            .and_then(|n| n.model.as_deref())
+                            .is_some_and(|m| m.ends_with(".spr")))
+                {
+                    self.node_mut(target).visible = *visible;
+                }
+            }
             Event::Balloon {
                 actor,
                 kind,
@@ -862,7 +882,9 @@ impl Cutscene {
             | Event::SceneTimeOfDay(_)
             | Event::SyncSceneTimeOfDay
             | Event::SetTimeOfDay(_)
-            | Event::Fog(_) => {
+            | Event::Fog(_)
+            | Event::ScreenCover { .. }
+            | Event::ScreenUncover { .. } => {
                 self.light.apply(event);
             }
             Event::AddSceneFlags(_) | Event::Chaining(_) | Event::SetQuestSignal(_) => {}

@@ -304,6 +304,8 @@ ov_001::0215b040 StbNat_EnableEventChaining arm # native 8
 ov_001::0215b058 StbNat_DisableEventChaining arm # native 9
 ov_001::0215b2cc StbNat_FadeInBoth arm # native 100
 ov_001::0215b318 StbNat_FadeBoth arm # native 101
+ov_001::0215b384 StbNat_ClearScreenCover arm # native 102: ScreenCover_Clear(ticks) fades the cover to its lowest level and switches it off
+ov_001::0215b3ac StbNat_SetScreenCover arm # native 103: ScreenCover_Set(r, g, b, ticks) fades the cover to full opacity in the 5-bit colour
 ov_001::0215b454 StbNat_FadeSub arm # native 105
 ov_001::0215b4c0 StbNat_FadeInMain arm # native 106
 ov_001::0215b50c StbNat_FadeMain arm # native 107
@@ -344,6 +346,7 @@ ov_001::0215c57c StbNat_SetActorAlpha arm # native 219
 ov_001::0215c5b4 StbNat_FadeActorAlpha arm # native 220
 ov_001::0215c5fc StbNat_TurnActorTowardsActor arm # native 221
 ov_001::0215c70c StbNat_StopActorAnimation arm # native 222
+ov_001::0215c730 StbNat_SetSlotObjectVisible arm # native 223: type 2 slots only; 020406c0 hides, 02040678 shows
 ov_001::0215c788 StbNat_QueueActorAnimation arm # native 224
 ov_001::0215c858 StbNat_SetActorRadius arm # native 226
 ov_001::0215c8a4 StbNat_FadeActorRadius arm # native 227
@@ -377,6 +380,7 @@ ov_001::0215e4b4 StbNat_SetMessageEffect409 arm # native 409: W+0x195b |= 4, W+0
 ov_001::0215e4f0 StbNat_DisableMessageBox arm # native 410
 ov_001::0215e514 StbNat_SetMessageEffect411 arm # native 411: W+0x195b |= 0x40
 ov_001::0215e564 StbNat_ClearMessageField413 arm # native 413: W+0x19b2 = 0
+ov_001::0215e900 StbNat_SetMessageField417 arm # native 417: W+0x19c0 = 1, W+0x195d = 30 [unknown reader of 0x195d]
 ov_001::0215eab0 StbNat_RestoreTextureArena arm # native 502
 ov_001::0215eb3c StbNat_SaveTextureArena arm # native 503
 ov_001::0215ed2c StbNat_PreloadResources arm # native 506
@@ -389,6 +393,7 @@ ov_001::0215f740 StbNat_DestroySprite arm # native 522
 ov_001::0215f930 StbNat_RestoreSavedCamera arm # native 531
 ov_001::0215f968 StbNat_SetCameraFov arm # native 532
 ov_001::0215f9dc StbNat_SetNextEvent arm # native 538
+ov_001::0215fa40 StbNat_OpenDoorways arm # native 540: Region_Fire (02018310) on the type 2 records with (block entry, id), like native 584
 ov_001::0215fb44 StbNat_OpenDoorVariant arm # native 584
 ov_001::0215fe50 StbNat_ShowBalloon arm # native 541: (actor, kind, p, q), via Balloon_Show
 ov_001::0215fef4 StbNat_EndBalloon arm # native 542: ctx+0x3630 = 0
@@ -439,6 +444,7 @@ ov_001::021639ac StbNat_PlaySecondarySe arm # native 732
 ov_001::02163ccc StbNat_BeginScriptedBattle arm # native 547: object of a type-1 slot, mask 0x40000000 [hypothesis: battle transition]
 ov_001::02163dec StbNat_SetPlacementHidden arm # native 574: (group, id, b): bit 2 of the placement's +2, via Zone3D_FindPlacement
 ov_001::02163e50 StbNat_SetPlacementPosition arm # native 575: (group, id, x, y, z) into the placement's +8/+0xc/+0x10
+ov_001::02163f60 StbNat_SetPlacementScale arm # native 577: record scale +0x14/+0x18/+0x1c = float x 4096
 ov_001::02164004 StbNat_SetLightIntensity arm # native 578
 ov_001::02164080 StbNat_SetDayTimerStopped arm # native 579
 ov_001::021640b4 StbNat_MoveCameraFov arm # native 580
@@ -802,7 +808,7 @@ ov_017::021c16cc CastReloadTask_Update       # fade to black over 15 frames, wai
 0x0203cf5c NpcTable_Get                     # returns g_NpcTable
 0x0203cfc4 NpcTable_Reset                   # clears the entries, including the 0x8000 removed bit set by action 0x7c
 0x0203d038 NpcTable_Build                   # one 0x20-byte entry per cast member: sprite / chara_sub model / enemy.gp2 monster
-0x0203de94 NpcTable_DrawEntries             # per NPC: skipped when +0x98 != 0 and no 0x10000 mark; calls 0208f87c [hypothesis: shadows]
+0x0203de94 NpcTable_DrawEntries             # per NPC: skipped when +0x98 != 0 and no 0x10000 mark; calls 0208f88c [hypothesis: shadows]
 0x0203df88 NpcTable_FindById                # the NPC of member number n among the 32 entries (566 mode 4/5 use it)
 0x0203e0b0 NpcTable_TakeSnapshot            # event start: position >> 4, angle, member, removed bit 9 per NPC (+0x9e list)
 0x0203e2d4 NpcTable_ApplySnapshot           # Cast_LoadMap: gives a same-map snapshot back, consumes it on any map
@@ -891,3 +897,16 @@ ov_001::02163564 StbNat_PlaySeBase     arm # native 712: one argument plays on t
 ov_001::02163744 StbNat_RequestJingle  arm # native 720
 ov_001::0216376c StbNat_JingleActive   arm # native 725
 ov_001::02163aec StbNat_SelectZoneBgm arm # native 736: Bgm_SequenceForMap of the current zone, then Bgm_Select
+
+# --- Screen cover and the party guest (docs/re/stb-natives.md, docs/re/characters.md) ---
+0x0207050c ScreenCover_Get             # the singleton of natives 102/103: +0 active, +2 RGB15, +4 target level, +8 ms left, +0xc level (float)
+0x0207052c ScreenCover_Draw            # (obj, rgb15, level): one translucent polygon over the 3D screen, alpha = level (0..31), polygon id 0x3a
+0x020707d8 ScreenCover_Update          # per frame: the level moves linearly to the target; switched off on reaching 1
+0x020708d8 ScreenCover_Clear           # (obj, frames): target 1, 16.667 ms per frame (native 102)
+0x02070910 ScreenCover_Set             # (obj, rgb, frames): colour, target 0x1f (native 103)
+0x0208f88c Shadow_Draw                 # (position, polygon id, radius, alpha, 8): the blob shadow, read by every Object3D flag 0x10 test [hypothesis: name]
+0x020d3d88 AttNpcTable_Get             # (table, index): record of data/bin/attnpc.gp2 (0x24 bytes), 0 beyond the count
+ov_017::0218dba0 Character_DrawShadow  # skips the shadow when Object3D flag 0x10 is set (what native 571 toggles)
+ov_017::021913d0 Guest_Start           # (GameResources, record): trigger action 0xcd (case 0x69) -> guest task with the attnpc record
+ov_017::02191484 Guest_Dismiss         # trigger action 0xcc (case 0x68): destroys character 0xce, clears the guest flag
+ov_017::021c1e6c Guest_LoadTask        # loads attnpc.gp2 and data/chara_sub/s%03dn.chr into character 0xce (the guest, outside the party list)

@@ -231,6 +231,30 @@ The prologue chain plays end to end without intervention: `21500 → 21507` (nat
 then trigger 11 of `M01` launches scripted battle 26 (action `0x78`), whose victory (trigger
 15) launches `21520 → 21521 → 21522 → 21596` (natives 538), see "New game" below.
 
+**Result on chapter 2** (`--events-report 2.1-1`, 50 report rows: **47 complete, 3 partial**; the
+prologue report above is unchanged). The report plays each scene at **its own story point**
+(`report::story_of`): the chapter and step of the trigger rule that starts it, and the first
+sub-step at which the NPC that rule talks to stands on the map; before this the 2.1.1 cast of
+the base point made every NPC motion of 2.2 to 2.6 "absent" (the NPC was not in the cast). The
+party's guest (Ivor) is carried from one scene to the next (`event/guest.rs`;
+[`re/characters.md`](re/characters.md), § The guest). Natives counted "no rendered effect" now
+also include 509 (flags `0x80`/`0x100` nothing reads), 550/556 (the hero's weapon and shield,
+not drawn), 571 (bit `0x10` is the shadow flag, shadows not drawn) and a motion package the ROM
+does not hold (the game's load fails too).
+
+| Cutscene(s) | Maps | Result | What is missing |
+|---|---|---|---|
+| 2110, 2120, 2140, 2200, 2210, 2220, 2222, 2230, 2240, 2250, 2300, 2320, 2350, 2360, 2370, 2400, 2410, 2420, 2430, 2440, 2450 | `M01`, `M01M02`, `M01M05`, `M01M07`, `M01M09`, `M01M10`, `S01M01` | complete | — (NPC motions and the guest in cast mode 10 play; 2130, 2220 and 2600 use 509: no effect) |
+| 2130, 2500, 2510, 2520, 2530, 2550, 2555, 2560, 2570, 2620, 2720, 2730 | `M01M10`, `D01M01`, `D01M05`, `D01`, `M01`, `M01M10` | complete | — (2130 opens doorway `(0, 2)` by 540; 2500/2520 hide and show a sprite by 223) |
+| 2600 + 2610 | `M01M02` | complete | — |
+| 2750, 2760, 2800 | `M01M10`, `M01` | complete | — (2750: native 103/102 fade the 3D screen to black under the captions; the candidate package `event/ev03060s011.chr` is not in the ROM) |
+| 22590, 22591, 22592, 22594 | `M01`, `S01M01`, `M01M10` | complete | — |
+| 2535 + 22510 | `D01M05` | partial | 547 (battle transition, J4); 574 on placements `(0, 28)` and `(0, 30)`, which **no map of area 7100 holds** (`dq9re map D01 … D01M05`: ids stop at 19), so the game's "record for a later load" has nothing to apply to |
+| 2700 + 22593 | `M01` | partial | 417 (`W+0x19c0`, `W+0x195d`: the message routine clears `W+0x40` while it is set; effect **[unknown]**) |
+
+(Rows after 2750: 2810 to 2940, 22500 and 22595 are complete except 2900 + 2910, partial on 573,
+outside the v0.2 target.)
+
 **Cutscene effects** (J3, `dq9_core::cutscene`, `dq9-app/src/event.rs`, details and evidence in
 [`re/stb-natives.md`](re/stb-natives.md#effects-executed-on-screen-j3)):
 
@@ -256,6 +280,19 @@ then trigger 11 of `M01` launches scripted battle 26 (action `0x78`), whose vict
 - **Door (584).** The placement `(block entry, identifier)` rotates by 90° in 16 updates;
   screenshots `21500` frames 2900/2960, where the panel changes orientation. The sound stays reported
   as long as the index (`g_DoorSeTable[low nibble]`, 200–204) is not wired.
+- **Screen cover (102/103).** A translucent colour polygon over the 3D screen
+  (`Environment::cover`, drawn after the edge marking by `Renderer::render`, `cover.wgsl`):
+  103 fades it in to the 5-bit colour over `d` ticks (16.667 ms each, `ScreenCover_Update`),
+  102 fades it out and switches it off; the message window and the brightness fades stay
+  above it. Captures `build/evidence/v2-ch2-cutscenes/cap-2750-cover-1370.png` (half way) and
+  `-1420.png` (black); test `native_103_covers_the_screen_and_102_takes_it_away`.
+- **Party guest (566 mode 10).** The model of Ivor (`chara_sub/s017n.chr`, record 1 of
+  `attnpc.gp2`) is a cast member of the scenes where he walks with the hero; his motions are
+  `stand`, `talk`… of the script's package. `EventPlayer` keeps who the guest is and replays
+  the trigger rules that add or dismiss him at the end of each event.
+- **Doors by 540, show/hide of a sprite (223), placement scale (577).** 540 opens the doorway
+  `(block entry, identifier)` like 584; 223 shows or hides a script sprite; 577 scales a map
+  placement's drawn instance (not its collision).
 - **Screen swap (109/110).** The `POWCNT1` bit 15 state is shared with the layout; six
   swaps in the opening move the field and the window from one screen to the other. Screenshots
   `stacked`/`side`/`top` before/after the first 109 (frames 100 and 5000 of 21500).

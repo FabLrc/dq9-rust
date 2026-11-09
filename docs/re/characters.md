@@ -408,8 +408,39 @@ the hero of the current slot (first character of the party).
   arm palettes (Character-Colours); only the original palettes are used **[unknown]**.
 - Hair colours: the skin ramp of `GetItemSkinShades` (`0x020731f0`, wiki) is not applied.
 - Lighting: fixed character light (`app.md`), not the DS lights.
-- Item parts without a model (see above); party companions; the hero during
+- Item parts without a model (see above); party companions outside cutscenes (the guest of
+  the scenes is drawn: § The guest); the hero during
   cutscenes (script `walk`, event scale and camera).
+
+## The guest (cast mode 10 of native 566)
+
+The chapter 2 scenes carry a companion that is **not in the party list**: Ivor, then (chapter 4)
+others. Evidence (Ghidra EU, `ov_001`/`ov_017`):
+
+- Trigger action `0xcd` (`Trig_RunAction` case `0x69` of the switch on `code − 100`, `ov_017::021913d0` = `Guest_Start`) takes
+  record `arg` of **`data/bin/attnpc.gp2`** (`attnpc_<lang>.bin`: 5 records, `0x24` bytes each in
+  memory: `[id, character number, name, …]`, read by `020d3d88`) and starts the guest task
+  `ov_017::021c1e6c`, which loads `data/chara_sub/s%03dn.chr` (`s017n.chr` for Ivor: model
+  `s017`, motions `stand`, `run`, `step_*`) into **character `0xce`** (`Chara_Get(0xce)`),
+  scale `0x10a`. Action `0xcc` (case `0x68`, `ov_017::02191484` = `Guest_Dismiss`) destroys it.
+  `ov_017::021a316c` (the cast teardown of an event) also frees `0xce`.
+- Mode 10 of native 566 (`ov_001::02160da8`) binds that character to the cast member: with no
+  party member accepted by `02061bd8` it uses `0xce`. The member then has the motions of
+  `s017n.chr` plus the package the script declares with 567 (`event_lv5/ev01000s017.chr`:
+  `talk`).
+- Which trigger rules add or dismiss it (`dq9re triggers M01 --with 2210`): the end of `2210`
+  and of `2350` add record 1; the end of `2400` and of `22591` dismiss it
+  (`0xcd(1)` / `0xcc(1)`; chapter 4: `4080` adds record 2, `24170` and `24596` dismiss
+  record 1).
+- **Application**: the trigger state does not hold the guest, so `EventPlayer` keeps it
+  (`guest`, `event/guest.rs`) and replays the rules of `Event::Ended` (`guest::rules`).
+  The report plays each scene at its own story point and gives it the guest the latest rule
+  introduced at or before its step (`guest::introduced_by`; **[hypothesis]**: the order of
+  the events of one step is not in the data; 2430 to 2450 come before 2400, whose end
+  dismisses Ivor). Test
+  `the_guest_of_the_party_stands_in_cast_mode_10_and_plays_his_motions`.
+- **[unknown]**: the guest's other places (field walking, battles) and what `Guest_LoadTask`
+  does with record fields 3 onwards (`+0x10` bits 0–2 go into byte `+0x56b` of the character).
 
 ## Checks
 

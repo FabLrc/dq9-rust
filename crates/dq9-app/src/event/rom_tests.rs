@@ -489,3 +489,140 @@ fn a_chained_event_on_another_map_ignores_the_previous_map_bindings() {
         }
     }
 }
+
+/// Cast mode 10 of chapter 2's scenes binds the party's guest (Ivor, record 1 of
+/// `attnpc.gp2`, dressed with `chara_sub/s017n.chr`): the scene draws his model and plays the
+/// `stand` and `talk` motions the script gives him. Without the guest the member stays
+/// unbound, nothing is drawn for him and each motion is reported missing on `Detached(1)`.
+#[test]
+fn the_guest_of_the_party_stands_in_cast_mode_10_and_plays_his_motions() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let story = Story {
+        chapter: 2,
+        step: 2,
+        substep: 1,
+        daytime: true,
+        ..Story::default()
+    };
+    let state = initial_state(&story);
+    let place = crate::event::place(rom, 2300).expect("event record");
+    let run = |guest: Option<u8>| {
+        let mut loaded = load::load(
+            rom,
+            &place.map.to_string(),
+            0,
+            &story,
+            crate::event::spawn(&place),
+            None,
+            &HeroLook::new_game(),
+        )
+        .expect("map of the event");
+        let mut camera = Camera::default();
+        let mut talk = Talk::default();
+        talk.set_rom(rom);
+        let mut hero = loaded.hero;
+        let mut player = EventPlayer::new();
+        player.set_guest(guest);
+        player.queue(2300);
+        let mut drawn = false;
+        for tick in 0..2_000 {
+            frame(
+                rom,
+                &mut player,
+                &mut loaded,
+                &mut hero,
+                &mut camera,
+                &mut talk,
+                &state,
+                tick % 30 == 0,
+            );
+            drawn |= player.bindings.actors.iter().any(|((_, path), &actor)| {
+                path == "chara_sub/s017n.chr"
+                    && loaded
+                        .runtime
+                        .actor_instance(actor)
+                        .and_then(|i| loaded.runtime.scene.instances.get(i))
+                        .is_some_and(|i| i.world != Mat4::from_scale(Vec3::ZERO))
+            });
+            if !player.is_active() && player.pending_start().is_none() {
+                break;
+            }
+        }
+        assert!(!player.is_active(), "event 2300 did not end");
+        (drawn, player.coverage().missing.clone())
+    };
+    let (drawn, missing) = run(Some(1));
+    assert!(drawn, "Ivor's model was never drawn: {missing:?}");
+    assert!(
+        !missing
+            .keys()
+            .any(|k| k.contains("Detached") || k.contains("cast mode")),
+        "the guest scene still reports missing parts: {missing:?}"
+    );
+    let (drawn, missing) = run(None);
+    assert!(!drawn, "a scene without a guest drew Ivor");
+    assert!(missing.contains_key("cast mode 10"), "{missing:?}");
+}
+
+/// Event 2750 darkens the 3D screen with native 103 and takes the cover away with 102: the
+/// environment the player hands the renderer carries a cover that grows and is gone at the end.
+#[test]
+fn native_103_covers_the_screen_and_102_takes_it_away() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let story = Story {
+        chapter: 2,
+        step: 6,
+        substep: 1,
+        daytime: true,
+        ..Story::default()
+    };
+    let state = initial_state(&story);
+    let place = crate::event::place(rom, 2750).expect("event record");
+    let mut loaded = load::load(
+        rom,
+        &place.map.to_string(),
+        0,
+        &story,
+        crate::event::spawn(&place),
+        None,
+        &HeroLook::new_game(),
+    )
+    .expect("map of the event");
+    let mut camera = Camera::default();
+    let mut talk = Talk::default();
+    talk.set_rom(rom);
+    let mut hero = loaded.hero;
+    let mut player = EventPlayer::new();
+    player.set_guest(Some(1));
+    player.queue(2750);
+    let mut peak = 0.0f32;
+    let mut cover_seen_at_end = false;
+    for tick in 0..6_000 {
+        frame(
+            rom,
+            &mut player,
+            &mut loaded,
+            &mut hero,
+            &mut camera,
+            &mut talk,
+            &state,
+            tick % 30 == 0,
+        );
+        if let Some(env) = player.environment(
+            loaded.lighting.as_ref(),
+            dq9_core::state::DayClock::new(0.0, false),
+        ) {
+            peak = peak.max(env.cover.map_or(0.0, |c| c[3]));
+            cover_seen_at_end = env.cover.is_some();
+        }
+        if !player.is_active() && player.pending_start().is_none() {
+            break;
+        }
+    }
+    assert!(peak > 0.99, "the cover never reached full opacity: {peak}");
+    assert!(!cover_seen_at_end, "the cover outlived the event");
+}
