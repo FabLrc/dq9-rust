@@ -519,25 +519,25 @@ Branch integration (`scripts/integrate.ps1`), the evidence manifest
 (`scripts/evidence.ps1`, protected by `scripts/prune-build.ps1`) and branch cleanup
 (`scripts/prune-branches.ps1`) are described in `docs/orchestration/README.md`.
 
-Orca worktrees need not recompile the same crates: sharing the Cargo target
-is enough.
+Each Orca worktree has its own Cargo target: sharing one is **not** safe. Observed in the r1
+wave (integration of `r1-formats-bytes`): with one `CARGO_TARGET_DIR` for every worktree,
+Cargo considered the `nds-rom` rlib built from another worktree's sources fresh, and the
+doctests of `dq9-formats` failed against it (`module bytes is private`) although the branch
+was correct; the same mechanism can produce a false pass. The target stays outside the
+repository (`build/` is only for project outputs: screenshots, extracted ROM), and its
+directory name carries the batch, so two worktrees never share a lock either.
 
 ```powershell
-$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target"   # cmd: %LOCALAPPDATA%\dq9-target
-# For all sessions: setx CARGO_TARGET_DIR "%LOCALAPPDATA%\dq9-target"
+$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target-<batch>"   # cmd: %LOCALAPPDATA%\dq9-target-<batch>
 ```
 
-Cargo locks a target: two worktrees building at the same time wait for each other instead of
-stepping on each other, and the first build fills the cache for the following ones. The shared target
-stays outside the repository (`build/` is only for project outputs: screenshots, extracted ROM).
-A shared target can reuse a test binary compiled in another worktree, even a
-deleted one: a path frozen by `env!("CARGO_MANIFEST_DIR")` then designates that worktree. The
-tests therefore read `CARGO_MANIFEST_DIR` at runtime (`crates/testrom`), and
-`verify.ps1 -RequireRom` passes the found ROM to the tests through `DQ9_ROM`.
+A test binary can outlive the sources it was built from (branch change): the tests read
+`CARGO_MANIFEST_DIR` at runtime (`crates/testrom`), and `verify.ps1 -RequireRom` passes the
+found ROM to the tests through `DQ9_ROM`.
 
-`sccache` is optional: it caches `rustc` invocations, useful when the shared
-target is absent or discarded (branch change, cleanup), useless when it is
-warm.
+`sccache` is the way to share compilation work: it caches `rustc` invocations by content, so
+per-worktree targets warm each other. Useful when a target is absent or discarded (branch
+change, cleanup).
 
 ```powershell
 cargo install sccache --locked

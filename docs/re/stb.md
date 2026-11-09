@@ -334,8 +334,8 @@ Implementation: `crates/dq9-core/src/cutscene.rs` (cutscene state, no I/O, tests
   **frozen** during the caption (`020657c8`: the action does not close before 401, 405 stays 1).
 - Three-bone camera (552): `0204a170` follows the source's `eye` and `lookat` and sets the target on
   `foot`; the latter is turned every three updates towards its displacement. Executed by
-  `Camera::ThreeBoneCamera` and `EventPlayer::drag_three_bone`; its capture at frame 1820 of
-  `21507` shows the change of viewpoint, without melonDS comparison.
+  `Camera::ThreeBoneCamera` and `EventPlayer::drag_three_bone` (`event/camera.rs`); its
+  capture at frame 1820 of `21507` shows the change of viewpoint, without melonDS comparison.
 - Door (584): `02018b44` finds the area's `(block entry, identifier)` placement;
   `02018310` sets the target angle to `+6434` (90°) and the speed to `409` per update. Executed by
   `Event::OpenDoor`: rotation of the placement visible at frames 2900→2960 of `21500`; the sound

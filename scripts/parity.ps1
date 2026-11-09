@@ -7,7 +7,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/parity.ps1 -References build/evidence/parity/references.json -Rom rom/game.nds
 #
 # -References defaults to build/evidence/parity/references.json (local, ignored: it points to
-# original checkpoints, which are game data). -Rom defaults to the lookup of crates/testrom:
+# original checkpoints, which are game data). From a linked worktree, where that file does not
+# exist, it falls back to the same path in the main checkout (first entry of
+# `git worktree list --porcelain`). -Rom defaults to the lookup of crates/testrom:
 # DQ9_ROM, else the only *.nds of rom/, else the only *.nds of the repository root.
 #
 # References file (UTF-8 JSON, paths relative to its own directory):
@@ -123,7 +125,20 @@ function Format-Arg([string] $Arg) {
 }
 
 # --- references file ---------------------------------------------------------------------
-if (-not $References) { $References = Join-Path $Root 'build/evidence/parity/references.json' }
+if (-not $References) {
+    $References = Join-Path $Root 'build/evidence/parity/references.json'
+    if (-not (Test-Path -LiteralPath $References -PathType Leaf)) {
+        # build/ is ignored by git, so a linked worktree has no references of its own.
+        $First = @(& git -C $Root worktree list --porcelain | Where-Object { $_ -like 'worktree *' } | Select-Object -First 1)
+        if ($First.Count -gt 0) {
+            $Candidate = Join-Path $First[0].Substring(9) 'build/evidence/parity/references.json'
+            if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+                Write-Output "parity: no local references, using the main checkout's $Candidate"
+                $References = $Candidate
+            }
+        }
+    }
+}
 if (-not (Test-Path -LiteralPath $References -PathType Leaf)) { Stop-Parity "no references file $References" }
 $References = (Resolve-Path -LiteralPath $References).Path
 $BaseDir = Split-Path -Parent $References

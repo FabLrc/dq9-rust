@@ -1,7 +1,7 @@
 # Items: `itemdt_<category>.gp2` tables and "item obtained" flags
 
 Implementation: `crates/dq9-formats/src/item.rs` (`ItemTable::add_member`,
-`ItemTable::compendium`) and `crates/dq9-core/src/trigger.rs` (`State::obtain`);
+`ItemTable::compendium`) and `crates/dq9-core/src/trigger/action.rs` (`State::obtain`);
 `dq9-core::state::item_obtained_flag`. Data: `data/prm/itemdt_<category>.gp2`, member
 `itemdt_<category>_<language>.nat` (decompressed). The DQIX wiki, *Items* page, documents the
 same tables; the numbers below were checked on the European ROM and against the
@@ -85,7 +85,7 @@ does `Flags_Set(+0x8c, 0xc76 + compendium, 1)` and counts; the count then goes t
 `Items_Give`. Callers (xrefs): `ov_017::0218b688` (call `(x, 0)` depending on the analysis
 branch) and `ov_017::021b688c` [hypothesis: loop over the party list
 `+0xf78`/`+0xf7c`]. `dq9-core` does not model this path: `State::obtain`
-(`crates/dq9-core/src/trigger.rs`) only covers given items; the start is rendered by
+(`crates/dq9-core/src/trigger/action.rs`) only covers given items; the start is rendered by
 `start_new_game` via the same rule, but a recruited companion's equipment will not set
 its flags [hypothesis on the exact moment the original calls the function on
 recruitment].

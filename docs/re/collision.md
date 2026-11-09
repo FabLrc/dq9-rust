@@ -63,8 +63,8 @@ are described in [`movement.md`](movement.md).
 
 ## Grid, attribute word and query (J2, `0x0204c040`)
 
-The query code establishes (re-read in `dq9_core::collision::query` and checked by synthetic
-tests):
+The query code establishes (re-read in the private `query` of
+`crates/dq9-core/src/collision/geometry.rs` and checked by synthetic tests):
 
 - **In-memory `.col2` object** (`0x0204bf54`, 0x4c bytes): `+0` header, `+4` triangles,
   `+8` cell counts (`u8`), `+0xc` starts (`u16`), `+0x10` indices (`u16`), `+0x14`

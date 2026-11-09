@@ -94,10 +94,10 @@ Kit: `docs/orchestration/README.md` (coordinator), `worker-rules.md` (workers),
   `docs/status.md`. No other model.
 - **State in `docs/status.md` only**, rewritten by the coordinator alone; workers
   write neither status, nor roadmap, nor README (except the progress block).
-- **One owner per shared file.** `dq9-app/src/{app,event}.rs`,
-  `dq9-core/src/{field,state,trigger}.rs`, `Cargo.toml`, `re/symbols.txt`: in the
-  ```owns block of a single batch at a time. Out of scope or blocked: one precise `ask`, then stop;
-  no concurrent patch, no status loop.
+- **One owner per shared file.** `dq9-app/src/app.rs`, `dq9-app/src/event.rs` + `event/**`,
+  `dq9-core/src/{field,state}.rs`, `dq9-core/src/trigger.rs` + `trigger/**`, `Cargo.toml`,
+  `re/symbols.txt`: in the ```owns block of a single batch at a time. Out of scope or
+  blocked: one precise `ask`, then stop; no concurrent patch, no status loop.
 - **One batch = one branch `FabLrc/<milestone>-<batch>`** (no wave suffix), one spec,
   evidence, one squash commit by `scripts/integrate.ps1` (gate: scope, forbidden
   files, `verify.ps1 -RequireRom`). End of wave: `scripts/prune-branches.ps1`.

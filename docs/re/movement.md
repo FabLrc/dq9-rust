@@ -53,7 +53,7 @@ control. Steady-state speed is the same (5.76 units/s), and so is the speed ramp
 `0x28` per tick.
 
 This cadence is checked on the real ROM by
-`field_cadence_holds_the_pose_and_matches_the_original_every_vblank` (`app.rs`): from
+`field_cadence_holds_the_pose_and_matches_the_original_every_vblank` (`app/tests.rs`): from
 the pose `(1.756; −3.041)`, raw angle 0, speed 0 in `X01M05`, odd steps give the
 exact raw angles 0, 1608, 3216, …, 12868 and the fx `z` of the original capture, even
 steps holding the pose byte for byte (camera included). The first VBlank only reads the
@@ -232,11 +232,11 @@ comparison at equal frame count under melonDS.
 
 The driver now judges its waypoints and goal in **3D** (§ "Return from 1.2.1");
 the grid links two neighboring cells only if the floor height gap stays below `STEP_HEIGHT`
-(0.75), so a continuous ramp or staircase, never two stacked walkways; the edge is
-additionally validated by `Hero::step`. A cell can carry several floors. Remaining: the
-melonDS comparison of the return route and the measurement of the `Field::step` cadence for
-doors (§ "What is ported"). The driver's connectivity probe (`edge_pass`) keeps
-`ticks = 1`: it is a traversal test, not the field cadence.
+(0.75, `crates/dq9-app/src/app/auto/nav.rs`), so a continuous ramp or staircase, never two
+stacked walkways; the edge is additionally validated by `Hero::step`. A cell can carry several
+floors. Remaining: the melonDS comparison of the return route and the measurement of the
+`Field::step` cadence for doors (§ "What is ported"). The driver's connectivity probe
+(`edge_pass`) keeps `ticks = 1`: it is a traversal test, not the field cadence.
 
 `cargo dq9re map --reach` ([`map-archive.md`](map-archive.md#viewing-the-collision-dq9re-map---image---reach))
 replays `Hero::step` on a 0.5-unit grid and renders the components by visible height:
@@ -388,7 +388,8 @@ It used to stop there at 444.7 s. The cause is **in the driver**, not in the col
   to `4107` also forbade the doors to `4107`, hence the oscillation
   `4101 ↔ 4103 ↔ 4109 ↔ 4104` then "no walkable way back through map 4101 to 4105".
 
-Fixes (`crates/dq9-app/src/app/auto.rs`, code held for central checks):
+Fixes (`crates/dq9-app/src/app/auto.rs`, nav grid in `app/auto/nav.rs`, code held for central
+checks):
 
 - `LEVEL_REACH = 0.8`: a waypoint or goal is only reached if `|Δy|` is
   below it, in addition to the `x/z` distance. A wider tolerance (1.5 was tried)

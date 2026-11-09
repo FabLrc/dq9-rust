@@ -350,7 +350,7 @@ The field updates at 30 Hz; `App::run_steps` now runs the field (`Hero::step(...
 follows this cadence. The measurements in this section date from the 60 Hz application
 (`ticks = 1`): they keep their historical comparison value, but the conclusion has changed
 and strict equality is now verified by a native test on the real ROM
-(`field_cadence_holds_the_pose_and_matches_the_original_every_vblank`, `crates/dq9-app/src/app.rs`).
+(`field_cadence_holds_the_pose_and_matches_the_original_every_vblank`, `crates/dq9-app/src/app/tests.rs`).
 Comparing two engines at the same frame requires starting from the **same state**: same
 position, same speed (stopped) and **same orientation**.
 

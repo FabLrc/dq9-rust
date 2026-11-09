@@ -15,6 +15,9 @@ Batch <batch> — OMP harness, mandatory model: <model> (do not change it; subag
 
 Rules:
 - Start from <base sha>. Rebase on main only if the coordinator asks for it.
+- Set `$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target-<batch>"` for every
+  cargo/verify.ps1 call: never share a target between worktrees (`docs/app.md`,
+  "Development loop").
 - Only change files covered by the spec's ```owns block. Never rom/, tools/,
   build/ (except evidence), *.nds, *.sav, docs/status.md, docs/roadmap.md, README.md.
 - While working: ./scripts/verify.ps1 -Fast. Once at the end:
@@ -31,5 +34,12 @@ Launch (from the main checkout):
 
 ```powershell
 orca orchestration worker-start --spec "<filled prompt>" --worktree new-top-level `
-  --repo id:8ef45a12-a7ec-4e6c-b9dc-c85007817f63 --name <batch> --model <model>
+  --repo id:8ef45a12-a7ec-4e6c-b9dc-c85007817f63 --name <batch> --model <model> `
+  --base-branch main --agent omp --setup skip
 ```
+
+- `--base-branch main`: without it Orca creates the worktree from `origin/main`, which lags
+  behind the locally integrated `main` during a wave.
+- `--agent omp`: the harness of `AGENTS.md`.
+- `--setup skip`: the repo-level Orca setup hook runs `pnpm install`, irrelevant for this Rust
+  repository.

@@ -147,16 +147,16 @@ decodes them as `Event`). Evidence: rows of the natives below and of the previou
 |---|---|---|
 | 578, 548/549, 588, 589, 804 | light scale (`lightRGBScale_`, `BeginFade`: linear interpolation over `2 × duration` ticks, applied to both lights, the background, the fog), forced phase (588: start of the phase; 589: phase from the save), forced lighting index, fog cut or restored | `dq9_core::cutscene::SceneLight`, `dq9_app::lighting::scene_environment` |
 | 579, 808 | day clock stopped or restarted (579: `Running(!stop)`), set to the start of a phase (808: `SetTimeOfDay`); change the phase of maps loaded afterwards | `ClockCommand`, `App::apply_event_lighting` |
-| 235, 236 | a model (or an actor sprite) attached to a bone of another: parent world × bone matrix (hero via `HeroRig::bone`, actors via `actor_bone`); without a name, the bone of the previous attachment | `Node::attached`, `EventPlayer::attachment_base` |
+| 235, 236 | a model (or an actor sprite) attached to a bone of another: parent world × bone matrix (hero via `HeroRig::bone`, actors via `actor_bone`); without a name, the bone of the previous attachment | `Node::attached`, `EventPlayer::attachment_base` (`event/camera.rs`) |
 | 238 | palette operation on a model's colours (see its row) | `TexelOp`, `MaterialLight::texel_tint` |
 | 328 | return of the camera to the field pose around the hero | `Event::CameraToField` |
 | 521, 522 | a `.spr` sheet from `data/ani` created by handle; slots of type 2 and 6 designate it; drawn like a map NPC (billboard, `stand_*` or `walk_*`) | `Target::Object`, `AnimatedScene::add_sprite` |
-| 541, 542, 561 | "!" balloon above an actor | `Balloon`, `EventPlayer::present_balloon` |
+| 541, 542, 561 | "!" balloon above an actor | `Balloon`, `EventPlayer::present_balloon` (`event/camera.rs`) |
 | 545, 546 | `run` / `stand` of a character or a sprite | `Event::SlotMotion` |
 | 574, 575 | map placement hidden, shown or moved | `PlacementChange`, `Scene::placements` |
 | 409, 411, 413 | caption: text alpha (60-tick fade, hold, fade), vertical centring with 410, typing beep cut | `Caption`, `EventPlayer::step`, `Talk::set_event_caption_alpha/centered/silent` |
-| 552 | three-bone camera: eye/aim by two bones of the source, target placed on the third | `Camera::ThreeBoneCamera`, `EventPlayer::three_bone_camera/drag_three_bone` |
-| 584 | door opening: 90° rotation of the placement `(block entry, identifier)` over 16 updates | `Event::OpenDoor`, `Door`, `EventPlayer::apply_placements` |
+| 552 | three-bone camera: eye/aim by two bones of the source, target placed on the third | `Camera::ThreeBoneCamera`, `EventPlayer::three_bone_camera/drag_three_bone` (`event/camera.rs`) |
+| 584 | door opening: 90° rotation of the placement `(block entry, identifier)` over 16 updates | `Event::OpenDoor`, `Door`, `EventPlayer::apply_placements` (`event/placement.rs`) |
 | 566 (modes 4, 5), 210/224 on a map NPC | named motions of a model NPC (archive, extra package, event packages 229/567) | `AnimatedScene::play_npc`, `add_npc_package` |
 
 **Mode 4 of 566 (resolved).** `Event_BuildScene` (`ov_001::021539d8`, case 4) looks up the

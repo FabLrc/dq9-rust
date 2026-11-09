@@ -1,8 +1,9 @@
 # Scenario triggers (`data/scenario/trigger<map>.bin`)
 
 Implementation: `crates/dq9-formats/src/trigger.rs` (format: `parse`, `Trigger::loaded`,
-`Trigger::talk`, `action_name`) and `crates/dq9-core/src/trigger.rs` (state and execution:
-`first_match`, `fire`, `run_action`, `run_deferred`, `State`); the map region events
+`Trigger::talk`, `action_name`) and `crates/dq9-core/src/trigger.rs` (re-exports; state and
+world in `trigger/world.rs`, conditions and `first_match` in `trigger/condition.rs`,
+`fire`/`run_action`/`run_deferred` in `trigger/action.rs`); the map region events
 (2, 3, 5, 6, 17, 20) are fired by `crates/dq9-core/src/field.rs` (see "Zones"
 below). Tool: `cargo dq9re talk`
 fires the map's conversation triggers, runs their actions, then picks the
@@ -156,7 +157,8 @@ others **conditions**; the compiler splits them into two lists. Check: the words
 
 Compiled nodes store the argument and the operand halves in half-words; the
 layouts, read from the two jump tables (`0x0205ed1c` conditions,
-`0x0205f1f4` actions), are reproduced by `dq9-core/src/trigger.rs`. Notable cases:
+`0x0205f1f4` actions), are reproduced by `dq9-core/src/trigger/condition.rs` (conditions)
+and `trigger/action.rs` (actions). Notable cases:
 
 - 0x1D and actions 0x6c/0x6d/0x88/0x98–0x9a: the second operand is an angle in degrees,
   converted to `(π·x/180 brought once into [0, 2π]) × 4096` truncated;
@@ -781,7 +783,7 @@ change. The event plays on the already loaded map, without reload.
    writes `Raw::Quest490` in `step_event`, in result order (`Outcome`), hence
    before the `Ended` that runs event 11. Files: `script/natives.rs`,
    `script/event.rs`, `cutscene.rs` (exhaustive match arm), `dq9-app/src/event.rs` and
-   `app.rs`. End-to-end test:
+   `app/tests.rs`. End-to-end test:
    `event_21595_sets_quest490_and_takes_the_1_4_1_warp` (`Raw::Quest490 == 1`, track
    (1, 4, 1), warp `4105`, neither 21593 nor its start).
 2. **Arrival event of `0x85`/`0x8a`** — **wired** (this batch). `MapChange.entry` is

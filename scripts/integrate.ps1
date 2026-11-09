@@ -4,12 +4,14 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec build/batches/<batch>.md
 #   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec <spec> -Apply -Message 'docs: summary'
 #   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec <spec> -Apply -Message '...' -Cleanup
+#   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec <spec> -Rebase
 #   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Cleanup
 #
 # Checks (always run, in this order; the script stops at the first failure with a non-zero exit):
 # - the main checkout is on `main` with a clean tree (`git status --porcelain` empty);
 # - the branch exists, has a worktree (found with `git worktree list --porcelain`) and contains
-#   `main` (otherwise: rebase needed);
+#   `main` (otherwise: rebase needed; `-Rebase` runs `git rebase main` in that worktree first,
+#   and a conflict aborts the rebase and fails with "rebase conflict, ask the worker");
 # - every file of `git diff --name-only main...<b>` matches a glob of the spec's ```owns block
 #   (`**` any path including none, `*` anything but `/`, `?` one character). README.md outside
 #   the globs is accepted only when every changed line lies between `<!-- coverage:start -->`
@@ -17,7 +19,11 @@
 # - no forbidden file: `rom/`, `build/`, `tools/`, `*.nds`, `*.sav`;
 # - the worktree is clean, `scripts/verify.ps1 -RequireRom` passes inside it (cwd = worktree),
 #   and the worktree is still clean afterwards (otherwise the README progress block must be
-#   committed on the branch).
+#   committed on the branch). The verify step always uses a private Cargo target
+#   (`%LOCALAPPDATA%\dq9-target-integrate`, overriding the caller: a shared target lets Cargo
+#   reuse an rlib built from another worktree's sources, observed with `nds-rom` during the r1
+#   wave) and sets `DQ9_ROM` to the single `*.nds` of the main checkout's `rom/` when the
+#   variable is empty (fails when there is not exactly one).
 # There is no option to skip a check. Without -Apply nothing is changed in main.
 #
 # -Apply: `git merge --squash <b>` then one commit with -Message (`domain: summary`, required).
@@ -29,6 +35,10 @@
 #   as a link only, without following its target; the script refuses to go on if one remains,
 #   then runs `git worktree remove` (never forced) and `git branch -D`. Tracked files hidden by a
 #   removed junction (such as rom/README.md) are checked out again so the worktree stays clean.
+#   After the worktree is gone, the batch Cargo target `%LOCALAPPDATA%\dq9-target-<batch>`
+#   (the part of -Branch after the last `/`, when it matches [A-Za-z0-9._-]+) is deleted: each
+#   per-batch target costs ~5 GB, and the 13 targets of a wave filled the disk (os error 112).
+#   `dq9-target-integrate` and any other target are never touched.
 #   With -Apply the cleanup follows the commit. Without -Apply it is a cleanup-only run: -Spec
 #   is not needed, and the branch must already be integrated (ancestor of main, or main holds
 #   the same content for every file the branch changed). A branch without a worktree is only
@@ -38,6 +48,7 @@ param(
     [string] $Spec,
     [string] $Message,
     [switch] $Apply,
+    [switch] $Rebase,
     [switch] $Cleanup
 )
 $ErrorActionPreference = 'Stop'
@@ -263,6 +274,28 @@ function Invoke-Cleanup([string] $Worktree) {
         if (Test-Path -LiteralPath $Worktree) { Fail 'worktree remove' "$Worktree still exists" }
         Pass 'worktree remove' $Worktree
     }
+
+    # The batch Cargo target costs ~5 GB. Only the directory named after the batch (the part of
+    # -Branch after the last `/`) is removed, never dq9-target-integrate or another target.
+    $Batch = $Branch.Substring($Branch.LastIndexOf('/') + 1)
+    $TargetDir = Join-Path $env:LOCALAPPDATA "dq9-target-$Batch"
+    $IntegrateDir = Join-Path $env:LOCALAPPDATA 'dq9-target-integrate'
+    $IsIntegrate = [System.IO.Path]::GetFullPath($TargetDir) -eq [System.IO.Path]::GetFullPath($IntegrateDir)
+    if ($Batch -match '^[A-Za-z0-9._-]+$' -and -not $IsIntegrate -and
+        (Test-Path -LiteralPath $TargetDir -PathType Container) -and
+        -not (([System.IO.DirectoryInfo]::new($TargetDir).Attributes) -band [System.IO.FileAttributes]::ReparsePoint)) {
+        $Bytes = (Get-ChildItem -LiteralPath $TargetDir -Recurse -File -Force -ErrorAction SilentlyContinue |
+            Measure-Object -Property Length -Sum).Sum
+        if ($null -eq $Bytes) { $Bytes = 0 }
+        try {
+            Remove-Item -LiteralPath $TargetDir -Recurse -Force
+        } catch {
+            Fail 'target' "cannot remove ${TargetDir}: $($_.Exception.Message)"
+        }
+        if (Test-Path -LiteralPath $TargetDir) { Fail 'target' "$TargetDir still exists" }
+        Pass 'target' ("{0} removed ({1:N1} GB freed)" -f $TargetDir, ($Bytes / 1GB))
+    }
+
     Invoke-Git 'branch delete' @('branch', '-D', $Branch) | Out-Null
     Pass 'branch delete' $Branch
 }
@@ -333,7 +366,17 @@ try {
     Pass 'worktree' $Worktree
 
     & git merge-base --is-ancestor main "refs/heads/$Branch"
-    if ($LASTEXITCODE -ne 0) { Fail 'contains main' "rebase needed: $Branch does not contain main ($($MainHead.Substring(0, 7)))" }
+    if ($LASTEXITCODE -ne 0) {
+        if (-not $Rebase) { Fail 'contains main' "rebase needed: $Branch does not contain main ($($MainHead.Substring(0, 7)))" }
+        Write-Host "==> rebase: git rebase main (in $Worktree)"
+        & git -C $Worktree rebase main | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            & git -C $Worktree rebase --abort | Out-Null
+            Fail 'contains main' 'rebase conflict, ask the worker'
+        }
+        $BranchHead = (Invoke-Git 'rebase' @('rev-parse', "refs/heads/$Branch"))[0]
+        Pass 'rebase' "rebased on main, branch at $($BranchHead.Substring(0, 7))"
+    }
     Pass 'contains main' 'yes'
 
     $Files = Invoke-Git 'changes' @('diff', '--name-only', '--no-renames', "main...refs/heads/$Branch")
@@ -367,6 +410,19 @@ try {
     $WorktreeHead = (Invoke-Git 'worktree clean' @('-C', $Worktree, 'rev-parse', 'HEAD'))[0]
     if ($WorktreeHead -ne $BranchHead) { Fail 'worktree clean' "worktree HEAD $WorktreeHead is not the branch head" }
     Pass 'worktree clean' 'before verify'
+
+    # Verify environment: a private target (a shared one lets Cargo reuse an rlib built from
+    # another worktree's sources) and the main checkout's ROM when DQ9_ROM is empty.
+    $env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target-integrate"
+    if ([string]::IsNullOrEmpty($env:DQ9_ROM)) {
+        $RomDir = Join-Path $Root 'rom'
+        $Roms = @(Get-ChildItem -LiteralPath $RomDir -File -Filter '*.nds' -ErrorAction SilentlyContinue)
+        if ($Roms.Count -ne 1) {
+            Fail 'rom' "expected exactly one *.nds in $RomDir, found $($Roms.Count): set DQ9_ROM"
+        }
+        $env:DQ9_ROM = $Roms[0].FullName
+    }
+    Pass 'verify env' "CARGO_TARGET_DIR=$env:CARGO_TARGET_DIR, DQ9_ROM=$env:DQ9_ROM"
 
     $VerifyScript = Join-Path $Worktree 'scripts/verify.ps1'
     if (-not (Test-Path -LiteralPath $VerifyScript)) { Fail 'verify' "$VerifyScript not found" }

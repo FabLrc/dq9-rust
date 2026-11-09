@@ -7,7 +7,9 @@ played by a map and the scripts' sound natives are read and verified on the Euro
 the published documentation; **it has not been compared by ear nor against melonDS** (see
 "Not established").
 
-Code: `crates/dq9-formats/src/sdat.rs` (container and files), `bgm.rs` (which sequence for
+Code: `crates/dq9-formats/src/sdat.rs` (container), `sdat/sequence.rs` (`Sseq`, `Ssar`,
+`SsarEntry`), `sdat/bank.rs` (`NoteKind`, `Note`, `Instrument`, `Sbnk`, `note_def`),
+`sdat/wave.rs` (`WaveFormat`, `Wave`, `Samples`, `Swar`), `bgm.rs` (which sequence for
 which map), `crates/dq9-audio` (sequencer, multi-sequence mixer, WAV),
 `crates/dq9-app/src/audio.rs` (sound manager), `cargo dq9re sseq|sdat|se` (offline rendering
 and inspection).
@@ -23,7 +25,8 @@ In the order of `docs/external-resources.md`:
   set);
 - [SSEQPlayer](https://github.com/kode54/SSEQPlayer) (kode54) and [FSS](https://github.com/fincs/FSS)
   (fincs), both WTFPL: conversion tables (decibels, attack, decay) and command semantics,
-  adapted with attribution in `tables.rs` and `player.rs`;
+  adapted with attribution in `crates/dq9-audio/src/tables.rs` and `player.rs` (commands),
+  `player/cursor.rs` (command stream) and `player/voice.rs` (voices);
 - Nintendo's sound library linked into the game is platform code: replaced, not translated.
 
 ## What we verified on the ROM
