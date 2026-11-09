@@ -152,9 +152,8 @@ powershell -ExecutionPolicy Bypass -File scripts/parity.ps1              # compa
 
 `scripts/verify.ps1` is the single source of the verification commands (CI calls it): it runs
 fmt, clippy, tests (the real-ROM ones when a ROM is present), the wasm build and the progress
-block above, and stops at the first failure; targets shared between worktrees and the optional
-tools (`sccache`, `cargo nextest`) are described in
-[`docs/app.md`](docs/app.md#development-loop).
+block above, and stops at the first failure; the per-worktree Cargo target and the optional
+`cargo nextest` are described in [`docs/app.md`](docs/app.md#development-loop).
 
 Two diagnostic tools, with no effect on the game:
 

@@ -87,7 +87,8 @@ RE → implementation → challenger → integration → final "docs consistency
 - **One Cargo target per worktree** (`worker-rules.md` § 0, `docs/app.md`): with a shared
   target, Cargo took the `nds-rom` rlib built from another worktree's sources as fresh and
   the `dq9-formats` doctests failed (`module bytes is private`) on a correct branch; the same
-  mechanism can produce a false pass. `sccache` shares compilation work instead. A target
+  mechanism can produce a false pass. A cold target builds in ~96 s; `sccache` was measured
+  and dropped (0 hits across targets, see `docs/app.md`). A target
   costs ~4-5 GB: the 13 targets of the r1 wave filled the disk and a verify failed with
   `os error 112` (no space), so `integrate.ps1 -Cleanup` now deletes
   `%LOCALAPPDATA%\dq9-target-<batch>` after removing the worktree (never

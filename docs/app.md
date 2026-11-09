@@ -535,14 +535,11 @@ A test binary can outlive the sources it was built from (branch change): the tes
 `CARGO_MANIFEST_DIR` at runtime (`crates/testrom`), and `verify.ps1 -RequireRom` passes the
 found ROM to the tests through `DQ9_ROM`.
 
-`sccache` is the way to share compilation work: it caches `rustc` invocations by content, so
-per-worktree targets warm each other. Useful when a target is absent or discarded (branch
-change, cleanup).
-
-```powershell
-cargo install sccache --locked
-$env:RUSTC_WRAPPER = 'sccache'
-```
+A private target costs little: a full `cargo test --workspace --no-run` into an empty target
+takes ~96 s on the development machine (measured after the r1 wave). `sccache` was measured
+too and is not used: a second empty target got 0 cache hits (the keys contain the target
+path), and even with perfect hits it could save at most those ~1.5 min per batch, for a
+cache of several GB.
 
 `cargo nextest` is optional too: it runs integration and unit tests
 faster and names the slowest ones. CI keeps `cargo test`; workspace doctests are not

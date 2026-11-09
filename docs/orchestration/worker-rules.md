@@ -28,7 +28,7 @@ tests. A Cargo target shared between worktrees is **not** safe: during the r1 wa
 `CARGO_TARGET_DIR` for all of them, Cargo took the `nds-rom` rlib built from another
 worktree's sources as fresh and the `dq9-formats` doctests failed against it
 (`module bytes is private`) although the branch was correct; the same mechanism can produce a
-false pass. `sccache` is the way to share compilation work. Each per-batch target costs ~5 GB:
+false pass. A cold target builds in ~96 s, so no cache is used. Each per-batch target costs ~5 GB:
 the 13 targets of the r1 wave filled the disk and a verify failed with `os error 112` (no
 space). `integrate.ps1 -Cleanup` deletes `%LOCALAPPDATA%\dq9-target-<batch>` after removing
 the worktree; a worker never deletes another target (nor `dq9-target-integrate`).
