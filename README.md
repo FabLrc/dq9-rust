@@ -82,7 +82,7 @@ What works:
 - music, sound effects and jingles;
 - starting from a DS save (`--save`); the game state restores the party, bag and gold;
 - battles played with the engine in the window and on the Web (command menus, the game's
-  messages, experience, level-ups, wipe-out; `--fight --seed N` headless) and a battle scene on its
+  messages, carried-item use, experience, level-ups, wipe-out; `--fight --seed N` headless) and a battle scene on its
   stage (`--battle 2`, `--battle-stage 30116 --monsters 1x3`); in `dq9-core` a battle engine checked
   against BattleEmulator, party levels and rewards, battle messages in five languages,
   roaming-monster rules checked on melonDS field states;

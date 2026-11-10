@@ -462,9 +462,10 @@ effect on the story and the wipe-out.
   party for an action aimed at its own side; the scene marks the monster under the cursor
   with the wait arrow). Spells are those the vocation has learned at the member's level in
   `spelltable.bin` (the Minstrel learns Heal at 3: a level 1 hero has none, so Spells is
-  greyed). **Defend** is `Command::Defend` (no target); **Items** lists the bag's items that
-  do something in battle with their count, greyed when there are none (a new game's bag is
-  empty until a drop). Flee is greyed in a set battle (`BattleError::FleeForbidden`).
+  greyed). **Defend** is `Command::Defend` (no target); **Items** lists the acting member's
+  held items with a supported battle action, one row per held slot (duplicates included).
+  The party bag is unavailable in combat. Items is greyed when no held action is enabled;
+  Flee is greyed in a set battle (`BattleError::FleeForbidden`).
 - *Round.* `Battle::round`; its events become windows (`narrate.rs`): each action says its
   opening line (`actmsg`, by the record's `+0x20` bits 0–9 / 10–19 for a party / monster
   target), the critical line (`+0x28` bits 20–29), what it did (`+0x20` bits 20–29 at a
@@ -484,11 +485,11 @@ effect on the story and the wipe-out.
 - *Defend, items, backup, monsters' flight.* `Event::Defended` says action 3's opening line
   (`actmsg` 10, "Hero defends."). `Event::ItemUsed` precedes the item's own action: its
   opening line (`actmsg` 70, "Hero uses a medicinal herb.") names the item the member chose
-  and its result line follows ("Hero's wounds are healed."); the fight takes one copy out of
-  its party's bag (`Bag::remove`), so the next menu shows the new count and the party the
-  battle returns has it gone. The Items rows are the bag's items whose record names a battle
-  action (the second action of `itemdt_*`, read by `Data::item_actions`, 252 is "nothing"
-  **[hypothesis]** for which of the two is the battle's, wiki *Items*). A call for backup
+  and its result line follows ("Hero's wounds are healed."). Only the selected held slot is
+  consumed, and only on execution of an item whose record sets `+0x08` bit 19 (used up).
+  Cancelling or falling before the turn spends nothing; reusable items such as the sage's
+  stone remain. The bag is unchanged. Slot compaction and the flag's evidence are in
+  `re/battle.md`, "Defend, guard level and items". A call for backup
   (action kind 12) says its opening, then the record's line: "A bag o' laughs shows up." when
   the engine added the monster (`Event::Summoned`, the scene gets its model through
   `BattleScene::add_monster` and the monsters take their places again), "But nobody shows up."
@@ -547,7 +548,13 @@ references with real battles (`scripts/parity.ps1` still compares the stand-in; 
 - Not played: abilities, Examine, Misc., the guard's effect on who monsters pick, the party
   members beyond the hero on the scene (the scene loads the hero only), the `.bact` action
   scripts, the battle camera's shots (the opening's wide shot stays), the fanfares and the
-  battle's sound effects. Held items (`Character::held_items`) are not offered, only the bag.
+  battle's sound effects. Using worn equipment from Items is not offered.
+- Held-item evidence (`j4-battle-held-items`): offscreen rasterization of the real UI quads,
+  ROM atlas and font, not a native-window or browser interaction:
+  `build/evidence/j4-battle-held-items/item-menu.png` (`9e2260ec767e`, HP 5/20) and
+  `item-used.png` (`f4baed36c8c8`, healing). At capture, HP increased, the held herb was gone,
+  and the bag retained its two herbs. Regression tests cover a selected second duplicate,
+  cancellation, a skipped fallen actor and a reusable sage's stone.
 
 **Evidence** (local, `build/evidence/j4-battle-play/`, sha256 prefixes): `fight-run.log`
 (`743b4a58e0bd`, `--new-game --fight --seed 7 --headless --auto --pilot`: battle 26 won in 4

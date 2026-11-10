@@ -9,8 +9,8 @@ Plan: [`roadmap.md`](roadmap.md); rules: [`../AGENTS.md`](../AGENTS.md).
   village tasks 1.2 through return 1.4.1. Driver: 615 checkpoints; parity 2/2 at first
   control and 1.1.2, except flag `4135` (battle 26 loot).
 - **Cadence**: fixed 60 Hz; hero, field and model pose at 30 Hz.
-- **Browser**: Pages deployment `42800444183`, build `b91f43b`; standalone battle 26
-  played to victory (4 rounds, 5 XP, 9 gold). Reward closure restarts that standalone fight;
+- **Browser**: Pages deployment `42803107861`, build `15d965a`; standalone battle 26
+  played to victory on `b91f43b` (4 rounds, 5 XP, 9 gold). Reward closure restarts it;
   assigned to `j4-roaming-play`. Continuous certification still stops at the raised hall.
 - **CI**: last recorded `main` green after Windows-only app-test dead-code fix;
   `cfg(all(test, windows))` must also govern test-only allowances on Linux.
@@ -24,6 +24,12 @@ whole-battle engine, chapter 2 monster actions (`re/battle.md`); five-language b
 wipe-out (`app.md`, Battle); facility rules without UI (`re/facility.md`); billboards
 (`re/g3d.md`). Chapter 2 events: 47/50 complete (`re/stb-natives.md`).
 
+Held-item commands integrated as `c064473` (`j4-battle-held-items`, Flash): member slots,
+execution-only consumption, duplicates, cancellation, skipped actor and reusable stone;
+bag unchanged. Full `verify.ps1 -RequireRom` passed (5/5, 104.7 s; app tests 71/71).
+Offscreen UI evidence: `build/evidence/j4-battle-held-items/item-menu.png` (`9e2260ec767e`),
+`item-used.png` (`f4baed36c8c8`); not an interactive native/Web item smoke.
+
 Roaming rules (`re/encounter.md`) have original F02/F38 evidence and an independent
 challenge. Zone/node/point/contact checked; standing still does not prevent spawning.
 The model waits only for the first step after arrival; that cause remains [hypothesis].
@@ -33,17 +39,16 @@ stage selection, F44 and states 4/5/11/12 lack corresponding original-runtime ev
 
 ## Active batches — Orca / OMP
 
-Both workers use **`opencode-go/deepseek-v4.1-flash`**, base `b91f43b`;
-no model escalation. Local specs: `build/batches/<batch>.md`.
+Workers use **`opencode-go/deepseek-v4.1-flash`**; no model escalation.
+Local specs: `build/batches/<batch>.md`.
 
 | Batch / branch | Dispatch | Contract |
 |---|---|---|
 | `j4-roaming-play` / `FabLrc/j4-roaming-play` | `ctx_24fdc9c80929` | field models, existing roaming rules, natural contact → real battle → field; battle Esc cancels |
-| `j4-battle-held-items` / `FabLrc/j4-battle-held-items` | `ctx_fe142fe11c08` | establish original item-source rules, held-slot identity, execution-only consumption, cancellation |
 
-Workers own disjoint files; coordinator owns status, roadmap, README, app documentation
-and integration. Runtime smoke evidence is required; the single full ROM verification
-runs at each integration. No implementation from these batches is integrated yet.
+Held-items worker released after integration; its branch and private target removed.
+Roaming delivery `f858c3f` is under review: generator return and equipment-aware party
+inputs do not yet meet the contract. No roaming implementation is integrated yet.
 
 ## Remaining after the active contracts
 

@@ -439,8 +439,10 @@ Progress:
       (`j4-battle-actions`; code-read, **no oracle** for them, 20-seed tests); `re/battle.md`.
 - [ ] Battle in play: **done in the window and on the Web** (`j4-battle-play`: menus, messages,
       award, level-up, wipe-out, `--fight`; `app.md` § "Battle"); headless keeps the stand-in for
-      the parity traces. Remaining: attack and damage motions, held items and abilities,
-      wipe-out details (priest line, revival by save, trigger 180), `Esc`, checking by hand,
+      the parity traces. Held-item commands and execution-only consumption are done
+      (`j4-battle-held-items`); standalone battle 26 played to victory in the browser.
+      Remaining: attack/damage motions, abilities, using worn equipment, wipe-out details
+      (priest line, revival by save, trigger 180), `Esc`, continuous manual play,
       re-recording the parity references with real battles.
 - [ ] Battle scene: stage, grid, side camera, 547 transition done (`j4-battle-scene`). Remaining:
       action-script shots, swirl, encounter transition, companions.
