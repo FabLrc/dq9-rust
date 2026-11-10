@@ -9,6 +9,9 @@
 !/rom/README.md
 /build/
 
+
+# Python bytecode of the melonDS harness scripts (scripts/melondsds_host.py)
+__pycache__/
 # Third-party RE tools installed by scripts/setup-re-tools.ps1
 /tools/
 
