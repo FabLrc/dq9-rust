@@ -96,6 +96,24 @@ at the current vocation and level. It also fills a new-game hero's maxima and cu
 (the character has none yet); a restored character keeps the record's maxima, which include
 seeds and equipment exactly as the load writes them.
 
+## Held items
+
+A party slot carries **eight** held item ids (`Save` `7578 + 18 i`, 8 × u16; RAM member
+`+0x454`; `Save_UnpackMain`, `func_02082d7c`). `0` and `0xffff` are empty
+(`Character::held_items`, `docs/re/party.md`'s `from_record`). They are the items the member
+carries into battle: the battle item command operates a held slot, not the bag (see
+[`battle.md`](battle.md) § "Defend, guard level and items"; the consumer is
+`func_ov017_021d0164`, which clears the slot behind a command descriptor with
+`func_0208386c`, EU `0x0208387c`). Consumption is the original's single compaction pass: the
+chosen slot becomes `0xffff`, then each hole shifts one rank down, so duplicates of the same
+id keep their order and only the chosen copy goes. The field item use (`func_020ddb38`,
+EU `0x020ddb34`) reaches the same slots by index for categories 8–10.
+
+Whether an item is spent is the item record's `+0x08` bit 19 ("used up", the bit the battle
+AI reads in `func_ov024_021f7478`); measured over the 1,178 EU records it is set on 46 tools
+and the prayer ring only, never on a weapon, shield or armour with a battle action
+(`build/evidence/j4-battle-held-items/item-flags.txt`, `755490182234`). `dq9-app` keeps that rule.
+
 ## Battle numbers of a member
 
 `Character::fighter` (`crates/dq9-core/src/party.rs`) turns a member into the battle

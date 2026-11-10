@@ -61,6 +61,15 @@ impl ActionLines {
     }
 }
 
+/// The item record field the battle consumes by: the "used up" bit (`+0x08` bit 19), the bit
+/// the AI scores an item with (`func_ov024_021f7478`) and the battle's item handler removes the
+/// held slot for (`ov_017::021d0164`). The same record word's low nibble is the category
+/// measured in `docs/re/item.md` (0–7 equipment, 8–9 tools).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemMeta {
+    pub used_up: bool,
+}
+
 /// The owned ROM members.
 #[derive(Debug)]
 pub struct Data {
@@ -83,6 +92,9 @@ pub struct Data {
     pub lines: BTreeMap<u16, ActionLines>,
     /// An item's field and battle actions (252 for none), by item id.
     pub item_actions: BTreeMap<u16, [u16; 2]>,
+    /// The item record's "used up" flag, by item id (the word's low nibble is its category,
+    /// read by the equipment rules, not stored here).
+    pub item_meta: BTreeMap<u16, ItemMeta>,
     /// Which vocation learns which spell at which level.
     pub spells: SpellTable,
     /// The worn items' stats (attack, defence, …).
@@ -163,6 +175,7 @@ impl Data {
         // layout" and "The two actions"; the field's first, the battle's second INFERRED), read
         // from every category, the tools included.
         let mut item_actions = BTreeMap::new();
+        let mut item_meta = BTreeMap::new();
         let tools = member(
             &rom,
             "data/prm/itemdt_t.gp2",
@@ -173,7 +186,7 @@ impl Data {
             .copied()
             .chain(std::iter::once(tools.as_slice()))
         {
-            read_item_actions(table, &mut item_actions);
+            read_item_records(table, &mut item_actions, &mut item_meta);
         }
         Ok(Self {
             monsters: rom.file_by_path("data/prm/mon_btldata.nat")?.to_vec(),
@@ -217,6 +230,7 @@ impl Data {
             )?,
             lines,
             item_actions,
+            item_meta,
             spells: SpellTable::parse(rom.file_by_path("data/prm/spelltable.bin")?)
                 .context("parsing spelltable.bin")?,
             items: ItemStats::from_members(&item_members).context("parsing the item stats")?,
@@ -295,10 +309,15 @@ const ITEM_SUFFIX: &str = "en";
 /// The action number that stands for "nothing" in an item's record.
 pub const NO_ACTION: u16 = 252;
 
-/// Reads the two actions of every record of one category table: `u16` ×2 at `+0x14` of the
-/// reader's 32-byte record (4 bytes before the id at `+0x18`, after the 12-byte head), as
-/// `dq9_formats::item` lays the records out.
-fn read_item_actions(table: &[u8], out: &mut BTreeMap<u16, [u16; 2]>) {
+/// Reads the two actions and the category/used-up word of every record of one category
+/// table: `u16` ×2 at `+0x14` and the id at `+0x18` of the reader's 32-byte record, the word
+/// at `+0x08` (low nibble category, bit 19 used up), as `dq9_formats::item` lays the records
+/// out.
+fn read_item_records(
+    table: &[u8],
+    out: &mut BTreeMap<u16, [u16; 2]>,
+    meta: &mut BTreeMap<u16, ItemMeta>,
+) {
     let u16_at = |at: usize| {
         table
             .get(at..at + 2)
@@ -307,12 +326,20 @@ fn read_item_actions(table: &[u8], out: &mut BTreeMap<u16, [u16; 2]>) {
     let Some(count) = u16_at(0) else { return };
     for index in 0..usize::from(count) {
         let at = 12 + index * 32;
-        let (Some(id), Some(field), Some(battle)) =
-            (u16_at(at + 0x18), u16_at(at + 0x14), u16_at(at + 0x16))
-        else {
+        let (Some(id), Some(field), Some(battle), Some(word)) = (
+            u16_at(at + 0x18),
+            u16_at(at + 0x14),
+            u16_at(at + 0x16),
+            table
+                .get(at + 8..at + 12)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+        ) else {
             return;
         };
         out.entry(id).or_insert([field, battle]);
+        meta.entry(id).or_insert(ItemMeta {
+            used_up: (word >> 19) & 1 == 1,
+        });
     }
 }
 

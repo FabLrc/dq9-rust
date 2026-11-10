@@ -149,6 +149,14 @@ enum Pending {
     Item(usize),
 }
 
+/// The held slot an item command was built from, kept until the engine reports the use.
+#[derive(Debug, Clone, Copy)]
+struct Reservation {
+    slot: usize,
+    id: u16,
+    action: u16,
+}
+
 #[derive(Debug, Clone)]
 enum Menu {
     Top(usize),
@@ -202,7 +210,7 @@ pub struct Fight {
     monster_names: Vec<Vec<u8>>,
     party: Party,
     labels: Labels,
-    /// The bag's items that do something in battle, for the member being asked.
+    /// The held items that do something in battle, for the member being asked.
     item_rows: Vec<ItemRow>,
     attack: Skill,
     spells: Vec<Vec<Spell>>,
@@ -213,6 +221,9 @@ pub struct Fight {
     menu: Menu,
     member: usize,
     chosen: Vec<Option<Command>>,
+    /// The held slot each member's item command was built from, released when the command is
+    /// changed and spent only by the engine's [`Event::ItemUsed`].
+    reserved: Vec<Option<Reservation>>,
     /// HP and MP the status window shows now, and their maxima.
     shown: Vec<(i32, i32)>,
     maxima: Vec<(i32, i32)>,
@@ -224,6 +235,10 @@ pub struct Fight {
     /// How the fight ends, known once the engine has a result; the outcome once the closing
     /// windows are shown.
     ending: Option<Ending>,
+    /// The events of the last resolved round, for the tests that prove an actor was skipped
+    /// before it could act.
+    #[cfg(test)]
+    last_events: Vec<Event>,
 }
 
 impl Fight {
@@ -345,6 +360,7 @@ impl Fight {
             menu: Menu::Top(0),
             member: 0,
             chosen: vec![None; count],
+            reserved: vec![None; count],
             shown,
             maxima,
             popups: Vec::new(),
@@ -353,6 +369,8 @@ impl Fight {
             outcome: None,
             auto: false,
             ending: None,
+            #[cfg(test)]
+            last_events: Vec::new(),
         })
     }
 
@@ -360,6 +378,18 @@ impl Fight {
     #[cfg(test)]
     pub fn battle(&self) -> &Battle {
         &self.battle
+    }
+
+    /// The events of the last round the engine resolved (the tests prove a skipped actor).
+    #[cfg(test)]
+    pub fn last_events(&self) -> &[Event] {
+        &self.last_events
+    }
+
+    /// The party as the fight holds it: held items after a round's consumption.
+    #[cfg(test)]
+    pub fn party(&self) -> &Party {
+        &self.party
     }
 
     /// Every window shown so far, as plain text (lines joined by `\n`).
@@ -490,6 +520,7 @@ impl Fight {
         self.chosen = (0..self.battle.party().len())
             .map(|i| (!self.battle.alive(Who::Party(i))).then_some(Command::Skip))
             .collect();
+        self.reserved = vec![None; self.chosen.len()];
         self.member = self.chosen.iter().position(Option::is_none).unwrap_or(0);
         self.menu = Menu::Top(0);
         self.roster.items = vec![None; self.chosen.len()];
@@ -656,6 +687,8 @@ impl Fight {
             .find(|&i| self.battle.alive(Who::Party(i)));
         if let Some(i) = before {
             self.chosen[i] = None;
+            self.reserved[i] = None;
+            self.roster.items[i] = None;
             self.member = i;
             self.menu = Menu::Top(0);
             self.refresh_items();
@@ -713,21 +746,26 @@ impl Fight {
         validate(&actor, action, std::slice::from_ref(&target)).is_ok()
     }
 
-    /// The items of the bag that do something in battle, for the member whose menu opens:
-    /// the second action of the item's record (`Data::battle_action`) and the name and
-    /// count the row shows.
+    /// The held items of the member whose menu opens that do something in battle: every
+    /// non-empty slot of [`Character::held_items`](dq9_core::party::Character::held_items)
+    /// whose item record names a battle action. The row keeps its slot so that the item used
+    /// is the one chosen, duplicates included (the original's item command carries the held
+    /// slot, `ov_017::021d0164`; the record's second action is what it resolves).
     fn refresh_items(&mut self) {
         self.item_rows.clear();
-        let (Ok(tables), Ok(names)) = (self.data.tables(), self.data.item_names()) else {
+        let Ok(tables) = self.data.tables() else {
+            return;
+        };
+        let Ok(names) = self.data.item_names() else {
             return;
         };
         let member = self.member.min(self.battle.party().len().saturating_sub(1));
-        let mut seen = Vec::new();
-        for stack in self.party.bag.slots() {
-            let Some(id) = stack.item.filter(|id| !seen.contains(id)) else {
-                continue;
-            };
-            seen.push(id);
+        let Some(character) = self.party.members.get(member) else {
+            return;
+        };
+        let held = character.held_items;
+        for (slot, id) in held.iter().enumerate() {
+            let Some(id) = *id else { continue };
             let Some(skill) = self
                 .data
                 .battle_action(id)
@@ -735,10 +773,10 @@ impl Fight {
             else {
                 continue;
             };
-            let mut label = names.find(id).map_or_else(Vec::new, |i| i.name.to_vec());
-            label.extend_from_slice(format!(" x{}", self.party.bag.count(id)).as_bytes());
+            let label = names.find(id).map_or_else(Vec::new, |i| i.name.to_vec());
             let enabled = self.modelled(member, &skill);
             self.item_rows.push(ItemRow {
+                slot,
                 id,
                 label,
                 skill,
@@ -770,11 +808,45 @@ impl Fight {
     fn give(&mut self, member: usize, skill: Skill, pending: &Pending, target: Target) {
         self.chosen[member] = Some(match pending {
             Pending::Item(k) => {
-                self.roster.items[member] = self.item_rows.get(*k).map(|r| r.id);
+                let row = self.item_rows.get(*k);
+                self.reserved[member] = row.map(|r| Reservation {
+                    slot: r.slot,
+                    id: r.id,
+                    action: skill.number,
+                });
+                self.roster.items[member] = row.map(|r| r.id);
                 Command::Item { skill, target }
             }
-            _ => Command::Act { skill, target },
+            _ => {
+                self.reserved[member] = None;
+                self.roster.items[member] = None;
+                Command::Act { skill, target }
+            }
         });
+    }
+
+    /// Spends one held item: its slot becomes empty, then one pass shifts each hole one rank
+    /// down (`func_0208386c`, EU `0x0208387c`: set the slot to `0xffff`, then for `i` in
+    /// `slot..7` move `i + 1` into an empty `i`). The other slots, duplicates of the same id
+    /// included, keep their order.
+    fn consume_held(&mut self, member: usize, slot: usize) {
+        let Some(character) = self.party.members.get_mut(member) else {
+            return;
+        };
+        let items = &mut character.held_items;
+        let Some(last) = items.len().checked_sub(1) else {
+            return;
+        };
+        if slot > last {
+            return;
+        }
+        items[slot] = None;
+        for i in slot..last {
+            if items[i].is_none() {
+                items[i] = items[i + 1];
+                items[i + 1] = None;
+            }
+        }
     }
 
     // ---- the round and the end ----
@@ -789,15 +861,45 @@ impl Fight {
             Ok(report) => {
                 let finished = self.battle.result().is_some();
                 self.sync_monsters();
-                // An item used leaves the bag (the engine only reports it).
+                #[cfg(test)]
+                {
+                    self.last_events = report.events.clone();
+                }
+                // An item used is spent from the held slot its command was built from, once,
+                // and only when the record says it is used up (`+0x08` bit 19). A member
+                // skipped before its turn produces no `ItemUsed` and keeps the item; the bag
+                // is never read or changed here. Each reservation is taken in place, so the
+                // round allocates nothing for it.
+                let mut spent = [(0usize, 0usize); 4];
+                let mut spent_count = 0;
                 for event in &report.events {
-                    if let Event::ItemUsed {
-                        who: Who::Party(i), ..
+                    let Event::ItemUsed {
+                        who: Who::Party(i),
+                        action,
                     } = event
-                        && let Some(Some(id)) = self.roster.items.get(*i)
-                    {
-                        self.party.bag.remove(*id, 1);
+                    else {
+                        continue;
+                    };
+                    let Some(reservation) = self.reserved.get_mut(*i).and_then(Option::take) else {
+                        continue;
+                    };
+                    if reservation.action != *action {
+                        self.reserved[*i] = Some(reservation);
+                        continue;
                     }
+                    if self
+                        .data
+                        .item_meta
+                        .get(&reservation.id)
+                        .is_some_and(|meta| meta.used_up)
+                        && spent_count < spent.len()
+                    {
+                        spent[spent_count] = (*i, reservation.slot);
+                        spent_count += 1;
+                    }
+                }
+                for &(member, slot) in &spent[..spent_count] {
+                    self.consume_held(member, slot);
                 }
                 let mut beats = match Narrator::new(&self.data, &self.roster) {
                     Ok(narrator) => narrator.round(&report),
@@ -1081,11 +1183,13 @@ pub fn lines_plain(lines: &[Vec<u8>]) -> String {
     plain(&lines.join(&b'\n'))
 }
 
-/// An item of the bag that does something in battle, as the Items menu lists it.
+/// A held item of the acting member that does something in battle, as the Items menu lists it.
 #[derive(Debug, Clone)]
 struct ItemRow {
+    /// The held slot the item occupies; the command must spend this one, not the id.
+    slot: usize,
     id: u16,
-    /// Name and count as the font draws them.
+    /// Name as the font draws it.
     label: Vec<u8>,
     skill: Skill,
     /// The engine models its action for this member.

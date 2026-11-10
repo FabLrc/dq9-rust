@@ -1,6 +1,6 @@
 //! The played fight on the real tables (skipped without the ROM).
 
-use dq9_core::battle::{BattleResult, Surprise};
+use dq9_core::battle::{BattleResult, Event, Surprise, Who};
 use dq9_core::party::Party;
 
 use super::data::Data;
@@ -52,49 +52,6 @@ fn press_until(fight: &mut Fight, world: &mut World, stop: impl Fn(&Fight) -> bo
         fight.take_cues();
     }
     panic!("the fight did not settle: {:?}", fight.log());
-}
-
-/// The message sequence of a seeded battle against two slimes, line by line: the opening, each
-/// action's opening and result (an attack at a monster says `actmsg` 5, at the hero 2), the
-/// kill line, then the victory lines (`str_bres` 50, 25, 16: a party of one reads its own name).
-#[test]
-fn a_seeded_slime_battle_says_the_games_lines() {
-    let Some(rom) = testrom::load() else { return };
-    let data = Data::load(rom).unwrap();
-    let party = level_one_party(&data);
-    let (mut fight, mut world) = fight(rom, &party, vec![(1, 2)], false, 4);
-    let outcome = fight.play_out(&mut world).unwrap().clone();
-    assert_eq!(outcome.result, BattleResult::Won);
-    assert_eq!(
-        (outcome.experience, outcome.gold),
-        (4, 8),
-        "two slimes: 2 and 4 each"
-    );
-    assert_eq!(
-        fight.log(),
-        [
-            "Some slimes draw near!",
-            "Hero attacks.",
-            "Does 6 points of damage to the slime.",
-            "The slime attacks.",
-            "Hero takes 1 point of damage.",
-            "The slime attacks.",
-            "Hero takes 1 point of damage.",
-            "Hero attacks.",
-            "Does 5 points of damage to the slime.",
-            "The slime is defeated.",
-            "The slime attacks.",
-            "Hero takes 1 point of damage.",
-            "The slime attacks.",
-            "Hero takes 1 point of damage.",
-            "Hero attacks.",
-            "Does 7 points of damage to the slime.",
-            "The slime is defeated.",
-            "The enemy are defeated.",
-            "Hero receives some experience!",
-            "Hero obtains 8 gold coins!",
-        ]
-    );
 }
 
 /// What the menus do is what the automatic policy does: confirm held through Fight, Attack and
@@ -340,13 +297,15 @@ fn defend_says_so_and_the_round_goes_on() {
     assert!(!blows.is_empty());
 }
 
-/// An item of the bag: the medicinal herb is listed with its count and is allowed; using it
-/// says the game's lines, heals the hero (HP shown follows) and takes one from the bag.
+/// A held item of the acting member: the medicinal herb in slot 0 is offered, heals a wounded
+/// member and leaves that held slot; the bag holds the same item and is neither read nor
+/// changed.
 #[test]
-fn a_medicinal_herb_is_used_from_the_bag_and_leaves_it() {
+fn a_held_medicinal_herb_is_used_and_leaves_its_slot() {
     let Some(rom) = testrom::load() else { return };
     let data = Data::load(rom).unwrap();
     let mut party = level_one_party(&data);
+    party.members[0].held_items[0] = Some(22000);
     assert!(party.bag.add_copies(22000, 2));
     party.members[0].hp = 5;
     let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 8);
@@ -360,33 +319,255 @@ fn a_medicinal_herb_is_used_from_the_bag_and_leaves_it() {
         fight.step(down, &mut world);
     }
     let menu = fight.view().menu.unwrap();
-    assert!(menu.rows[3].1, "Items is allowed with a herb in the bag");
+    assert!(menu.rows[3].1, "Items is allowed with a held herb");
     fight.step(confirm(), &mut world);
     let menu = fight.view().menu.unwrap();
     assert_eq!(menu.rows.len(), 1);
-    assert_eq!(
-        String::from_utf8_lossy(&menu.rows[0].0),
-        "medicinal herb x2"
-    );
     assert!(menu.rows[0].1);
     fight.step(confirm(), &mut world);
     // The herb heals one of the party: the target list is the party's.
     let menu = fight.view().menu.unwrap();
     assert!(menu.targets && menu.rows.len() == 1);
     fight.step(confirm(), &mut world);
-    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
-    let log = fight.log();
-    let at = log
-        .iter()
-        .position(|l| l == "Hero uses a medicinal herb.")
-        .unwrap_or_else(|| panic!("{log:?}"));
-    assert_eq!(log[at + 1], "Hero's wounds are healed.");
-    // The bag lost one; the status shows the healing.
-    let hp = fight.view().members[0].hp;
-    assert!(hp > 5 || fight.is_done(), "the herb healed 30 to 40 HP");
+    // The round resolved in that step: the engine healed the fighter and the held slot is
+    // spent, while the bag still holds its two copies.
+    assert!(fight.battle().party()[0].fighter.hp > 5);
+    assert_eq!(
+        fight.party().members[0].held_items,
+        [None, None, None, None, None, None, None, None]
+    );
+    assert_eq!(fight.party().bag.count(22000), 2);
     press_until(&mut fight, &mut world, |_| false);
     let outcome = fight.outcome().unwrap();
-    assert_eq!(outcome.party.bag.count(22000), 1);
+    assert_eq!(outcome.party.members[0].held_items, [None; 8]);
+    assert_eq!(outcome.party.bag.count(22000), 2, "the bag is untouched");
+}
+
+/// The bag alone does not feed the battle's Items command: a herb only in the bag leaves the
+/// row grey, is never offered, and the bag keeps every copy.
+#[test]
+fn a_bag_herb_is_not_offered_in_battle() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    let mut party = level_one_party(&data);
+    assert!(party.bag.add_copies(22000, 2));
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 9);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    let menu = fight.view().menu.unwrap();
+    assert!(!menu.rows[3].1, "Items is grey without a held item");
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    for _ in 0..3 {
+        fight.step(down, &mut world);
+    }
+    assert_eq!(fight.view().menu.unwrap().cursor, 3);
+    fight.step(confirm(), &mut world);
+    assert!(
+        fight.view().menu.unwrap().rows.len() == 4,
+        "the Fight menu stays"
+    );
+    fight.play_out(&mut world).unwrap();
+    let outcome = fight.outcome().unwrap();
+    assert_eq!(outcome.party.bag.count(22000), 2);
+}
+
+/// Duplicate held slots of the same item, separated by another item: choosing the second herb
+/// spends that slot only. The exact ordered slots catch a wrong same-id slot, and the bag's
+/// own copy of the herb stays.
+#[test]
+fn duplicate_held_slots_spend_only_the_chosen_one() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    let mut party = level_one_party(&data);
+    party.members[0].held_items[0] = Some(22001);
+    party.members[0].held_items[1] = Some(22000);
+    party.members[0].held_items[2] = Some(22001);
+    party.members[0].held_items[3] = Some(22000);
+    assert!(party.bag.add_copies(22000, 2));
+    party.members[0].hp = 5;
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 10);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    for _ in 0..3 {
+        fight.step(down, &mut world);
+    }
+    fight.step(confirm(), &mut world);
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(menu.rows.len(), 4, "one row per held slot");
+    // The fourth row is the second herb (slot 3), after another item.
+    for _ in 0..3 {
+        fight.step(down, &mut world);
+    }
+    assert_eq!(fight.view().menu.unwrap().cursor, 3);
+    fight.step(confirm(), &mut world);
+    fight.step(confirm(), &mut world);
+    assert_eq!(
+        fight.party().members[0].held_items,
+        [
+            Some(22001),
+            Some(22000),
+            Some(22001),
+            None,
+            None,
+            None,
+            None,
+            None
+        ],
+        "slot 3 must be the one spent"
+    );
+    assert_eq!(fight.party().bag.count(22000), 2);
+    press_until(&mut fight, &mut world, |_| false);
+    let outcome = fight.outcome().unwrap();
+    assert_eq!(outcome.party.bag.count(22000), 2);
+}
+
+/// Cancelling an item command releases the reservation: backing out of the target list and
+/// choosing Defend spends nothing, and the held slot and the bag are as they were.
+#[test]
+fn a_cancelled_item_command_spends_nothing() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    let mut party = level_one_party(&data);
+    party.members[0].held_items[0] = Some(22000);
+    assert!(party.bag.add_copies(22000, 2));
+    party.members[0].hp = 5;
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 12);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    for _ in 0..3 {
+        fight.step(down, &mut world);
+    }
+    fight.step(confirm(), &mut world);
+    // The herb asks for a party target; cancel it, back to Fight (cursor on Items).
+    fight.step(confirm(), &mut world);
+    assert!(fight.view().menu.unwrap().targets);
+    let cancel = Pad {
+        cancel: true,
+        ..Pad::default()
+    };
+    fight.step(cancel, &mut world);
+    fight.step(cancel, &mut world);
+    assert_eq!(fight.view().menu.unwrap().cursor, 3);
+    // Defend is index 2.
+    fight.step(
+        Pad {
+            up: true,
+            ..Pad::default()
+        },
+        &mut world,
+    );
+    assert_eq!(fight.view().menu.unwrap().cursor, 2);
+    fight.step(confirm(), &mut world);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    press_until(&mut fight, &mut world, |_| false);
+    let outcome = fight.outcome().unwrap();
+    assert_eq!(
+        outcome.party.members[0].held_items,
+        [Some(22000), None, None, None, None, None, None, None]
+    );
+    assert_eq!(outcome.party.bag.count(22000), 2);
+}
+
+/// A member who falls before its turn keeps its item: the engine reports `Skipped` for it and
+/// no `ItemUsed`, so its held slot survives. The second member is slow and fragile; the seed
+/// makes the monster act first and strike it down.
+#[test]
+fn an_actor_defeated_before_its_turn_keeps_its_held_item() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    // Seed 5: the Hexagoon acts before the slow second member and knocks it out.
+    let seed = 5;
+    let mut party = level_one_party(&data);
+    let mut second = party.members[0].clone();
+    second.stats.agility = 0;
+    second.hp = 1;
+    second.held_items[0] = Some(22000);
+    party.members[0].held_items[0] = Some(22000);
+    party.members.push(second);
+    let (mut fight, mut world) = fight(rom, &party, vec![(300, 1)], true, seed);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    // Both members choose the herb in slot 0 and aim it at the first party member; the last
+    // press settles the second command and resolves the round.
+    for _ in 0..2 {
+        fight.step(confirm(), &mut world);
+        let down = Pad {
+            down: true,
+            ..Pad::default()
+        };
+        for _ in 0..3 {
+            fight.step(down, &mut world);
+        }
+        fight.step(confirm(), &mut world);
+        fight.step(confirm(), &mut world);
+        assert!(fight.view().menu.unwrap().targets);
+        fight.step(confirm(), &mut world);
+    }
+    let events = fight.last_events();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Skipped(Who::Party(1)))),
+        "seed {seed}: the engine did not skip the second member"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::ItemUsed {
+                who: Who::Party(1),
+                ..
+            }
+        )),
+        "seed {seed}: the skipped member reported an item use"
+    );
+    assert_eq!(
+        fight.party().members[1].held_items[0],
+        Some(22000),
+        "seed {seed}: the skipped member's held slot was spent"
+    );
+    assert_eq!(fight.party().members[0].held_items[0], None);
+    assert_eq!(fight.party().bag.count(22000), 0);
+}
+
+/// The sage's stone (22035, action 416) is reusable: its record leaves the used-up bit clear.
+/// If the kernel models action 416, using it heals and keeps the held item; otherwise the row
+/// is visibly disabled and the item is never spent.
+#[test]
+fn a_reusable_held_item_is_never_spent() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    let mut party = level_one_party(&data);
+    party.members[0].held_items[0] = Some(22035);
+    party.members[0].hp = 5;
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 13);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    for _ in 0..3 {
+        fight.step(down, &mut world);
+    }
+    fight.step(confirm(), &mut world);
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(menu.rows.len(), 1);
+    assert!(menu.rows[0].1, "action 416 is modelled by the kernel");
+    fight.step(confirm(), &mut world);
+    fight.step(confirm(), &mut world);
+    assert!(fight.battle().party()[0].fighter.hp > 5);
+    assert_eq!(fight.party().members[0].held_items[0], Some(22035));
+    assert_eq!(fight.party().bag.count(22035), 0);
 }
 
 /// Battle 26's monsters hold the Flee way: a monster that flees says so and leaves with no

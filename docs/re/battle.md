@@ -462,7 +462,35 @@ turn record and no draw, since the stance is taken up as the round begins; the c
 not read.
 
 `Command::Item` resolves an item's action like any action and emits `Event::ItemUsed { who,
-action }`; the bag and the consumption stay in `dq9_core::party` / the caller, as the spec asks.
+action }`. The item comes from the acting member's **held items**, not the party bag: the
+battle's item command carries the held slot (`func_ov017_021d0164` in the item handler table
+at `0x021d823c`, which clears that member's slot through `func_0208386c`, EU `0x0208387c`),
+and the battle command UI builds its item list from the member's item entries
+(`func_ov000_0217ae90` case 4 → `func_ov000_02171c04`), never from the bag. A public rule
+states the same for the series: items in the bag cannot be used during battle (DQ Wiki,
+*Bag*, <https://dragonquest-wiki.com/Bag>: "Items in the bag cannot be used during
+battle"). `dq9-app` therefore lists `Character::held_items`, keeps the row's slot (duplicates
+included), and spends exactly that slot when the engine reports `ItemUsed`.
+
+**Which uses spend the item.** The item record's `+0x08` word, bit 19, is the "used up" flag:
+the AI reads it to score an item that is consumed (`func_ov024_021f7478`, `(word & 0xfffff)
+>> 0x13`), and it is set exactly on the consumable tools and on the prayer ring (18023, an
+accessory that breaks when used). Measured on the EU tables over all 1,178 records
+(`build/evidence/j4-battle-held-items/item-flags.txt`, `755490182234`): 46 of 234 tools and 1 of 52
+accessories set it; every weapon, shield, helm, armour, glove, legwear and other accessory
+leaves it clear, including the weapons and shields with a battle action (cautery sword 20010,
+brain drainer 21010) and the reusable tools (sage's stone 22035, mimic stone 22125,
+blarney stone 22126). Consumables such as the medicinal herb (22000) set it. The field item
+use (`func_020ddb38`, category 8–10) clears the chosen held slot the same way; the battle rule
+adds the flag test so a reusable item use is not spent. The app models only held items, not
+the worn-gear half of the original's item list (equipment UI is out of scope).
+
+A member who falls before its turn produces no `ItemUsed`: the reservation is dropped at the
+next command phase and the held slot stays. Cancelling or reselecting a command releases the
+reservation likewise. **[unknown]** the exact routine that fills the original's item menu
+with the held tools (the list builder preserves tool entries but its writer was not found);
+the consumer and the slot identity are read, the population path is not. The bag is never
+read or changed by the app's battle item path.
 
 ### Accuracy with statuses
 
