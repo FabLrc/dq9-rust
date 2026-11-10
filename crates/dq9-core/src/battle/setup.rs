@@ -197,6 +197,10 @@ fn skill(r: &ActionRecord<'_>, ranges: &Ranges) -> Skill {
         a.rider = r.rider;
         a.damage_handler = u16::from(r.damage_handler);
         a.scales_accuracy = r.scales == 1;
+        a.accuracy_monster = r.monster_chance;
+        a.spoilt = r.spoilt;
+        a.halved_by_defending = r.halved_by_defending;
+        a.stat_step = r.stat_change;
         a.multi_target_falloff = r.weakens;
         a.weapon_element = r.weapon_element;
         a.trait_accuracy_die = r.party_trait;
@@ -247,8 +251,11 @@ pub struct Tables<'a> {
 /// A monster standing in a battle.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Monster {
-    /// The monster's number (`mon_btldata` `+0x00`).
+    /// The number of the monster's record, so that a call for backup can add another of its
+    /// kind.
     pub number: u16,
+    /// The record's table HP (`mon_btldata`), for a call for backup's own HP draw.
+    pub table_hp: u16,
     /// The group it stands in (0 to 2): monsters of a group fight and are targeted as one kind.
     pub group: usize,
     /// The kernel's numbers: HP drawn, MP, attack, defence, agility, evasion and block rates,
@@ -381,6 +388,7 @@ fn monster(
     let word = record.word_10;
     Ok(Monster {
         number: record.number,
+        table_hp: record.hp,
         group,
         fighter,
         ways: record.ways,

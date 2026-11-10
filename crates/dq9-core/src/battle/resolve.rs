@@ -28,13 +28,17 @@ use super::random::{FloatDraw, Random};
 /// The multipliers of the combo table (`0x021fe778`), indexed by the counter held to 3.
 const COMBO_TABLE: [f32; 4] = [1.0, 1.2, 1.5, 2.0];
 
+/// The multipliers of the guard level (`0x020e88c0`): the party's Defend sets 1, the round's end
+/// clears it. Applied to an action carrying `+0x10` bit 4, before the coin.
+const GUARD_MULTIPLIERS: [f32; 4] = [1.0, 0.5, 0.1, 0.0];
+
 /// The accuracy a non-scaling action stands at: it lands on every draw.
 const STANDING_ACCURACY: i32 = 100;
 
 /// What happened to one target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetOutcome {
-    /// The accuracy roll succeeded (always, for the actions modelled: accuracy stands at 100).
+    /// The accuracy roll succeeded.
     pub landed: bool,
     /// The target dodged (evasion roll).
     pub dodged: bool,
@@ -42,9 +46,13 @@ pub struct TargetOutcome {
     pub blocked: bool,
     /// The blow or spell was a critical.
     pub critical: bool,
-    /// Damage dealt (kind 1) or HP restored (kind 2), after the cap. 0 for a dodged or blocked
-    /// blow.
+    /// Damage dealt (kind 1), HP restored (kind 2) or MP taken (kind 57), after the cap. 0 for a
+    /// dodged or blocked blow, and for every kind that changes no number.
     pub amount: i32,
+    /// MP taken (kind 57), held under what the target had.
+    pub mp_damage: i32,
+    /// The monster left the battle (action `0xE1`, `func_ov024_021da670`'s removal).
+    pub fled: bool,
     /// The target's HP before.
     pub hp_before: i32,
     /// The target's HP after: damage floored at 0, healing held to the maximum.
@@ -112,6 +120,29 @@ fn roll_block(rng: &mut Counted<'_>, target: &Fighter) -> bool {
     (rng.next_max(100) as f32) < target.block_rate
 }
 
+/// `RollAccuracy` (`ov_000::02156648`): `NextRandomMax(100)` first, whatever the accuracy; then a
+/// scaling accuracy (a monster's `+0x14` bits 0–6 chance × the target's resistance to the action's
+/// landing element + 0.5, truncated); then, for an action spoilt by a status (`+0x10` bit 3) on a
+/// dazzled attacker, a die of eight that misses on 0 to 4; it lands under the accuracy.
+fn roll_accuracy(
+    rng: &mut Counted<'_>,
+    actor: &Fighter,
+    action: &Action,
+    target: &Fighter,
+) -> bool {
+    let die = rng.next_max(100);
+    let accuracy = if action.scales_accuracy {
+        let scaled = f32::from(action.accuracy_monster) * target.resistance(action.landing_element);
+        (0.5f32 + scaled) as i32
+    } else {
+        STANDING_ACCURACY
+    };
+    if action.spoilt && actor.dazzled && rng.next_max(8) < 5 {
+        return false;
+    }
+    die < accuracy
+}
+
 /// `CalculateFinalDamage` (`ov_024::021e6a90`) for the steps modelled, in the game's order:
 /// critical, resistance, block / dodge zero, the coin, the combo, truncation, the cap.
 fn final_amount(
@@ -145,6 +176,11 @@ fn final_amount(
     damage *= target.resistance(action.element);
     if nullified {
         damage = 0.0;
+    }
+    // The guard level (`0x021e77a4`'s neighbour, table `0x020e88c0`): an exact half for Defend,
+    // before the coin, whoever struck.
+    if action.halved_by_defending && target.guard_level > 0 {
+        damage *= GUARD_MULTIPLIERS[usize::from(target.guard_level.min(3))];
     }
     let takes_both =
         target.resistance(action.element) > 0.0 && target.resistance(action.landing_element) > 0.0;
@@ -194,7 +230,7 @@ pub fn resolve_action(
         };
         let dodged = action.dodgeable && roll_evasion(&mut rng, target);
         let blocked = action.blockable && !dodged && roll_block(&mut rng, target);
-        let landed = rng.next_max(100) < STANDING_ACCURACY;
+        let landed = roll_accuracy(&mut rng, actor, action, target);
         let mut amount = 0;
         if landed {
             let strike = Strike {
@@ -203,6 +239,8 @@ pub fn resolve_action(
                 action,
                 combo_count,
             };
+            // Every kind computes its amount in the game: the kind handler is handed it and
+            // ignores it where the kind changes no number (`docs/re/battle.md`).
             let base = base_amount(actor, target, action, &mut rng);
             amount = final_amount(&mut rng, &strike, base, critical, dodged || blocked);
             if action.wakes_target && action.kind == 1 && amount > 0 {
@@ -211,10 +249,15 @@ pub fn resolve_action(
                 rng.next_max(100);
             }
         }
-        let hp_after = if action.kind == 2 {
-            target.hp.max((target.hp + amount).min(target.max_hp))
-        } else {
-            (target.hp - amount).max(0)
+        let fell = landed && action.number == 0xE1;
+        let (hp_after, mp_damage) = match action.kind {
+            1 => ((target.hp - amount).max(0), 0),
+            2 => (target.hp.max((target.hp + amount).min(target.max_hp)), 0),
+            // Weird Dance (`func_ov024_021e0bf4`): the amount is taken from MP, held under what
+            // the target has.
+            57 => (target.hp, amount.max(0).min(target.mp.max(0))),
+            // Kinds 0, 4, 5, 12 and 19 change no HP or MP here.
+            _ => (target.hp, 0),
         };
         outcomes.push(TargetOutcome {
             landed,
@@ -222,8 +265,10 @@ pub fn resolve_action(
             blocked,
             critical,
             amount,
+            mp_damage,
+            fled: fell,
             hp_before: target.hp,
-            hp_after,
+            hp_after: if fell { 0 } else { hp_after },
         });
     }
     Ok(ActionOutcome {

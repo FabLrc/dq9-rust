@@ -26,6 +26,13 @@ pub const WAY_WEIGHTS: [[u8; 6]; 4] = [
 /// 11): EU `0x02182a85`, read on the European ROM.
 const HIT_TABLE: [u8; 12] = [0, 0, 0, 0, 2, 4, 0, 7, 3, 0, 1, 0];
 
+/// The stat kinds 4 and 5 move (`+0x58` bits 3–5 defence, 6–8 agility).
+#[derive(Clone, Copy)]
+enum Stat {
+    Defence,
+    Agility,
+}
+
 impl Battle {
     /// `func_0208a91c` (EU `0x0208a92c`): the monster's way by its rule, then the targets of the
     /// way's action. Returns the action's number and its targets.
@@ -162,7 +169,31 @@ impl Battle {
         let handler = if handler > 0xa0 { 0 } else { handler };
         let targets = match handler {
             0 => self.generic_pick(Who::Monster(j), &skill)?,
+            18 => match self.stat_target(j, Stat::Defence) {
+                Some(targets) => targets,
+                None => return Ok(None),
+            },
+            26 => match self.stat_target(j, Stat::Agility) {
+                Some(targets) => targets,
+                None => return Ok(None),
+            },
+            54 => match self.dazzle_targets() {
+                Some(targets) => targets,
+                None => return Ok(None),
+            },
+            66 => match self.herb_target(j) {
+                Some(targets) => targets,
+                None => return Ok(None),
+            },
             112 => match self.flee_handler(j) {
+                Some(targets) => targets,
+                None => return Ok(None),
+            },
+            116 => match self.backup_target(j) {
+                Some(targets) => targets,
+                None => return Ok(None),
+            },
+            117 => match self.weird_dance_target(j, &skill)? {
                 Some(targets) => targets,
                 None => return Ok(None),
             },
@@ -189,6 +220,96 @@ impl Battle {
         let own = &self.monsters[j].fighter;
         let own = i32::from(((own.attack + own.defence) & 0xffff) as u16);
         (mean >= own * 3).then(|| vec![Who::Monster(j)])
+    }
+
+    /// Handlers 18 and 26 (`func_ov024_021eee68`, `021ef7b8`): Buff and Accelerate, one of the
+    /// caller's own side whose stat is below the ceiling (`0xffff` for defence, 999 for agility)
+    /// and whose level is below two, drawn evenly by `NextRandomMax` (`func_ov024_021ed890`).
+    fn stat_target(&mut self, _j: usize, stat: Stat) -> Option<Vec<Who>> {
+        let candidates: Vec<usize> = self
+            .monsters_standing()
+            .into_iter()
+            .filter(|&i| {
+                let fighter = &self.monsters[i].fighter;
+                let status = self.status(Who::Monster(i));
+                match stat {
+                    Stat::Defence => {
+                        u32::from(fighter.defence as u16) < 0xffff && status.defence_level < 2
+                    }
+                    Stat::Agility => fighter.agility < 999 && status.agility_level < 2,
+                }
+            })
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        let k = self.rng.next_max(candidates.len() as i32) as usize;
+        Some(vec![Who::Monster(candidates[k])])
+    }
+
+    /// Handler 54 (`func_ov024_021f1198`): Dazzle, the whole party, usable while one of them is
+    /// not dazzled yet (`func_ov024_021df6ec` tests `+0x14` bit 6).
+    fn dazzle_targets(&mut self) -> Option<Vec<Who>> {
+        let party = self.party_standing();
+        let any_clear = party
+            .iter()
+            .any(|&i| self.status(Who::Party(i)).dazzle_count == 0);
+        any_clear.then(|| party.into_iter().map(Who::Party).collect())
+    }
+
+    /// Handler 66 (`func_ov024_021f1c64`): the medicinal herb on one of the caller's own side
+    /// below half its HP (`func_ov024_021db358`), drawn evenly.
+    fn herb_target(&mut self, _j: usize) -> Option<Vec<Who>> {
+        let candidates: Vec<usize> = self
+            .monsters_standing()
+            .into_iter()
+            .filter(|&i| {
+                let fighter = &self.monsters[i].fighter;
+                fighter.hp > 0 && fighter.hp * 2 < fighter.max_hp
+            })
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        let k = self.rng.next_max(candidates.len() as i32) as usize;
+        Some(vec![Who::Monster(candidates[k])])
+    }
+
+    /// Handler 116 (`func_ov024_021f45c8`): a call for backup, on the caller itself, while the
+    /// battle holds fewer than five monsters (eight for monster 266, `0x021f4764`).
+    fn backup_target(&mut self, j: usize) -> Option<Vec<Who>> {
+        let limit = if self.monsters[j].number == 266 { 8 } else { 5 };
+        (self.monsters.len() < limit).then(|| vec![Who::Monster(j)])
+    }
+
+    /// Handler 117 (`func_ov024_021f4768`): Weird Dance, a party member with MP left, by the
+    /// weighted pick (`func_ov000_02154f30`, reached through `func_ov024_021ed8c0`). Its picks
+    /// are one for hit code 0 or 10; the codes that pick several are refused.
+    fn weird_dance_target(
+        &mut self,
+        j: usize,
+        skill: &Skill,
+    ) -> Result<Option<Vec<Who>>, Unsupported> {
+        let picks = match skill.hit_code {
+            0 | 10 => 1,
+            other => return Err(Unsupported::HitCode(other)),
+        };
+        let candidates: Vec<usize> = self
+            .party_standing()
+            .into_iter()
+            .filter(|&i| self.party[i].fighter.mp > 0)
+            .collect();
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let mut targets = Vec::new();
+        for _ in 0..picks {
+            let Some(picked) = self.weighted_pick(j, &candidates)? else {
+                return Ok(None);
+            };
+            targets.push(Who::Party(picked));
+        }
+        Ok(Some(targets))
     }
 
     /// `func_ov000_02154a04`: the default targets of an action by its side and reach, then the

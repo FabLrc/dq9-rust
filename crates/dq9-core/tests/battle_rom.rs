@@ -148,6 +148,23 @@ fn print_round(label: &str, report: &RoundReport) {
             Event::Skipped(who) => {
                 println!("{label} r{} {} does not act", report.round, name(*who))
             }
+            Event::Defended(who) => {
+                println!("{label} r{} {} defends", report.round, name(*who))
+            }
+            Event::ItemUsed { who, action } => {
+                println!(
+                    "{label} r{} {} uses item action {action}",
+                    report.round,
+                    name(*who)
+                )
+            }
+            Event::Summoned { who, number } => {
+                println!(
+                    "{label} r{} {} calls monster {number} for backup",
+                    report.round,
+                    name(*who)
+                )
+            }
             Event::End(result) => println!("{label} r{} ends: {result:?}", report.round),
         }
     }
@@ -408,6 +425,210 @@ fn the_adapter_reads_the_actions_the_oracle_was_decoded_for() {
     assert_eq!(range.scaling, Some(dq9_core::battle::ScaleStat::Mending));
 }
 
+/// A hero made to last: enough HP and defence for the monster to choose several ways before the
+/// fight ends, weak enough not to one-shot it.
+fn enduring_hero() -> PartyMember {
+    let mut f = Fighter::new(Side::Party);
+    f.hp = 200;
+    f.max_hp = 200;
+    f.mp = 6;
+    f.attack = 9;
+    f.defence = 8;
+    f.agility = 8;
+    f.deftness = 12;
+    f.evasion_rate = 2.0;
+    PartyMember::new(f)
+}
+
+/// Plays a battle to its end, Attack on the first standing monster, and returns the actions the
+/// monsters acted and the rounds played.
+fn play_to_the_end(
+    label: &str,
+    tables: &Tables<'_>,
+    setup: BattleSetup,
+    hero: PartyMember,
+    seed: u64,
+) -> (Battle, Vec<u16>, Vec<(i8, i8, u8)>) {
+    let mut world = Random::new(seed ^ 0x5a5a_5a5a);
+    let mut battle = Battle::new(setup, vec![hero], Surprise::None, seed).unwrap();
+    let mut acted = Vec::new();
+    let mut statuses = Vec::new();
+    for _ in 0..200 {
+        if battle.result().is_some() {
+            break;
+        }
+        let Some(target) = battle.monsters().iter().position(|m| m.fighter.hp > 0) else {
+            break;
+        };
+        let report = battle
+            .round(&[attack_command(tables, target)], &mut world)
+            .unwrap_or_else(|e| panic!("{label} seed {seed}: {e}"));
+        for event in &report.events {
+            match event {
+                Event::Acted { who, action, .. } => {
+                    if matches!(who, Who::Monster(_)) {
+                        acted.push(*action);
+                    }
+                }
+                Event::Summoned { number, .. } => acted.push(*number),
+                _ => {}
+            }
+        }
+        let monster = battle.status(Who::Monster(0));
+        let party = battle.status(Who::Party(0));
+        statuses.push((
+            monster.defence_level,
+            monster.agility_level,
+            party.dazzle_count,
+        ));
+    }
+    assert!(
+        battle.result().is_some(),
+        "{label} seed {seed}: the battle never ended"
+    );
+    (battle, acted, statuses)
+}
+
+/// The chapter 2 ways are played whole: the herb (monster 23), Accelerate (20), Dazzle (32 and
+/// 63), Weird Dance and its neighbours (43) and a no-op action (56), over 20 seeds each, with no
+/// rule refused.
+#[test]
+fn chapter_two_ways_play_to_the_end_over_twenty_seeds() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    for (number, wanted) in [
+        (23u16, 236u16),
+        (20, 45),
+        (32, 59),
+        (63, 323),
+        (43, 243),
+        (56, 364),
+    ] {
+        let mut seen = BTreeSet::new();
+        let (mut buffed, mut accelerated, mut dazzled) = (false, false, false);
+        for seed in 0..20u64 {
+            let setup = BattleSetup::set_battle(&tables, &[(number, 1)]).unwrap();
+            let (battle, acted, statuses) = play_to_the_end(
+                &format!("monster {number}"),
+                &tables,
+                setup,
+                enduring_hero(),
+                seed,
+            );
+            // A buff, a status and a no-op all leave the monster standing and its numbers whole.
+            assert!(
+                battle.monsters().iter().all(|m| m.fighter.hp >= 0),
+                "monster {number} seed {seed}"
+            );
+            buffed |= statuses.iter().any(|s| s.0 != 0);
+            accelerated |= statuses.iter().any(|s| s.1 != 0);
+            dazzled |= statuses.iter().any(|s| s.2 > 0);
+            seen.extend(acted);
+        }
+        assert!(
+            seen.contains(&wanted),
+            "monster {number} never chose {wanted}: {seen:?}"
+        );
+        match number {
+            23 => assert!(buffed, "Buff moved the defence level"),
+            20 => assert!(accelerated, "Accelerate moved the agility level"),
+            32 | 63 => assert!(dazzled, "Dazzle set the party's status"),
+            _ => {}
+        }
+    }
+}
+
+/// A monster that flees leaves the battle with no draw of its own: the way is chosen, the
+/// action resolves and the monster is gone, over 20 seeds and every chapter 2 monster that holds
+/// the way.
+#[test]
+fn fleeing_monsters_leave_over_twenty_seeds() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let mut fled_somewhere = false;
+    for number in [1u16, 4, 20, 23, 30, 32, 43, 56, 57, 63, 290, 292] {
+        let mut acted = BTreeSet::new();
+        for seed in 0..20u64 {
+            let mut build = Random::new(0x900 + seed);
+            let setup = BattleSetup::encounter(&tables, &[(number, 1)], &mut build).unwrap();
+            let (battle, actions, _) = play_to_the_end(
+                &format!("flee {number}"),
+                &tables,
+                setup,
+                enduring_hero(),
+                seed,
+            );
+            acted.extend(actions);
+            for j in 0..battle.monsters().len() {
+                if battle.has_fled(Who::Monster(j)) {
+                    fled_somewhere = true;
+                    assert_eq!(battle.monsters()[j].fighter.hp, 0, "a fled monster is gone");
+                    assert!(!battle.result().is_some_and(|r| r == BattleResult::Lost));
+                }
+            }
+        }
+        println!("flee monster {number}: {acted:?}");
+    }
+    assert!(
+        fled_somewhere,
+        "no monster ever left, though every chapter 2 monster holds the way"
+    );
+}
+
+/// What a party member's Defend, an item and a monster's own flight do in the round state.
+#[test]
+fn defend_guards_for_the_round_and_an_item_is_reported() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let mut world = Random::new(3);
+    let setup = BattleSetup::encounter(&tables, &[(1, 1)], &mut world).unwrap();
+    let mut battle = Battle::new(setup, vec![enduring_hero()], Surprise::None, 3).unwrap();
+    let report = battle.round(&[Command::Defend], &mut world).unwrap();
+    assert!(report.events.contains(&Event::Defended(Who::Party(0))));
+    // The guard level is a round's state: `func_ov000_0215e6e8` clears it before the round
+    // returns. The halving itself is the kernel's (`battle::tests`).
+    assert_eq!(battle.status(Who::Party(0)).guard, 0);
+
+    // The medicinal herb's action through the item command, reported for the caller's bag.
+    let herb = tables.actions.skill(236).unwrap();
+    let mut hero = enduring_hero();
+    hero.fighter.hp = 10;
+    let mut world = Random::new(4);
+    let setup = BattleSetup::set_battle(&tables, &[(23, 1)]).unwrap();
+    let mut battle = Battle::new(setup, vec![hero], Surprise::None, 4).unwrap();
+    let hp = battle.party()[0].fighter.hp;
+    let report = battle
+        .round(
+            &[Command::Item {
+                skill: herb,
+                target: Target::Party(0),
+            }],
+            &mut world,
+        )
+        .unwrap();
+    assert!(
+        report.events.iter().any(|e| matches!(
+            e,
+            Event::ItemUsed {
+                who: Who::Party(0),
+                action: 236
+            }
+        )),
+        "{:?}",
+        report.events
+    );
+    assert!(
+        battle.party()[0].fighter.hp > hp,
+        "the herb healed its user"
+    );
+}
+
 /// What a way's action comes to against the hero: the kernel's verdict, and the AI's (the
 /// way rule, the AI mode and the targeting handler). Printed as the chapter 2 coverage table of
 /// `docs/re/battle.md`.
@@ -488,7 +709,7 @@ fn chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve() {
                 _ => 0,
             };
             let ai = match handler {
-                0 | 112 => "ok".to_string(),
+                0 | 18 | 26 | 54 | 66 | 112 | 116 | 117 => "ok".to_string(),
                 h => format!("handler {h}"),
             };
             let kernel = match &entry.0.action {
@@ -517,8 +738,7 @@ fn chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve() {
         );
     }
 
-    // The plain Attack (1 and its twin 2, the fall-back every way rule ends on) is resolved
-    // for every monster, and the Flee way stays a refusal by action number.
+    // Every way of the chapter 2 list is resolved by the kernel and its handler is modelled.
     for plain in [1u16, 2] {
         if let Some((_, _, verdicts)) = by_action.get(&plain) {
             assert!(
@@ -527,13 +747,12 @@ fn chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve() {
             );
         }
     }
-    let flee = &by_action[&225];
-    assert!(
-        flee.2
-            .iter()
-            .all(|v| v.starts_with("kernel ActionNumber(225)")),
-        "{:?}",
-        flee.2
-    );
+    for action in [225u16, 41, 45, 59, 323, 243, 344, 364, 366] {
+        let (_, _, verdicts) = &by_action[&action];
+        assert!(
+            verdicts.iter().all(|v| v == "kernel ok; targeting ok"),
+            "{action}: {verdicts:?}"
+        );
+    }
     let _ = Unsupported::Defend;
 }

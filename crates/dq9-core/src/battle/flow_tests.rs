@@ -42,6 +42,7 @@ fn slime(group: usize, hp: i32, agility: i32) -> Monster {
     f.agility = agility;
     Monster {
         number: 1,
+        table_hp: hp as u16,
         group,
         fighter: f,
         ways: [1; 6],
@@ -251,7 +252,7 @@ fn turn_classes_reorder_and_an_unsupported_round_changes_nothing() {
     // A monster whose way needs a handler that is not modelled: nothing changes.
     let mut odd = Skill::from_action(plain_attack(1));
     odd.number = 66;
-    odd.handlers = [66, 66];
+    odd.handlers = [55, 55];
     let mut monsters = slime(0, 50, 5);
     monsters.ways = [66; 6];
     let mut s = setup(vec![monsters], false);
@@ -262,7 +263,7 @@ fn turn_classes_reorder_and_an_unsupported_round_changes_nothing() {
     let err = b.round(&[attack(0)], &mut Random::new(1)).unwrap_err();
     assert_eq!(
         err,
-        BattleError::Unsupported(Unsupported::TargetHandler(66))
+        BattleError::Unsupported(Unsupported::TargetHandler(55))
     );
     assert_eq!(b.generator_state(), state);
     assert_eq!(b.monsters()[0].fighter.hp, hp);

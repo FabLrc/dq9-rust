@@ -93,14 +93,24 @@ pub enum Target {
 /// One party member's command for a round.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
-    /// An action: the Attack, a spell, an item (an item is an action of the action table).
+    /// An action: the Attack, a spell (an item is an action of the action table, see
+    /// [`Command::Item`]).
     Act {
         /// The action (from [`ActionTables::skill`](super::setup::ActionTables::skill)).
         skill: Skill,
         /// Whom it aims at.
         target: Target,
     },
-    /// Defend: the guard level is not modelled ([`Unsupported::Defend`]).
+    /// Use an item: its action table entry, resolved like any action. The engine reports it
+    /// ([`Event::ItemUsed`]); taking it out of the bag is the caller's (`dq9_core::party`).
+    Item {
+        /// The item's action (from the item table, through the caller).
+        skill: Skill,
+        /// Whom it aims at.
+        target: Target,
+    },
+    /// Defend: the guard level goes to 1 for the round (`func_ov024_021e57c0`), cleared at the
+    /// round's end (`func_ov000_0215e6e8`).
     Defend,
     /// Flee.
     Flee,
@@ -171,6 +181,22 @@ pub enum Event {
         /// What happened to each target, in order.
         outcomes: Vec<(Who, TargetOutcome)>,
     },
+    /// A party member defended: its guard level is 1 until the round's end.
+    Defended(Who),
+    /// An item's action resolved; the caller takes one of it out of the bag.
+    ItemUsed {
+        /// The user.
+        who: Who,
+        /// The item's action number.
+        action: u16,
+    },
+    /// A monster called for backup (`func_ov024_021dc2a0`): another of its kind joined.
+    Summoned {
+        /// The caller.
+        who: Who,
+        /// The monster number that joined.
+        number: u16,
+    },
     /// A combatant did not act: fallen before its turn, or its flight failed.
     Skipped(Who),
     /// The battle ended.
@@ -189,9 +215,73 @@ pub struct RoundReport {
 /// What a turn record does.
 #[derive(Clone, Debug)]
 enum Plan {
-    Party { skill: Skill, target: Target },
-    Monster { action: u16, targets: Vec<Who> },
+    Party {
+        skill: Skill,
+        target: Target,
+        item: bool,
+    },
+    Monster {
+        action: u16,
+        targets: Vec<Who>,
+    },
     Idle,
+}
+
+/// What a combatant's battle status holds of the chapter 2 actions (`[combatant + 0x138]` in the
+/// original; `docs/re/battle.md`, "Statuses"). Levels are held to two either way; a count is the
+/// passes the status still holds, a second count the wear-off rolls once it has run out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Status {
+    /// Defence level, `+0x58` bits 3–5, and its counts `+0x6f` and `+0x92` (Buff, Sap, Kasap).
+    pub defence_level: i8,
+    /// Passes the defence level still holds (`+0x6f`).
+    pub defence_count: u8,
+    /// Wear-off rolls left at defence (`+0x92`).
+    pub defence_second: u8,
+    /// Agility level, `+0x58` bits 6–8, and its counts `+0x70` and `+0x93` (Accelerate,
+    /// Deceleratle).
+    pub agility_level: i8,
+    /// Passes the agility level still holds (`+0x70`).
+    pub agility_count: u8,
+    /// Wear-off rolls left at agility (`+0x93`).
+    pub agility_second: u8,
+    /// Passes the dazzle still holds (`+0x5f`), its wear-off `+0x82` (`func_02088854`).
+    pub dazzle_count: u8,
+    /// Wear-off rolls left at dazzle (`+0x82`).
+    pub dazzle_second: u8,
+    /// Guard level 0 to 3 (`+0x21`): 1 while defending, cleared at the round's end.
+    pub guard: u8,
+}
+
+impl Status {
+    /// The defence multiplier of a level (`CalculateDefenseBuffMultiplier`): 1 + 0.5 a level up,
+    /// 0.5 at −1 and 0.25 at −2.
+    fn defence_multiplier(&self) -> f32 {
+        Self::level_multiplier(self.defence_level)
+    }
+
+    fn agility_multiplier(&self) -> f32 {
+        Self::level_multiplier(self.agility_level)
+    }
+
+    fn level_multiplier(level: i8) -> f32 {
+        if level >= 0 {
+            1.0f32 + 0.5f32 * f32::from(level)
+        } else {
+            1.0f32 + (f32::from(level + 1) * 0.25f32 - 0.5f32)
+        }
+    }
+}
+
+/// The chance a wear-off roll clears a status with `second` rolls left (`0x02182ad4`:
+/// 1.0, 0.875, 0.75, 0.625, read from the fourth roll down).
+fn wear_off_chance(second: u8) -> f32 {
+    match second {
+        4 => 0.625,
+        3 => 0.75,
+        2 => 0.875,
+        _ => 1.0,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -217,6 +307,11 @@ pub struct Battle {
     pub(super) rng: Random,
     pub(super) party: Vec<PartyMember>,
     pub(super) monsters: Vec<Monster>,
+    pub(super) party_status: Vec<Status>,
+    pub(super) monster_status: Vec<Status>,
+    /// The monsters that left through action `0xE1` (`func_ov000_021554f4`'s reason 2): gone, and
+    /// worth no experience.
+    pub(super) fled: Vec<bool>,
     pub(super) skills: BTreeMap<u16, Skill>,
     pub(super) set_battle: bool,
     pub(super) surprise: Surprise,
@@ -258,6 +353,9 @@ impl Battle {
         let n = setup.monsters.len();
         Ok(Self {
             rng: Random::new(seed),
+            party_status: vec![Status::default(); party.len()],
+            monster_status: vec![Status::default(); n],
+            fled: vec![false; n],
             party,
             monsters: setup.monsters,
             skills: setup.skills,
@@ -328,6 +426,48 @@ impl Battle {
         }
     }
 
+    /// The status of `who`.
+    pub fn status(&self, who: Who) -> &Status {
+        match who {
+            Who::Party(i) => &self.party_status[i],
+            Who::Monster(i) => &self.monster_status[i],
+        }
+    }
+
+    fn status_mut(&mut self, who: Who) -> &mut Status {
+        match who {
+            Who::Party(i) => &mut self.party_status[i],
+            Who::Monster(i) => &mut self.monster_status[i],
+        }
+    }
+
+    /// Whether `who` left the battle through the monsters' flight.
+    pub fn has_fled(&self, who: Who) -> bool {
+        match who {
+            Who::Party(_) => false,
+            Who::Monster(i) => self.fled[i],
+        }
+    }
+
+    /// The numbers the resolver reads for `who`: its base numbers with the defence and agility
+    /// levels applied and `RoundUp`-ed (`UpdateCombatantDefence`, `…Agility`), its guard level
+    /// and its dazzle.
+    fn fighter_snapshot(&self, who: Who) -> Fighter {
+        let mut fighter = self.fighter(who).clone();
+        let status = self.status(who);
+        fighter.guard_level = status.guard;
+        fighter.dazzled = status.dazzle_count > 0;
+        if status.defence_level != 0 {
+            fighter.defence =
+                super::damage::round_up(fighter.defence as f32 * status.defence_multiplier());
+        }
+        if status.agility_level != 0 {
+            fighter.agility =
+                super::damage::round_up(fighter.agility as f32 * status.agility_multiplier());
+        }
+        fighter
+    }
+
     fn fighter_mut(&mut self, who: Who) -> &mut Fighter {
         match who {
             Who::Party(i) => &mut self.party[i].fighter,
@@ -363,8 +503,8 @@ impl Battle {
                 _ if !standing => {
                     return Err(BattleError::Invalid("a fallen member can only be skipped"));
                 }
-                Command::Defend => return Err(Unsupported::Defend.into()),
-                Command::Act { skill, .. } => {
+                Command::Defend => {}
+                Command::Act { skill, .. } | Command::Item { skill, .. } => {
                     let cost = skill.action.as_ref().map_or(0, |a| i32::from(a.mp_cost));
                     if cost < 255 && self.party[i].fighter.mp < cost {
                         return Err(BattleError::Invalid("not enough MP"));
@@ -430,7 +570,22 @@ impl Battle {
                         Command::Act { skill, target } => Plan::Party {
                             skill: skill.clone(),
                             target: *target,
+                            item: false,
                         },
+                        Command::Item { skill, target } => Plan::Party {
+                            skill: skill.clone(),
+                            target: *target,
+                            item: true,
+                        },
+                        Command::Defend => {
+                            // `func_ov024_021e57c0`: Defend is a stance taken up as the round
+                            // begins; its guard level lasts until the round's end. No turn
+                            // record, so no draw ([hypothesis] for the absence of draws: the
+                            // command code was not read).
+                            self.status_mut(who).guard = 1;
+                            report.events.push(Event::Defended(who));
+                            Plan::Idle
+                        }
                         _ => Plan::Idle,
                     };
                     if failed_flee.contains(&i) {
@@ -481,13 +636,18 @@ impl Battle {
             // the targets are settled (which is `ResolveAction`'s head).
             // [hypothesis]: a party member under the original's tactics AI (`func_ov024_021f8f20`)
             // draws more here; the hero's tactic is taken to be Follow Orders (no draw).
-            let (skill, targets) = match &record.plan {
+            let (skill, targets, item) = match &record.plan {
                 Plan::Idle => continue,
-                Plan::Party { skill, target } => {
+                Plan::Party {
+                    skill,
+                    target,
+                    item,
+                } => {
                     self.rng.next_max(100);
                     (
                         skill.clone(),
                         self.party_targets(record.who, skill, *target)?,
+                        *item,
                     )
                 }
                 Plan::Monster { action, targets } => {
@@ -497,10 +657,20 @@ impl Battle {
                     let skill = self.skill(*action)?;
                     self.rng.next_max(100);
                     let settled = self.monster_targets(j, &skill, targets)?;
-                    (skill, settled)
+                    (skill, settled, false)
                 }
             };
-            self.resolve(record.who, &skill, targets, turn, &mut report)?;
+            if item {
+                report.events.push(Event::ItemUsed {
+                    who: record.who,
+                    action: skill.number,
+                });
+            }
+            self.resolve(record.who, &skill, targets, turn, &mut report, world)?;
+        }
+        // `func_ov000_0215e6e8`: the round's end clears the guard level for everyone.
+        for status in self.party_status.iter_mut().chain(&mut self.monster_status) {
+            status.guard = 0;
         }
         self.round += 1;
         Ok(report)
@@ -571,7 +741,7 @@ impl Battle {
                     _ => {}
                 }
             }
-            let agility = self.fighter(who).agility.clamp(0, 999) as f32;
+            let agility = self.fighter_snapshot(who).agility.clamp(0, 999) as f32;
             let draw = self.rng.next_float_between(0.51, 1.0);
             scored.push((who, agility * draw));
         }
@@ -729,8 +899,9 @@ impl Battle {
     }
 
     /// Runs the kernel for one action and everything the original does around it: the combo
-    /// counter, [`resolve_action`], the HP applied, the kills registered, the end test and the
-    /// actor's status tick.
+    /// counter, [`resolve_action`], the HP, MP, statuses and flight applied, the kills
+    /// registered, the end test and the actor's status tick.
+    #[allow(clippy::too_many_arguments)]
     fn resolve(
         &mut self,
         who: Who,
@@ -738,18 +909,38 @@ impl Battle {
         targets: Vec<Who>,
         turn: usize,
         report: &mut RoundReport,
+        world: &mut Random,
     ) -> Result<(), BattleError> {
         let action = skill.action.clone().map_err(BattleError::from)?;
-        let actor = self.fighter(who).clone();
-        let victims: Vec<Fighter> = targets.iter().map(|&w| self.fighter(w).clone()).collect();
+        let actor = self.fighter_snapshot(who);
+        let victims: Vec<Fighter> = targets.iter().map(|&w| self.fighter_snapshot(w)).collect();
         let combo = self.step_combo(who, &action, &targets, turn)?;
         let outcome = resolve_action(&mut self.rng, &actor, &action, &victims, combo)?;
         let mut outcomes = Vec::new();
         for (&victim, o) in targets.iter().zip(&outcome.targets) {
             let before = self.fighter(victim).hp;
-            self.fighter_mut(victim).hp = o.hp_after;
+            if o.fled {
+                self.fighter_mut(victim).hp = 0;
+                if let Who::Monster(j) = victim {
+                    self.fled[j] = true;
+                }
+            } else {
+                self.fighter_mut(victim).hp = o.hp_after;
+                if o.mp_damage > 0 {
+                    let mp = &mut self.fighter_mut(victim).mp;
+                    *mp = (*mp - o.mp_damage).max(0);
+                }
+                self.apply_kind(
+                    victim,
+                    &action,
+                    o.landed && !o.dodged && !o.blocked,
+                    world,
+                    report,
+                )?;
+            }
             if before > 0
                 && o.hp_after <= 0
+                && !o.fled
                 && let Who::Monster(j) = victim
             {
                 self.register_kill(j);
@@ -780,12 +971,185 @@ impl Battle {
         }
         match self.result {
             Some(result) => report.events.push(Event::End(result)),
-            // `func_ov000_0215858c`: the actor's status tick draws once whatever its state.
+            // `func_ov000_0215858c`: the actor's status tick draws once whatever its state, then
+            // the wear-off rolls of its statuses; `func_ov000_021599f4` then takes a pass off
+            // their counts.
             None => {
                 self.rng.next_max(100);
+                self.tick_status(who);
+                self.decrement_status(who);
             }
         }
         Ok(())
+    }
+
+    /// The kind handlers of the chapter 2 actions, once one target's pass is settled: 4 defence
+    /// (`func_ov024_021db7c0`), 5 agility (`021db994`), 19 dazzle (`021dd534`), 12 a call for
+    /// backup (`021dc2a0`). No draw of their own (`docs/re/battle.md`).
+    fn apply_kind(
+        &mut self,
+        victim: Who,
+        action: &super::model::Action,
+        landed: bool,
+        world: &mut Random,
+        report: &mut RoundReport,
+    ) -> Result<(), BattleError> {
+        if !landed {
+            return Ok(());
+        }
+        let step = action.stat_step.clamp(-2, 2) as i8;
+        let standing = self.alive(victim);
+        match action.kind {
+            4 if standing => {
+                let status = self.status_mut(victim);
+                // `func_02087860`: nothing moves a level already at the action's bound.
+                let movable = if step < 0 {
+                    status.defence_level > -2
+                } else {
+                    status.defence_level < 2
+                };
+                if movable {
+                    status.defence_level = (status.defence_level + step).clamp(-2, 2);
+                    if status.defence_level == 0 {
+                        status.defence_count = 0;
+                        status.defence_second = 0;
+                    } else {
+                        status.defence_count = 6;
+                        status.defence_second = 0;
+                    }
+                }
+            }
+            5 if standing => {
+                let status = self.status_mut(victim);
+                let movable = if step < 0 {
+                    status.agility_level > -2
+                } else {
+                    status.agility_level < 2
+                };
+                if movable {
+                    status.agility_level = (status.agility_level + step).clamp(-2, 2);
+                    if status.agility_level == 0 {
+                        status.agility_count = 0;
+                        status.agility_second = 0;
+                    } else {
+                        status.agility_count = 6;
+                        status.agility_second = 0;
+                    }
+                }
+            }
+            19 if standing => {
+                // `func_02088854`: the flag and a count of four.
+                let status = self.status_mut(victim);
+                status.dazzle_count = 4;
+                status.dazzle_second = 0;
+            }
+            12 => {
+                // `func_ov024_021dc2a0`: the caller adds another of its kind while the battle
+                // holds room for it (five monsters, eight for the one monster 266).
+                let Who::Monster(j) = victim else {
+                    return Ok(());
+                };
+                self.summon(j, world, report)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// A call for backup (`func_ov024_021dc2a0`): another of the caller's kind joins its group,
+    /// with its HP drawn from the world's generator (`func_02089630`). The count the handler
+    /// tests is the battle's monsters, five, or eight for the one whose number is `0x10a`.
+    fn summon(
+        &mut self,
+        caller: usize,
+        world: &mut Random,
+        report: &mut RoundReport,
+    ) -> Result<(), BattleError> {
+        let limit = if self.monsters[caller].number == 266 {
+            8
+        } else {
+            5
+        };
+        if self.monsters.len() >= limit {
+            return Ok(());
+        }
+        let template = self.monsters[caller].clone();
+        let hp = super::init_monster_hp(world, template.table_hp, false);
+        let mut monster = template.clone();
+        monster.fighter.hp = hp;
+        monster.fighter.max_hp = hp;
+        let number = monster.number;
+        self.monsters.push(monster);
+        self.monster_status.push(Status::default());
+        self.fled.push(false);
+        self.way_counts.push(0);
+        self.extras_called.push(false);
+        report.events.push(Event::Summoned {
+            who: Who::Monster(caller),
+            number,
+        });
+        Ok(())
+    }
+
+    /// `func_ov000_0215858c`'s wear-off: one roll per status with a second count running, cleared
+    /// where the chance by the count is above the draw (`0x02182ad4`).
+    fn tick_status(&mut self, who: Who) {
+        let mut status = *self.status(who);
+        // `func_ov000_0215858c`'s blocks run dazzle before attack, defence and agility.
+        if status.dazzle_second > 0 {
+            status.dazzle_second -= 1;
+            let draw = self.rng.next_max(100) as f32 / 100.0;
+            if wear_off_chance(status.dazzle_second) > draw {
+                status.dazzle_count = 0;
+                status.dazzle_second = 0;
+            }
+        }
+        for (second, level, count) in [
+            (
+                &mut status.defence_second,
+                &mut status.defence_level,
+                &mut status.defence_count,
+            ),
+            (
+                &mut status.agility_second,
+                &mut status.agility_level,
+                &mut status.agility_count,
+            ),
+        ] {
+            if *second > 0 {
+                *second -= 1;
+                let draw = self.rng.next_max(100) as f32 / 100.0;
+                if wear_off_chance(*second) > draw {
+                    *level = 0;
+                    *count = 0;
+                    *second = 0;
+                }
+            }
+        }
+        *self.status_mut(who) = status;
+    }
+
+    /// `func_ov000_021599f4`: a pass off every count the holder holds; at 0 the second count
+    /// starts at four. [hypothesis] the four of `0x02182efc` for defence, agility and dazzle.
+    fn decrement_status(&mut self, who: Who) {
+        let status = self.status_mut(who);
+        for (count, second) in [
+            (&mut status.defence_count, &mut status.defence_second),
+            (&mut status.agility_count, &mut status.agility_second),
+        ] {
+            if *count > 0 {
+                *count -= 1;
+                if *count == 0 {
+                    *second = 4;
+                }
+            }
+        }
+        if status.dazzle_count > 0 {
+            status.dazzle_count -= 1;
+            if status.dazzle_count == 0 {
+                status.dazzle_second = 4;
+            }
+        }
     }
 
     /// `func_ov024_021ea584`: steps the combo counter for the action's target. An action that

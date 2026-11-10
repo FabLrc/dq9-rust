@@ -10,8 +10,10 @@ Sources, in the order of `AGENTS.md`: the USA decompilation (DQIX/dqix-decomp, c
 `b5c617aa3113a57baba07465ede3be7a0be5328f`, Unlicense: `src/Util/Random.cpp`,
 `src/Combat/Main/{BasicAttackCalculation,CritRateCalculation,TensionBonusCalculation}.cpp`,
 `src/Combat/Overlay_24/GetAttackBaseDamage.cpp`); the DQIX formats wiki, pages
-*Battle-Resolution*, *Actions*, *Monsters* (facts only, not copied); Ghidra on the European ROM
-(`scripts/ghidra-query.ps1`); DQIX/BattleEmulator (MIT, commit
+*Battle-Resolution*, *Actions*, *Ability-Handlers*, *Battle-AI*, *Battle-Weight-Tables*,
+*Monsters* (facts only, not copied); Ghidra on the European ROM
+(`scripts/ghidra-query.ps1`; the batch's excerpts are in
+`build/evidence/j4-battle-actions/ghidra-{handlers,helpers,kinds,status,status3}.txt`); DQIX/BattleEmulator (MIT, commit
 `6c4ad874d1c84579690c22c16efc58c945a6b218`) as the differential oracle.
 
 **Addresses.** EU first, USA in brackets where the ARM9 module shifts them (`AGENTS.md`: USA
@@ -19,14 +21,18 @@ Sources, in the order of `AGENTS.md`: the USA decompilation (DQIX/dqix-decomp, c
 
 ## Scope of the kernel
 
-One action, of a party member or a monster, on any number of targets: the plain Attack and the
-damage and healing spells of chapter 2 (kind 1 and kind 2, no damage handler, no rider, accuracy
-standing at 100). Everything else is **refused before any draw** with `Unsupported`: damage
-handlers 1..66, riders, scaling accuracy, statuses, tension, guard level, metal bodies, a trait
-`0x11d` critical, an elemental weapon, a weapon that strikes several, the multi-target falloff
-against several targets, the accuracy die of four, and the actions the code singles out by number
-(`0x1B`, `0x40`, `0x48`, `0x70`, `0x7E`, `0xAF`, `0x79`, `0xE1`, `0x395`, `0x1FF`, `0x200`,
-`0x20B`, `0x20C`, `0x82`, `0x205`).
+One action, of a party member or a monster, on any number of targets: the plain Attack, the
+damage and healing spells of chapter 2 (kind 1 and kind 2), the stat changes of Buff and
+Accelerate (kinds 4 and 5), Dazzle (kind 19), Weird Dance's MP damage (kind 57), a call for
+backup (kind 12), a kind-0 action and the monsters' Flee `0xE1`. The accuracy roll models an
+action whose accuracy stands at 100 and a monster's scaling accuracy with the dazzle die of
+eight, the guard level and the dazzle flag. Everything else is **refused before any draw** with
+`Unsupported`: damage handlers 1..66, riders, a party member's scaling accuracy, tension, a guard
+level above 3, metal bodies, a trait `0x11d` critical, an elemental weapon, a weapon that strikes
+several, the multi-target falloff against several targets, the accuracy die of four, and the
+actions the code singles out by number (`0x1B`, `0x40`, `0x48`, `0x70`, `0x7E`, `0xAF`, `0x79`,
+`0x395`, `0x1FF`, `0x200`, `0x20B`, `0x20C`, `0x82`, `0x205`). The chapter 2 actions and handlers
+are below.
 
 ## Generators
 
@@ -182,8 +188,20 @@ kernel's contract starts **after** (the test advances the generator by two). Wha
 established (**[unknown]**; the wiki lists four actions that draw before any target, which is
 not this).
 
-### Oracle deviation: Woosh critical, who is right
+### The chapter 2 kinds and the oracle
 
+BattleEmulator (commit `6c4ad874…`) does not model Defend, Buff, Accelerate, Dazzle, the
+medicinal herb or a call for backup: `callAttackFun`'s switch has no `BUFF`, `MEDICINAL_HERBS`,
+`ACCELERATE` or `DAZZLE` case (its `BUFF` and `MEDICINAL_HERBS` constants only name actions), its
+`DEFENCE` is an enemy attack named so, and `KASAP`/`DECELERATLE` model the *down* kinds 4 and 5
+with a seven-turn state the game writes as six. No new vector could therefore be produced from it
+for this batch; the 306 existing vectors still replay unchanged, and the statuses and handlers are
+pinned by the Ghidra reads (`build/evidence/j4-battle-actions/ghidra-{handlers,kinds,status}.txt`)
+and the 20-seed whole-battle tests instead. The kernel batch's harness and its patch lived in
+`build/` of that batch's worktree and were not kept: `docs/re/battle.md` records the method, not
+the program.
+
+### Oracle deviation: Woosh critical, who is right
 BattleEmulator truncates the critical's damage to an integer, then applies Woosh's `× 0.75`, then
 truncates again. The game's `CalculateFinalDamage` keeps the float through `× GetResistance` and
 has a single float-to-int conversion at its end (EU decompilation, `_fmul` at line 182,
@@ -338,23 +356,131 @@ or 1 and a way rule the model has. Action by action, the kernel's verdict and th
 | 1, 2 Attack | 1 | all | resolved | default pick |
 | 9 Frizz | 1 | 7 firespirit | resolved | default pick (mode 0) |
 | 546 | 1 | 300 Hexagoon | resolved | default pick (mode 0) |
-| 225 Flee | 0 | 1, 4, 20, 23, 30, 32, 43, 56, 57, 63, 290, 292 | `ActionNumber(0xE1)` | handler 112 modelled |
-| 236 medicinal herb | 2 | 23 | resolved | handler 66: `TargetHandler(66)` |
-| 41 Buff | 4 | 23 | `Kind(4)` | handler 18 |
-| 45 Accelerate | 5 | 20 | `Kind(5)` | handler 26 |
-| 59 Dazzle | 19 | 32 | `Kind(19)` | handler 54 |
-| 323 | 19 | 63 | `Kind(19)` | handler 54 |
-| 243 Weird Dance | 57 | 43 | `Kind(57)` | handler 117 |
-| 344 | 12 | 43 | `Kind(12)` | handler 116 |
-| 364, 366 | 0 | 56, 43 | `Kind(0)` | default pick |
+| 225 Flee | 0 | 1, 4, 20, 23, 30, 32, 43, 56, 57, 63, 290, 292 | resolved (leaves, no rewards) | handler 112 |
+| 236 medicinal herb | 2 | 23 | resolved | handler 66 |
+| 41 Buff | 4 | 23 | resolved (defence +1) | handler 18 |
+| 45 Accelerate | 5 | 20 | resolved (agility +1) | handler 26 |
+| 59 Dazzle | 19 | 32 | resolved (dazzle, count 4) | handler 54 |
+| 323 | 19 | 63 | resolved (dazzle, count 4) | handler 54 |
+| 243 Weird Dance | 57 | 43 | resolved (MP damage) | handler 117 |
+| 344 | 12 | 43 | resolved (calls for backup) | handler 116 |
+| 364, 366 | 0 | 56, 43 | resolved (no effect) | default pick |
 
-So a battle against slimes, cruelcumbers, sacksquatches, teeny sanguini, dracky, spirits, the
-firespirit, the Hexagoon and the prologue's two is played whole as long as no monster
-**chooses** a way in the lower half of the table; the Flee way is refused by the kernel only when
-its handler lets it through (the party at least 3× as strong): a hero that strong beats them
-anyway. Inputs of `j4-battle-actions`: Flee `0xE1` (a monster leaving the battle, with the `fled`
-flag), kinds 0 (364, 366: what they do), 4, 5, 19 (statuses and stat changes), 12, 57 and their
-handlers 18, 26, 54, 66, 116, 117; the party's Defend (guard level); items.
+`tests/battle_rom.rs` plays each of these monsters to the end over 20 seeds
+(`chapter_two_ways_play_to_the_end_over_twenty_seeds`), every chapter 2 monster that holds Flee
+(`fleeing_monsters_leave_over_twenty_seeds`), and checks that Buff moved the defence level,
+Accelerate the agility level and Dazzle the party's status. The party's Defend and an item are
+checked by `defend_guards_for_the_round_and_an_item_is_reported`.
+
+## The chapter 2 actions
+
+Read on the European ROM in overlay 24 unless said. The kind dispatch is a table of
+pointer-to-members at `data_ov024_021ff508` indexed by the action's kind (`+0x18` bits 5–11),
+called once per target with the accuracy roll's answer (`param_7`) and the final damage; none of
+these handlers draws.
+
+| kind | handler (EU) | effect |
+|---|---|---|
+| 0 | `0x021da670` | nothing; for action `0xE1` (and `0x395`) it removes the combatant (below) |
+| 1 | `0x021da9e0` | damage, riders (as before) |
+| 2 | `0x021db3a4` | a heal (as before) |
+| 4 | `0x021db7c0` | defence level `+0x30` held to ±2 (`func_020878b4`, count 6 at `+0x6f`) |
+| 5 | `0x021db994` | agility level `+0x30` held to ±2 (`func_020879a8`, count 6 at `+0x70`) |
+| 12 | `0x021dc2a0` | a call for backup: adds monsters (`func_0x02161380`), no HP change |
+| 19 | `0x021dd534` | dazzle: `func_02088854` sets `+0x14` bit 6, count 4 at `+0x5f`, second count `+0x82` |
+| 57 | `0x021e0bf4` | MP damage: the final amount, held under the target's MP, taken from it |
+
+**Flee `0xE1`.** Action 225: kind 0, reach 1 (the actor), accuracy 100 unscaled, no range. The
+kind-0 handler's `param_3 == param_2` arm, for action numbers `0xE1` and `0x395`, calls
+`func_0x021554f4(battle, victim, victim, action, 0, 2)` — the defeat routine with reason 2 — sets
+the status HP to 0 and `func_02088f68`. A fled monster is therefore gone for `CheckBattleEnd`
+(`func_ov000_02157d3c`), worth no experience or drop (only `func_ov000_02155184` pays, and the
+victory collects `kills`), and the battle is won when none is left. `Battle::has_fled` reports it.
+
+**Buff and Accelerate.** `+0x30` is 1 on both (action records 41 and 45). `func_02087860` /
+`func_02087954` refuse a level already at the action's bound, else `func_020878b4` /
+`func_020879a8` store `clamp(level + step, −2, 2)`, a count of 6, and the flag `+0x14` `0x800` /
+`0x1000`; a level of 0 clears it. The multipliers are
+`CalculateDefenseBuffMultiplier`/`…Agility` (Unlicense decompilation): `1 + 0.5 × level` up,
+`0.5` at −1 and `0.25` at −2; `RoundUp` then gives the number the resolver reads
+(`UpdateCombatantDefence`, `…Agility`), and initiative scores the buffed agility. The counts run
+down per action (below).
+
+**Dazzle.** `func_02088854` sets `+0x14` bit 6, a count of 4 at `+0x5f` and clears the second
+count `+0x82`; the handler stores `+0x30` at `+0x22` bits 6–8, a cosmetic sort. While the flag is
+set, `RollAccuracy`'s last step throws `NextRandomMax(8)` for an action carrying `+0x10` bit 3
+(the plain Attack, Dazzle's own record included) and misses under 5 — read at `0x02156a90` in the
+EU decompilation, and the die is drawn **only** when the striker is dazzled.
+
+**Weird Dance, kind 57.** `func_ov024_021e0bf4`: the amount the resolver computed (range 43, 2 ± 1,
+capped at 5) is held under the target's MP and taken from it; no HP change, no draw. The record
+carries element 12, its landing resisted by 12, 100 accuracy and the combo bit.
+
+**A call for backup, kind 12.** `func_ov024_021dc2a0`, on a landed pass, asks
+`func_0x0215fb54` for the monster numbers the action calls (its own kind by default), tests each
+with `func_0x02162d88`, then adds each with `func_0x02161380` while the battle holds fewer than
+five monsters — eight for the battle whose monster is 266 (`0x021f4764`). Handler 116 refuses the
+way when the count is reached. The added monster's HP is drawn by `InitMonsterBattleStatus`
+(`func_02089630`) from the world's generator: **[hypothesis]**, the call into it was not read; the
+model draws from the world generator and clones the caller's record.
+
+**Actions 364 and 366 (kind 0).** Nothing: opening lines 350 and 354 ("is just fluffing
+around"), no range, reach the actor. The resolver still computes an amount for the landed pass
+(base amount's draws and the coin), which the kind-0 handler ignores.
+
+### Targeting handlers 18, 26, 54, 66, 116, 117
+
+Read in the European decompilation; all are `func_ov024_…` in overlay 24.
+
+- **18 Buff** (`0x021eee68`, waiting for `func_02087860`): the caller's own standing side whose
+  defence is below `0xffff` and whose level is below 2; one by `NextRandomMax(count)`
+  (`func_ov024_021ed890`).
+- **26 Accelerate** (`0x021ef7b8`): the same for agility below 999 and level below 2.
+- **54 Dazzle** (`0x021f1198`): every standing party member (`func_0x0215e9fc(…, 4, 1)`), usable
+  while one of them lacks `+0x14` bit 6 (`func_ov024_021df6ec` tests it).
+- **66 medicinal herb** (`0x021f1c64`): one of the caller's own side below half its HP
+  (`func_ov024_021db358` returns HP / maximum), by `NextRandomMax`. **[hypothesis]** the
+  comparison's direction: Ghidra loses it (`_fgeq`), the herb on a wounded ally is the only
+  reading that makes sense.
+- **116 a call for backup** (`0x021f45c8`): the caller itself, while the battle holds fewer than
+  five monsters (eight for monster 266); the group-record tests run first.
+- **117 Weird Dance** (`0x021f4768`): a party member with MP left, then `func_ov024_021ed8c0`'s
+  weighted picks by the hit code (one pick for 0 and 10; several are refused). Action 243's hit
+  code is 0 or 10 in practice (the whole-battle test picks it).
+
+### Defend, guard level and items
+
+`Command::Defend` sets the member's guard level to 1 at the command phase
+(`func_ov024_021e57c0`, reached through the action's sub-effect table `0x021ff3f8`, entry 2;
+action 3 "Defend", kind 0, reach 1); `func_ov000_0215e6e8` clears it for everyone at the round's
+end. `CalculateFinalDamage` applies `[1.0, 0.5, 0.1, 0.0][level]` (table `0x020e88c0`) to an
+action carrying `+0x10` bit 4 — the plain Attack, Frizz and Crack among 243 of the 681 — **before**
+the 0-or-1 coin, whoever struck. No link between the guard level and the monsters' pick weights
+was found: the weighted pick (`func_ov000_02154f30`) halves a member's weight under status
+`0x8000000`, not `+0x21` (**[unknown]** what sets `0x8000000`). **[hypothesis]**: Defend costs no
+turn record and no draw, since the stance is taken up as the round begins; the command code was
+not read.
+
+`Command::Item` resolves an item's action like any action and emits `Event::ItemUsed { who,
+action }`; the bag and the consumption stay in `dq9_core::party` / the caller, as the spec asks.
+
+### Accuracy with statuses
+
+`RollAccuracy` (`func_ov000_02156648`) draws `NextRandomMax(100)` first whatever the accuracy;
+then a party member's trait die of four (refused); then, for a scaling action, a monster's
+`+0x14` bits 0–6 times the target's resistance to the landing element `+ 0.5f`, truncated; then
+the dazzle die of eight (only while dazzled); it lands under the accuracy. A party member's
+scaling accuracy (a stat-scaled or drawn value) stays `Unsupported::AccuracyScaling`.
+
+### Statuses' run-down
+
+`func_ov000_021599f4` takes one off every count held on each of its holder's passes; at 0 the
+second count starts at 4 (`data_ov000_02182efc`, 4 for defence, agility and dazzle). The wear-off
+`func_ov000_0215858c` runs just before it on the same pass: after the tick's mandatory
+`NextRandomMax(100)`, each status whose second count is running takes one off it, draws
+`NextRandomMax(100)` and is cleared where the chance by the count (`0x02182ad4`: 1.0, 0.875,
+0.75, 0.625, by the remaining count from 1 to 4) is above the draw. A defence level therefore
+holds six of its holder's passes; the model's counts and second counts are in `Status`.
 
 ## Open points
 
@@ -376,8 +502,22 @@ handlers 18, 26, 54, 66, 116, 117; the party's Defend (guard level); items.
   and cannot check it.
 - **[unknown]** `GetAttackBaseDamage`'s blow multiplier (`Amount::Blow::multiplier`, 1.0 for the
   plain Attack): which field of the action holds it.
-- **[unknown]** the accuracy roll's statuses and traits (dazzle's die of 8, the trait's die of 4)
-  and the metal-body early miss: refused rather than modelled.
+- **[unknown]** the accuracy roll's remaining statuses and traits (the party trait's die of 4)
+  and the metal-body early miss: refused rather than modelled. Dazzle's die of 8 and a monster's
+  scaling accuracy are modelled.
+- **[hypothesis]** Defend's absence of a turn record and of draws: the stance is taken up as the
+  round begins (the wiki's reading of the command), but the command code was not read.
+- **[hypothesis]** a call for backup's new HP is drawn from the world's generator by
+  `func_02089630`; the call into it was not read, only the handler's `func_0x02161380`.
+- **[hypothesis]** the wear-off second count starts at 4 for defence, agility and dazzle
+  (`data_ov000_02182efc`'s 4), and the chance table `0x02182ad4` is indexed by the count that
+  remains, from 1 (1.0) to 4 (0.625).
+- **[hypothesis]** a scaling accuracy's critical does not land outright: `RollAccuracy` returns 1
+  before the multiplier when the target's resistance is above 0 and the cast was a critical
+  (`0x02156a90`'s neighbourhood), which the model does not carry (a Dazzle critical would land
+  where the model still rolls).
+- **[hypothesis]** the medicinal herb's handler uses "below half its HP"; Ghidra loses the
+  comparison's direction (`_fgeq`), and the wounded-ally reading is the only sensible one.
 - **[hypothesis]** the combo counter's stepping (`Battle::step_combo`) is the wiki's reading of
   `func_ov024_021ea584` and `func_ov000_0215cd80`: not checked against the code here.
 
@@ -389,13 +529,42 @@ in `re/symbols.txt`, section "Battle kernel and flow". `0x02032380` is `RandBelo
 uses. `ov_024::021e7bc0 GetAttackBaseDamage` and the `NextRandom*`/`CalculateCritRate`/
 `CalculatePhysicalDamage`/`RoundUp` functions are already named by the decompilation.
 
+### Symbols this batch proposes (for `re/symbols.txt`, which is not this batch's)
+
+| address (EU) | name |
+|---|---|
+| `ov_024::021da670` | `KindNothing` (kind 0; removes a combatant for `0xE1`/`0x395`) |
+| `ov_024::021db7c0` | `KindDefence` |
+| `ov_024::021db994` | `KindAgility` |
+| `ov_024::021dc2a0` | `KindCallForBackup` |
+| `ov_024::021dd534` | `KindDazzle` |
+| `ov_024::021e0bf4` | `KindMpDamage` (kind 57) |
+| `ov_024::021eee68` | `TargetHandlerBuff` (18) |
+| `ov_024::021ef7b8` | `TargetHandlerAccelerate` (26) |
+| `ov_024::021f1198` | `TargetHandlerDazzle` (54) |
+| `ov_024::021f1c64` | `TargetHandlerHerb` (66) |
+| `ov_024::021f45c8` | `TargetHandlerCallForBackup` (116) |
+| `ov_024::021f4768` | `TargetHandlerWeirdDance` (117) |
+| `ov_024::021ed890` | `PickTargetEven` |
+| `ov_024::021ed8c0` | `PickTargetsByHitCode` |
+| `ov_024::021db358` | `HpShare` |
+| `ov_024::021df6ec` | `IsDazzled` |
+| `ov_024::021e57c0` | `SetGuardLevel` |
+| `0x020878b4` | `SetDefenceLevel` |
+| `0x020879a8` | `SetAgilityLevel` |
+| `0x02088854` | `SetDazzle` |
+| `0x02087860` / `0x02087954` | `CanMoveDefenceLevel` / `CanMoveAgilityLevel` |
+| `0x02088840` | `IsStanding` |
+
 ## `port:` markers
 
 Fully translated and cited: `NextRandom`, `NextRandomMax`, `NextRandomFloat01`,
 `NextRandomFloatBetween` (`battle/random.rs`), `RoundUp`, `CalculatePhysicalDamage`,
 `CalculateCritRate` (`battle/damage.rs`). Not marked: `ResolveAction`, `CalculateFinalDamage`,
-`GetAttackBaseDamage`, `InitMonsterBattleStatus` and the rolls (partial, status-free subsets).
+`GetAttackBaseDamage`, `InitMonsterBattleStatus` and the rolls (still partial: no tension, no
+riders, no damage handler).
 
 The battle's flow (`setup`, `round`, `ai`, `end`) marks nothing either: `ProcessCombatTurn`,
 the way rules, the targeting handlers, `TryPartyFlee` and the victory routine are translated for a
-battle without status, tension, guard, co-op action or grotto, so none is fully reimplemented.
+battle without tension, co-op action or grotto, and with the chapter 2 statuses only, so none is
+fully reimplemented.

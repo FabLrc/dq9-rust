@@ -82,9 +82,14 @@ pub struct Fighter {
     pub resistances: [u8; ELEMENTS],
     /// Metal body (monster data `+0x0A` bit 12): refused ([`Unsupported::MetalBody`]).
     pub metal_body: bool,
-    /// Guard level, 0 to 3 (`[status + 0x138] + 0x21`): refused above 0
-    /// ([`Unsupported::Guard`]).
+    /// Guard level, 0 to 3 (`[status + 0x138] + 0x21`): the party's Defend command sets 1
+    /// (`func_ov024_021e57c0`), the round's end clears it (`func_ov000_0215e6e8`). An action
+    /// carrying `+0x10` bit 4 is multiplied by `[1.0, 0.5, 0.1, 0.0][level]` in the final damage
+    /// (`0x020e88c0`). Refused above 3 ([`Unsupported::Guard`]).
     pub guard_level: u8,
+    /// Dazzled: status `+0x14` bit 6 (`func_02088854`). A dazzled striker throws a die of eight
+    /// on an action carrying `+0x10` bit 3 and misses on 0 to 4 (`func_ov000_02156648`).
+    pub dazzled: bool,
     /// Tension level, 0 to 4 (`[status + 0x24]`): refused above 0 ([`Unsupported::Tension`]).
     pub tension_level: u8,
     /// The element of the weapon a party member wields (0: none; looked up from the weapon's
@@ -124,6 +129,7 @@ impl Fighter {
             resistances: [100; ELEMENTS],
             metal_body: false,
             guard_level: 0,
+            dazzled: false,
             tension_level: 0,
             weapon_element: 0,
             accuracy_die_trait: false,
@@ -255,8 +261,20 @@ pub struct Action {
     pub rider: u8,
     /// `+0x18` bits 18–26: its damage handler. Refused above 0.
     pub damage_handler: u16,
-    /// `+0x18` bits 16–17 at 1: its accuracy scales. Refused (the roll is only modelled at 100).
+    /// `+0x18` bits 16–17 at 1: its accuracy scales. Modelled for a monster actor only: its
+    /// `+0x14` bits 0–6 chance, multiplied by the target's resistance to
+    /// [`Action::landing_element`] plus 0.5 and truncated. A party member's scaling accuracy
+    /// (a stat-scaled or drawn value) is still refused.
     pub scales_accuracy: bool,
+    /// `+0x14` bits 0–6: a monster's chance with the action, in a hundred (`func_ov000_02156648`).
+    pub accuracy_monster: u8,
+    /// `+0x10` bit 3: spoilt by a status on the attacker. While dazzled, a die of eight misses on
+    /// 0 to 4 (`func_ov000_02156648`, `0x02156a90`).
+    pub spoilt: bool,
+    /// `+0x10` bit 4: the defender's guard level halves it (the table `0x020e88c0`).
+    pub halved_by_defending: bool,
+    /// `+0x30`: the levels the action moves a stat by, held to two either way (kinds 3, 4 and 5).
+    pub stat_step: i16,
     /// `+0x10` bit 17: strikes several, weakening as it goes (1.0, 0.8, 0.6, …). The plain Attack
     /// carries it. Against one target the factor is the table's first, 1.0 (**[hypothesis]**);
     /// against several it is refused.
@@ -292,6 +310,10 @@ impl Action {
             rider: 0,
             damage_handler: 0,
             scales_accuracy: false,
+            accuracy_monster: 0,
+            spoilt: false,
+            halved_by_defending: false,
+            stat_step: 0,
             multi_target_falloff: false,
             weapon_element: false,
             trait_accuracy_die: false,
@@ -395,7 +417,7 @@ impl fmt::Display for Unsupported {
             Self::CriticalTrait => write!(f, "trait 0x11d's critical rate is not established"),
             Self::MetalBody => write!(f, "a metal body is not modelled"),
             Self::Tension => write!(f, "tension is not modelled"),
-            Self::Guard => write!(f, "a guard level is not modelled"),
+            Self::Guard => write!(f, "a guard level above 3 is not modelled"),
             Self::Range => write!(f, "inconsistent amount range"),
             Self::AiMode(m) => write!(f, "AI mode {m} is not modelled"),
             Self::WaySelector(s) => write!(f, "way selector {s} is not modelled"),
@@ -415,11 +437,15 @@ impl Error for Unsupported {}
 
 /// Actions the code singles out by number whose rules are not modelled: Kamikazee `0x1B`, Metal
 /// Slash `0x40`, Thunder Thrust `0x48`, Hatchet Man `0x70`, Metalicker `0x7E`, Double-Edged Slash
-/// `0xAF`, `0x79` (four fifths), Flee `0xE1` and `0x395`, the four that draw before any target
-/// (`0x1FF`, `0x200`, `0x20B`, `0x20C`) and `0x82`, `0x205` (metal bodies).
-const SPECIAL_ACTIONS: [u16; 15] = [
-    0x1B, 0x40, 0x48, 0x70, 0x7E, 0xAF, 0x79, 0xE1, 0x395, 0x1FF, 0x200, 0x20B, 0x20C, 0x82, 0x205,
+/// `0xAF`, `0x79` (four fifths), `0x395` (the monsters' second flight), the four that draw before
+/// any target (`0x1FF`, `0x200`, `0x20B`, `0x20C`) and `0x82`, `0x205` (metal bodies).
+const SPECIAL_ACTIONS: [u16; 14] = [
+    0x1B, 0x40, 0x48, 0x70, 0x7E, 0xAF, 0x79, 0x395, 0x1FF, 0x200, 0x20B, 0x20C, 0x82, 0x205,
 ];
+
+/// The kinds the resolver and the battle apply: 0 nothing (and the monsters' flight), 1 damage,
+/// 2 heal, 4 defence, 5 agility, 12 a call for backup, 19 dazzle, 57 damage to MP.
+const MODELLED_KINDS: [u8; 8] = [0, 1, 2, 4, 5, 12, 19, 57];
 
 /// Checks everything the resolver cannot answer, before any draw.
 pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result<(), Unsupported> {
@@ -429,7 +455,7 @@ pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result
     if SPECIAL_ACTIONS.contains(&action.number) {
         return Err(Unsupported::ActionNumber(action.number));
     }
-    if !matches!(action.kind, 1 | 2) {
+    if !MODELLED_KINDS.contains(&action.kind) {
         return Err(Unsupported::Kind(action.kind));
     }
     if action.damage_handler != 0 {
@@ -438,7 +464,7 @@ pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result
     if action.rider != 0 {
         return Err(Unsupported::Rider(action.rider));
     }
-    if action.scales_accuracy {
+    if action.scales_accuracy && actor.side != Side::Monster {
         return Err(Unsupported::AccuracyScaling);
     }
     if action.multi_target_falloff && targets.len() > 1 {
@@ -471,7 +497,7 @@ pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result
         if fighter.tension_level > 0 {
             return Err(Unsupported::Tension);
         }
-        if fighter.guard_level > 0 {
+        if fighter.guard_level > 3 {
             return Err(Unsupported::Guard);
         }
     }

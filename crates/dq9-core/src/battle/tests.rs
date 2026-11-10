@@ -490,8 +490,16 @@ fn unsupported_rules_are_refused_before_any_draw() {
     tense.tension_level = 2;
     assert_eq!(refuse(&tense, &blow(), &monster()), Unsupported::Tension);
     let mut guarding = monster();
-    guarding.guard_level = 1;
+    guarding.guard_level = 4;
     assert_eq!(refuse(&party(), &blow(), &guarding), Unsupported::Guard);
+    // A defended target halves the blow; the draws are the same.
+    let mut defended = monster();
+    defended.guard_level = 1;
+    let mut halving = blow();
+    halving.halved_by_defending = true;
+    let plain = resolve_action(&mut Random::new(7), &party(), &blow(), &[monster()], 0).unwrap();
+    let held = resolve_action(&mut Random::new(7), &party(), &halving, &[defended], 0).unwrap();
+    assert_eq!(held.targets[0].amount, plain.targets[0].amount / 2);
     let mut all_mp = flat(10);
     all_mp.mp_cost = 255;
     assert_eq!(
@@ -510,4 +518,89 @@ fn grades_map_to_the_rate_table() {
     assert_eq!(grade_rate(0), Some(0.0));
     assert_eq!(grade_rate(4), Some(25.0));
     assert_eq!(grade_rate(5), None);
+}
+
+#[test]
+fn a_dazzled_striker_throws_the_die_of_eight_and_misses_under_five() {
+    let mut action = flat(5);
+    action.spoilt = true;
+    let mut dazzled = party();
+    dazzled.dazzled = true;
+    let mut hits_clear = 0;
+    let mut hits_dazzled = 0;
+    for seed in 0..200u64 {
+        let clear =
+            resolve_action(&mut Random::new(seed), &party(), &action, &[monster()], 0).unwrap();
+        let dim =
+            resolve_action(&mut Random::new(seed), &dazzled, &action, &[monster()], 0).unwrap();
+        hits_clear += i32::from(clear.targets[0].landed);
+        hits_dazzled += i32::from(dim.targets[0].landed);
+        if clear.targets[0].landed {
+            // The die is drawn only while dazzled: one more draw then.
+            assert!(
+                dim.draws == clear.draws + 1 || !dim.targets[0].landed,
+                "seed {seed}: {} vs {}",
+                clear.draws,
+                dim.draws
+            );
+        }
+    }
+    assert_eq!(hits_clear, 200, "an unscaled action always lands");
+    assert!(
+        (40..=160).contains(&hits_dazzled),
+        "five faces of eight miss: {hits_dazzled} of 200"
+    );
+}
+
+#[test]
+fn a_scaling_accuracy_is_the_chance_times_the_resistance() {
+    let mut action = flat(5);
+    action.scales_accuracy = true;
+    action.accuracy_monster = 50;
+    action.landing_element = 2;
+    let mut target = party();
+    target.resistances[1] = 50;
+    // 50 × 0.5 + 0.5 = 25.5, truncated: it lands under 25.
+    let mut hits = 0;
+    for seed in 0..400u64 {
+        let outcome = resolve_action(
+            &mut Random::new(seed),
+            &monster(),
+            &action,
+            &[target.clone()],
+            0,
+        )
+        .unwrap();
+        hits += i32::from(outcome.targets[0].landed);
+    }
+    assert!((60..=160).contains(&hits), "{hits} of 400 at 25 in 100");
+}
+
+#[test]
+fn weird_dance_takes_mp_and_the_flight_action_removes_its_monster() {
+    let mut dance = flat(5);
+    dance.kind = 57;
+    let mut target = monster();
+    target.mp = 3;
+    let outcome =
+        resolve_action(&mut Random::new(1), &party(), &dance, &[target.clone()], 0).unwrap();
+    assert_eq!(
+        outcome.targets[0].mp_damage, 3,
+        "held under the MP there is"
+    );
+    assert_eq!(outcome.targets[0].hp_after, target.hp);
+
+    let mut flee = Action::new(0xE1, 0, Amount::Blow { multiplier: 1.0 });
+    flee.reach = Reach::Actor;
+    let actor = monster();
+    let outcome = resolve_action(
+        &mut Random::new(1),
+        &actor,
+        &flee,
+        std::slice::from_ref(&actor),
+        0,
+    )
+    .unwrap();
+    assert!(outcome.targets[0].fled, "the monster left");
+    assert_eq!(outcome.targets[0].hp_after, 0);
 }

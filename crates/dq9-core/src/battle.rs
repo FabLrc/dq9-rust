@@ -3,9 +3,11 @@
 //! [`Random`] values (the battle owns its own, the caller owns the world's).
 //!
 //! The kernel ([`resolve`]) resolves one action exactly as the game does, for the plain Attack
-//! of a party member or a monster and the damage and healing spells met in chapter 2, against any
-//! number of targets, with no status, no tension, no guard and no metal body. Everything else the
-//! original does inside `ResolveAction` is refused with [`Unsupported`] rather than guessed.
+//! of a party member or a monster, the damage and healing spells met in chapter 2 and the
+//! chapter 2 statuses (Buff, Accelerate, Dazzle, Weird Dance), a call for backup, a kind-0 action
+//! and the monsters' Flee `0xE1` — against any number of targets, with the guard level and the
+//! dazzle flag, but with no tension, no rider and no metal body. Everything else the original does
+//! inside `ResolveAction` is refused with [`Unsupported`] rather than guessed.
 //!
 //! On top of it (batch `j4-battle-flow`) [`Battle`] plays a whole battle headless: it is built
 //! from ROM records ([`setup`]), runs round after round ([`round`], [`ai`]) and ends with a
@@ -41,7 +43,7 @@ pub use monster::init_monster_hp;
 pub use random::{CRand, FloatDraw, Random};
 pub use resolve::{ActionOutcome, TargetOutcome, resolve_action};
 pub use round::{
-    Battle, BattleError, Command, Event, PartyMember, RoundReport, Surprise, Target, Who,
+    Battle, BattleError, Command, Event, PartyMember, RoundReport, Status, Surprise, Target, Who,
 };
 pub use setup::{ActionTables, BattleSetup, Monster, SetupError, Skill, Tables};
 
