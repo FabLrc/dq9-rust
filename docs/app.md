@@ -911,8 +911,15 @@ Approximated or absent:
   centered on the horizon; DS fog (offset, shift, table of 32 densities, color) on
   materials with bit 15 of `POLYGON_ATTR` and sprites; edge marking. The shininess
   table (`SetShininessTable`, bit 15 of `SPE_EMI`) is not ported.
-- **Not rendered**: antialiasing, shadow polygons (mode 3) and wireframe (alpha 0), G3D
-  billboards of models, fog alpha-only mode and `FOG_COLOR` alpha, DS precision
+- **Billboards of models** (G3D render commands `0x07` BB and `0x08` BBY: trees, bushes and
+  other flat scenery, `j4-billboards`, [`re/g3d.md`](re/g3d.md) § Billboards): turned toward the
+  render camera every frame on the CPU, one model copy per billboard placement, with a static
+  translucent sort key. 342 of 740 `.amdj` archives hold them (3,466 commands, 2,761 BBY);
+  `F01` none (how the field vegetation is drawn is not established). Before this, such quads kept
+  their authored orientation and vanished edge-on or behind. Checked by `--screenshot` only: the
+  interactive window runs the same per-frame code but was not driven by hand.
+- **Not rendered**: antialiasing, shadow polygons (mode 3) and wireframe (alpha 0), fog
+  alpha-only mode and `FOG_COLOR` alpha, DS precision
   (6-bit colors, W depth; fog depth is recomputed on 24 bits).
 - **NPCs, limits**: NPCs neither stop nor turn toward the hero while he talks
   to them (sprites follow the camera; model orientation has no API in
