@@ -1434,7 +1434,10 @@ impl App {
             if self.apply_events(events) {
                 continue;
             }
-            if field_due && let Some(contact) = self.step_roaming(stepped) {
+            if field_due
+                && !talking
+                && let Some(contact) = self.step_roaming(stepped)
+            {
                 self.begin_encounter(contact);
                 continue;
             }
@@ -1952,10 +1955,15 @@ impl App {
     /// Gives the field back after the battle: the same map, cast, doors, collision and party
     /// pose (`0x02017a94` restores the placements 844 recorded; nothing here moved them).
     fn restore_field(&mut self) {
-        self.battle = None;
         let Some(saved) = self.saved_field.take() else {
             return;
         };
+        // A standalone preview has no field to restore. Keep its stage and battle camera;
+        // clearing only the CPU scene would leave its GPU geometry under the field camera.
+        if saved.runtime.is_none() && saved.field.is_none() {
+            return;
+        }
+        self.battle = None;
         self.current = saved.current;
         self.runtime = saved.runtime;
         self.collision = saved.collision;

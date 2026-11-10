@@ -1945,6 +1945,43 @@ fn f01_spawns_a_visible_roamer_after_the_party_steps() {
     );
 }
 
+#[test]
+fn a_dialogue_pauses_roamers_until_it_closes() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    a_winning_party(&mut app);
+    app.set_roaming_enabled(true);
+    let (slot, first) = wait_for_roamer(&mut app, 2_000).expect("F01 spawns a roamer");
+    app.pilot_dir = None;
+    let before = app.roaming_roamers();
+    let generators = (app.world.crand.clone(), app.world.random.clone());
+    app.talk.show_event(b"A conversation.").unwrap();
+    app.run_steps(120);
+    assert!(app.talk.is_active());
+    assert_eq!(
+        app.roaming_roamers(),
+        before,
+        "no movement, spawn or contact while reading"
+    );
+    assert_eq!(
+        (app.world.crand.clone(), app.world.random.clone()),
+        generators
+    );
+    assert_eq!(app.roaming_contacts(), 0);
+    app.talk.close_event();
+    app.run_steps(2);
+    let (_, resumed) = app
+        .roaming_roamers()
+        .into_iter()
+        .find(|(index, _)| *index == slot)
+        .expect("the paused monster resumes in its slot");
+    assert_eq!(resumed.id, first.id);
+    assert!(
+        resumed.state_ms > first.state_ms,
+        "closing the dialogue resumes the field"
+    );
+}
+
 /// Contact -> the existing encounter -> a played battle -> the same field, the defeated
 /// roamer gone, the party paid once.
 #[test]
@@ -2117,6 +2154,7 @@ fn a_battle_preview_is_fought_once_and_not_restarted() {
     // The preview has no field behind it, as `set_rom` sets it up.
     app.save_field();
     let resolved = request.resolve(rom).unwrap();
+    let expected_stage = resolved.stage;
     app.battle_change = Some(BattleChange::Entering {
         ticks: BATTLE_ENTER_DONE - 1,
         request: resolved,
@@ -2134,7 +2172,11 @@ fn a_battle_preview_is_fought_once_and_not_restarted() {
     assert!(fought, "the preview must end");
     let last = app.last_fight().expect("the preview was played").clone();
     assert!(!app.battle_is_active());
-    assert!(app.battle().is_none() && app.fight.is_none());
+    assert_eq!(
+        app.battle().map(|scene| scene.stage()),
+        Some(expected_stage)
+    );
+    assert!(app.fight.is_none());
     let gold = app.party().gold;
     for _ in 0..2_000 {
         app.run_steps(1);
@@ -2146,6 +2188,11 @@ fn a_battle_preview_is_fought_once_and_not_restarted() {
         app.last_fight().map(|fight| fight.gold)
     );
     assert_eq!(app.last_fight().map(|fight| fight.gold), Some(last.gold));
+    assert_eq!(
+        app.battle().map(|scene| scene.stage()),
+        Some(expected_stage),
+        "the framed stage survives after the preview ends"
+    );
 }
 
 /// Esc cancels in a fight (the pad owns it); the field's Esc is not touched.
