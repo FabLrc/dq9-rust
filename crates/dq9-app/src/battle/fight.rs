@@ -506,7 +506,7 @@ impl Fight {
                     kind: *kind,
                     age: 0,
                 }),
-                Cue::Remove(..) | Cue::Summon(..) => {}
+                Cue::Remove(..) | Cue::Escape(..) | Cue::Summon { .. } | Cue::Act { .. } => {}
             }
         }
         self.cues.extend(beat.cues.iter().cloned());

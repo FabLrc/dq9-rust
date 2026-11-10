@@ -12,7 +12,6 @@ use dq9_core::scenario::Step;
 use super::{App, status};
 use crate::battle::data::Data;
 use crate::battle::fight::{Fight, Outcome, Pad, Setup, World};
-use crate::battle::narrate::Cue;
 use crate::battle::{self, BattleScene};
 
 /// Where a new game's party comes round after a wipe-out: Angel Falls' church (`GameState+
@@ -90,6 +89,7 @@ impl App {
     /// Builds the fight of `resolved` against the party: the tables from the ROM, the
     /// monsters' HP drawn on the world's generator unless the battle is a set one.
     pub(super) fn make_fight(&mut self, resolved: &battle::Resolved) -> Option<Box<Fight>> {
+        self.ensure_world();
         let rom = self.rom.as_deref()?;
         let data = match Data::load(rom) {
             Ok(data) => data,
@@ -102,13 +102,24 @@ impl App {
             self.party.apply_level_tables(&data.levels);
             self.party_ready = true;
         }
-        self.ensure_world();
         let setup = Setup {
             groups: resolved.monsters.clone(),
             set_battle: resolved.number.is_some(),
             surprise: resolved.surprise,
             names: self.member_names(),
         };
+        // The hero moves by the motion set of the weapon it carries (`0x02072c9c`): the
+        // party's, or bare-handed when it has none.
+        let weapon = self
+            .party
+            .members
+            .first()
+            .and_then(|member| member.equipment.weapon);
+        if let Some(scene) = self.battle.as_mut()
+            && let Err(e) = scene.set_hero_weapon(rom, weapon)
+        {
+            status(&format!("battle motion: hero weapon: {e:#}"));
+        }
         match Fight::new(data, &self.party, &setup, &mut self.world) {
             Ok(fight) => Some(Box::new(fight)),
             Err(e) => {
@@ -138,12 +149,21 @@ impl App {
     }
 
     /// One fixed step of the fight in play: the pad of the window, the scene effects, the
-    /// outcome once its last window has closed.
+    /// outcome once its last window has closed. While the scene presents the previous command
+    /// the window does not advance and the pad is ignored (`battle::advance_fight`).
     pub(super) fn drive_fight(&mut self) -> Option<Outcome> {
         let pad = std::mem::take(&mut self.battle_pad);
         let fight = self.fight.as_mut()?;
-        fight.step(pad, &mut self.world);
-        let cues = fight.take_cues();
+        let joined = match &mut self.battle {
+            Some(scene) => {
+                battle::advance_fight(fight, scene, &mut self.world, pad, self.rom.as_deref()).1
+            }
+            None => {
+                fight.step(pad, &mut self.world);
+                fight.take_cues();
+                false
+            }
+        };
         let outcome = if fight.is_done() {
             let outcome = fight.take_outcome();
             if let Some(outcome) = &outcome {
@@ -155,21 +175,9 @@ impl App {
         };
         if outcome.is_some() {
             self.fight = None;
-        }
-        let mut joined = false;
-        if let Some(scene) = &mut self.battle {
-            for cue in cues {
-                match cue {
-                    Cue::Summon(number) => {
-                        if let Some(rom) = self.rom.as_deref() {
-                            match scene.add_monster(rom, number) {
-                                Ok(()) => joined = true,
-                                Err(e) => status(&format!("battle: backup {number}: {e:#}")),
-                            }
-                        }
-                    }
-                    cue => apply_cue(scene, cue),
-                }
+            if let Some(scene) = &mut self.battle {
+                // The fight is over: nothing is left displaced or half-way through a motion.
+                scene.clear_gestures();
             }
         }
         if joined {
@@ -385,18 +393,6 @@ fn summary(number: Option<u16>, outcome: &Outcome, log: &[String]) -> FightSumma
     }
 }
 
-/// Plays one cue on the scene: the defeat fade. The models of the chapter 2 battles carry no
-/// attack, damage or death motion (only `stand`, `run`, `walk` and `appear`, probed): the
-/// damage numbers and the windows carry the feedback, the action scripts are not played.
-fn apply_cue(scene: &mut BattleScene, cue: Cue) {
-    match cue {
-        Cue::Remove(fighter) => {
-            scene.remove(fighter);
-        }
-        Cue::Summon(_) | Cue::Hp(..) | Cue::Mp(..) | Cue::Popup { .. } => {}
-    }
-}
-
 /// The key presses of the window while a fight is on, as the fight's pad.
 pub(super) fn pad_press(pad: &mut Pad, code: winit::keyboard::KeyCode) {
     use winit::keyboard::KeyCode;
@@ -484,23 +480,28 @@ pub(super) fn draw_ui(
 }
 
 /// Plays `fight` on `scene` with the confirm key held, from the opening until `phase` shows:
-/// `menu` (the first command menu), `damage` (a damage number), `levelup` (a level line),
-/// `victory` (the experience line) or `lost` (the wipe-out line). For the captures of
-/// `--battle-capture`.
+/// `menu` (the first command menu), `swing` (a blow landed and still shown), `damage` (a
+/// damage number), `levelup` (a level line), `victory` (the experience line) or `lost` (the
+/// wipe-out line). For the captures of `--battle-capture`; `rom` and `weapon` are the caller's
+/// party's, so the scene's hero plays its own motion set and a call for backup can add its
+/// model.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn run_to_phase(
     fight: &mut Fight,
     scene: &mut BattleScene,
     world: &mut World,
     phase: &str,
+    rom: &[u8],
+    weapon: Option<u16>,
 ) -> anyhow::Result<()> {
     use crate::battle::fight::lines_plain;
     use crate::battle::narrate::PopupKind;
     const LIMIT: u32 = 60_000;
     anyhow::ensure!(
-        ["menu", "damage", "levelup", "victory", "lost"].contains(&phase),
-        "unknown battle phase {phase:?} (menu, damage, levelup, victory, lost)"
+        ["menu", "swing", "damage", "levelup", "victory", "lost"].contains(&phase),
+        "unknown battle phase {phase:?} (menu, swing, damage, levelup, victory, lost)"
     );
+    scene.set_hero_weapon(rom, weapon)?;
     let held = Pad {
         confirm: true,
         ..Pad::default()
@@ -510,6 +511,8 @@ pub(crate) fn run_to_phase(
         let text = view.message.map(lines_plain).unwrap_or_default();
         let reached = match phase {
             "menu" => view.menu.is_some(),
+            // The blow landed and is still being shown: the actor is at its target.
+            "swing" => scene.presenting() && !scene.pending_hit(),
             "damage" => view
                 .popups
                 .iter()
@@ -526,10 +529,7 @@ pub(crate) fn run_to_phase(
             "the fight ended before the {phase} phase; log: {:?}",
             fight.log()
         );
-        fight.step(held, world);
-        for cue in fight.take_cues() {
-            apply_cue(scene, cue);
-        }
+        crate::battle::advance_fight(fight, scene, world, held, Some(rom));
         scene.step()?;
     }
     anyhow::bail!("the {phase} phase did not come")

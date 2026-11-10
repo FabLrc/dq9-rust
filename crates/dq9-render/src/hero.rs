@@ -91,6 +91,8 @@ pub(crate) struct HeroRig {
     custom: Option<Clip>,
     /// Joint motions of the packages an event added: name, file, speed.
     packages: Vec<(String, Vec<u8>, i32)>,
+    /// The motion last started, for the tests and the reports.
+    playing: Option<String>,
     gait: Gait,
     scale: [f32; 3],
     pub(crate) dirty: bool,
@@ -338,6 +340,7 @@ impl HeroRig {
             clips,
             custom: None,
             packages: Vec::new(),
+            playing: Some("stand".to_owned()),
             gait: Gait::Stand,
             scale: [width, height, width],
             dirty: true,
@@ -361,6 +364,14 @@ impl HeroRig {
             self.gait = gait;
             self.clips[gait.index()].frame = 0;
         }
+        self.playing = Some(
+            match gait {
+                Gait::Stand => "stand",
+                Gait::Walk => "walk",
+                Gait::Run => "run",
+            }
+            .to_owned(),
+        );
     }
 
     pub(crate) fn gait(&self) -> Gait {
@@ -412,7 +423,17 @@ impl HeroRig {
         let Some(mut clip) = clip else { return false };
         clip.once = once;
         self.custom = Some(clip);
+        self.playing = Some(name.to_owned());
         true
+    }
+
+    /// The motion playing and its frame, for the tests and the reports.
+    pub(crate) fn animation(&self) -> Option<(&str, i32)> {
+        let clip = self
+            .custom
+            .as_ref()
+            .unwrap_or(&self.clips[self.gait.index()]);
+        Some((self.playing.as_deref()?, clip.frame))
     }
 
     /// Times the scripted motion reached its end since it started (0 without one).

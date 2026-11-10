@@ -38,9 +38,11 @@ use nds_rom::Rom;
 
 use crate::lighting;
 use crate::load::{self, MapEntry};
+use motion::{End, Script, Scripts, Timeline};
 
 pub mod data;
 pub mod fight;
+pub mod motion;
 pub mod narrate;
 #[cfg(test)]
 mod tests;
@@ -235,6 +237,21 @@ pub struct BattleScene {
     heights: Vec<f32>,
     /// Row width of each fighter (`mon_data` radius ×4 for a monster, 1 for the hero).
     widths: Vec<f32>,
+    /// The length of each fighter's motions, from its model archives, aligned with
+    /// [`fighters`](Self::fighters).
+    spans: Vec<Vec<(String, u32)>>,
+    /// Each monster's action script (`<code>.bact`), aligned with `fighters`.
+    bacts: Vec<Option<Script>>,
+    /// The hero's, the fallback and the spell scripts.
+    scripts: Scripts,
+    /// The hero's motion packs as read (`mp0200b`, the `be` set, `mp0200bm`), for the spans
+    /// and a weapon's set later.
+    hero_packs: Vec<Vec<u8>>,
+    /// The weapon set the hero's `be` pack currently is (0 bare-handed; 1 the new game's
+    /// copper sword). `set_hero_weapon` is a no-op for the set already loaded.
+    hero_set: u8,
+    /// The action each fighter is playing, if any: a blow, a reaction, a death or a flight.
+    timelines: Vec<Option<Timeline>>,
     runtime: AnimatedScene,
 }
 
@@ -276,6 +293,9 @@ impl BattleScene {
         let mut actors = Vec::new();
         let mut heights = Vec::new();
         let mut widths = Vec::new();
+        let mut spans = Vec::new();
+        let mut bacts: Vec<Option<Script>> = Vec::new();
+        let mut timelines: Vec<Option<Timeline>> = Vec::new();
 
         let hero_slot = party_slots(1)[0];
         let position = grid_position(hero_slot) + Vec3::Y * FIGHTER_HEIGHT;
@@ -284,6 +304,45 @@ impl BattleScene {
         loaded.runtime.scene.instances[loaded.hero_instance].world =
             loaded.runtime.hero_world(position, heading);
         loaded.runtime.play_hero("stand", false);
+        // The hero's own battle packs: `mp0200b` (reactions: `damage`, `death`, `guard`,
+        // `escape`), `mp0200be` (the blows, bare-handed until the party's weapon is known) and
+        // `mp0200bm` (casting). The weapon chooses the `be` set (`0x02072c9c`).
+        let mut hero_archives = Vec::new();
+        for pack in ["mp0200b.chr", "mp0200be.chr", "mp0200bm.chr"] {
+            match motion::hero_pack(rom, pack) {
+                Ok(Some(bytes)) => {
+                    if let Err(e) = loaded.runtime.add_hero_package(&bytes) {
+                        crate::app::status(&format!("battle motion: hero {pack}: {e:#}"));
+                    }
+                    hero_archives.push(bytes);
+                }
+                Ok(None) => {
+                    crate::app::status(&format!("battle motion: the ROM has no {pack}"));
+                }
+                Err(e) => crate::app::status(&format!("battle motion: hero {pack}: {e:#}")),
+            }
+        }
+        // The new game's hero carries the copper sword: `mp0201`, swords (item 20004's set in
+        // `itemdt_w`). A fight of the application replaces it with the party's weapon
+        // (`set_hero_weapon`); a capture of a new-game battle keeps this one.
+        let default_pack = motion::attack_pack(motion::NEW_GAME_WEAPON_SET);
+        if let Ok(Some(bytes)) = motion::hero_pack(rom, &default_pack) {
+            if let Err(e) = loaded.runtime.add_hero_package(&bytes) {
+                crate::app::status(&format!("battle motion: hero {default_pack}: {e:#}"));
+            }
+            hero_archives.push(bytes);
+        }
+        crate::app::status(&format!(
+            "battle motion: hero set {} ({default_pack}), the new game's copper sword, until the \
+             party's weapon is set",
+            motion::NEW_GAME_WEAPON_SET
+        ));
+        let hero_spans = motion::motion_spans(
+            &hero_archives
+                .iter()
+                .map(Vec::as_slice)
+                .collect::<Vec<&[u8]>>(),
+        );
         fighters.push(PlacedFighter {
             fighter: Fighter::party(0),
             number: None,
@@ -295,6 +354,9 @@ impl BattleScene {
         actors.push(None);
         heights.push(1.5);
         widths.push(1.0);
+        spans.push(hero_spans);
+        bacts.push(None);
+        timelines.push(None);
 
         let flat = flatten(&resolved.monsters);
         if flat.len() > 8 {
@@ -310,11 +372,16 @@ impl BattleScene {
                 .find(number)
                 .with_context(|| format!("monster {number} has no mon_data record"))?;
             let code = String::from_utf8_lossy(record.code);
-            let chr = crate::event::scan::monster_archive_bytes(rom, &format!("enemy/{code}.mon"))
-                .with_context(|| format!("monster {number} ({code}) has no body in enemy.gp2"))?;
+            // The battle body's `.cchr` holds only `appear`, `attack0a`, `run` and `stand`: the
+            // blows, reactions and death are the `.cmot` beside it, and the action script the
+            // `.bact` (wiki *Monsters*, "Monster models").
+            let archive = motion::monster_members(rom, &code)
+                .with_context(|| format!("monster {number} ({code}) battle archive"))?;
+            let (chr, cmot, bact) = (&archive.body, &archive.motions, &archive.script);
+            let packages = cmot.iter().map(Vec::as_slice).collect::<Vec<&[u8]>>();
             let actor = loaded
                 .runtime
-                .add_actor(&chr, &[])
+                .add_actor(chr, &packages)
                 .with_context(|| format!("monster {number} ({code}): model"))?;
             let instance = loaded
                 .runtime
@@ -335,6 +402,7 @@ impl BattleScene {
                     crate::app::status(&format!("monster {number} ({code}): no idle motion"));
                 }
             }
+            let archives = [chr.as_slice(), cmot.as_deref().unwrap_or(&[])];
             fighters.push(PlacedFighter {
                 fighter: Fighter::monster(rank),
                 number: Some(number),
@@ -347,8 +415,29 @@ impl BattleScene {
             heights.push((f32::from(record.height) / 4096.0).max(0.5));
             // The row's width: the body's radius ×4 (`+0x0C`, 1024ths).
             widths.push((f32::from(record.radius) / 1024.0 * 4.0).max(0.5));
+            spans.push(motion::motion_spans(&archives));
+            bacts.push(
+                bact.as_deref()
+                    .and_then(|bytes| match Script::parse(bytes) {
+                        Ok(script) => Some(script),
+                        Err(e) => {
+                            crate::app::status(&format!(
+                                "battle motion: monster {number} ({code}) script: {e:#}"
+                            ));
+                            None
+                        }
+                    }),
+            );
+            timelines.push(None);
         }
 
+        let scripts = match Scripts::load(rom) {
+            Ok(scripts) => scripts,
+            Err(e) => {
+                crate::app::status(&format!("battle motion: action scripts: {e:#}"));
+                Scripts::default()
+            }
+        };
         let lighting = loaded.lighting.clone();
         let environment = lighting::environment(lighting.as_ref(), clock);
         let mut scene = Self {
@@ -365,6 +454,12 @@ impl BattleScene {
             actors,
             heights,
             widths,
+            spans,
+            bacts,
+            scripts,
+            hero_packs: hero_archives,
+            hero_set: motion::NEW_GAME_WEAPON_SET,
+            timelines,
             runtime: loaded.runtime,
         };
         scene.set_shot(Shot::Opening);
@@ -421,7 +516,38 @@ impl BattleScene {
     pub fn step(&mut self) -> Result<()> {
         self.runtime
             .step(&self.camera)
-            .context("advancing the battle animations")
+            .context("advancing the battle animations")?;
+        self.present();
+        Ok(())
+    }
+
+    /// Gives the hero the motion set of the weapon it carries (`itemdt_w`, `0x02072c9c`):
+    /// `None` is bare-handed (`mp0200`). The application calls it once the party is known;
+    /// the scene starts on the new game's copper sword.
+    pub fn set_hero_weapon(&mut self, rom: &[u8], weapon: Option<u16>) -> Result<()> {
+        let set = weapon
+            .and_then(|item| motion::weapon_set(rom, item))
+            .unwrap_or(0);
+        if set == self.hero_set {
+            return Ok(());
+        }
+        let pack = motion::attack_pack(set);
+        let Some(bytes) = motion::hero_pack(rom, &pack)? else {
+            crate::app::status(&format!("battle motion: the ROM has no {pack}"));
+            return Ok(());
+        };
+        self.runtime.add_hero_package(&bytes)?;
+        self.hero_packs.push(bytes);
+        self.hero_set = set;
+        crate::app::status(&format!("battle motion: hero set {set} ({pack})"));
+        self.spans[0] = motion::motion_spans(
+            &self
+                .hero_packs
+                .iter()
+                .map(Vec::as_slice)
+                .collect::<Vec<&[u8]>>(),
+        );
+        Ok(())
     }
 
     /// Plays `motion` on `fighter`: the hero's own motion name, or a name of the monster's
@@ -460,17 +586,24 @@ impl BattleScene {
             .find(number)
             .with_context(|| format!("monster {number} has no mon_data record"))?;
         let code = String::from_utf8_lossy(record.code);
-        let chr = crate::event::scan::monster_archive_bytes(rom, &format!("enemy/{code}.mon"))
-            .with_context(|| format!("monster {number} ({code}) has no body in enemy.gp2"))?;
+        let archive = motion::monster_members(rom, &code)
+            .with_context(|| format!("monster {number} ({code}) battle archive"))?;
+        let (chr, cmot, bact) = (&archive.body, &archive.motions, &archive.script);
+        let packages = cmot.iter().map(Vec::as_slice).collect::<Vec<&[u8]>>();
         let actor = self
             .runtime
-            .add_actor(&chr, &[])
+            .add_actor(chr, &packages)
             .with_context(|| format!("monster {number} ({code}): model"))?;
         let instance = self
             .runtime
             .actor_instance(actor)
             .with_context(|| format!("monster {number} ({code}): no polygons"))?;
-        self.runtime.play_actor(actor, "stand", false, 1.0);
+        // Those called for appear (`60`): `appear`, held on its last frame, then their idle
+        // when it is over is the scene's call, not the script's (a name the archive lacks is
+        // a no-op in the game).
+        if !self.runtime.play_actor(actor, "appear", true, 1.0) {
+            self.runtime.play_actor(actor, "stand", false, 1.0);
+        }
         let rank = self
             .fighters
             .iter()
@@ -489,18 +622,27 @@ impl BattleScene {
             .push((f32::from(record.height) / 4096.0).max(0.5));
         self.widths
             .push((f32::from(record.radius) / 1024.0 * 4.0).max(0.5));
+        let archives = [chr.as_slice(), cmot.as_deref().unwrap_or(&[])];
+        self.spans.push(motion::motion_spans(&archives));
+        self.bacts
+            .push(bact.as_deref().and_then(|bytes| Script::parse(bytes).ok()));
+        self.timelines.push(None);
         self.place();
         self.set_shot(self.shot);
         Ok(())
     }
 
     /// The defeat fade: the fighter is hidden and `alive` goes false. Its slot stays (the
-    /// game keeps it for the death effect and the results).
+    /// game keeps it for the death effect and the results). Called once: a model that is
+    /// already gone is not hidden again.
     #[allow(dead_code)]
     pub fn remove(&mut self, fighter: Fighter) -> bool {
         let Some(index) = self.index_of(fighter) else {
             return false;
         };
+        if !self.fighters[index].alive {
+            return false;
+        }
         if let Some(instance) = self.instances.get(index)
             && let Some(entry) = self.runtime.scene.instances.get_mut(*instance)
         {
@@ -508,6 +650,409 @@ impl BattleScene {
         }
         self.fighters[index].alive = false;
         true
+    }
+
+    /// Plays `action` of `actor` on `targets`: the motion the actor's script names, its lunge
+    /// and the moment the blow lands, at which the `damaged` targets play their `damage`
+    /// motion. A fighter that has fallen, or is falling, plays nothing.
+    ///
+    /// The script is the actor's own (a monster's `.bact`, the hero's `mp0200.bact`), else the
+    /// action's own file (`sp%03d.bact`), else `default.bact`; nothing at all when none has a
+    /// motion, as the game skips a script it cannot load. `gap` is the scripts' edge-to-edge
+    /// distance: the middles less the two bodies' half-widths.
+    pub fn act(&mut self, actor: Fighter, action: u16, targets: &[Fighter], damaged: &[Fighter]) {
+        let Some(index) = self.index_of(actor) else {
+            return;
+        };
+        if !self.fighters[index].alive {
+            return;
+        }
+        if self.timelines[index]
+            .as_ref()
+            .is_some_and(|timeline| timeline.end == End::Hide)
+        {
+            // Falling: its death is playing; no later action may animate it.
+            return;
+        }
+        let first = targets
+            .iter()
+            .chain(damaged)
+            .find_map(|target| self.index_of(*target));
+        let (target, radius, gap) = match first {
+            Some(target) => {
+                let width = self.widths[index] / 4.0;
+                let reach = self.widths[target] / 4.0;
+                let distance = (self.fighters[target].position - self.fighters[index].position)
+                    .xz()
+                    .length();
+                (
+                    self.fighters[target].position,
+                    reach,
+                    (distance - width - reach).max(0.0),
+                )
+            }
+            None => (self.fighters[index].position, 0.0, 0.0),
+        };
+        let blow = match self.actors[index] {
+            None => self
+                .scripts
+                .hero(action, gap)
+                .or_else(|| self.scripts.special(action))
+                .or_else(|| self.scripts.fallback(action, gap)),
+            Some(_) => {
+                let own = self.bacts[index]
+                    .as_ref()
+                    .and_then(|script| script.section(action))
+                    .and_then(|ops| motion::plan(ops, gap));
+                own.or_else(|| self.scripts.special(action))
+                    .or_else(|| self.scripts.fallback(action, gap))
+            }
+        };
+        let Some(blow) = blow else {
+            crate::app::status(&format!(
+                "battle motion: action {action} has no motion for {:?}",
+                self.fighters[index].fighter
+            ));
+            return;
+        };
+        // The script's `magic` falls back to `magic1`, then `magic_in`, when the model lacks
+        // it (`3`'s player).
+        let mut blow = blow;
+        if motion::span_of(&self.spans[index], &blow.motion).is_none() && blow.motion == "magic" {
+            for fallback in ["magic1", "magic_in"] {
+                if motion::span_of(&self.spans[index], fallback).is_some() {
+                    blow.motion = fallback.to_owned();
+                    break;
+                }
+            }
+        }
+        let ticks = match motion::span_of(&self.spans[index], &blow.motion) {
+            Some(ticks) => ticks,
+            None => {
+                crate::app::status(&format!(
+                    "battle motion: {:?} has no motion {:?}",
+                    self.fighters[index].fighter, blow.motion
+                ));
+                motion::FALLBACK_MOTION_TICKS
+            }
+        };
+        // The previous gesture of this fighter ends first: settling it puts the fighter back
+        // on its place and plays its idle, which must not replace the motion started below.
+        if let Some(old) = self.timelines[index].take() {
+            self.settle(index, &old);
+        }
+        let played = match self.actors[index] {
+            None => self.runtime.play_hero(&blow.motion, true),
+            Some(actor) => self.runtime.play_actor(actor, &blow.motion, true, 1.0),
+        };
+        if !played && self.actors[index].is_some() {
+            crate::app::status(&format!(
+                "battle motion: {:?} cannot play {:?}",
+                self.fighters[index].fighter, blow.motion
+            ));
+        }
+        let heading = self.fighters[index].heading;
+        let mut timeline = Timeline::blow(
+            &blow,
+            ticks,
+            self.fighters[index].position,
+            heading,
+            self.widths[index] / 4.0,
+            target,
+            radius,
+        );
+        timeline.damaged = damaged
+            .iter()
+            .filter_map(|target| self.index_of(*target))
+            .filter(|&target| self.fighters[target].alive)
+            .collect();
+        let playing = self
+            .animation(self.fighters[index].fighter)
+            .map(|(name, _)| name.to_owned());
+        crate::app::status(&format!(
+            "battle motion: {:?} {:?} (playing {playing:?}), {ticks} ticks, hit {}%, lunge {}, \
+             gap {gap:.2}",
+            self.fighters[index].fighter,
+            timeline.motion,
+            blow.hit * 100.0,
+            timeline.lunge.is_some(),
+        ));
+        self.timelines[index] = Some(timeline);
+    }
+
+    /// The flight of `fighter`: the `escape` motion, then hidden. `47 7 0 500` is the script's
+    /// alpha fade, which the scene shows as the model going away once its motion is over.
+    pub fn flee(&mut self, fighter: Fighter) {
+        let Some(index) = self.index_of(fighter) else {
+            return;
+        };
+        if !self.fighters[index].alive {
+            return;
+        }
+        if self.timelines[index]
+            .as_ref()
+            .is_some_and(|timeline| timeline.end == End::Hide)
+        {
+            return;
+        }
+        if let Some(old) = self.timelines[index].take() {
+            self.settle(index, &old);
+        }
+        let Some(ticks) = motion::span_of(&self.spans[index], "escape") else {
+            self.remove(fighter);
+            return;
+        };
+        match self.actors[index] {
+            None => {
+                self.runtime.play_hero("escape", true);
+            }
+            Some(actor) => {
+                self.runtime.play_actor(actor, "escape", true, 1.0);
+            }
+        }
+        let heading = self.fighters[index].heading;
+        self.timelines[index] = Some(Timeline::reaction(
+            "escape".to_owned(),
+            End::Hide,
+            ticks,
+            self.fighters[index].position,
+            heading,
+        ));
+    }
+
+    /// The defeat fade of `fighter`: the `death` motion, then hidden once. A model without a
+    /// death motion goes at once, as the game's own skip does.
+    pub fn kill(&mut self, fighter: Fighter) {
+        let Some(index) = self.index_of(fighter) else {
+            return;
+        };
+        if !self.fighters[index].alive {
+            return;
+        }
+        if self.timelines[index]
+            .as_ref()
+            .is_some_and(|timeline| timeline.end == End::Hide)
+        {
+            return;
+        }
+        if let Some(old) = self.timelines[index].take() {
+            self.settle(index, &old);
+        }
+        let Some(ticks) = motion::span_of(&self.spans[index], "death") else {
+            self.remove(fighter);
+            return;
+        };
+        match self.actors[index] {
+            None => {
+                self.runtime.play_hero("death", true);
+            }
+            Some(actor) => {
+                self.runtime.play_actor(actor, "death", true, 1.0);
+            }
+        }
+        let heading = self.fighters[index].heading;
+        self.timelines[index] = Some(Timeline::reaction(
+            "death".to_owned(),
+            End::Hide,
+            ticks,
+            self.fighters[index].position,
+            heading,
+        ));
+    }
+
+    /// A monster `caller` called `number` for backup: the caller's `call` motion, the monster
+    /// added to the scene playing `appear` (the default script's `347`/`242`).
+    pub fn summon(&mut self, rom: &[u8], caller: Fighter, number: u16) -> Result<()> {
+        self.add_monster(rom, number)?;
+        let Some(index) = self.index_of(caller) else {
+            return Ok(());
+        };
+        if let Some(old) = self.timelines[index].take() {
+            self.settle(index, &old);
+        }
+        let Some(ticks) = motion::span_of(&self.spans[index], "call") else {
+            return Ok(());
+        };
+        if let Some(actor) = self.actors[index] {
+            self.runtime.play_actor(actor, "call", true, 1.0);
+        }
+        let heading = self.fighters[index].heading;
+        self.timelines[index] = Some(Timeline::reaction(
+            "call".to_owned(),
+            End::Idle,
+            ticks,
+            self.fighters[index].position,
+            heading,
+        ));
+        Ok(())
+    }
+
+    /// Where `fighter` is drawn now: its blow's lunge, or its place. The native report and the
+    /// tests read it; nothing in the window does.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn drawn_position(&self, fighter: Fighter) -> Option<Vec3> {
+        let index = self.index_of(fighter)?;
+        if !self.fighters[index].alive {
+            return None;
+        }
+        match &self.timelines[index] {
+            Some(timeline) if timeline.end != End::Hide => Some(timeline.position()),
+            _ => Some(self.fighters[index].position),
+        }
+    }
+
+    /// The motion `fighter` is playing and how far, for the report and the tests.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn gesture(&self, fighter: Fighter) -> Option<(&str, u32)> {
+        let index = self.index_of(fighter)?;
+        let timeline = self.timelines[index].as_ref()?;
+        Some((timeline.motion.as_str(), timeline.age))
+    }
+
+    /// The motion `fighter`'s model is actually playing, and its frame: what the renderer
+    /// holds, which a timeline alone does not prove (a settled idle replaces a clip).
+    pub fn animation(&self, fighter: Fighter) -> Option<(&str, i32)> {
+        let index = self.index_of(fighter)?;
+        match self.actors[index] {
+            None => self.runtime.hero_animation(),
+            Some(actor) => self.runtime.actor_animation(actor),
+        }
+    }
+
+    /// Whether `fighter` is playing its death or its flight (it is hidden when it ends).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn falling(&self, fighter: Fighter) -> bool {
+        self.index_of(fighter)
+            .and_then(|index| self.timelines[index].as_ref())
+            .is_some_and(|timeline| timeline.end == End::Hide)
+    }
+
+    /// Whether the scene is still presenting something: a blow before its landing, a
+    /// reaction, a death or a flight. The windows wait for it, as the game's reaction queue
+    /// does (`67`: no target dying, no effect playing).
+    pub fn presenting(&self) -> bool {
+        self.timelines.iter().any(Option::is_some)
+    }
+
+    /// Whether a blow is still on its way to its landing point.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn pending_hit(&self) -> bool {
+        self.timelines
+            .iter()
+            .flatten()
+            .any(|timeline| !timeline.reacted && timeline.hit != u32::MAX)
+    }
+
+    /// Ends every presentation at once: every fighter back at its place or hidden, nothing
+    /// left playing. The end of a fight and the return to the field.
+    pub fn clear_gestures(&mut self) {
+        for index in 0..self.timelines.len() {
+            if let Some(timeline) = self.timelines[index].take() {
+                self.settle(index, &timeline);
+            }
+        }
+    }
+
+    /// One step of the presentation: the motion clock, the blow's lunge and hit, the end of a
+    /// reaction, a death or a flight.
+    fn present(&mut self) {
+        for index in 0..self.timelines.len() {
+            let Some(mut timeline) = self.timelines[index].take() else {
+                continue;
+            };
+            let (hit, done) = timeline.advance();
+            if hit {
+                for &target in &timeline.damaged {
+                    self.react(target);
+                }
+            }
+            if done {
+                self.settle(index, &timeline);
+            } else {
+                if timeline.end == End::Restore {
+                    let (position, face) = (timeline.position(), timeline.face);
+                    self.place_world(index, position, face);
+                }
+                self.timelines[index] = Some(timeline);
+            }
+        }
+    }
+
+    /// A `damage` reaction of `index`, unless it is already playing something of its own.
+    fn react(&mut self, index: usize) {
+        if !self.fighters[index].alive || self.timelines[index].is_some() {
+            return;
+        }
+        let Some(ticks) = motion::span_of(&self.spans[index], "damage") else {
+            return;
+        };
+        match self.actors[index] {
+            None => {
+                self.runtime.play_hero("damage", true);
+            }
+            Some(actor) => {
+                self.runtime.play_actor(actor, "damage", true, 1.0);
+            }
+        }
+        let heading = self.fighters[index].heading;
+        self.timelines[index] = Some(Timeline::reaction(
+            "damage".to_owned(),
+            End::Idle,
+            ticks,
+            self.fighters[index].position,
+            heading,
+        ));
+    }
+
+    /// What a finished timeline leaves: the fighter at its place and idle, or hidden.
+    fn settle(&mut self, index: usize, timeline: &Timeline) {
+        match timeline.end {
+            End::Hide => {
+                let fighter = self.fighters[index].fighter;
+                if self.remove(fighter) {
+                    crate::app::status(&format!(
+                        "battle motion: {fighter:?} {:?} ended, hidden",
+                        timeline.motion
+                    ));
+                }
+            }
+            End::Restore | End::Idle => {
+                if !self.fighters[index].alive {
+                    return;
+                }
+                let (position, heading) =
+                    (self.fighters[index].position, self.fighters[index].heading);
+                self.place_world(index, position, heading);
+                match self.actors[index] {
+                    None => {
+                        self.runtime.play_hero("stand", false);
+                    }
+                    Some(actor) => {
+                        self.runtime.play_actor(actor, "stand", false, 1.0);
+                    }
+                }
+                if timeline.end == End::Restore {
+                    crate::app::status(&format!(
+                        "battle motion: {:?} back at ({:.3}, {:.3})",
+                        self.fighters[index].fighter, position.x, position.z
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Writes a fighter's drawn place (`hero_world`, `monster_world`).
+    fn place_world(&mut self, index: usize, position: Vec3, heading: f32) {
+        let Some(instance) = self.instances.get(index).copied() else {
+            return;
+        };
+        let world = match self.actors[index] {
+            None => self.runtime.hero_world(position, heading),
+            Some(_) => monster_world(position, heading),
+        };
+        if let Some(entry) = self.runtime.scene.instances.get_mut(instance) {
+            entry.world = world;
+        }
     }
 
     /// Frames `shot` and clamps the eye (`ov_000::0216d600`, `ov_000::0216f2b8`).
@@ -631,6 +1176,56 @@ impl BattleScene {
             (1.0 - ndc.y) * 0.5 * 192.0,
         ))
     }
+}
+
+/// One 60 Hz step of a fight on its scene: the window (the pad and its cues), unless the scene
+/// is still presenting the previous command. While a blow has not landed, a reaction, a death
+/// or a flight is playing, the windows do not advance and `pad` is dropped, as the game ignores
+/// input during an action. The generator and the round are untouched: only the narrative's
+/// clock waits. Returns `(advanced, joined)`, `joined` when a call for backup added a model.
+pub fn advance_fight(
+    fight: &mut fight::Fight,
+    scene: &mut BattleScene,
+    world: &mut fight::World,
+    pad: fight::Pad,
+    rom: Option<&[u8]>,
+) -> (bool, bool) {
+    if scene.presenting() {
+        return (false, false);
+    }
+    fight.step(pad, world);
+    let mut joined = false;
+    for cue in fight.take_cues() {
+        joined |= apply_cue(scene, cue, rom);
+    }
+    (true, joined)
+}
+
+/// Plays one cue on the scene: the action's motion and lunge, the target's reaction, the
+/// death fade and a flight, and the model a call for backup adds. Returns whether the scene
+/// gained a model (its renderer then has to be built again).
+pub fn apply_cue(scene: &mut BattleScene, cue: narrate::Cue, rom: Option<&[u8]>) -> bool {
+    match cue {
+        narrate::Cue::Remove(fighter) => scene.kill(fighter),
+        narrate::Cue::Escape(fighter) => scene.flee(fighter),
+        narrate::Cue::Act {
+            actor,
+            action,
+            targets,
+            damaged,
+        } => scene.act(actor, action, &targets, &damaged),
+        narrate::Cue::Summon { caller, number } => match rom {
+            Some(rom) => match scene.summon(rom, caller, number) {
+                Ok(()) => return true,
+                Err(e) => crate::app::status(&format!("battle: backup {number}: {e:#}")),
+            },
+            None => crate::app::status(&format!(
+                "battle: backup {number} needs the ROM (this caller has none)"
+            )),
+        },
+        narrate::Cue::Hp(..) | narrate::Cue::Mp(..) | narrate::Cue::Popup { .. } => {}
+    }
+    false
 }
 
 /// Keeps the eye where `ov_000::0216f2b8` does: at most [`EYE_REACH`] from the target in the

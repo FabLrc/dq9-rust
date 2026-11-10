@@ -254,3 +254,139 @@ all named, every range present and used; 210 encounter maps in `maplist9.bin`, 2
 company words with least ≤ most; 438 field monsters equal to the battle data; 1,423 equipment
 records with the bonus and resistance counts; 65 + 108 spell records. The test prints the
 chapter 2 table; its output is in `build/evidence/j4-battle-data/`.
+
+## Action scripts and battle motions
+
+Implementation: `crates/dq9-app/src/battle/motion.rs`; the scene plays the plans in
+`BattleScene::act`/`flee`/`kill` (`crates/dq9-app/src/battle.rs`). Sources: the wiki
+*Battle-Action-Scripts*, *Motion-Tables*, *Monsters* and *Weapon-Positions*; re-read on the
+European ROM.
+
+### Where the files are
+
+| file | what |
+|---|---|
+| `data/pack_lv5/enemy.gp2/<code>.mon` | a NARC of three members: `<code>.cchr` (LZ11), `<code>.cmot` (LZ11), `<code>.bact` (plain) |
+| `<code>.cchr` | the model and its first motions: `appear`, `attack0a`, `run`, `stand` |
+| `<code>.cmot` | **the rest**: `attack1a`, `call`, `damage`, `death`, `escape`, `sake` |
+| `<code>.bact` | the monster's action script |
+| `data/pack_lv5/chara_mp.gp2/mp0200b.chr/mp0200.bact` | the hero's, whatever weapon it carries |
+| `data/bin/actdef.nsarc/default.bact` | Defend (3), Flee (225/917), a call for help (347/242), a spell's fallback (504/914) |
+| `data/skill/act{spl,skl,etc}.nsarc/sp%03d.bact` | spells, skills and the rest by action number |
+| `data/prm/itemdt_w.gp2/itemdt_w_en.nat` | a weapon's motion set: record `+0x10` bits 12–19 (1 swords, 3 hammers, 4 knives, 5 wands, 6 spears, 7 axes, 8 boomerangs, 9 bows, 10 whips, 11 staves, 12 claws, 13 fans) |
+| `data/pack_lv5/chara_mp.gp2/mp02%02d%02dbe.chr` | the hero's blow pack: `attack1a` 1..19 and `attack1b` 20..36 at speed 0.25 (`mp0200` bare-handed, `mp0201` with the copper sword) |
+
+The **field** bodies `<code>_f.mon` have no `.cmot`: a field model carries only `appear`,
+`attack0a`, `run` and `stand` (**the roaming batch must not reuse them in battle**). The
+battle body alone has no `attack1a`, `damage` or `death` either; those come from the `.cmot`.
+
+### A `.bact`
+
+A [record table](table.md) the game runs once (`func_ov000_0216d1c4`); each record's tag is
+an opcode. `1 k…` opens a section keyed by every value it carries (a key of 1 brings 2 and
+219), `16` opens one keyed {1, 2, 219}, and `2`/`17` build nothing. Read on the slime's,
+the Hexagoon's, the hero's and `default.bact`:
+
+| tag | what the presentation reads |
+|---|---|
+| 3 | `who "name"`: a motion on the one acting (`7`); `25` is the camera's |
+| 5 | `from to gap`: the lunge, fractions of the motion in thousandths, a gap edge to edge |
+| 8 | `ms`: a wait (not played) |
+| 9/10 | a skip: `9 id type v` jumps to `10 id` when type 0 (always) or 1–4 (gap `< > ≤ ≥`) holds |
+| 11 | the end |
+| 26 | `who point`: a point of a motion (thousandths, or a float); to the end when absent |
+| 47 | `who alpha ms`: a fade; the flight's |
+| 61 | the reaction block (the blow lands before it) |
+
+Measured plans (the values the implementation uses; `26` after the lunge is the landing):
+
+| script | motion | lunge | lands |
+|---|---|---|---|
+| hero `mp0200.bact` §1 | `attack1a` | 6% → 33%, gap 0.25 | 61% |
+| slime `z000a.bact` §1 | `attack1a` | 12% → 40.7%, gap 0.3 | 58% |
+| Hexagoon `b003a.bact` §1 | `attack1a` | 11% → 35%, gap 0.5 | 55% |
+| slime/Hexagoon near branch | `attack1b`/`attack0a` | none | 50% |
+| spells (e.g. `sp030`, `sp041`, `sp045`) | `magic` | none | the motion's end (`26 7`) |
+| `default.bact` | `guard` (3), `escape` (225), `call` + `appear` (347/242) | none | — |
+
+The branch is chosen from the gap: 9.0 for the grid's middle rows, so all three attacks above
+take the far blow. The game's `79` (formation), its camera commands and its effects are not
+modelled; the scene keeps the opening shot.
+
+**Dispatch, checked on the actions used by the chapter 2 companies.** A monster's own file is
+read first (the wiki's step 1), then `sp%03d.bact`, then `default.bact`. Weird Dance is action
+243, kind 57, selector `+0x18` bits 12–15 = 1 (a party actor would use `actskl`; a monster
+actor uses `actetc`), and **no `sp243.bact` exists** in `actspl` (84 files), `actskl` (160) or
+`actetc` (67), nor a 243 section in `default.bact`; the monster's own archive does —
+`z017a.bact` (the monster's code at number 43) carries a section keyed 243 playing `skill1`.
+The scene therefore plays `skill1` for Weird Dance, not a log-skip.
+
+### What the scene shows
+
+- A blow: the motion from its first frame, once, at speed 1; the lunge is linear over the
+  motion's `from`–`to`; the struck fighters play `damage` at the landing point. A fighter
+  whose script has no motion, or whose archive lacks the named motion, is skipped and logged
+  (`battle motion: …`), never posed by a stand-in.
+- Death: `death`, then hidden once (`alive` false; a second `remove` does nothing). A fighter
+  that is falling cannot start another action.
+- Flight: `escape`, then hidden; a model without it goes at once.
+- A call for backup: the caller plays `call`, the joined monster is added playing `appear`,
+  and the joined fighter is the next monster slot, so later cues still name the right model.
+- The next action of the same fighter ends its previous gesture first (back to its grid place,
+  idle) and then starts the new motion: a settle's `stand` can never replace the new blow
+  (`battle/tests.rs`, "a repeated command keeps the new motion playing", which asserts the
+  renderer's own clip name and frame, not the timeline). A cancelled or rapidly confirmed
+  command leaves nobody displaced. The original puts everyone back at the next action's start;
+  restoring at the end of each motion is the same place (**[hypothesis]** for the moment).
+- **The windows wait for the scene.** A window's step does not advance while the scene is
+  still presenting the previous command — a blow before its landing, a reaction, a death or a
+  flight (`BattleScene::presenting`, `crates/dq9-app/src/battle.rs::advance_fight`). The pad is
+  dropped during that time, as the game ignores input during an action, and the generator and
+  the round are untouched: only the narrative clock waits. This replaces the earlier window
+  cadence that could show a damage number, a death or the next actor before the blow landed
+  (the game's reaction queue, `67`, waits for the same). `HOLD` (40 ticks) is still the
+  **[hypothesis]** grouping of lines into windows, not a bound on a motion.
+- The hit is applied at the script's percentage of the motion (hero 61%, slime 58%, Hexagoon
+  55%), with the motion's own length. `--battle-capture swing` stops on the frame the blow has
+  landed and is still being shown; `damage` stops later, at the number's window. The capture
+  caller (`native.rs`) passes its ROM and party weapon into `run_to_phase`, so the captured
+  scene takes the hero's real motion set and a call for backup adds its model there too
+  (tested: "a capture run adds a called monster").
+
+Motion lengths come from the `.bcfg` tables (`0x66`: frames and speed, ×4096): a motion's
+ticks are `(end − start) / speed`. The ROM's `attack1a` is therefore 72 ticks (1.2 s at
+60 Hz), matching the wiki's measurement.
+
+### Evidence
+
+`build/evidence/j4-battle-motions/` (local, sha256 prefixes):
+
+- **During a blow** — `battle26-swing.png` (`780cc8be2a0a`: the hero at the left slime
+  with "Hero attacks.", the frame the blow has landed and the `damage` reaction starts) and
+  `hexagoon-swing.png` (`1d5f145219cd`: the Hexagoon on the hero, "The Hexagoon attacks.").
+- **Before and after** — `battle26-before.png` (`c7ed26e23bcb`, byte-identical to
+  `j4-battle-scene/battle26.png`) and `battle26-after.png` (`aeba2ddf7956`: the hero back at
+  (0, 4.5), the three monsters gone, "Hero receives some experience!"); `hexagoon-before.png`
+  (`dd025965b166`, likewise the older capture) and `hexagoon-after.png` (`52fa24d4e7db`:
+  "Hero is wiped out!", HP 0/20).
+- **After the landing** — `battle26-damage.png` (`85b1eef75e92`) and `hexagoon-damage.png`
+  (`4ea1f63d4392`): the damage number's window, which the gated windows show only once the
+  motion is over.
+- `scripts.log` (`a53fe431cbc0`): every `battle motion:` line of those runs — the motion
+  actually playing (the renderer's clip, e.g. `playing Some("attack1a")`), its ticks, hit
+  percentage, lunge and gap; the hero's set; the deaths and flights "ended, hidden"; the blows
+  "back at" their grid places.
+- `smoke.log` (`51d8c0845cd6`): `--new-game --fight --seed 7 --headless --auto --pilot
+  --headless-steps 12000` (bounded so the pilot stops cleanly), battle 26 won in 4 rounds,
+  2 experience, 4 gold, no drop — the same outcome as before this batch. The unbounded pilot
+  wanders after the prologue and dies at its step cap in this environment; the bounded run
+  makes the battle the last thing logged.
+- `parity.log` (`d8c1aa92f901`): `scripts/parity.ps1`, 2 of 2 references.
+
+Tests: `crates/dq9-app/src/battle/tests.rs` (the body/`.cmot` split, the scripts' plans,
+Weird Dance 243 as `z017a`'s `skill1`, the equipped-versus-bare-handed posed vertices, the
+lunge/hit/return, a repeated command keeping the new clip and its frame, the windows waiting
+for hits/deaths/flights with the engine's outcome unchanged, the `swing` capture frame and
+its weapon argument, a capture run adding a called monster, death and flight once, a called
+monster that appears and reacts) and `battle/motion.rs` (the skip interpreter and the
+timeline).

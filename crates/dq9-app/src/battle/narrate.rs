@@ -41,10 +41,21 @@ const DEFEND_LINE: u16 = 10;
 /// A scene effect that goes with a window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cue {
-    /// The defeat fade.
+    /// The defeat fade: the `death` motion, then hidden once.
     Remove(Fighter),
-    /// A monster of this number joined the battle (its model is added to the scene).
-    Summon(u16),
+    /// A flight: the `escape` motion, then hidden.
+    Escape(Fighter),
+    /// A monster of this number joined the battle (its model is added to the scene,
+    /// playing `appear`), and its caller plays `call`.
+    Summon { caller: Fighter, number: u16 },
+    /// The action's presentation: the actor plays its script's motion (the blow and its
+    /// lunge), and the `damaged` targets play their `damage` motion when it lands.
+    Act {
+        actor: Fighter,
+        action: u16,
+        targets: Vec<Fighter>,
+        damaged: Vec<Fighter>,
+    },
     /// The party member's HP the status window shows from now on.
     Hp(usize, i32),
     /// The party member's MP the status window shows from now on.
@@ -268,24 +279,37 @@ impl<'a> Narrator<'a> {
                 Event::Flee { success, .. } => {
                     let hero = Some(Who::Party(0));
                     if *success {
-                        out.extend(
-                            self.beat(self.say(File::Actmsg, 45, hero, hero, &[]), HOLD_FLEE),
-                        );
+                        let beat =
+                            self.beat(self.say(File::Actmsg, 45, hero, hero, &[]), HOLD_FLEE);
+                        if let Some(mut beat) = beat {
+                            beat.cues.push(Cue::Escape(fighter_of(Who::Party(0))));
+                            out.push(beat);
+                        }
                     } else {
                         out.extend(self.beat(self.say(File::StrBres, 24, hero, hero, &[]), HOLD));
                     }
                 }
                 Event::Defended(who) => {
-                    // Action 3 says its opening line (`actmsg` 10, "defends").
+                    // Action 3 says its opening line (`actmsg` 10, "defends") and the script
+                    // is `default.bact`'s `guard`.
                     let line = self
                         .data
                         .lines
                         .get(&DEFEND_ACTION)
                         .map_or(DEFEND_LINE, |l| l.opening[0]);
-                    out.extend(self.beat(
+                    let beat = self.beat(
                         self.say(File::Actmsg, line, Some(*who), Some(*who), &[]),
                         HOLD,
-                    ));
+                    );
+                    if let Some(mut beat) = beat {
+                        beat.cues.push(Cue::Act {
+                            actor: fighter_of(*who),
+                            action: DEFEND_ACTION,
+                            targets: Vec::new(),
+                            damaged: Vec::new(),
+                        });
+                        out.push(beat);
+                    }
                 }
                 Event::ItemUsed { who, .. } => {
                     // The window of the action that follows names the item the member chose.
@@ -310,7 +334,34 @@ impl<'a> Narrator<'a> {
                         } if caller == who => Some(*number),
                         _ => None,
                     });
+                    let start = out.len();
+                    let kind = self.data.lines.get(action).map_or(0, |l| l.kind);
                     self.acted(*who, *action, outcomes, record, summoned, &mut out);
+                    // The presentation of the action. A flight and a call for backup say what
+                    // they do themselves (`Escape`, `Summon`), and a kind-34 action has no
+                    // script (`func_ov025_021d8a40`).
+                    if !FLEE_ACTIONS.contains(action) && kind != 12 && kind != 34 {
+                        let cue = Cue::Act {
+                            actor: fighter_of(*who),
+                            action: *action,
+                            targets: outcomes.iter().map(|(w, _)| fighter_of(*w)).collect(),
+                            damaged: outcomes
+                                .iter()
+                                .filter(|(_, o)| {
+                                    o.landed && !o.dodged && !o.blocked && o.hp_after < o.hp_before
+                                })
+                                .map(|(w, _)| fighter_of(*w))
+                                .collect(),
+                        };
+                        match out.get_mut(start) {
+                            Some(beat) => beat.cues.push(cue),
+                            None => {
+                                let mut beat = Beat::new(b"", 0);
+                                beat.cues.push(cue);
+                                out.push(beat);
+                            }
+                        }
+                    }
                 }
                 Event::Summoned { .. }
                 | Event::Initiative(_)
@@ -345,7 +396,7 @@ impl<'a> Narrator<'a> {
             let line = if opening != 0 { opening } else { FLEE_LINE };
             let text = self.say_with(File::Actmsg, line, Some(who), first, &[], Some(lines), None);
             if let Some(mut beat) = self.beat(text, HOLD) {
-                beat.cues.push(Cue::Remove(fighter_of(who)));
+                beat.cues.push(Cue::Escape(fighter_of(who)));
                 out.push(beat);
             }
             return;
@@ -382,7 +433,10 @@ impl<'a> Narrator<'a> {
                     None,
                 );
                 if let Some(mut beat) = self.beat(text, HOLD) {
-                    beat.cues.extend(summoned.map(Cue::Summon));
+                    beat.cues.extend(summoned.map(|number| Cue::Summon {
+                        caller: fighter_of(who),
+                        number,
+                    }));
                     out.push(beat);
                 }
             }

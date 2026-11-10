@@ -882,7 +882,11 @@ fn battle_screenshot(
             names: vec![talk.hero_name()],
         };
         let mut played = crate::battle::fight::Fight::new(data, &party, &setup, &mut world)?;
-        crate::app::run_to_phase(&mut played, &mut scene, &mut world, phase)?;
+        let weapon = party
+            .members
+            .first()
+            .and_then(|member| member.equipment.weapon);
+        crate::app::run_to_phase(&mut played, &mut scene, &mut world, phase, rom, weapon)?;
         fight = Some(played);
     }
     for _ in 0..cli.frame {

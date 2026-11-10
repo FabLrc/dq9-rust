@@ -22,6 +22,7 @@ use nds_rom::g3d::{Fx12, G3dFile};
 use nds_rom::{Error, Result};
 
 use super::{AnimatedScene, Clip, ModelAnimation};
+use crate::SceneVertex;
 use crate::hero::object_worlds;
 use crate::pose::VertexPose;
 use crate::scene::{Builder, SceneInstance, TexelTint, TextureSources};
@@ -140,9 +141,23 @@ pub(crate) struct ActorRig {
     drawn: Option<(usize, usize)>,
     ghost: Option<Ghost>,
     motions: Vec<Motion>,
+    /// The motion last started, for the tests and the reports: the clips alone do not say
+    /// which name they came from.
+    playing: Option<String>,
 }
 
 impl ActorRig {
+    /// The motion playing and its frame, for the tests and the reports.
+    pub(super) fn animation<'a>(
+        &'a self,
+        models: &'a [super::ModelAnimation],
+    ) -> Option<(&'a str, i32)> {
+        Some((
+            self.playing.as_deref()?,
+            self.clips(models).first().map_or(0, |clip| clip.frame),
+        ))
+    }
+
     fn clips<'a>(&'a self, models: &'a [super::ModelAnimation]) -> &'a [Clip] {
         match (&self.drawn, &self.ghost) {
             (Some((_, anim)), _) => &models[*anim].clips,
@@ -192,6 +207,7 @@ impl AnimatedScene {
                     clips: Vec::new(),
                 }),
                 motions,
+                playing: None,
             });
             return Ok(self.actors.len() - 1);
         }
@@ -220,6 +236,7 @@ impl AnimatedScene {
             drawn: Some((instance, anim)),
             ghost: None,
             motions,
+            playing: None,
         });
         Ok(self.actors.len() - 1)
     }
@@ -264,7 +281,14 @@ impl AnimatedScene {
             (None, Some(ghost)) => ghost.clips = clips,
             (None, None) => return false,
         }
+        rig.playing = Some(name.to_owned());
         true
+    }
+
+    /// The motion an actor is playing and its frame: what the tests and the reports assert,
+    /// the clips alone do not name it.
+    pub fn actor_animation(&self, actor: usize) -> Option<(&str, i32)> {
+        self.actors.get(actor)?.animation(&self.models)
     }
 
     /// Times the actor's motion reached its end (looping ones included) since it started.
@@ -551,6 +575,21 @@ impl AnimatedScene {
     /// application sets next ends it. Returns whether the hero has it.
     pub fn play_hero(&mut self, name: &str, once: bool) -> bool {
         self.hero.as_mut().is_some_and(|h| h.play(name, once))
+    }
+
+    /// The motion the hero is playing and its frame.
+    pub fn hero_animation(&self) -> Option<(&str, i32)> {
+        self.hero.as_ref()?.animation()
+    }
+
+    /// The hero's posed vertices in model space, for the tests and the reports: two motion
+    /// sets' `attack1a` differ in the pose they produce, which their names alone do not show.
+    pub fn hero_vertices(&self) -> Option<&[SceneVertex]> {
+        let hero = self.hero.as_ref()?;
+        self.scene
+            .models
+            .get(hero.model)
+            .map(|model| model.vertices.as_slice())
     }
 
     /// Times the hero's scripted motion reached its end since it started.
