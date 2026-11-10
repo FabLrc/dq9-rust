@@ -18,7 +18,7 @@ Each passed its single full `verify.ps1 -RequireRom` gate (fmt, clippy, tests, w
 | Batch / commit | Result | Gate |
 |---|---|---|
 | `j4-battle-held-items` / `c064473` | Acting member's held slots, duplicates, execution-only consumption, cancellation, skipped actor, reusable stone; bag unchanged | 5/5, 104.7 s, app 71/71 |
-| `j4-roaming-play` / `3711b50` | Animated field models, natural contact → battle → field, RNG continuity, equipment-aware inputs, preset companies, released models hidden; Esc cancels, previews run once | 5/5, 90.4 s, app 82/82; parity 2/2 |
+| `j4-roaming-play` / `2801473` | Animated field models, natural contact → battle → field, RNG continuity, equipment-aware inputs, preset companies, released models hidden; Esc cancels, previews run once | 5/5, 90.4 s, app 82/82; parity 2/2 |
 
 Native roaming smoke: F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold)
 → same field without a ghost model; D01M02 models visible. Tests cover Hexagon floors
@@ -41,7 +41,7 @@ only first-step waiting remains [hypothesis]. Original surprise/company/stage, F
 
 Last checked Pages deployment: `42808567716` (`f77b722`, held items included).
 Standalone battle 26 was played to victory on `b91f43b` (4 rounds, 5 XP, 9 gold).
-Its observed restart is fixed in `3711b50`; final roaming Web smoke/deployment is pending.
+Its observed restart is fixed in `2801473`; final roaming Web smoke/deployment is pending.
 Continuous browser certification still stops at the raised hall, not at chapter 2.
 
 ## Active work and next steps

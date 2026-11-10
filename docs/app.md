@@ -994,7 +994,7 @@ layout. Web: the "Screens" select or `?layout=`. The old `--ds-aspect` and `ds=`
   `build/evidence/j4-combat-web-baseline/report.md` (`44aa2de407fe`),
   `victory.png` (`981849bfdefc`), `gold.png` (`b131f23efcf2`).
   **Defect on that build**: closing rewards started standalone battle 26 again;
-  `restarted.png` (`637807d124a5`). Fixed in `3711b50` by removing the explicit preview
+  `restarted.png` (`637807d124a5`). Fixed in `2801473` by removing the explicit preview
   restart branch; a regression checks no second battle or reward after closure.
   This proves neither natural field contact/return nor continuous new-game progress.
 
