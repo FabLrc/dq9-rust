@@ -120,6 +120,9 @@ What works:
   stage (`--battle 2`, `--battle-stage 30116 --monsters 1x3`); in `dq9-core` a battle engine checked
   against BattleEmulator, party levels and rewards, battle messages in five languages,
   roaming-monster rules checked on melonDS field states;
+- ROM-backed battle attack/damage/death/flight motions and equipped-weapon motion sets,
+  with action windows waiting for the presentation; native GPU regression and an actual
+  browser battle check cover lunges, returns and hiding defeated/fled models;
 - carried-item commands (ROM tests and offscreen UI checked; interactive item use not certified);
 - visible animated roaming monsters and contact-triggered battles, with the field restored
   afterwards; native F01 and Hexagon smoke checks (`docs/app.md`, Field encounters);
@@ -129,8 +132,8 @@ Still missing:
 
 - headless runs still count scripted battles as won unless `--fight` is given, and roaming
   is disabled there to preserve the parity traces;
-- attack animations in battle, the field menu, shops, inn and church screens (their rules exist in
-  `dq9-core`);
+- the field menu, shops, inn and church screens (their rules exist in `dq9-core`), full battle
+  action-script camera/effects and companions on the battle scene;
 - end-to-end browser certification (standalone battle 26 has been played to victory, but not
   the continuous route) and comparison with the original over the whole route
   (see [`docs/status.md`](docs/status.md)).

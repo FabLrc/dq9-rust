@@ -363,6 +363,12 @@ The scene therefore plays `skill1` for Weird Dance, not a log-skip.
   `build/evidence/j4-battle-gpu-sync/native-before.log` (`68eda57021be`),
   `native-after.log` (`b79d9b6cf677`); the original browser victory still showing the
   defeated/fled models is `web-before-ghosts.png` (`a412c6933bff`).
+  After the fix, real browser input through battle 26 on seed 7 shows the hero at its target
+  (`web-after-lunge.png`, `c461e1d32686`), then back on the same empty stage after victory
+  (`web-after-victory.png`, `c39b70b7ba1a`). The console (`web-after-console.json`,
+  `e616bcfb24af`) has one victory: 4 rounds, 2 XP, 4 gold. Extra confirmations and a
+  stacked → wide switch do not restart the preview or resurrect the models. Full ROM
+  integration gate: 5/5, 109.4 s, app 103/103 (`integration.log`, `be6722f0cb72`).
 
 Motion lengths come from the `.bcfg` tables (`0x66`: frames and speed, ×4096): a motion's
 ticks are `(end − start) / speed`. The ROM's `attack1a` is therefore 72 ticks (1.2 s at

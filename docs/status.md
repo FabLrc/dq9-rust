@@ -6,54 +6,53 @@ Plan: [`roadmap.md`](roadmap.md); rules: [`../AGENTS.md`](../AGENTS.md).
 ## Status as of November 10, 2026
 
 **v0.1 functional natively; v0.2 still in progress** (new game → event 2750, every battle fought).
-Opening, Observatory, physical Angel Falls return and village tasks through 1.4.1 work.
+Opening, Observatory, physical Angel Falls return and village tasks through 1.4.1 work on main.
 Driver: 615 checkpoints; parity 2/2 at first control and 1.1.2 except flag `4135` (battle loot).
 Fixed 60 Hz loop; hero, field and model pose at 30 Hz. Chapter 2 events: 47/50 complete.
 
 ## Combat and monsters — integrated on main
 
-Combat batches used Orca / OMP / **`opencode-go/deepseek-v4.1-flash`**; each passed its full ROM gate.
+Workers use Orca / OMP / **`opencode-go/deepseek-v4.1-flash`**; no expensive-model escalation.
 
-| Batch / commit | Result | Gate |
+| Batch / commit | Result | Full ROM gate |
 |---|---|---|
-| `j4-battle-held-items` / `c064473` | Acting member's held slots, duplicates, execution-only consumption, cancellation, skipped actor, reusable stone; bag unchanged | 5/5, 104.7 s, app 71/71 |
-| `j4-roaming-play` / `2801473` | Animated field models, natural contact → battle → field, RNG continuity, equipment-aware inputs, preset companies, released models hidden; Esc cancels, previews run once | 5/5, 90.4 s, app 82/82; parity 2/2 |
-| `j4-battle-lifecycle` / `749ae40` | Completed preview keeps stage/camera; dialogue pauses roamers and resumes them on close | 5/5, 103.5 s, app 83/83 |
-| `add-graphics-tech` / `49843de` | Optional wide 16:9, cinematic post pass, HUD and shader validation; native captures and local browser wide → stacked → wide checked | 5/5, 150.3 s, app 86/86 |
+| `j4-battle-held-items` / `c064473` | Held slots, duplicates, execution-only consumption, cancellation, skipped actor, reusable stone; bag unchanged | 5/5, 104.7 s, app 71/71 |
+| `j4-roaming-play` / `2801473` | Visible models, contact → battle → field, shared RNG, equipment/preset companies, released models hidden; Esc/one-shot preview | 5/5, 90.4 s, app 82/82; parity 2/2 |
+| `j4-battle-lifecycle` / `749ae40` | Finished preview retains stage/camera; dialogue pauses roamers | 5/5, 103.5 s, app 83/83 |
+| `add-graphics-tech` / `49843de` | Optional wide/post/HUD; native and local browser wide → stacked → wide checked | 5/5, 150.3 s, app 86/86 |
+| `j4-battle-motions` / `de583e0` | ROM motions/scripts, weapon set, hit reactions, death/flight, summon capture, presentation barriers | 5/5, 80.4 s, app 102/102; parity 2/2 |
+| `j4-battle-gpu-sync` / `4327fd8` | Live lunge/hide matrices reach GPU; native image regression and real Web victory without ghost models | 5/5, 109.4 s, app 103/103 |
 
-Native roaming smoke: F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold)
-→ same field without a ghost model; D01M02 models visible. Tests cover Hexagon floors
-D01M02–04, encounter-free S01M01/D01M01/D01M05, flight retention and one-time rewards.
-Evidence: `build/evidence/j4-roaming-play/field-restored-after-win.png` (`61a585913e52`),
-`hexagon-field.png` (`fceee50be300`), `smoke-win.log` (`0ec1f1917e68`).
+Native F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold) → same field, no ghost;
+D01M02 models visible. Evidence: `j4-roaming-play/field-restored-after-win.png` (`61a585913e52`),
+`hexagon-field.png` (`fceee50be300`), `smoke-win.log` (`0ec1f1917e68`), under `build/evidence/`.
 Held-item UI was rasterized offscreen, not driven in a native window or browser:
-`build/evidence/j4-battle-held-items/item-menu.png` (`9e2260ec767e`),
-`item-used.png` (`f4baed36c8c8`). RE and limits: `re/encounter.md`, `re/battle.md`, `re/party.md`.
-
-Earlier integrated work: party/levels, battle data/kernel/flow and chapter 2 monster actions,
-five-language messages, battle scene/rewards/wipe-out, facility rules without UI, billboards.
+`j4-battle-held-items/item-menu.png` (`9e2260ec767e`), `item-used.png` (`f4baed36c8c8`).
 Kernel: 306 BattleEmulator vectors (Woosh critical differs); chapter 2 special actions have
 code-read rules and 20-seed tests, not an independent battle oracle (`re/battle.md`).
-Roaming F02/F38 oracle/challenge covers zone, node/point and contact. Standing still can spawn;
-only first-step waiting remains [hypothesis]. Original surprise/company/stage, F44, states
-4/5/11/12, exact post-flight state and recent-list writer remain unmeasured or [hypothesis].
+Roaming F02/F38 oracle/challenge covers zone, node/point and contact. First-step waiting,
+original surprise/company/stage, F44, states 4/5/11/12 and exact post-flight state remain open.
 
 ## Browser and publication
 
-Pages `42812911849` (`6ecf718`): F01 models visible; D01M02 natural contact → Esc
-cancel → flight, then another monster → loss in four rounds → church 1106, all by keyboard.
-Evidence: `build/evidence/j4-combat-web-final/console.json` (`2798e51a2364`),
-`revival-church.png` (`430671952e62`). Standalone battle 26 won once (seed 7: 2 XP, 4 gold).
-Graphics build `1e0326d`: CI `42831807723` and Pages `42831807515` green; local wide → stacked → wide smoke (`add-graphics-tech/web-wide-restored.png`, `5b598af7e34f`). Wide mode is optional; DS layout remains default.
-These direct-map checks do not certify continuous new-game play to chapter 2.
+Pages `42812911849` (`6ecf718`): Hexagon contact → Esc cancel → flight, another contact → loss
+→ church 1106; `j4-combat-web-final/console.json` (`2798e51a2364`), church PNG (`430671952e62`).
+Graphics `1e0326d`: CI `42831807723` and Pages `42831807515` green; wide remains optional.
+Latest local browser build `4327fd8`: battle 26, seed 7 → one victory, 4 rounds, 2 XP, 4 gold;
+hero lunges/returns, all defeated/fled models disappear, extra input/layout switches do not restart.
+Evidence: `j4-battle-gpu-sync/web-after-lunge.png` (`c461e1d32686`),
+`web-after-victory.png` (`c39b70b7ba1a`), `web-after-console.json` (`e616bcfb24af`).
+Motion/GPU publication pending. Direct-map checks do not certify continuous new-game play to 2750.
 
 ## Active work and next steps
 
-Active wave: three Orca / OMP / `opencode-go/deepseek-v4.1-flash` batches, separate ownership.
-`j4-field-services`: field menu and inn/shop/church implementation in progress.
-`j4-battle-motions`: fixes 1–4 committed as `05e67cd`; paired native capture API cutover
-authorized after graphics integration. Not integrated or certified yet.
-`j4-chapter2-route`: worker reports real-fight pilot reaches 1.4.1; Observatory route still blocked.
+Two Orca / OMP Flash batches retain separate ownership; neither is integrated or certified yet.
+`j4-field-services`: menu/inn/shop/church on branch `b5ae183`; paid services and dead-member
+revival need real native surface evidence before review/integration, then browser verification.
+`j4-chapter2-route`: worker reports branch `090c04c` reaches 2.2.1 with real battle 26; M01M10
+exit-volume/grid join blocks return to 1107. Continuing actual Hexagoon outcomes and event 2750.
 Headless parity keeps stand-ins unless `--fight` is given and disables roaming.
-Graphics Git/Orca worktree and local branch removed; an empty Windows-locked directory remains.
-Evidence stays local under `build/evidence/<batch>/`; never committed.
+Remaining presentation: full camera/effects, original alpha fades, companions; timing limits
+are labelled [hypothesis] in `re/battle-data.md`. Abilities/worn-item commands remain open.
+Graphics and motion worker Git/Orca worktrees/local branches removed; the graphics empty root
+remains Windows-locked. Evidence stays local under `build/evidence/<batch>/`, never committed.

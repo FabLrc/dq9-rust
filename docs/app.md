@@ -360,12 +360,13 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
   centred; monsters at z −2.5 by their width (radius ×4, gap 0.7, narrowed as `0x02167b5c`
   does). The turn of the party's ends (±0.2) and the five narrowed monster kinds are
   **[hypothesis]**: the angle table and the kind list were not read.
-- **Models and motions.** The party is the hero model (`AnimatedScene::add_hero`), playing
-  `stand`; a monster is the first `.cchr` of its `<code>.mon` member of
-  `data/pack_lv5/enemy.gp2` (`LoadMonsterCharacter`, native 233), drawn at `0x10a` and playing
-  its idle `stand` (`appear` then `run` when the archive lacks it). The monster's `+0x12` battle
-  size and its death fade are not modelled (the size only drives the camera's close-ups,
-  **[unknown]** here).
+- **Models and motions.** The party is the hero model (`AnimatedScene::add_hero`); monsters
+  load their `.cchr` bodies and separate `.cmot` motions from `<code>.mon` in
+  `data/pack_lv5/enemy.gp2` (`LoadMonsterCharacter`, native 233). ROM `.bact` action sections
+  select attack, magic, guard, call and escape motions; the hero takes its equipped weapon's
+  `mp02NNbe` set. Damage reacts at the script's hit percentage; death/flight play once then
+  hide the model. The original alpha fade and camera close-up size remain unmodelled.
+  Timing, dispatch and limits: [`re/battle-data.md`](re/battle-data.md#action-scripts-and-battle-motions).
 - **Camera.** `Shot::Opening` is the opening (`func_ov000_0216118c`): the wide side shot
   (22° half-angle), from the party's side; `Shot::Side(side)` is the 15° framing of
   `func_ov000_0216d600`. Distance is the larger of width × cos ÷ (sin × 2.2) and
@@ -374,10 +375,11 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
   high. Which sign "side 1" is, the opening's eased approach (0.95 a frame) and the fixed
   per-monster-kind shots of `data_ov026_021de87c` are **[unknown]/[hypothesis]**: the first
   is taken as the party's side.
-- **API**: `play(fighter, motion)` (the models of chapter 2 only carry `stand`, `run`, `walk`
-  and `appear`, so the fight does not call it), `remove(fighter)` (defeat fade, called by the
-  fight), `set_shot(shot)`, `fighter_screen_pos(fighter)` (the fighter's body on the 256×192
-  top screen, for the damage numbers).
+- **API**: `act(actor, action, targets, damaged)` starts the ROM-backed gesture;
+  `presenting()` gates windows/input until it finishes. `kill`/`flee` hide at motion end;
+  `remove` hides immediately. `upload` transfers geometry and every fighter world matrix,
+  including hidden entries, to the existing GPU renderer. `set_shot` and
+  `fighter_screen_pos` provide framing and damage-number positions on the 256×192 top screen.
 - **Transition** (native 547, `ov_001::02163ccc`). A scripted battle (`Request::Battle`, action
   `0x78`) or 547 starts it: the battle track (`eventbattle.bin` `+0x24`, else sequence `0x17`)
   plays at once, both screens go to black over 20 frames from the 15th, the scene is built
@@ -551,9 +553,10 @@ references with real battles (`scripts/parity.ps1` still compares the stand-in; 
   `MP`), the command menu (`6`, below it, 116 wide, 20-pixel rows) and the target list (`128`,
   122 wide) are laid out here. The colours are the conversation window's.
 - Window timing: 40 steps per window (the opening's `<TIME=45>` and the flight's 30 are the
-  game's), a key closes it after 10; the results wait for a key (wiki *Battle-Stages*).
-  Which lines go in one window (here: one a line) and the order of a multi-target action's
-  lines are not read.
+  game's), a key closes it after 10; results wait for a key (wiki *Battle-Stages*). The scene's
+  actual loaded action/reaction/death/flight motion is also a barrier: the window and pad
+  wait, so a damage number, next actor or result cannot cut the presentation. Which lines
+  go in one window (here: one a line) and multi-target line ordering remain [hypothesis].
 - Party names carry no article (`grammar` 0): "Hero attacks."; `IF_SOLO` makes the victory
   lines read "Hero obtains 8 gold coins!" and the wipe-out "Hero is wiped out!".
 - Treasure: one chest pair (17, 18) per drop, the monster named is the first fallen one whose
@@ -565,16 +568,25 @@ references with real battles (`scripts/parity.ps1` still compares the stand-in; 
   Over twenty seeds, every chapter 2 monster of `re/battle.md` plays to its end (Flee, Buff,
   Accelerate, Dazzle, Weird Dance, a call for backup), so none stops today. The menus ask the
   engine first: a spell or an item whose action `validate` refuses is greyed.
-- Not played: abilities, Examine, Misc., the guard's effect on who monsters pick, the party
-  members beyond the hero on the scene (the scene loads the hero only), the `.bact` action
-  scripts, the battle camera's shots (the opening's wide shot stays), the fanfares and the
-  battle's sound effects. Using worn equipment from Items is not offered.
+- Not played: abilities, Examine, Misc., the guard's effect on who monsters pick, party
+  members beyond the hero on the scene, the full action-script camera/effects interpreter
+  (the opening's wide shot stays), fanfares and battle sound effects. Using worn equipment
+  from Items is not offered. Lunge interpolation/return timing and the window grouping
+  remain [hypothesis]; playing the ROM motions does not certify the full presentation.
 - Held-item evidence (`j4-battle-held-items`): offscreen rasterization of the real UI quads,
   ROM atlas and font, not a native-window or browser interaction:
   `build/evidence/j4-battle-held-items/item-menu.png` (`9e2260ec767e`, HP 5/20) and
   `item-used.png` (`f4baed36c8c8`, healing). At capture, HP increased, the held herb was gone,
   and the bag retained its two herbs. Regression tests cover a selected second duplicate,
   cancellation, a skipped fallen actor and a reusable sage's stone.
+- Motion evidence: native ROM captures `j4-battle-motions/battle26-swing.png`
+  (`780cc8be2a0a`) and `hexagoon-swing.png` (`1d5f145219cd`), actual local browser battle 26
+  on seed 7 `j4-battle-gpu-sync/web-after-lunge.png` (`c461e1d32686`) and
+  `web-after-victory.png` (`c39b70b7ba1a`): hero lunges, returns, and defeated/fled monsters
+  disappear; victory remains 4 rounds, 2 XP, 4 gold. Extra confirmation and stacked → wide
+  retain the finished preview without restarting. Console: `web-after-console.json`
+  (`e616bcfb24af`). The live GPU world upload regression failed before the fix (300 pixels)
+  and now passes lunge/hide readbacks; full ROM gate 5/5, 109.4 s, app 103/103.
 
 **Evidence** (local, `build/evidence/j4-battle-play/`, sha256 prefixes): `fight-run.log`
 (`743b4a58e0bd`, `--new-game --fight --seed 7 --headless --auto --pilot`: battle 26 won in 4

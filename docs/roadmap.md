@@ -441,9 +441,10 @@ Progress:
       award, level-up, wipe-out, `--fight`; `app.md` § "Battle"); headless keeps the stand-in for
       the parity traces. Held-item commands and execution-only consumption are done
       (`j4-battle-held-items`); standalone battle 26 played to victory in the browser.
-      Remaining: attack/damage motions, abilities, using worn equipment, wipe-out details
-      (priest line, revival by save, trigger 180), continuous manual play,
-      re-recording the parity references with real battles.
+      ROM-backed action/damage/death/flight motions, weapon sets, hit timing and window
+      barriers are integrated (`j4-battle-motions`); live GPU lunge/hide verified in the browser.
+      Remaining: abilities, using worn equipment, wipe-out details (priest line, revival by
+      save, trigger 180), continuous manual play, parity references with real battles.
 - [ ] Battle scene: stage, grid, side camera, 547 transition done (`j4-battle-scene`). Remaining:
       action-script shots, swirl, encounter transition, companions.
 - [ ] Roaming monsters: rules in `dq9_core::encounter` (`j4-roaming`), checked against melonDS F02
@@ -462,9 +463,8 @@ Progress:
 - [ ] Browser: continuous session from a new game to 2750.
 
 Next waves: (1) facility screens and the field menu, wipe-out details;
-(2) the chapter 2 route test with the
-Hexagoon both ways, motions of battle, the remaining cutscene gaps; (3) browser session,
-parity references with real battles, docs consistency.
+(2) the chapter 2 route test with the Hexagoon both ways and remaining cutscene gaps;
+(3) continuous browser session, parity references with real battles, docs consistency.
 
 **v0.2** criterion: a new game played by hand reaches the end of 2750 natively and in the
 browser, with every battle fought; a headless run with a fixed seed reaches it in a real test;
