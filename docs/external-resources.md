@@ -123,6 +123,53 @@ and [`ROADMAP.md`](https://github.com/sackchief/dqix-enhanced/blob/main/ROADMAP.
   loader (freeze after the first battle), encrypted anti-piracy code run by an
   interpreter (dqix-functions places the protection in overlay 29 **[unverified]**).
 
+### Dragon Quest IX Modern — instrumented reference, not a replacement engine
+
+<https://github.com/romusan495/Dragon-Quest-IX-Modern> · GPL-3.0 · inspected
+2026-11-10 at [`093342a80458`](https://github.com/romusan495/Dragon-Quest-IX-Modern/tree/093342a804586bdd8964f1ee8b6ec52763039eae).
+Its [`RECAP.md`](https://github.com/romusan495/Dragon-Quest-IX-Modern/blob/093342a804586bdd8964f1ee8b6ec52763039eae/docs/RECAP.md)
+identifies its DQIX Enhanced origin, although GitHub does not mark it as a fork.
+The architecture remains ARM9/ARM7 → generated C plus a DS hardware runtime, not a
+hand-reimplemented game engine. Recompiled function counts do not measure the same thing
+as our fully ported `port:` markers.
+
+**Useful now for v0.2:**
+
+- **An additional behavioral reference.** Source inspection confirms scripted and recorded
+  inputs (`runtime/input.c`), fixed RTC (`io7.c`), frame-triggered RAM dumps (`io.c`),
+  write watches (`mem.c`) and function-entry traces (`dispatch.c`). These can help observe
+  held-item consumption, wipe-out services and post-flight state instead of guessing.
+  Pin the build and starting save, disable cheats and behavior-changing options, and
+  cross-check discoveries on the ROM/melonDS; this runtime is not an independent authority.
+- **Reproducible reports.** [`runtime/report.c`](https://github.com/romusan495/Dragon-Quest-IX-Modern/blob/093342a804586bdd8964f1ee8b6ec52763039eae/runtime/report.c)
+  records initial/current saves, inputs, clock, build/ROM identity and a replay command.
+  Compare semantic checkpoints (map, events, flags, HP/MP, inventory and RNG), not identical
+  Rust/DS frame counts or pixels from different renderers.
+- **Targeted RE leads.** `runtime/mapmarks.c` documents container/`.bmbl` associations,
+  flags and ROM paths; `journal_party.c` identifies party/skill fields and attribute labels.
+  These are search leads, **[unverified here]** until checked on our ROM. Many underlying
+  formats already have Rust readers; do not implement a second parser.
+
+**Limits:** the modern battle HUD and shop presentation in `frontend_sdl.c` mostly
+recompose the original rendered screens; they are not reusable command/facility state
+machines or an attack-motion interpreter. HD textures, a future Godot remake and the
+inherited multi-DS lockstep network do not unblock our Rust/Web v0.2. Prefer the original
+Unlicense `dqix-decomp` for reusable source; keep Modern's GPL code read-only under our rules.
+
+[`tests/smoke/run.py`](https://github.com/romusan495/Dragon-Quest-IX-Modern/blob/093342a804586bdd8964f1ee8b6ec52763039eae/tests/smoke/run.py)
+uses Linux/xvfb and sampled image differences; a missing reference is created from the
+current capture without failing. Its save/input/reference corpus is private according to
+`docs/SUIVI.md`. Passing it is reproducibility evidence, not independent correctness proof.
+The README and inherited roadmap/technical notes have different dates and scopes; verify
+claims against pinned source and actual runs.
+
+**Exercised here:** upstream `extract_rom.py` succeeded on the local European ROM
+(35 overlays); `region.py` returned `eur`, including its direct-call validation. Its +8/+16
+mapping matches the conversion already documented above. Smoke-runner `--help` succeeded;
+**no full upstream build or gameplay was exercised**. Evidence stays local:
+`build/evidence/dqix-modern-review/inspection-commands.json` (`cdb69a7771ea`),
+`report.md` (`4c269f6db909`). Relevant leads were sent to the three active v0.2 workers.
+
 ### Other DQI-haX projects
 
 | Project | Contribution | License |
@@ -216,7 +263,7 @@ keeps GPL and unlicensed sources as read-only references.
 | Status | Projects | Rule |
 |---|---|---|
 | Integrable (with attribution) | dqix-decomp (Unlicense), apicula (0BSD), ds-decomp/ds-rom, dsd-ghidra, ndskit, libntr, dqix-script-disasm, ArchiveTool, BattleEmulator, DualRip (MIT), objdiff (Apache-2.0), SSEQPlayer/FSS (WTFPL) | reusable code and data; cite the source |
-| Read-only | DQIX Enhanced, melonDS, Kuriimu2, dqix-functions, Collapsus (GPL-3.0), FFmpeg (LGPL) | learn the facts, reimplement yourself; do not copy or translate the code |
+| Read-only | DQIX Enhanced, Dragon Quest IX Modern, melonDS, Kuriimu2, dqix-functions, Collapsus (GPL-3.0), FFmpeg (LGPL) | learn the facts, reimplement yourself; do not copy or translate the code |
 | No license | DQIX wiki, editor, desmume-scripts, auction, pret | facts reusable citing the page; do not copy text or code |
 
 Facts about the game (offsets, formulas, constants) are not protected by these licenses;
