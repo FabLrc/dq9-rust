@@ -61,6 +61,8 @@ Computed by `cargo dq9re coverage` from the `port:` markers in the code (definit
 </details>
 <!-- coverage:end -->
 
+<img width="1467" height="801" alt="image" src="https://github.com/user-attachments/assets/55868b8e-93d1-4090-8143-bef37e079afb" />
+
 ## Status
 
 **v0.1 works natively and is partly certified in the browser; v0.2 (chapter 2 up to the
