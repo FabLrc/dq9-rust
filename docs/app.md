@@ -125,7 +125,9 @@ the map, together they reset it. `Tab` switches to free flight, where the moveme
 move the camera and `Q`/`E` move the target down/up; `Shift` speeds up the camera. `F` restores
 the terrain orbit around the hero (distance 11, relative height 6, target at mid-height), or
 frames the whole map in free flight. `R` changes the screen layout (`stacked`, `side`, `top`),
-`T` next time of day ("Time" list on the Web), `M` mutes/unmutes the music, `PageUp`/`PageDown` previous/next map, `Enter`/`Space` talk, `Esc` quit.
+`T` next time of day ("Time" list on the Web), `M` mutes/unmutes the music,
+`PageUp`/`PageDown` previous/next map, `Enter`/`Space` talk, `Esc` quit on the field
+(cancel while a fight is in play).
 
 **Sound**: on each map load, `dq9-app` plays the `bgm.sdat` sequence the game
 chooses for it (`re/sdat.md`: music slot of `maplist9.bin`, night variant, overrides from
@@ -418,6 +420,23 @@ resolves every round, the scene shows its fighters, and the messages of the game
 (`Party::award`: experience, gold, drops, level-up lines), a defeat is a wipe-out (trigger 16,
 the purse halved, the party wakes in a church), a flight returns to the field.
 
+**Field encounters.** Native and Web display the map's roaming monsters with their own
+`<code>_f.mon` models and stand/walk/run/appear motions. `app/roaming.rs` steps the existing
+core rules at 30 Hz, on the actual collision world; equipment contributes to party strength
+and deftness, preset companies come from `eventbattle.bin`, and the field and battles retain
+one continuous generator stream. Natural contact calls `start_encounter`; victory fades and
+releases the fought model, flight retains it and prevents immediate re-contact. The exact
+original post-flight state/recent-list writer remains **[hypothesis]**
+(`re/encounter.md`, Application wiring). Field-menu/facility screens are still absent.
+Headless parity runs keep roaming disabled.
+
+Native window evidence (`build/evidence/j4-roaming-play/`): natural F01 contact → victory
+in 3 rounds (3 experience, 5 gold) → same field with no ghost model,
+`field-restored-after-win.png` (`61a585913e52`), `smoke-win.log` (`0ec1f1917e68`);
+`hexagon-field.png` (`fceee50be300`) shows field monsters on `D01M02`. ROM regressions cover
+`D01M02`–`D01M04` and encounter-free `S01M01`/`D01M01`/`D01M05`.
+Standalone `--battle`/`?battle=` previews now run once; `Esc` cancels battle commands.
+
 ```powershell
 # The Hexagoon's set battle, played by hand (command menu, messages, defeat → trigger 16):
 cargo run -p dq9-app --release -- --battle 2
@@ -442,7 +461,7 @@ effect on the story and the wipe-out.
 **What is played.**
 
 - *Entry.* `App::run_battle` (action `0x78`) and `App::start_encounter(groups, stage,
-  opening)` (the roaming monsters' entry, called by nothing yet but tested) resolve the
+  opening)` (called by the field's roaming-monster contact) resolve the
   request, run the transition and build the scene (§ "Battle scene"), then the `Fight`:
   the party is `Party` (new game: the hero, level tables applied at the first fight; a save:
   its party), each member's `Character::fighter` from `ItemStats` and `itembtlprm.nat`; a
@@ -511,7 +530,7 @@ effect on the story and the wipe-out.
 **Controls** (as the conversation window): `Enter`, `Space` or `Z` confirm and close the
 window; `Backspace` or `X` cancel (back one menu, or to the previous member); the arrow keys
 or `W`/`A`/`S`/`D` move the cursor (left and up go back, right and down forward); `M` mute,
-`R` layout; `Esc` closes the application (it does not cancel, as in the conversation). No
+`R` layout; `Esc` cancels during a fight and still closes the application on the field. No
 touch. With `--layout top` the bottom screen's windows are laid over the top screen.
 
 **Headless and parity.** The 615 checkpoints and the recorded traces pin battle 26's "won at
@@ -728,7 +747,8 @@ Q/E: camera; M: sound. A DS save is optional.
 Files are read locally: no ROM or save is sent to GitHub.
 A computer with a keyboard and a recent browser with WebGPU or WebGL 2 are recommended.
 Battles are interactive; standalone battle 26 has been played to victory in the browser
-(Verification below). Roaming monsters and field-menu/facility screens are still missing;
+(Verification below). Roaming monsters are visible and start fights; field-menu/facility
+screens are still missing;
 effects and battle motions are incomplete. The continuous chapter 2 route is not certified.
 
 The ROM/save fields and the selectors stay disabled during the download and
@@ -973,8 +993,9 @@ layout. Web: the "Screens" select or `?layout=`. The old `--ds-aspect` and `ds=`
   5 experience, 9 gold, one drop, hero HP 10/20 at victory. Evidence:
   `build/evidence/j4-combat-web-baseline/report.md` (`44aa2de407fe`),
   `victory.png` (`981849bfdefc`), `gold.png` (`b131f23efcf2`).
-  **Observed defect**: closing rewards starts standalone battle 26 again;
-  `restarted.png` (`637807d124a5`). Cause not established; assigned to `j4-roaming-play`.
+  **Defect on that build**: closing rewards started standalone battle 26 again;
+  `restarted.png` (`637807d124a5`). Fixed in `3711b50` by removing the explicit preview
+  restart branch; a regression checks no second battle or reward after closure.
   This proves neither natural field contact/return nor continuous new-game progress.
 
 - Browser run on Pages (November 7, 2026, partial evidence, final build): successful

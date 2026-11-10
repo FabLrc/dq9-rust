@@ -88,12 +88,14 @@ What works:
   stage (`--battle 2`, `--battle-stage 30116 --monsters 1x3`); in `dq9-core` a battle engine checked
   against BattleEmulator, party levels and rewards, battle messages in five languages,
   roaming-monster rules checked on melonDS field states;
+- visible animated roaming monsters and contact-triggered battles, with the field restored
+  afterwards; native F01 and Hexagon smoke checks (`docs/app.md`, Field encounters);
 - trees and scenery that face the camera.
 
 Still missing:
 
-- roaming monsters are not drawn and start no fight yet; headless runs count scripted battles as
-  won (the parity traces depend on it);
+- headless runs still count scripted battles as won unless `--fight` is given, and roaming
+  is disabled there to preserve the parity traces;
 - attack animations in battle, the field menu, shops, inn and church screens (their rules exist in
   `dq9-core`);
 - end-to-end browser certification (standalone battle 26 has been played to victory, but not

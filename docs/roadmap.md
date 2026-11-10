@@ -442,7 +442,7 @@ Progress:
       the parity traces. Held-item commands and execution-only consumption are done
       (`j4-battle-held-items`); standalone battle 26 played to victory in the browser.
       Remaining: attack/damage motions, abilities, using worn equipment, wipe-out details
-      (priest line, revival by save, trigger 180), `Esc`, continuous manual play,
+      (priest line, revival by save, trigger 180), continuous manual play,
       re-recording the parity references with real battles.
 - [ ] Battle scene: stage, grid, side camera, 547 transition done (`j4-battle-scene`). Remaining:
       action-script shots, swirl, encounter transition, companions.
@@ -450,7 +450,10 @@ Progress:
       states (`j4-roaming-oracle`) and by a challenger on F02/F38: zone, node/point, contact
       confirmed; "standing party" refuted, tick weaker, flee duration wrong: corrected
       (`j4-roaming-fix`). Untested: F44, states 4/5/11/12, 126° threshold, surprise roll, company, stage.
-      Not drawn yet.
+      Field models, natural contact → played battle → field, shared RNG, equipment-aware
+      inputs, preset companies and battle `Esc` integrated (`j4-roaming-play`); native F01
+      victory and D01M02 models exercised. Exact original flight resumption/recent-list writer
+      remains [hypothesis]; broader oracle and continuous browser checks remain.
 - [x] Trees and scenery face the camera (`j4-billboards`, `re/g3d.md` § Billboards).
 - [ ] Facilities: **data and rules done** (`j4-facilities-core`: inn, church, shop, treasure;
       `re/facility.md`). Remaining: their screens, chests/pots/barrels on the field, field menu,
@@ -458,8 +461,8 @@ Progress:
 - [ ] Chapter 2 route 1.4.1 → 2750 in a real test, Hexagoon won and lost; battle 26 played.
 - [ ] Browser: continuous session from a new game to 2750.
 
-Next waves: (1) roaming monsters drawn and starting encounters (`start_encounter` exists),
-facility screens and the field menu, wipe-out details; (2) the chapter 2 route test with the
+Next waves: (1) facility screens and the field menu, wipe-out details;
+(2) the chapter 2 route test with the
 Hexagoon both ways, motions of battle, the remaining cutscene gaps; (3) browser session,
 parity references with real battles, docs consistency.
 

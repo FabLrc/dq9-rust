@@ -179,7 +179,7 @@ impl App {
         outcome
     }
 
-    /// A wandering monster's encounter, for the roaming monsters of the next wave: `groups`
+    /// A wandering monster's contact encounter: `groups`
     /// lists `(monster number, count)`, `stage` the ground's battle stage (0 for the
     /// default), `opening` who has the jump. The monsters' HP are drawn and the party may
     /// flee. Settled with no trigger (`BattleTask` has no battle number to report).
