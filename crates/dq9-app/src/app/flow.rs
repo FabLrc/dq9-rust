@@ -54,6 +54,7 @@ impl App {
     pub(super) fn start_new_game(&mut self) {
         // A battle preview gives way to the new game.
         self.battle = None;
+        self.fight = None;
         self.battle_change = None;
         self.saved_field = None;
         self.battle_cover = 0.0;
@@ -63,6 +64,13 @@ impl App {
             return;
         };
         let game = GameState::new_game();
+        self.party = game.party.clone();
+        self.party_ready = false;
+        self.world_seeded = false;
+        self.revival_map = super::fight::NEW_GAME_REVIVAL_MAP;
+        self.fight = None;
+        self.battle_pad = Default::default();
+        self.last_fight = None;
         let scenario = game.scenario;
         let story = &mut self.options.story;
         (story.chapter, story.step, story.substep) = (
@@ -136,9 +144,10 @@ impl App {
     }
 
     /// Action 0x78: a scripted battle. The scene is shown through the transition (native
-    /// 547's black screens and the record's track), then the J4 stand-in settles it as won
-    /// ([`scenario::stand_in`]) and the end of the battle fires trigger event 15, which starts
-    /// the scene that follows it.
+    /// 547's black screens and the record's track), then the fight is played on it
+    /// (`app/fight.rs`; a headless run without `--fight` keeps the J4 stand-in,
+    /// [`scenario::stand_in`]) and the end of the battle fires trigger event 15 or 16, which
+    /// starts the scene that follows it.
     pub(super) fn run_battle(&mut self, number: u16) {
         let record = self.rom.as_deref().and_then(|rom| {
             let rom = nds_rom::Rom::parse(rom).ok()?;
@@ -157,6 +166,7 @@ impl App {
                 stage: 0,
                 monsters: Vec::new(),
                 track: None,
+                surprise: None,
             },
             true,
             false,

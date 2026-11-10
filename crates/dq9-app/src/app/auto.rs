@@ -1156,6 +1156,7 @@ impl App {
         if let Some(hero) = &self.hero {
             out.push_str(&format!("hero at {:?}\n", hero.position()));
         }
+        out.push_str(&self.party_report());
         out
     }
 }

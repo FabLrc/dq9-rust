@@ -144,7 +144,8 @@ pub fn canvas_size() -> Option<(u32, u32)> {
 
 /// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
 /// `layout` (`stacked`, `side` or `top`), `mute`, `battle` (an `eventbattle.bin` index),
-/// `battle-stage` and `monsters` (`1x3`) from the page's query string.
+/// `battle-stage` and `monsters` (`1x3`), `seed` (the battle generators' seed) from the page's
+/// query string.
 fn options() -> Options {
     let mut options = Options {
         map: None,
@@ -158,6 +159,7 @@ fn options() -> Options {
         layout: Layout::default(),
         new_game: false,
         battle: None,
+        play: Default::default(),
         story_override: [None; 3],
         story: dq9_formats::cast::Story {
             chapter: 1,
@@ -197,6 +199,7 @@ fn options() -> Options {
                 }
             }
             "night" => options.story.daytime = value == "0",
+            "seed" => options.play.seed = value.parse().ok(),
             "event" => options.event = value.parse().ok(),
             "newgame" => options.new_game = value != "0",
             "battle" => {

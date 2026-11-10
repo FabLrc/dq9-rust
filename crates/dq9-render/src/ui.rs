@@ -252,7 +252,6 @@ pub struct Ui {
     pipeline: wgpu::RenderPipeline,
     group: wgpu::BindGroup,
     size: (u32, u32),
-    buffer: Option<(wgpu::Buffer, u64)>,
 }
 
 impl Ui {
@@ -368,7 +367,6 @@ impl Ui {
             pipeline,
             group,
             size: (atlas.width, atlas.height),
-            buffer: None,
         }
     }
 
@@ -377,7 +375,7 @@ impl Ui {
     pub fn draw(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        _queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         region: Viewport,
@@ -388,22 +386,14 @@ impl Ui {
         }
         let data = vertices(quads, self.size);
         let bytes: &[u8] = bytemuck::cast_slice(&data);
-        let needed = bytes.len() as u64;
-        match &self.buffer {
-            Some((buffer, capacity)) if *capacity >= needed => queue.write_buffer(buffer, 0, bytes),
-            _ => {
-                let capacity = needed.next_power_of_two().max(4096);
-                let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("ui vertices"),
-                    contents: &[bytes, &vec![0; (capacity - needed) as usize]].concat(),
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
-                self.buffer = Some((buffer, capacity));
-            }
-        }
-        let Some((buffer, _)) = &self.buffer else {
-            return;
-        };
+        // One buffer per draw: several draws of one frame (the two DS screens) are recorded
+        // into the same encoder, and a buffer rewritten by `queue.write_buffer` would hold only
+        // the last one's quads when the encoder runs.
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ui vertices"),
+            contents: bytes,
+            usage: wgpu::BufferUsages::VERTEX,
+        });
         let mut pass = crate::gpu::load_pass(encoder, "ui", target);
         pass.set_viewport(
             region.x as f32,
@@ -415,7 +405,7 @@ impl Ui {
         );
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.group, &[]);
-        pass.set_vertex_buffer(0, buffer.slice(..needed));
+        pass.set_vertex_buffer(0, buffer.slice(..));
         pass.draw(0..data.len() as u32, 0..1);
     }
 }

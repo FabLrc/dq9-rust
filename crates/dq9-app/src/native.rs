@@ -175,6 +175,20 @@ struct Cli {
     /// action key of one fixed step (`--new-game --headless --replay inputs.jsonl`).
     #[arg(long, requires = "headless", conflicts_with = "auto")]
     replay: Option<PathBuf>,
+    /// Play battles with the engine in a headless run (`--new-game --fight --seed 7 --headless
+    /// --auto --pilot`): an automatic policy attacks the first standing monster. Windows and the
+    /// Web always fight; without it a headless run keeps the J4 stand-in that wins at once.
+    #[arg(long)]
+    fight: bool,
+    /// Seed of the battles' generators (the world's and the C library's); without it the
+    /// day clock and the step count seed them.
+    #[arg(long)]
+    seed: Option<u64>,
+    /// With `--battle` or `--battle-stage` and `--screenshot`: plays the fight until `menu`,
+    /// `damage`, `levelup`, `victory` or `lost` and captures its windows (`--seed` picks the
+    /// draws).
+    #[arg(long, value_name = "PHASE")]
+    battle_capture: Option<String>,
 }
 
 impl Cli {
@@ -219,6 +233,7 @@ impl Cli {
         }
         let stage = self.battle_stage?;
         Some(crate::battle::Request {
+            surprise: None,
             record: None,
             stage,
             monsters: self.monsters.clone().unwrap_or_default(),
@@ -402,6 +417,7 @@ pub fn main() -> Result<()> {
             story_override: [None; 3],
             new_game: false,
             battle: None,
+            play: Default::default(),
         };
         let mut app = App::new_headless(options, Some(rom));
         app.walk_pose().context("cannot walk: no map loaded")?;
@@ -444,6 +460,10 @@ pub fn main() -> Result<()> {
         story_override: [cli.chapter, cli.step, cli.substep],
         new_game: cli.new_game,
         battle: cli.battle_request(),
+        play: crate::app::BattlePlay {
+            fight: cli.fight,
+            seed: cli.seed,
+        },
     };
     // Headless runs have no window, GPU task or `UserEvent`: do not make them depend on
     // winit accepting an event loop. The visible window keeps its real proxy.
@@ -827,6 +847,25 @@ fn battle_screenshot(
             fighter.heading
         );
     }
+    let mut talk = Talk::default();
+    let mut fight = None;
+    if let Some(phase) = &cli.battle_capture {
+        // The fight is played on the scene with the confirm key held, up to the phase asked.
+        talk.set_rom(rom);
+        let data = crate::battle::data::Data::load(rom)?;
+        let mut party = dq9_core::party::Party::new_game();
+        party.apply_level_tables(&data.levels);
+        let mut world = crate::battle::fight::World::seeded(cli.seed.unwrap_or(7));
+        let setup = crate::battle::fight::Setup {
+            groups: resolved.monsters.clone(),
+            set_battle: resolved.number.is_some(),
+            surprise: resolved.surprise,
+            names: vec![talk.hero_name()],
+        };
+        let mut played = crate::battle::fight::Fight::new(data, &party, &setup, &mut world)?;
+        crate::app::run_to_phase(&mut played, &mut scene, &mut world, phase)?;
+        fight = Some(played);
+    }
     for _ in 0..cli.frame {
         scene.step()?;
     }
@@ -863,6 +902,10 @@ fn battle_screenshot(
             |encoder, view| {
                 if let Some(overlay) = shown.overlay(false) {
                     panel.draw(encoder, view, overlay);
+                }
+                if let Some(fight) = &fight {
+                    let regions = crate::app::fight_regions(&talk, fight, &scene, &shown, 0);
+                    talk.draw_screens(&device, &queue, format, encoder, view, &regions);
                 }
             },
         )

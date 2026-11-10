@@ -1,4 +1,5 @@
 use super::*;
+use dq9_core::battle::BattleResult;
 use dq9_core::state::GameState;
 use dq9_formats::save::Save;
 
@@ -25,6 +26,7 @@ fn map_options(map: &str, story: (u8, u8, u8, bool)) -> Options {
         story_override: [None; 3],
         new_game: false,
         battle: None,
+        play: Default::default(),
     }
 }
 
@@ -96,6 +98,7 @@ fn a_save_selected_after_a_new_game_loads_that_save() {
         story_override: [None; 3],
         new_game: true,
         battle: None,
+        play: Default::default(),
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     assert!(app.options.new_game);
@@ -159,6 +162,7 @@ fn a_new_game_raises_the_opening_flags() {
         story_override: [None; 3],
         new_game: true,
         battle: None,
+        play: Default::default(),
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     assert_eq!(
@@ -214,6 +218,7 @@ fn a_same_map_reload_reapplies_open_doors_to_the_collision() {
         story_override: [None; 3],
         new_game: false,
         battle: None,
+        play: Default::default(),
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(4107));
@@ -278,6 +283,7 @@ fn event_21595_sets_quest490_and_takes_the_1_4_1_warp() {
         story_override: [None; 3],
         new_game: false,
         battle: None,
+        play: Default::default(),
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     for frame in 0..120_000 {
@@ -1252,6 +1258,7 @@ fn trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03() {
         story_override: [None; 3],
         new_game: false,
         battle: None,
+        play: Default::default(),
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(4101));
@@ -1397,6 +1404,7 @@ fn a_three_slime_battle_places_the_fighters_on_the_grid() {
         stage: crate::battle::DEFAULT_STAGE,
         monsters: vec![(1, 3)],
         track: None,
+        surprise: None,
     };
     let resolved = request.resolve(rom).unwrap();
     let mut scene = BattleScene::build(
@@ -1540,6 +1548,7 @@ fn scripted_battle_26_enters_and_leaves_the_scene_and_gives_the_field_back() {
         story_override: [None; 3],
         new_game: true,
         battle: None,
+        play: Default::default(),
     };
     let mut app = App::new_headless(options, Some(rom.to_vec()));
     let mut before: Option<(u16, Vec3)> = None;
@@ -1563,7 +1572,8 @@ fn scripted_battle_26_enters_and_leaves_the_scene_and_gives_the_field_back() {
                 Step::Battle {
                     number: 26,
                     record: Some(_),
-                    won: true
+                    won: true,
+                    fought: None
                 }
             )
         }) {
@@ -1588,4 +1598,272 @@ fn scripted_battle_26_enters_and_leaves_the_scene_and_gives_the_field_back() {
     );
     assert!(!app.battle_is_active());
     assert!(!app.events.is_active() || app.events.pending_start().is_some());
+}
+
+/// A headless run that plays its battles with the engine, the world's generators on `seed`.
+fn fighting(mut options: Options, seed: u64) -> Options {
+    options.play = BattlePlay {
+        fight: true,
+        seed: Some(seed),
+    };
+    options
+}
+
+/// The journal's battle step for scripted battle `number`.
+fn battle_step(app: &App, number: u16) -> Option<&Step> {
+    app.journal
+        .steps
+        .iter()
+        .map(|(_, step)| step)
+        .find(|step| matches!(step, Step::Battle { number: n, .. } if *n == number))
+}
+
+/// `--fight`: scripted battle 26 of a new game is played by the engine instead of declared
+/// won. It pays the party (`Party::award`, the gold), keeps the opening's monsters and says
+/// the game's lines, and the story chains on as after the stand-in.
+#[test]
+fn battle_26_is_fought_from_a_new_game_and_pays_the_party() {
+    let Some(rom) = testrom::load() else { return };
+    let mut options = fighting(map_options("1100", (1, 1, 1, true)), 7);
+    options.map = None;
+    options.new_game = true;
+    let mut app = App::new_headless(options, Some(rom.to_vec()));
+    assert_eq!(app.party().gold, 0);
+    for frame in 0..40_000 {
+        if frame % 20 == 0 {
+            app.talk.press(Button::Confirm);
+        }
+        app.run_steps(1);
+        if battle_step(&app, 26).is_some() {
+            break;
+        }
+    }
+    let Some(Step::Battle {
+        won,
+        fought: Some(fought),
+        ..
+    }) = battle_step(&app, 26).cloned()
+    else {
+        panic!("battle 26 must be fought: {:?}", battle_step(&app, 26));
+    };
+    assert!(won, "seed 7 wins battle 26");
+    assert_eq!(fought.result, "Won");
+    assert!(fought.experience > 0 && fought.gold > 0, "{fought:?}");
+    // The party shows the award: one member takes the whole experience.
+    let hero = &app.party().members[0];
+    assert_eq!(hero.current_experience(), fought.experience);
+    assert_eq!(app.party().gold, fought.gold);
+    assert!(hero.hp > 0 && hero.hp <= hero.max_hp);
+    let last = app.last_fight().expect("the fight is summarised");
+    assert_eq!(last.number, Some(26));
+    assert_eq!(
+        &last.log[..2],
+        ["Some slimes draw near!", "A cruelcumber draws near!"]
+    );
+    assert!(
+        last.log.iter().any(|line| line.contains("gold coins!")),
+        "{:?}",
+        last.log
+    );
+    // The same scenes follow the battle as after the stand-in.
+    assert!(!app.battle_is_active());
+    assert!(!app.events.is_active() || app.events.pending_start().is_some());
+}
+
+/// A level-1 hero loses the Hexagoon (battle 2, a set battle): trigger event 16 of its room
+/// runs (its action sets track flag 4), the fallen hero is raised, the purse is halved and
+/// the party comes round in Angel Falls' church (map 1106, `GameState+0x5698` after a new
+/// game).
+#[test]
+fn a_lost_hexagoon_fires_trigger_16_and_the_party_wakes_in_the_church() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(
+        fighting(map_options("7105", (2, 4, 1, true)), 3),
+        Some(rom.to_vec()),
+    );
+    assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(7105));
+    app.party.gold = 101;
+    let flags_before = app.state.tracks[app.state.track].flags.clone();
+    app.run_battle(2);
+    let Some(Step::Battle {
+        won,
+        fought: Some(fought),
+        ..
+    }) = battle_step(&app, 2).cloned()
+    else {
+        panic!("battle 2 must be fought: {:?}", battle_step(&app, 2));
+    };
+    assert!(!won);
+    assert_eq!(fought.result, "Lost");
+    assert_eq!((fought.experience, fought.gold), (0, 0));
+    let flags = &app.state.tracks[app.state.track].flags;
+    assert_ne!(flags, &flags_before, "trigger 16 ran: {flags:?}");
+    assert!(flags.iter().any(|set| set.contains(&4)), "{flags:?}");
+    assert_eq!(app.party().gold, 50, "the purse is halved, rounding down");
+    let hero = &app.party().members[0];
+    assert_eq!(hero.hp, hero.max_hp, "the fallen hero gets up");
+    assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(1106));
+    assert!(
+        app.journal.steps.iter().any(
+            |(_, s)| matches!(s, Step::MapChange { to: 1106, cause, .. } if cause == "wipe-out")
+        )
+    );
+}
+
+/// `start_encounter`, the roaming monsters' entry: an encounter has no battle number, so no
+/// trigger fires and no step is journaled; the party is paid and the field is back.
+#[test]
+fn an_encounter_pays_the_party_and_fires_no_trigger() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(
+        fighting(map_options("1100", (1, 2, 1, true)), 5),
+        Some(rom.to_vec()),
+    );
+    let map = app.current.as_ref().map(|(e, _)| e.id);
+    app.start_encounter(vec![(1, 2)], 0, dq9_core::battle::Surprise::None);
+    let last = app.last_fight().expect("the encounter was fought").clone();
+    assert_eq!(last.result, BattleResult::Won);
+    assert_eq!((last.experience, last.gold), (4, 8), "two slimes");
+    assert_eq!(app.party().gold, 8);
+    assert!(
+        !app.journal
+            .steps
+            .iter()
+            .any(|(_, s)| matches!(s, Step::Battle { .. })),
+        "no battle number, nothing to report to the triggers"
+    );
+    assert_eq!(
+        app.current.as_ref().map(|(e, _)| e.id),
+        map,
+        "the field is back"
+    );
+    assert!(!app.battle_is_active());
+}
+
+/// Without `--fight` the stand-in still settles a headless battle at once and leaves the party
+/// as it was: the recorded traces replay as before.
+#[test]
+fn the_stand_in_leaves_the_party_untouched() {
+    let Some(rom) = testrom::load() else { return };
+    let mut options = map_options("1100", (1, 2, 1, true));
+    options.map = None;
+    options.new_game = true;
+    let mut app = App::new_headless(options, Some(rom.to_vec()));
+    for frame in 0..40_000 {
+        if frame % 20 == 0 {
+            app.talk.press(Button::Confirm);
+        }
+        app.run_steps(1);
+        if battle_step(&app, 26).is_some() {
+            break;
+        }
+    }
+    assert!(matches!(
+        battle_step(&app, 26),
+        Some(Step::Battle {
+            won: true,
+            fought: None,
+            ..
+        })
+    ));
+    assert_eq!(app.party().gold, 0);
+    assert_eq!(app.party().members[0].current_experience(), 0);
+    assert!(app.last_fight().is_none());
+}
+
+/// The window's path without a window: the transition builds the scene, the fight reads the
+/// pad the keyboard fills (`confirm` held), the scene is left, the field is back and the party
+/// is paid. `proxy` is only what makes a run fight by itself; the phases are the same.
+#[test]
+fn the_window_path_plays_a_battle_from_the_pad() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(
+        fighting(map_options("1100", (1, 2, 1, true)), 9),
+        Some(rom.to_vec()),
+    );
+    let map = app.current.as_ref().map(|(e, _)| e.id);
+    let request = crate::battle::Request {
+        stage: 0,
+        monsters: vec![(1, 2)],
+        surprise: Some(dq9_core::battle::Surprise::None),
+        ..Default::default()
+    };
+    let resolved = request.resolve(rom).unwrap();
+    app.battle_change = Some(BattleChange::Entering {
+        ticks: BATTLE_ENTER_DONE - 1,
+        request: resolved,
+        auto_leave: false,
+    });
+    let mut seen_menu = false;
+    let mut seen_message = false;
+    for _ in 0..20_000 {
+        if !app.battle_is_active() {
+            break;
+        }
+        if let Some(fight) = &app.fight {
+            let view = fight.view();
+            seen_menu |= view.menu.is_some();
+            seen_message |= view.message.is_some();
+        }
+        app.battle_pad.confirm = true;
+        app.run_steps(1);
+    }
+    assert!(!app.battle_is_active(), "the battle must end");
+    assert!(
+        seen_menu && seen_message,
+        "the fight showed its menu and windows"
+    );
+    let last = app.last_fight().expect("the fight is summarised");
+    assert_eq!(last.result, BattleResult::Won);
+    assert_eq!(app.party().gold, last.gold);
+    assert!(app.fight.is_none() && app.battle().is_none());
+    assert_eq!(
+        app.current.as_ref().map(|(e, _)| e.id),
+        map,
+        "the field is back"
+    );
+}
+
+/// A monster that joins the fight (a call for backup) is drawn on the next place of the grid,
+/// the monsters take their places again for the new count, and a fallen one stays hidden.
+#[test]
+fn a_monster_that_joins_the_fight_is_placed_and_the_fallen_stay_hidden() {
+    use crate::battle::Fighter;
+
+    let Some(rom) = testrom::load() else { return };
+    let clock = DayClock::new(0.0, true);
+    let resolved = crate::battle::Request {
+        stage: crate::battle::DEFAULT_STAGE,
+        monsters: vec![(1, 2)],
+        ..Default::default()
+    }
+    .resolve(rom)
+    .unwrap();
+    let mut scene = BattleScene::build(
+        rom,
+        &resolved,
+        clock.phase().index(),
+        clock,
+        &dq9_formats::cast::Story::default(),
+        &HeroLook::new_game(),
+    )
+    .unwrap();
+    assert!(scene.remove(Fighter::monster(0)));
+    scene.add_monster(rom, 43).unwrap();
+    assert_eq!(scene.fighters().len(), 4);
+    let joined = *scene.fighter(Fighter::monster(2)).unwrap();
+    assert_eq!(joined.number, Some(43));
+    assert!(joined.alive && scene.fighter_screen_pos(Fighter::monster(2)).is_some());
+    assert!(
+        scene.fighter_screen_pos(Fighter::monster(0)).is_none(),
+        "the fallen monster is still hidden"
+    );
+    // Three monsters stand on the three-monster slots (29, 22, 32: x −3.897, 0, 3.897).
+    let xs: Vec<f32> = (0..3)
+        .map(|i| scene.fighter(Fighter::monster(i)).unwrap().position.x)
+        .collect();
+    assert!(
+        (xs[0] + 3.897).abs() < 1e-3 && xs[1].abs() < 1e-3 && (xs[2] - 3.897).abs() < 1e-3,
+        "{xs:?}"
+    );
 }

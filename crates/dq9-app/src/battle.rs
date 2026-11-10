@@ -25,6 +25,7 @@
 use std::f32::consts::PI;
 
 use anyhow::{Context as _, Result};
+use dq9_core::battle::Surprise;
 use dq9_core::scenario::{BattleRecord, battle as battle_record};
 use dq9_formats::Gpc2;
 use dq9_formats::battle::monster::Names;
@@ -37,6 +38,13 @@ use nds_rom::Rom;
 
 use crate::lighting;
 use crate::load::{self, MapEntry};
+
+pub mod data;
+pub mod fight;
+pub mod narrate;
+#[cfg(test)]
+mod tests;
+pub mod ui;
 
 /// Stage the game falls back to when the ground names none, or a map the list does not hold
 /// (`func_ov000_02166880`, wiki *Battle-Stages*).
@@ -120,6 +128,8 @@ pub struct Request {
     pub monsters: Vec<(u16, u16)>,
     /// Music sequence; `None` takes the record's, else [`BATTLE_TRACK`].
     pub track: Option<u8>,
+    /// Who has the jump at the start; `None` is an even start.
+    pub surprise: Option<Surprise>,
 }
 
 /// A [`Request`] with the record read: what the scene needs.
@@ -130,6 +140,8 @@ pub struct Resolved {
     pub track: u8,
     pub number: Option<u16>,
     pub record: Option<BattleRecord>,
+    /// Who has the jump at the start (the roaming monsters' contact).
+    pub surprise: Surprise,
 }
 
 impl Request {
@@ -173,6 +185,7 @@ impl Request {
             track,
             number: self.record,
             record,
+            surprise: self.surprise.unwrap_or(Surprise::None),
         })
     }
 }
@@ -425,9 +438,64 @@ impl BattleScene {
         }
     }
 
+    /// A monster that joined the fight (a call for backup): its model is added on the next
+    /// free place of the grid and the monsters' places are taken again for the new count.
+    /// `Fighter::monster(n)` of the next index is its fighter.
+    pub fn add_monster(&mut self, rom: &[u8], number: u16) -> Result<()> {
+        let files = Rom::parse(rom).context("parsing the ROM")?;
+        let names_archive = Gpc2::parse(
+            files
+                .file_by_path("data/prm/mon_data.gp2")
+                .context("the ROM has no mon_data archive")?,
+        )
+        .context("parsing mon_data.gp2")?;
+        let names_member = names_archive
+            .entries
+            .iter()
+            .find(|e| e.name == "mon_data_en.nat")
+            .and_then(|entry| names_archive.member(entry).ok())
+            .context("no readable mon_data_en.nat member")?;
+        let names = Names::parse(&names_member).context("parsing mon_data_en.nat")?;
+        let record = names
+            .find(number)
+            .with_context(|| format!("monster {number} has no mon_data record"))?;
+        let code = String::from_utf8_lossy(record.code);
+        let chr = crate::event::scan::monster_archive_bytes(rom, &format!("enemy/{code}.mon"))
+            .with_context(|| format!("monster {number} ({code}) has no body in enemy.gp2"))?;
+        let actor = self
+            .runtime
+            .add_actor(&chr, &[])
+            .with_context(|| format!("monster {number} ({code}): model"))?;
+        let instance = self
+            .runtime
+            .actor_instance(actor)
+            .with_context(|| format!("monster {number} ({code}): no polygons"))?;
+        self.runtime.play_actor(actor, "stand", false, 1.0);
+        let rank = self
+            .fighters
+            .iter()
+            .filter(|f| f.fighter.side == Side::Monsters)
+            .count();
+        self.fighters.push(PlacedFighter {
+            fighter: Fighter::monster(rank),
+            number: Some(number),
+            position: Vec3::ZERO,
+            heading: 0.0,
+            alive: true,
+        });
+        self.instances.push(instance);
+        self.actors.push(Some(actor));
+        self.heights
+            .push((f32::from(record.height) / 4096.0).max(0.5));
+        self.widths
+            .push((f32::from(record.radius) / 1024.0 * 4.0).max(0.5));
+        self.place();
+        self.set_shot(self.shot);
+        Ok(())
+    }
+
     /// The defeat fade: the fighter is hidden and `alive` goes false. Its slot stays (the
-    /// game keeps it for the death effect and the results). The action scripts of the next
-    /// wave are the callers.
+    /// game keeps it for the death effect and the results).
     #[allow(dead_code)]
     pub fn remove(&mut self, fighter: Fighter) -> bool {
         let Some(index) = self.index_of(fighter) else {
@@ -504,6 +572,10 @@ impl BattleScene {
             let position = position + Vec3::Y * FIGHTER_HEIGHT;
             self.fighters[index].position = position;
             self.fighters[index].heading = heading;
+            if !self.fighters[index].alive {
+                // A fallen fighter stays hidden (`remove`).
+                continue;
+            }
             let instance = self.instances[index];
             let world = match self.actors[index] {
                 None => self.runtime.hero_world(position, heading),

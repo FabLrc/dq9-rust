@@ -40,9 +40,20 @@ use crate::gpu::Gpu;
 use crate::lighting;
 use crate::load::{self, MapEntry};
 use crate::talk::{Button, Talk};
+use dq9_core::party::Party;
+
+use self::fight::FightSummary;
+use crate::battle::fight::{Fight, Outcome as FightOutcome, Pad, World};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod auto;
+mod fight;
+#[cfg(not(target_arch = "wasm32"))]
+pub use self::fight::BattlePlay;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use self::fight::regions as fight_regions;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use self::fight::run_to_phase;
 mod flow;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod headless;
@@ -90,11 +101,13 @@ enum BattleChange {
         request: battle::Resolved,
         auto_leave: bool,
     },
-    /// Both screens to black, the field back, then up.
+    /// Both screens to black, the field back, then up; the fight's outcome settles the
+    /// story when the field is back.
     Leaving {
         ticks: u32,
         request: battle::Resolved,
         restored: bool,
+        outcome: Option<FightOutcome>,
     },
 }
 
@@ -175,6 +188,8 @@ pub struct Options {
     /// Show a battle scene from the start (`--battle`, `?battle=`): an `eventbattle.bin`
     /// record or an explicit stage and its monsters.
     pub battle: Option<crate::battle::Request>,
+    /// How battles are played (`--fight`, `--seed`).
+    pub play: fight::BattlePlay,
 }
 
 /// Reads the item id → compendium index tables (`data/prm/itemdt_<category>.gp2`,
@@ -319,6 +334,21 @@ pub struct App {
     battle_cover: f32,
     /// The last battle a headless run built and settled at once ([`ShownBattle`]).
     last_battle: Option<ShownBattle>,
+    /// The fight in play (windows and the Web, or `--fight`): the engine, its menus and its
+    /// messages; its end settles the battle.
+    fight: Option<Box<Fight>>,
+    /// Pad presses of the window since the last fixed step, for the fight.
+    battle_pad: Pad,
+    /// The world's generators the battle draws on (monsters' HP, flight, drops).
+    world: World,
+    world_seeded: bool,
+    /// The party: members, gold and bag. Its level tables are applied at the first fight.
+    party: Party,
+    party_ready: bool,
+    /// Where a wiped-out party comes round.
+    revival_map: u16,
+    /// How the last fight went.
+    last_fight: Option<FightSummary>,
     renderer: Option<Renderer>,
     audio: Audio,
     /// Lighting, fog and background of the loaded map at the selected time of day.
@@ -412,6 +442,14 @@ impl App {
             saved_field: None,
             battle_cover: 0.0,
             last_battle: None,
+            fight: None,
+            battle_pad: Default::default(),
+            world: World::seeded(0),
+            world_seeded: false,
+            party: Party::new_game(),
+            party_ready: false,
+            revival_map: fight::NEW_GAME_REVIVAL_MAP,
+            last_fight: None,
             renderer: None,
             audio,
             environment: dq9_render::Environment::default(),
@@ -497,6 +535,12 @@ impl App {
         );
         self.time = self.day.phase().index();
         self.look = start.look.clone();
+        self.party = start
+            .state
+            .as_ref()
+            .map_or_else(Party::new_game, |s| s.party.clone());
+        self.party_ready = false;
+        self.world_seeded = false;
         self.load(&start.map, true, None, start.state.as_ref());
         if let Some(event) = self.options.event {
             self.events.queue(event);
@@ -940,6 +984,16 @@ impl App {
         }
         if !self.held.insert(code) {
             return; // key repeat
+        }
+        if self.fight.is_some() {
+            // The fight reads the pad itself; the conversation's presses must not pile up.
+            match code {
+                KeyCode::Escape => event_loop.exit(),
+                KeyCode::KeyM => self.audio.toggle_mute(),
+                KeyCode::KeyR => self.options.layout = self.options.layout.next(),
+                _ => fight::pad_press(&mut self.battle_pad, code),
+            }
+            return;
         }
         if self.talk.is_active() {
             match code {
@@ -1570,6 +1624,20 @@ impl App {
                 field,
             );
         }
+        if self.battle_cover <= 0.0
+            && let (Some(fight), Some(scene)) = (&self.fight, &self.battle)
+        {
+            fight::draw_ui(
+                &mut self.talk,
+                fight,
+                scene,
+                gpu,
+                &mut encoder,
+                &view,
+                &screens,
+                self.tick as u32,
+            );
+        }
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(frame);
     }
@@ -1619,9 +1687,10 @@ impl App {
     }
 
     /// Starts a battle: the record (or the explicit stage and monsters) is read now, then the
-    /// transition builds the scene once both screens are black. `auto_leave` settles it after
-    /// [`BATTLE_HOLD`] steps (the stand-in of J4); `immediate` skips a transition that has no
-    /// field to fade from.
+    /// transition builds the scene once both screens are black and the fight starts on it.
+    /// `auto_leave` settles it after [`BATTLE_HOLD`] steps when no fight could be built (the
+    /// J4 stand-in); `immediate` skips a transition that has no field to fade from. A
+    /// headless run keeps the stand-in unless `--fight` asks for the engine.
     pub(crate) fn start_battle(
         &mut self,
         request: battle::Request,
@@ -1651,7 +1720,7 @@ impl App {
         if self.proxy.is_none() {
             // Headless: the scene is built (and checked) but no fixed step is spent showing
             // it, so the story's timeline is exactly the one recorded traces describe. The
-            // stand-in then settles it as before.
+            // stand-in then settles it as before, or `--fight` plays it with the engine.
             if self.enter_battle(&resolved) {
                 self.last_battle = self.battle.as_ref().map(|scene| ShownBattle {
                     stage: scene.stage(),
@@ -1660,7 +1729,11 @@ impl App {
                 self.restore_field();
             }
             self.set_battle_cover(0.0);
-            self.settle_battle(&resolved);
+            if self.options.play.fight {
+                self.play_headless_fight(&resolved);
+            } else {
+                self.settle_battle(&resolved, None);
+            }
             return;
         }
         let ticks = if immediate { BATTLE_ENTER_DONE } else { 0 };
@@ -1703,6 +1776,11 @@ impl App {
                     let request = request.clone();
                     let auto_leave = *auto_leave;
                     if self.enter_battle(&request) {
+                        // The fight starts on the scene; one that cannot be built leaves the
+                        // stand-in to settle the battle after its hold.
+                        self.fight = self.make_fight(&request);
+                        self.battle_pad = Default::default();
+                        self.talk.discard_input();
                         change = BattleChange::Fighting {
                             ticks: 0,
                             request,
@@ -1711,7 +1789,7 @@ impl App {
                     } else {
                         // No scene: the story does not stop on it (the stand-in of J4).
                         self.set_battle_cover(0.0);
-                        self.settle_battle(&request);
+                        self.settle_battle(&request, None);
                         finished = true;
                     }
                 }
@@ -1721,7 +1799,6 @@ impl App {
                 request,
                 auto_leave,
             } => {
-                let _ = request;
                 if let Some(scene) = &mut self.battle
                     && let Err(e) = scene.step()
                 {
@@ -1731,12 +1808,23 @@ impl App {
                 let alpha = (1.0 - *ticks as f32 / 15.0).max(0.0);
                 *ticks += 1;
                 self.set_battle_cover(alpha);
-                if *auto_leave && *ticks >= BATTLE_HOLD {
+                if self.fight.is_some() {
+                    if let Some(outcome) = self.drive_fight() {
+                        let request = request.clone();
+                        change = BattleChange::Leaving {
+                            ticks: 0,
+                            request,
+                            restored: false,
+                            outcome: Some(outcome),
+                        };
+                    }
+                } else if *auto_leave && *ticks >= BATTLE_HOLD {
                     let request = request.clone();
                     change = BattleChange::Leaving {
                         ticks: 0,
                         request,
                         restored: false,
+                        outcome: None,
                     };
                 }
             }
@@ -1744,6 +1832,7 @@ impl App {
                 ticks,
                 request,
                 restored,
+                outcome,
             } => {
                 *ticks += 1;
                 if *ticks < BATTLE_LEAVE_AT {
@@ -1761,8 +1850,16 @@ impl App {
                 if *ticks >= BATTLE_LEAVE_DONE {
                     self.set_battle_cover(0.0);
                     let request = request.clone();
-                    self.settle_battle(&request);
+                    let outcome = outcome.take();
                     finished = true;
+                    self.settle_battle(&request, outcome);
+                    // A preview (`--battle`) has no story to go back to: it fights again.
+                    if self.field.is_none()
+                        && self.battle_change.is_none()
+                        && let Some(again) = self.options.battle.clone()
+                    {
+                        self.start_battle(again, false, true);
+                    }
                 }
             }
         }
@@ -1876,31 +1973,6 @@ impl App {
         };
         let flags = |flag: u16| self.state.flags.contains(&i32::from(flag));
         self.audio.set_map(rom, map, self.time, &flags);
-    }
-
-    /// The stand-in outcome of J4: the battle is recorded and trigger event 15 fires, exactly
-    /// as `scenario::stand_in` did before the scene existed.
-    fn settle_battle(&mut self, request: &battle::Resolved) {
-        let Some(number) = request.number else {
-            return;
-        };
-        let won = dq9_core::scenario::stand_in(number);
-        status(&format!(
-            "battle {number}: {won} (stand-in), stage {}",
-            request.stage
-        ));
-        self.journal.record(
-            self.tick,
-            Step::Battle {
-                number,
-                record: request.record.clone(),
-                won,
-            },
-        );
-        if let Some(field) = &mut self.field {
-            let events = field.battle_ended(number, won, &mut self.state);
-            self.apply_events(events);
-        }
     }
 
     /// Draws the battle scene once: the animations at the battle camera, its light and the

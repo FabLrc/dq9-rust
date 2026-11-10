@@ -61,12 +61,23 @@ pub fn battle(files: &dyn Files, number: u16) -> Option<BattleRecord> {
     })
 }
 
-/// How a scripted battle ends while there is no battle system (J4): the party wins at once.
-/// The game would play the fight and then fire trigger event 15 (won) or 16 (lost); the story
-/// continues exactly as after a win. A stand-in, not a model of a fight: it exists so that
-/// the scenes that follow a scripted battle can be reached.
+/// How a scripted battle ends when the battle is not played (a headless run without
+/// `--fight`, which keeps the recorded traces' timeline): the party wins at once. The game
+/// plays the fight and then fires trigger event 15 (won) or 16 (lost); the story continues
+/// exactly as after a win. A stand-in, not a model of a fight: the application plays the
+/// real fight in a window, on the Web and with `--fight` (`docs/app.md`, § "Battle").
 pub fn stand_in(_battle: u16) -> bool {
     true
+}
+
+/// What a played fight came to, as the journal records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fought {
+    pub rounds: u32,
+    pub experience: u32,
+    pub gold: u32,
+    /// `Won`, `Lost` or `Fled`.
+    pub result: String,
 }
 
 /// One thing the story did, for the report of a run.
@@ -85,11 +96,13 @@ pub enum Step {
     },
     EventStarted(u16),
     EventEnded(u16),
-    /// A scripted battle was requested and settled by [`stand_in`].
+    /// A scripted battle was requested and settled: by [`stand_in`] (`fought` is `None`) or
+    /// by the application's battle engine.
     Battle {
         number: u16,
         record: Option<BattleRecord>,
         won: bool,
+        fought: Option<Fought>,
     },
     /// The progress of a scenario track moved.
     Progress {
@@ -123,6 +136,7 @@ impl fmt::Display for Step {
                 number,
                 record,
                 won,
+                fought,
             } => {
                 write!(f, "scripted battle {number}")?;
                 if let Some(r) = record {
@@ -130,11 +144,15 @@ impl fmt::Display for Step {
                         r.monsters.iter().map(|(m, n)| format!("{m}x{n}")).collect();
                     write!(f, " [monsters {}, stage {}]", monsters.join(" "), r.stage)?;
                 }
-                write!(
-                    f,
-                    ": {} (stand-in, no battle system yet)",
-                    if *won { "won" } else { "lost" }
-                )
+                let verdict = if *won { "won" } else { "lost" };
+                match fought {
+                    Some(fought) => write!(
+                        f,
+                        ": {verdict} (fought: {}, {} rounds, {} experience, {} gold)",
+                        fought.result, fought.rounds, fought.experience, fought.gold
+                    ),
+                    None => write!(f, ": {verdict} (stand-in, no battle system yet)"),
+                }
             }
             Self::Progress { track, from, to } => {
                 write!(f, "story track {track}: {} -> {}", story(*from), story(*to))

@@ -371,22 +371,25 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
   high. Which sign "side 1" is, the opening's eased approach (0.95 a frame) and the fixed
   per-monster-kind shots of `data_ov026_021de87c` are **[unknown]/[hypothesis]**: the first
   is taken as the party's side.
-- **API for the next wave**: `play(fighter, motion)`, `remove(fighter)` (defeat fade),
-  `set_shot(shot)`, `fighter_screen_pos(fighter)` (the fighter's body on the 256×192 top
-  screen, for damage numbers).
+- **API**: `play(fighter, motion)` (the models of chapter 2 only carry `stand`, `run`, `walk`
+  and `appear`, so the fight does not call it), `remove(fighter)` (defeat fade, called by the
+  fight), `set_shot(shot)`, `fighter_screen_pos(fighter)` (the fighter's body on the 256×192
+  top screen, for the damage numbers).
 - **Transition** (native 547, `ov_001::02163ccc`). A scripted battle (`Request::Battle`, action
   `0x78`) or 547 starts it: the battle track (`eventbattle.bin` `+0x24`, else sequence `0x17`)
   plays at once, both screens go to black over 20 frames from the 15th, the scene is built
-  while black and comes up over 15 (`0x021d9d18`). The fight itself is the J4 **stand-in**
-  (`scenario::stand_in`, won); after 90 steps it fades out, restores the field and fires
-  trigger event 15. 547 without a following battle gives the field back after 110 steps. The
+  while black and comes up over 15 (`0x021d9d18`); the fight is played on it (§ "Battle"),
+  then the screens go to black again over 15, the field comes back and trigger event 15 or 16
+  fires. When no fight can be built, the stand-in holds the scene 90 steps and settles it as
+  won. 547 without a following battle gives the field back after 110 steps. The
   swirl's model (`ev999991500.chr`), its roll and field of view, and the encounter transition
   of a roaming monster are **[hypothesis]/not modelled** (J4 roaming batch).
 - **Headless** (`--headless`, `--auto`, `--replay`, tests): the scene is built and checked,
-  then settled in the **same fixed step** (`App::last_battle` records its stage and fighter
-  count). No step is spent on a presentation: the headless timeline is the story's, so the
-  recorded input traces replay identically (`scripts/parity.ps1`), as they did with the old
-  stand-in. The window and the Web show the transition and hold it.
+  then the battle is settled in the **same fixed step** (`App::last_battle` records its stage
+  and fighter count). No step is spent on a presentation: the headless timeline is the
+  story's, so the recorded input traces replay identically (`scripts/parity.ps1`). What
+  settles it is the J4 stand-in (won) unless `--fight` plays it with the engine (§ "Battle").
+  The window and the Web show the transition and play the fight.
 - **Back to the field.** Native 844's rule is modelled by keeping the field scene aside
   (`App::save_field`): the same map, cast, doors, collision, party pose and lighting come back
   unchanged, so the placements are as the scene left them. The map is not reloaded: no entry
@@ -406,6 +409,160 @@ Real-ROM tests in `app/tests.rs` assert the grid of a
 three-slime scene and of the Hexagoon's set battle, the eye clamp, `fighter_screen_pos`, and
 that scripted battle 26 enters the scene from `--new-game` and gives the same map and pose
 back.
+
+## Battle
+
+A battle is **played**: the player picks the commands, the engine (`dq9_core::battle`)
+resolves every round, the scene shows its fighters, and the messages of the game
+(`dq9_formats::battle::text`, `re/battle-text.md`) say what happens. A victory pays the party
+(`Party::award`: experience, gold, drops, level-up lines), a defeat is a wipe-out (trigger 16,
+the purse halved, the party wakes in a church), a flight returns to the field.
+
+```powershell
+# The Hexagoon's set battle, played by hand (command menu, messages, defeat → trigger 16):
+cargo run -p dq9-app --release -- --battle 2
+# Three slimes on the field stage, to a victory with experience and gold messages:
+cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3
+# A new game whose battle 26 is played by the engine (an automatic policy attacks the first
+# standing monster), the world's generators seeded with 7:
+cargo run -p dq9-app --release -- --new-game --fight --seed 7 --headless --auto --pilot
+# A capture of the windows: play with the confirm key held until the phase shows (`menu`,
+# `damage`, `levelup`, `victory` or `lost`):
+cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 --fight --seed 7 `
+    --battle-capture damage --screenshot build/evidence/j4-battle-play/damage.png
+```
+
+**Code.** `crates/dq9-app/src/battle/` (the scene is `battle.rs`): `data.rs` (the ROM tables
+of a fight, decompressed once), `fight.rs` (`Fight`, the state machine: opening, command
+entry, rounds, end; no scene, no GPU), `narrate.rs` (events → the game's messages and scene
+cues), `ui.rs` (the windows as quads of the two DS screens), `tests.rs`. `app/fight.rs` is
+the application's side: the party, the world's generators, the window's pad, the outcome's
+effect on the story and the wipe-out.
+
+**What is played.**
+
+- *Entry.* `App::run_battle` (action `0x78`) and `App::start_encounter(groups, stage,
+  opening)` (the roaming monsters' entry, called by nothing yet but tested) resolve the
+  request, run the transition and build the scene (§ "Battle scene"), then the `Fight`:
+  the party is `Party` (new game: the hero, level tables applied at the first fight; a save:
+  its party), each member's `Character::fighter` from `ItemStats` and `itembtlprm.nat`; a
+  scripted battle (`eventbattle.bin`) is a **set battle** (the table's HP, no flight), an
+  explicit stage or an encounter draws the monsters' HP on the world's generator and allows
+  flight. `Surprise` is the request's.
+- *Generators.* The world's `Random` (monsters' HP, flight) and the C library's `CRand`
+  (drops) are kept by the application across battles; the battle owns its own `Random`,
+  seeded from the world's. `--seed N` (the Web's `?seed=N`) seeds them, else the game's clock
+  and the fixed-step count at the first battle.
+- *Opening.* `strbtl` 6 for each kind of monster ("Some slimes draw near!", "A cruelcumber
+  draws near!"), 8 for a boss, then 14 (monsters strike first) or 11 (the party has the
+  jump). Each window closes itself after 40 steps; a key shortens it.
+- *Commands.* Per member, in the bottom screen: **Fight** (`str_btl` 30000) → Attack, Spells,
+  Defend, Items (30004–30008); **Flee** (30001); Examine and Misc. are shown greyed. Attack,
+  a single-target spell and an item open the target list (the monsters standing, or the
+  party for an action aimed at its own side; the scene marks the monster under the cursor
+  with the wait arrow). Spells are those the vocation has learned at the member's level in
+  `spelltable.bin` (the Minstrel learns Heal at 3: a level 1 hero has none, so Spells is
+  greyed). **Defend** is `Command::Defend` (no target); **Items** lists the bag's items that
+  do something in battle with their count, greyed when there are none (a new game's bag is
+  empty until a drop). Flee is greyed in a set battle (`BattleError::FleeForbidden`).
+- *Round.* `Battle::round`; its events become windows (`narrate.rs`): each action says its
+  opening line (`actmsg`, by the record's `+0x20` bits 0–9 / 10–19 for a party / monster
+  target), the critical line (`+0x28` bits 20–29), what it did (`+0x20` bits 20–29 at a
+  party member, `+0x24` bits 0–9 at a monster, the failure lines `+0x24` bits 10–19 / 20–29
+  on a dodge or a block) and the kill line (`+0x28` bits 0–9 / 10–19). The status window
+  follows the HP as the windows come; damage and healing numbers float over the fighter at
+  `fighter_screen_pos`; a defeated monster is removed (`remove`). The models carry no attack
+  or damage motion, so the action scripts are not played.
+- *End.* Victory: `str_bres` 1 (50 for several monsters), 25 (26 for several members), a
+  level line (10) and the skill points (13) for each level gained, gold (16) and a treasure
+  chest (17, 18) for each drop; every window waits for a key (wiki *Battle-Stages*). The
+  drops roll on `CRand` (`Battle::finish`), the award goes to `Party::award`, each drop to
+  the trigger state (`State::obtain`, which raises the item-obtained flag, so a drop of the
+  medicinal herb raises flag 4135). Defeat: `str_bres` 20, then **the wipe-out**
+  (below). Flight: `actmsg` 45 (`str_bres` 24 when the enemy block the way, the fight goes
+  on); the field comes back.
+- *Defend, items, backup, monsters' flight.* `Event::Defended` says action 3's opening line
+  (`actmsg` 10, "Hero defends."). `Event::ItemUsed` precedes the item's own action: its
+  opening line (`actmsg` 70, "Hero uses a medicinal herb.") names the item the member chose
+  and its result line follows ("Hero's wounds are healed."); the fight takes one copy out of
+  its party's bag (`Bag::remove`), so the next menu shows the new count and the party the
+  battle returns has it gone. The Items rows are the bag's items whose record names a battle
+  action (the second action of `itemdt_*`, read by `Data::item_actions`, 252 is "nothing"
+  **[hypothesis]** for which of the two is the battle's, wiki *Items*). A call for backup
+  (action kind 12) says its opening, then the record's line: "A bag o' laughs shows up." when
+  the engine added the monster (`Event::Summoned`, the scene gets its model through
+  `BattleScene::add_monster` and the monsters take their places again), "But nobody shows up."
+  otherwise. A monster that flees (Flee `0xE1`, `0x395`: `Event::Acted` on itself) says its
+  record's opening ("The slime flees.") and is removed from the scene; it pays nothing
+  (`Battle::has_fled`, no kill).
+- *Back.* The screens go to black, the field is restored (§ "Battle scene"), trigger event 15
+  (won) or 16 (lost) of the scripted battle fires, a flight fires none.
+- **Wipe-out** (`func_02010604`, wiki *Travel* "A wipe-out"): the fallen members get up with
+  full HP and MP, the purse is **halved rounding down** (the bank is spared), and the party
+  comes round on the revival map at its start point: **1106** (Angel Falls' church) after a
+  new game. The trigger 16 of the battle runs **before** (the Hexagoon's, `D01` room 7105,
+  sets track flag 4). Not modelled: what the priest says there (`chur_messet.bin` picks the
+  voice, wiki *Travel*), the revival map a save carries (a church saved in, Stornway's), a
+  set battle's own revival map (trigger action 180, the Magmaroo and Gortress only), the
+  jingle `ME_009`. A wipe-out during a running scene (an event queued by trigger 16) leaves
+  the party on the map.
+
+**Controls** (as the conversation window): `Enter`, `Space` or `Z` confirm and close the
+window; `Backspace` or `X` cancel (back one menu, or to the previous member); the arrow keys
+or `W`/`A`/`S`/`D` move the cursor (left and up go back, right and down forward); `M` mute,
+`R` layout; `Esc` closes the application (it does not cancel, as in the conversation). No
+touch. With `--layout top` the bottom screen's windows are laid over the top screen.
+
+**Headless and parity.** The 615 checkpoints and the recorded traces pin battle 26's "won at
+once" timeline, so a headless run, `--replay` and the application's tests keep the stand-in
+unless `--fight` is given; the window and the Web always fight. `--fight` plays the battle in
+the same fixed step (no step is spent on a presentation) with the automatic policy (Attack
+the first standing monster, as holding confirm through the menus does: a test asserts the
+two play the same fight) and the world's generators on `--seed`. Follow-up: re-record the
+references with real battles (`scripts/parity.ps1` still compares the stand-in; the loot of
+`--fight` depends on the seed: seed 7 drops nothing now that the fleeing monsters pay nothing).
+
+**Open and [hypothesis].**
+
+- Layout of the windows is not read from the overlay: the message window is the field's size
+  (252 × 70) put at the top of the top screen (the field's own, `y = 0x74`, would sit on the
+  fighters); the status window (`6, 6`, 244 wide, one 22-pixel row a member: name, `HP`,
+  `MP`), the command menu (`6`, below it, 116 wide, 20-pixel rows) and the target list (`128`,
+  122 wide) are laid out here. The colours are the conversation window's.
+- Window timing: 40 steps per window (the opening's `<TIME=45>` and the flight's 30 are the
+  game's), a key closes it after 10; the results wait for a key (wiki *Battle-Stages*).
+  Which lines go in one window (here: one a line) and the order of a multi-target action's
+  lines are not read.
+- Party names carry no article (`grammar` 0): "Hero attacks."; `IF_SOLO` makes the victory
+  lines read "Hero obtains 8 gold coins!" and the wipe-out "Hero is wiped out!".
+- Treasure: one chest pair (17, 18) per drop, the monster named is the first fallen one whose
+  record holds the item.
+- Several kinds of monsters: one `strbtl` 6 line each, not message 7 (two sentences).
+- **Rules the engine still refuses.** `Battle::round` returns `BattleError::Unsupported` for
+  the whole round and leaves the battle unchanged (an AI mode, a targeting handler…): the
+  fight then ends as a flight with a logged warning, since the same round would fail again.
+  Over twenty seeds, every chapter 2 monster of `re/battle.md` plays to its end (Flee, Buff,
+  Accelerate, Dazzle, Weird Dance, a call for backup), so none stops today. The menus ask the
+  engine first: a spell or an item whose action `validate` refuses is greyed.
+- Not played: abilities, Examine, Misc., the guard's effect on who monsters pick, the party
+  members beyond the hero on the scene (the scene loads the hero only), the `.bact` action
+  scripts, the battle camera's shots (the opening's wide shot stays), the fanfares and the
+  battle's sound effects. Held items (`Character::held_items`) are not offered, only the bag.
+
+**Evidence** (local, `build/evidence/j4-battle-play/`, sha256 prefixes): `fight-run.log`
+(`743b4a58e0bd`, `--new-game --fight --seed 7 --headless --auto --pilot`: battle 26 won in 4
+rounds, 2 experience, 4 gold, no drop, the slime and the cruelcumber that had not fallen
+fleeing; the party line and every window of the fight are in the report), `menu.png`
+(`50124557cf7c`), `damage.png` (`dd23ba975c12`), `victory.png` (`d00681832a18`),
+`hexagoon-lost.png` (`841dac2ee401`, `--battle 2 --seed 3`), `parity.log` (`6bffa8a68372`: 2
+of 2, unchanged), `events-report-2.1-1.txt` (`0475ab6cf0dc`: 47 of 50 complete, unchanged),
+`verify.log` (`aa44613207e9`). Tests: `battle/tests.rs` (the seeded slime battle's lines,
+menus against the automatic policy, cancel, flight by seed, a lost Hexagoon, a level-up line,
+Defend, a herb from the bag, fleeing monsters, a call for backup) and `app/tests.rs` (battle
+26 fought and paid, the lost Hexagoon's trigger 16 and wake-up in map 1106, an encounter, the
+stand-in untouched, a monster joining the scene, the window's path driven by the pad). A
+window run was not exercised interactively: its
+phases (`Entering`, `Fighting`, `Leaving`) are driven by the last test without a window.
 
 ## New game (`--new-game`) and automatic run
 
@@ -469,19 +626,21 @@ current trigger progress (`current_story`: track, flags, quests), not for the
 | end of a cutscene that sets the cast aside (event list, value 21, bit 0 or 2) | cast rebuilt before trigger 11, pre-cutscene poses and removals restored by the snapshot | `App::reload_cast`, `EventPlayer::cast_loaded` |
 | 0x76 outside a conversation | dialogue window of the trigger's line | `App::talk_to` |
 
-**Scripted battles.** The battle itself is not fought (J4): `scenario::stand_in` declares it
-won, which the log states explicitly ("stand-in, no battle system yet"). Since the battle
-scene batch, action `0x78` (and native 547 in a cutscene) shows the **battle scene** first —
-the stage, the monsters and the party on the grid, under the battle camera (§ "Battle scene")
-— then the stand-in settles it and trigger 15 starts what follows. The monsters, experience
-and items are still not read, so a battle leaves no trace in the party yet.
+**Scripted battles.** A headless run does not play the battle unless `--fight` is given:
+`scenario::stand_in` declares it won, which the log states explicitly ("stand-in, no battle
+system yet"), so the recorded input traces and the 615 checkpoints of `scripts/parity.ps1`
+keep their timeline. Action `0x78` (and native 547 in a cutscene) shows the **battle scene**
+first — the stage, the monsters and the party on the grid, under the battle camera (§
+"Battle scene") — then the battle is settled and trigger 15 (or 16) starts what follows. In
+a window, on the Web and with `--fight` the settling is the played fight of § "Battle": the
+party is paid (experience, gold, drops) and its HP persists.
 
 **Result** (`--new-game --headless --auto`, EU ROM, English text; game time at 60 Hz):
 
 | Time | Map | Cutscene / fact |
 |---:|---|---|
 | 0 s | `M01M12` | `21500` "stage_opening" (80 s), then `21507` (43 s) via native 538 |
-| 123 s | — | trigger 11 of `21507` → **scripted battle 26** (monsters 290, 292, 290; arena 30116), won by stand-in → trigger 15 → `21520` |
+| 123 s | — | trigger 11 of `21507` → **scripted battle 26** (monsters 290, 292, 290; arena 30116), won by stand-in (`--fight`: played by the engine, § "Battle") → trigger 15 → `21520` |
 | 123 s | `F01M01`, `X01`, `X01M01`, `X01M05` | `21520 → 21521 → 21522 → 21596` (natives 538 and map changes requested by the scripts) |
 | 210 s | `X01M05` | **first player control** (Observatory, story 1.1.1) |
 
@@ -774,9 +933,12 @@ The window shows both DS screens (`crates/dq9-app/src/screens.rs`):
 
 - **Top**: the 3D field, with the game's camera and projection (`0x0202df78`, vertical
   half-angle of 15°). The screen is 256×192; only the rectangle size varies with the window.
-- **Bottom**: plain background (`dq9_render::Panel`), no content. The touch screen content is
-  not identified **[unknown]**; no ROM data is displayed there.
-- **Message window**: drawn on the top screen (`talk.rs`, `dialogue.md`).
+- **Bottom**: plain background (`dq9_render::Panel`) in the field, no content: the touch
+  screen content is not identified **[unknown]**; no ROM data is displayed there. During a
+  fight it holds the party's status and the command menus (§ "Battle", layout
+  **[hypothesis]**).
+- **Message window**: drawn on the top screen (`talk.rs`, `dialogue.md`); the battle's own is
+  at the top of the screen (`battle/ui.rs`).
 
 Layouts: `stacked` (default, top screen above the bottom one), `side` (side by side),
 `top` (top screen alone). The screens are centered and scaled together to the maximum of the

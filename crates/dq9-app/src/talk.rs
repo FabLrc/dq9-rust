@@ -36,18 +36,18 @@ fn archive_path(map_code: &str, chapter: u8) -> Result<String> {
 }
 
 /// The message window on the 256×192 screen (`func_02042b98(win, 2, 0x74, 0xfc, 0x4a)`).
-const WINDOW: [i32; 4] = [2, 0x74, 0xfc, 0x4a];
+pub(crate) const WINDOW: [i32; 4] = [2, 0x74, 0xfc, 0x4a];
 /// Where the text starts, from the window's corner **[hypothesis]** (the game's text origin is
 /// `(2, 0x7e)` in its own text layer).
-const TEXT_MARGIN: [i32; 2] = [12, 10];
+pub(crate) const TEXT_MARGIN: [i32; 2] = [12, 10];
 /// Pixels between the lines (`+0x1864 = 0x14`).
-const LINE_HEIGHT: i32 = 20;
+pub(crate) const LINE_HEIGHT: i32 = 20;
 /// Width the text wraps at **[hypothesis]**.
 const TEXT_WIDTH: i32 = 228;
 const NAME_HEIGHT: i32 = 22;
 /// Window fill **[hypothesis]**.
-const FILL: [f32; 4] = [0.02, 0.03, 0.22, 0.9];
-const SELECTED: [f32; 4] = [0.25, 0.35, 0.8, 0.95];
+pub(crate) const FILL: [f32; 4] = [0.02, 0.03, 0.22, 0.9];
+pub(crate) const SELECTED: [f32; 4] = [0.25, 0.35, 0.8, 0.95];
 
 /// Glyphs and width of one prompt label.
 #[derive(Debug)]
@@ -667,6 +667,44 @@ impl Talk {
             return;
         };
         ui.draw(device, queue, encoder, target, region, &quads);
+    }
+
+    /// The interface's atlas and message font, for the windows that are not conversations
+    /// (the battle's, `battle/ui.rs`). `None` when the ROM resources did not load.
+    pub(crate) fn with_ui<R>(&self, f: impl FnOnce(&Atlas, &Font<'_>) -> R) -> Option<R> {
+        let assets = self.assets.as_ref()?;
+        let font = assets.font().ok()?;
+        Some(f(&assets.atlas, &font))
+    }
+
+    /// The protagonist's name as the font draws it (`Hero` until a name is known).
+    pub(crate) fn hero_name(&self) -> Vec<u8> {
+        self.names.hero.clone()
+    }
+
+    /// Draws each set of quads over its screen of `target`, sharing the atlas (and the GPU
+    /// state) of the message window.
+    pub(crate) fn draw_screens(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        screens: &[(Viewport, Vec<Quad>)],
+    ) {
+        let Some(assets) = &self.assets else {
+            return;
+        };
+        if self.gpu.as_ref().is_none_or(|(f, _)| *f != format) {
+            self.gpu = Some((format, Ui::new(device, queue, format, &assets.atlas)));
+        }
+        let Some((_, ui)) = &mut self.gpu else {
+            return;
+        };
+        for (region, quads) in screens {
+            ui.draw(device, queue, encoder, target, *region, quads);
+        }
     }
 }
 
