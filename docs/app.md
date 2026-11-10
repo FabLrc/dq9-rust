@@ -694,9 +694,10 @@ no teleport enters the evidence.
 advances the story according to the simulation (conversations that no longer change progress or
 flags, areas already taken), or step cap reached. Known limits:
 
-- Battles are not played (stand-in); experience, party and items are not
-  modeled, so triggers that depend on them (conditions `0x24`, `0x31`, `0x32`…) can give
-  other branches than the real game: only the hero's opening outfit is set in the state.
+- The driver keeps the battle stand-in by default (`--fight` plays them with the engine, § "Battle");
+  the party's items and the battles' loot are only modelled with `--fight`, so triggers that
+  depend on them (conditions `0x24`, `0x31`, `0x32`…) can give other branches than the real game
+  without it: only the hero's opening outfit is set in the state.
 - `0x8d` (end of `21510`, `21595`, `21593`, `1340`…) rebuilds the cast of the current
   map without reloading it (`re/trigger.md`, § "Reloads after deferred
   actions"); its fade is not modeled. Natives without effect (`stb.md`) are

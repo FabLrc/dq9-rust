@@ -81,17 +81,21 @@ What works:
 - village tasks 1.2: ring, widow, stable, exit lock, return 1.4.1;
 - music, sound effects and jingles;
 - starting from a DS save (`--save`); the game state restores the party, bag and gold;
-- a battle scene on its stage (`--battle 2`, `--battle-stage 30116 --monsters 1x3`), and in
-  `dq9-core` a headless battle engine checked against BattleEmulator, party levels and
-  rewards, battle messages in five languages, roaming-monster rules.
+- battles played with the engine in the window and on the Web (command menus, the game's
+  messages, experience, level-ups, wipe-out; `--fight --seed N` headless) and a battle scene on its
+  stage (`--battle 2`, `--battle-stage 30116 --monsters 1x3`); in `dq9-core` a battle engine checked
+  against BattleEmulator, party levels and rewards, battle messages in five languages,
+  roaming-monster rules checked on melonDS field states;
+- trees and scenery that face the camera.
 
 Still missing:
 
-- battles in play: the engine is not wired to the scene yet, scripted battles are counted as
-  won and no roaming monster is drawn;
-- battle windows and menus, the field menu, shops, inn and church;
-- end-to-end browser certification and comparison with the original over the whole route
-  (see [`docs/status.md`](docs/status.md)).
+- roaming monsters are not drawn and start no fight yet; headless runs count scripted battles as
+  won (the parity traces depend on it);
+- attack animations in battle, the field menu, shops, inn and church screens (their rules exist in
+  `dq9-core`);
+- end-to-end browser certification (battles and the window have not been driven by hand) and
+  comparison with the original over the whole route (see [`docs/status.md`](docs/status.md)).
 
 Status, limits and evidence: [`docs/status.md`](docs/status.md); plan and milestones:
 [`docs/roadmap.md`](docs/roadmap.md); running and commands: [`docs/app.md`](docs/app.md).
