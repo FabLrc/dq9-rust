@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use dq9_core::battle::{
     ActionTables, Battle, BattleError, BattleResult, BattleSetup, CRand, Command, Event, Fighter,
     PartyMember, Random, RoundReport, Side, Skill, Surprise, Tables, Target, Unsupported, Who,
-    validate,
+    resolve_action, validate,
 };
 use dq9_core::scenario;
 use dq9_formats::Gpc2;
@@ -79,6 +79,42 @@ fn hero() -> PartyMember {
     f.deftness = 12;
     f.evasion_rate = 2.0;
     PartyMember::new(f)
+}
+
+/// Fullheal's kind handler replaces the resolved amount with the target's maximum HP
+/// (`ov_024::021db3a4`), after the ordinary resolver's draws, even at overwhelming defence.
+#[test]
+fn fullheal_restores_hp_after_spending_the_ordinary_draws() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let action = tables.actions.skill(33).unwrap().action.unwrap();
+    let mut actor = Fighter::new(Side::Party);
+    actor.mp = 40;
+    actor.attack = 9;
+    for (defence, draws) in [(0, 5), (999, 4)] {
+        let mut target = Fighter::new(Side::Party);
+        target.hp = 37;
+        target.max_hp = 321;
+        target.defence = defence;
+        let mut rng = Random::new(7);
+        let outcome =
+            resolve_action(&mut rng, &actor, &action, std::slice::from_ref(&target), 0).unwrap();
+        let restored = &outcome.targets[0];
+        assert_eq!((restored.hp_before, restored.hp_after), (37, 321));
+        assert_eq!(
+            restored.amount, 321,
+            "the handler replaces the capped amount"
+        );
+        assert_eq!(outcome.mp_spent, 24);
+        assert_eq!(outcome.draws, draws);
+        let mut expected = Random::new(7);
+        for _ in 0..draws {
+            expected.next_u32();
+        }
+        assert_eq!(rng, expected, "Fullheal must not bypass the ordinary draws");
+    }
 }
 
 fn attack_command(tables: &Tables<'_>, target: usize) -> Command {

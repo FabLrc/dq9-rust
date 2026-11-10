@@ -252,7 +252,15 @@ pub fn resolve_action(
         let fell = landed && action.number == 0xE1;
         let (hp_after, mp_damage) = match action.kind {
             1 => ((target.hp - amount).max(0), 0),
-            2 => (target.hp.max((target.hp + amount).min(target.max_hp)), 0),
+            2 => {
+                // The heal handler (`ov_024::021db3a4`) replaces the incoming amount for
+                // Fullheal and Omniheal after the normal base/final calculations and draws.
+                if matches!(action.number, 0x21 | 0x310) {
+                    amount = target.max_hp;
+                }
+                // `ov_000::0215a16c` applies the amount under the target's maximum HP.
+                (target.hp.max((target.hp + amount).min(target.max_hp)), 0)
+            }
             // Weird Dance (`func_ov024_021e0bf4`): the amount is taken from MP, held under what
             // the target has.
             57 => (target.hp, amount.max(0).min(target.mp.max(0))),

@@ -138,6 +138,28 @@ resistances to the action's both elements are above 0 → metal slash adder (not
   gives 0 (unit test).
 - **Heal** (kind 2) goes through the same function: a critical heal multiplies by
   `between(1.5, 2.0)`; the combo bit is not set on it.
+- **Fullheal is a kind-handler override, not another range.** The European action 33 has
+  range 0, kind 2, cost 24 and no damage handler. `ov_024::021db3a4` (the heal handler,
+  also identified by the wiki's [Ability-Handlers](https://github.com/DQIX/wiki/blob/main/Ability-Handlers.md))
+  replaces its incoming amount with the target's maximum HP for action `0x21` (33) or
+  `0x310` (784), then passes it to `ov_000::0215a16c`, which holds HP under that maximum.
+  The normal base/final amount calculations and their draws have already happened.
+  `resolve_action` applies this override at the kind-2 application boundary; changing every
+  range-0 action to a new "full heal" amount would incorrectly skip those draws.
+  Action 784 is Omniheal with MP cost 128: that cost remains explicitly unsupported, so
+  this correction does not claim Omniheal support or model its MP policy.
+
+  Checked on the EU ROM with the existing `dq9re action` command and Ghidra; local evidence
+  `build/evidence/j4-full-heal/ghidra-heal-kind.txt` (`69b5515a8fed`),
+  `ghidra-apply-hp.txt` (`5ab254622c18`), `action-records.txt` (`69fee1fd0d7e`).
+  The permanent ROM regression failed before (HP 37 → 41 rather than 321) and passes after,
+  at defence 0 and 999 while retaining the respective five/four ordinary draws:
+  `before.log` (`075bff88690d`), `after.log` (`cbbe8c54de72`).
+  A throwaway executable exercised the real `Battle::round` consumer with a synthetic
+  wounded party and ROM-backed skill/monster data: HP 37 → 321 and MP 40 → 16
+  (`smoke.log`, `2d4fc32e2122`). It was removed after the run; this is not a continuous
+  chapter-route or interactive UI claim. No new function is marked ported: the handler's
+  other state/message work is still partial.
 
 ### Action fields (EU action tables, read with `cargo dq9re gp2 data/prm/actdt_b.gp2`)
 
