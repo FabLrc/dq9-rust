@@ -349,6 +349,14 @@ impl HeroRig {
         Ok(rig)
     }
 
+    /// Rebinds a rig built in a detached scene to the model and instance slots of the scene
+    /// it now belongs to ([`HeroRig::build`] numbers them from zero there).
+    pub(crate) fn rebind(&mut self, model: usize, instance: usize) {
+        self.model = model;
+        self.instance = instance;
+        self.dirty = true;
+    }
+
     /// World matrix of the model at `position`, turned by the game's object `angle` (0 faces
     /// +z, `(sin a, cos a)` is the direction).
     pub(crate) fn world(&self, position: Vec3, angle: f32) -> Mat4 {

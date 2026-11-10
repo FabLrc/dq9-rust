@@ -284,6 +284,128 @@ battle, not a gift: `Opened::Monster`. Measured: all ten monster rows are in `ra
 and 5 and `randTD` ranks 3 to 10, none in `randTTT`; `randTBox` rank 1 is ten rows summing to
 100, so a blue chest always gives something.
 
+## The field menu and the facility screens (application)
+
+Implementation: `crates/dq9-app/src/app/services.rs` (the screens and their state),
+`app/services/transfer.rs` (bag ↔ held slots, equipment) and `app/services/tests.rs`; the
+service tag is caught in `crates/dq9-app/src/talk.rs`. The rules stay in `dq9_core::facility`;
+this layer is the ROM tables, the cursors and the commands' effect on `Party`.
+
+**Opening a facility.** `Talk_SelectLine`'s chosen text is scanned for `<INN=n>`,
+`<CHURCH=n>` or `<SHOP=n>` before `Msg_Compile` drops the tag
+(`dq9_formats::message::SKIPPED`). When the line ends (`<END>`, `<CLOSE>` or `<ADD>`), the
+conversation's `Ended` is held back and the screen of that number opens; trigger event 1 and
+the talk counters fire only after the screen closes, which is the order of the game's talk
+task. The map's talk triggers, conditions and counters are unchanged.
+
+**Field menu.** `I` on the field (not while a conversation, event or battle runs) opens:
+Items, Equipment, Attributes, Spells, Close. `Enter`/`Space`/`Z` confirm, `Backspace`/`X`
+cancel, the arrows or `WASD` move. Movement and roaming are frozen while any menu or service
+screen is open, and a map change or a replaced session closes the menu and clears its input.
+
+**Items.** The list is the bag's non-empty slots in bag order, then the leader's eight held
+slots (each one item, `7578 + 18 i`). `Enter` uses the item on a chosen party member,
+`H` puts the bag item under the cursor into a chosen held slot, `T` takes a held item back.
+A transfer is exactly one copy: `Bag::remove` (first stack, order kept) into the chosen slot;
+a held slot that was occupied hands its item back to the bag in the same command, so a full
+bag refuses the swap rather than losing a copy. `Bag::add` returns true when it clamps a 99
+stack, so the transfers preflight the real destination (`bag_can_store`: an existing stack
+below 99, else an empty slot) before mutating; a failed swap restores the chosen copy, and a
+99 stack plus the held copy keeps all 100 copies. Removing the only copy of the chosen item
+frees its slot and lets the old piece in. Duplicates and the other slots keep their order. A field use runs the item's action record through
+`dq9_core::battle::resolve_action` on the target (the range table, the healing cap, no MP
+cost for a herb), and the source is spent only when that action executed: one copy from the
+bag stack, or the chosen held slot when `+0x08` bit 19 says used up, followed by the battle's
+hole compaction (`func_0208386c`). A use that changes no HP still spends the item, as the
+battle's execution rule does; **[hypothesis]** the field handler behaves the same. Only field
+actions of kind 2 (heal) aimed at the party are offered; other tools are refused with a
+message.
+
+**Generator of a field action.** `App::service_button` passes `&mut self.world.random` into
+`Services::press`, and `Services::apply` hands that same `Random` to
+`dq9_core::battle::resolve_action` for both the item and spell arms. A field item or healing
+spell therefore draws from the **shared world generator** — the one encounters and roaming
+also use — not from a battle's separate generator (`re/battle.md`, § Generators). The
+original field call site is **not established**: the item helper `func_020ddb38` (EU
+`0x020ddb48`) accepts a `Random*` and uses that pointer for its 25 % draw, falling back to
+`GetBTRandom()` only when it is null, but Ghidra finds its only xref from `ResolveAction`
+(`ov_024::021eb5d0+0x2214`), not from the field menu; the held-slot consumption helper
+`func_020ddcbc` (EU `0x020ddccc`) takes no `Random*`. Whether the cartridge's field menu passes
+a world or battle generator is **[hypothesis]**; the app's shared-generator wiring is an
+implementation choice. Consequence: a field heal or item advances the encounter/roaming draw
+stream in continuous play.
+
+**Equipment.** The eight slots list what the leader wears; `Enter` offers the bag's items of
+that id band (helmets 12, armour 13, gloves 15, leggings 16, shoes 17, accessories 18,
+weapons 19–20, shields 21) plus "Take it off". The chosen item leaves the bag and the worn one
+comes back; when the bag cannot take the old piece nothing changes. The `Character` equipment
+is the source of truth for battle numbers; after the menu closes `AnimatedScene::replace_hero`
+rebuilds the hero in the same scene model and instance slots at its live pose and gait. The
+new rig is built in a detached scene first, so a failed resource leaves the old rig and
+storage untouched. Matching textures are reused, unreferenced hero texture slots are released
+to 1×1 placeholders (other models' indices never move), and only textures beyond those slots
+are appended. The field's cast, talk counters, doors, camera, events and generators stay as
+they were. The regression `app/services/tests.rs`
+(`changing_gear_rebuilds_the_hero_without_reloading_the_field`) changes torso gear through the
+menu, observes the drawn vertices change, alternates two outfits 20 times with stable hero
+instance, model/instance/texture counts and bounded texel bytes, checks other actors' poses
+and texture references, and verifies a failed replacement is transactional; the map-load
+journal, talk counter, a field flag, the world generator, the event list and the hero pose do
+not change. It fails on the old `load_map` refresh (`setgear-before.log`/`setgear-after.log`,
+`b043a8eb6bf4`, `5f51d1db3cb5`). The weapon and shield are not parts of `HeroLook` and do not
+change the model; vocation restrictions are **not modelled**.
+
+**Attributes.** The rows show each member's level, HP/MP and the numbers
+`Character::fighter` computes from the level table and worn items (attack, defence, agility,
+deftness, magical might), so the page follows an equipment change immediately.
+
+**Spells.** The leader's healing spells are the actions `spelltable.bin` learns by the current
+vocation and level, filtered to kind 2 and aimed at its own side and validated against a
+party fighter. `Reach::All`/`Group` (Multiheal) resolves once against every living member in
+party order and skips the single-target screen; `Reach::Actor` is the leader; `One`/`Attack`
+asks for one member. Dead members are never targets (the cursor skips them and a forced
+Confirm shows a refusal), and a dead leader has no enabled spell or item command. A cast
+spends the action's real MP cost once and applies every resolver outcome; MP is held below
+what the member has. The same reach mapping drives a kind-2 field item, not an action-number
+special case.
+
+**Shop.** `<SHOP=n>` reads `shopdata1.bin` and the two price words of `itemdt_*`; 32 is the
+village shop. Buy mode lists the 18 stock slots with the ask price (`rate` 100), sell mode the
+bag's items with what the shop gives. `Enter` buys or sells **one** copy through
+`dq9_core::facility::shop` (99 a stack, 152 bag slots, 9,999,999 gold); `Left`/`Right` switch
+mode, `X` leaves. A partial purchase is still **[unknown]** and is not offered.
+
+**Inn.** `<INN=n>` reads `str_in<n − 1>`; the menu is Stay/Rest/Cancel by day and Stay/Cancel
+at night (`dq9_core::facility::inn::menu`), priced the head's price (message 10000) times the
+living. The choices and their labels are frozen together and refreshed after a Stay/Rest, so
+a displayed Cancel cannot become Rest. Stay sets the clock to the day's start and Rest to the
+night's, heals the living's HP and MP, never raises the dead; the application's time, lighting
+and trigger `time_of_day` follow. The keeper's lines 1010 and 1011 are shown in turn; on the
+paid/closed notices X advances or closes exactly as Confirm does, so no stale menu is
+reachable. 1020 too poor mutates nothing and 1090 leaves. The retail labels 0/1/2 and price
+line 10000 are required at open (a missing or empty one is an error); an explicit price 0
+(inn 15) is a valid free stay.
+
+**Church.** `<CHURCH=n>` reads `str_ch<n − 1>`; the menu is its non-empty labels (the
+Observatory's missing Resurrection and Purification, the adventure log's Confession). Divination
+is free, shows its 1021/1022/1023 notice (1023 **[hypothesis]**) and returns to the service
+row; `<TARGET>` is the member's name, and `<str_2>` takes the church file's vocation label
+(message 30 + vocation) when it exists — the Guardian's message 30 is in no European file,
+so its tag stays visibly unknown. Resurrection, Purification and Benediction ask the member
+and its price (1061), then execute `church::cure` with the caller's `MemberStatus` bits
+(dead = HP 0) and charge the party; a NotNeeded refusal also names the member. Confession
+shows the core's "not available in this build" and nothing is saved (v0.3).
+
+**Open.** The window geometry, colours and title/footer are **[hypotheses]**: the menu uses
+the field message window's rectangle grown to the DS screen, drawn on the screen the field
+does not use. The field action of an item is the record's first action number, read here
+because the battle's second one is the one `battle_action` uses; the field and battle records
+of the medicinal herb both name action 255. Which `<Target0>`/`<val_n>` a line wants is
+substituted for the service lines (member name, living, price); other name tags stay
+`[tagN]`. Item use at full HP spends the copy **[hypothesis]**. The church's coffin line
+(1100), Benediction's unequipping and the inn's guest lines are not modelled. The native
+smoke drives real windows; the browser capture is the coordinator's.
+
 ## Open questions
 
 - **Which generator draws**: this model draws from the **world** generator
@@ -299,6 +421,42 @@ and 5 and `randTD` ranks 3 to 10, none in `randTTT`; `randTBox` rank 1 is ten ro
 - What `unknown_2` counts outside the village; whether a rate touches what a shop gives;
   whether the shop offers a partial purchase; which items carry the cursed slot bit.
 - The Quester's Rest's own flow (v0.3), and the inn's guest lines (no session here).
+
+- Field-menu and facility screens (`build/evidence/j4-field-services/`, native windows on
+  the European ROM, `manifest.json`): `field-menu.png` (`6669e1ad98e4`), `items.png`
+  (`e96b6fecfcdb`), `held-swap.png` (`86384dc0755b`) and `held-use.png`/`held-use.log`
+  (`298cdf4a7336`, `e6f548be5b7b`: "field held item 22000 … slot 0 spent"), `equipment.png`
+  (`f0d25fe2a8aa`), `attributes.png` (`0379109e4882`), `spells.png` (`70a5ed97296d`),
+  `shop-menu.png`/`shop.log` (`9492670c4a11`, `bbc4016b7d65`: herb asks 8, refused with no
+  gold), `inn-menu.png`/`inn.log` (`014f49f282d9`, `d3cabdd4452d`: "Stay price 5 for 1 bed"),
+  `church-resurrection.png` and `church-result.png`/`church.log` (`92efb6ac5ddc`,
+  `c9b254acc879`, `8b00f88b9f0b`: Resurrection on a living member returns the line).
+- Paid and refused services, driven in the window with an explicit **throwaway synthetic
+  party** (gold 100 or 0; HP `10/40`, `0/30`, `20/30`; MP `1/9`, `0/9`, `7/9`), then removed
+  with its native flag: no save was modified and no debug/give API remains. `shop-paid.log`/
+  `shop-paid.png` (`c47eaba03983`, `cecbfc5c446c`: gold 100 → 92, herb in the bag, 1);
+  `shop-poor.log`/`shop-poor.png` (`c47e89dad887`, `ca111329841f`: refused, gold 0, bag 0);
+  `inn-paid.log`/`inn-rested.png` (`57324a991daf`, `94a10396507b`: night clock 0 → 210, gold
+  100 → 90, living `40/40` and `9/9`, the dead stay `0/30`); `inn-poor.log`/`inn-poor.png`
+  (`f428c3fd3a33`, `385fafc4f8d1`: price 10 for two beds, gold, clock and the three members
+  unchanged, the ROM's too-poor line); `revival.log`/`revival-price.png`/`revival-done.png`
+  (`34ba1a43b1ac`, `7823943a2133`, `39dc17c14e4d`: member 2 at 0 HP and level 10 comes back
+  at `30/30`, 60 gold paid, gold 100 → 40, `<TARGET>` replaced by its name);
+  `revival-poor.log`/`revival-poor.png` (`db767cbd7c97`, `07a886c61d3a`: refused, HP 0, gold
+  0). The same transitions remain covered without a window in `app/services/tests.rs`.
+- Review-driven surface evidence: `divination-result.png`/`divination-return.png`
+  (`044932510558`, `f3e473277da6`: the 1022 line names Hero and "minstrel", then returns to the
+  Divination row), `inn-night-x.log`/`inn-night-x.png` (`31507e7fc45b`, `3c72616e0872`: one
+  Stay charge, X shows 1011 and no Rest), `multiheal.log`/`multiheal-after.png`
+  (`a691caa6479f`, `6592d06768ea`: action 34 heals members `[0,1]`, dead skipped, MP once),
+  `fullheal.log`/`fullheal-list.png`/`fullheal-after.png` (`8a7e036ac72c`, `7fb70e831bf0`,
+  `c24ecb26688e`: action 33, HP 20 → 80, MP 100 → 76), `dead-actor.log`/`dead-actor-refusal.png`
+  (`1db5b20d3292`, `f9f2c74e00c2`: visible refusal, nothing spent). Web canvas smoke on the same
+  wasm build: `web-field-menu-canvas.png` (`5baa467cd031`) and `web-spells-canvas.png`
+  (`c7a3950647cd`), with `web-smoke.log` (`d35afe4cfb87`). After
+  the rebase onto the GPU-fixed main, the field menu was captured again
+  (`field-menu-rebased.png`, `76f62ffeec95`); the paid and revival runs above are from the
+  services commit they prove, before that rebase.
 
 ## Symbols
 

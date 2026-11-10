@@ -33,6 +33,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use self::services::Services;
 use crate::audio::Audio;
 use crate::battle::{self, BattleScene};
 use crate::event::{EventPlayer, Outcome, Stage, apply_collision_changes};
@@ -40,6 +41,7 @@ use crate::gpu::Gpu;
 use crate::hud::{HudInfo, time_label};
 use crate::lighting;
 use crate::load::{self, MapEntry};
+use crate::talk::ServiceTag;
 use crate::talk::{Button, Talk};
 use dq9_core::party::Party;
 
@@ -59,6 +61,7 @@ mod flow;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod headless;
 mod roaming;
+mod services;
 
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
@@ -303,6 +306,8 @@ pub struct App {
     door_angles: std::collections::BTreeMap<(i32, i32), i32>,
     /// NPC conversations and the message window.
     talk: Talk,
+    /// The field menu and the facility screens (`app/services.rs`).
+    services: Services,
     /// Script events: the event task and what it did to the scene.
     events: EventPlayer,
     /// Set while an event loads its map: the map's own `Request::Event`s are not queued.
@@ -430,6 +435,7 @@ impl App {
             doors_opened: std::collections::BTreeSet::new(),
             door_angles: std::collections::BTreeMap::new(),
             talk: Talk::default(),
+            services: Services::default(),
             events: EventPlayer::new(),
             quiet_events: false,
             cast_reload: false,
@@ -489,6 +495,7 @@ impl App {
     fn reset_session(&mut self) {
         self.events = EventPlayer::new();
         self.talk.reset_session();
+        self.services = Services::default();
         self.doors_opened.clear();
         self.door_angles.clear();
         self.roaming.reset_rom();
@@ -623,6 +630,9 @@ impl App {
     ) -> bool {
         let story = self.current_story(key);
         let Some(rom) = &self.rom else { return false };
+        // A map load tears the talk and menu tasks down; a facility screen does not survive it.
+        self.services.close();
+        self.talk.abort_service();
         let started = Instant::now();
         let mut loaded = match load::load(rom, key, self.time, &story, spawn, state, &self.look) {
             Ok(l) => l,
@@ -1013,6 +1023,35 @@ impl App {
             }
             return;
         }
+        if self.services.is_open() {
+            match code {
+                KeyCode::KeyM => self.audio.toggle_mute(),
+                KeyCode::KeyR => self.set_layout(self.options.layout.next()),
+                KeyCode::Enter | KeyCode::Space | KeyCode::KeyZ => {
+                    self.service_button(Button::Confirm);
+                }
+                KeyCode::Backspace | KeyCode::KeyX | KeyCode::Escape => {
+                    self.service_button(Button::Cancel);
+                }
+                KeyCode::ArrowUp | KeyCode::KeyW => self.service_button(Button::Up),
+                KeyCode::ArrowDown | KeyCode::KeyS => self.service_button(Button::Down),
+                KeyCode::ArrowLeft | KeyCode::KeyA => self.service_side(false),
+                KeyCode::ArrowRight | KeyCode::KeyD => self.service_side(true),
+                KeyCode::KeyH => self.service_hold(),
+                KeyCode::KeyT => self.service_take(),
+                _ => {}
+            }
+            return;
+        }
+        if code == KeyCode::KeyI
+            && !self.talk.is_active()
+            && !self.battle_is_active()
+            && !self.events.is_active()
+            && self.events.pending_start().is_none()
+            && self.open_field_menu()
+        {
+            return;
+        }
         if self.talk.is_active() {
             match code {
                 KeyCode::ArrowUp | KeyCode::KeyW => self.talk.press(Button::Up),
@@ -1054,6 +1093,176 @@ impl App {
             KeyCode::PageDown => self.cycle_map(1),
             KeyCode::PageUp => self.cycle_map(-1),
             _ => {}
+        }
+    }
+
+    /// The party members' names as the font draws them, for the menu's rows.
+    fn service_names(&self) -> Vec<Vec<u8>> {
+        let hero = self.talk.hero_name();
+        self.party
+            .members
+            .iter()
+            .enumerate()
+            .map(|(index, member)| {
+                if index == 0 {
+                    return hero.clone();
+                }
+                self.talk
+                    .with_ui(|_, font| {
+                        let mut name = Vec::new();
+                        for &glyph in member.name() {
+                            match font.glyphs.get(usize::from(glyph)) {
+                                Some(glyph) => name.extend_from_slice(glyph.text),
+                                None => name.push(b'?'),
+                            }
+                        }
+                        name
+                    })
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    /// `I` on the field: opens the menu, unless a conversation, an event or a battle holds
+    /// the player. Returns whether the menu opened.
+    fn open_field_menu(&mut self) -> bool {
+        let Some(rom) = self.rom.as_deref() else {
+            return false;
+        };
+        let names = self.service_names();
+        self.services.set_names(names);
+        self.talk.discard_input();
+        match self.services.open_menu(rom, &mut self.party) {
+            Ok(()) => {
+                status("field menu");
+                true
+            }
+            Err(e) => {
+                status(&format!("field menu unavailable: {e:#}"));
+                false
+            }
+        }
+    }
+
+    /// The facility a talk line named.
+    fn open_service(&mut self, tag: ServiceTag) -> bool {
+        let Some(rom) = self.rom.as_deref() else {
+            return false;
+        };
+        let names = self.service_names();
+        self.services.set_names(names);
+        self.talk.discard_input();
+        match self.services.open(tag, rom, &mut self.party, &self.day) {
+            Ok(()) => {
+                status(&format!("service: {tag:?}"));
+                true
+            }
+            Err(e) => {
+                status(&format!("service {tag:?} unavailable: {e:#}"));
+                false
+            }
+        }
+    }
+
+    fn service_button(&mut self, button: Button) {
+        let effect = self.services.press(
+            button,
+            &mut self.party,
+            &mut self.world.random,
+            &mut self.day,
+        );
+        self.after_service(effect);
+    }
+
+    fn service_side(&mut self, right: bool) {
+        self.services.side(right);
+    }
+
+    fn service_hold(&mut self) {
+        self.services.hold(&self.party);
+    }
+
+    fn service_take(&mut self) {
+        self.services.take(&mut self.party);
+    }
+
+    /// What follows a command: the facility's conversation ends when its screen closes, the
+    /// lighting follows an inn's clock and the field's scene is rebuilt once equipment
+    /// changed and the menu is gone.
+    fn after_service(&mut self, effect: services::Effect) {
+        if !self.services.is_open() {
+            self.talk.finish_service();
+        }
+        if effect == services::Effect::Clock {
+            self.sync_clock_from_day();
+        }
+        if !self.services.is_open() && self.services.look_dirty() {
+            self.services.clear_look_dirty();
+            self.refresh_hero_look();
+        }
+    }
+
+    /// The inn moved the day clock: the application's time, lighting and the trigger state's
+    /// `time_of_day` follow (`GameState::SetTimeOfDay`, `0x02010374`).
+    fn sync_clock_from_day(&mut self) {
+        self.time = self.day.phase().index();
+        self.state.time_of_day = self.time;
+        self.environment = lighting::environment(self.lighting_info.as_ref(), self.day);
+        if let Some(renderer) = &mut self.renderer {
+            renderer.environment = self.environment.clone();
+        }
+    }
+
+    /// Rebuilds only the hero the renderer draws for the leader's current equipment, through
+    /// [`AnimatedScene::replace_hero`]: the same model and instance slots are reused in place
+    /// and obsolete hero textures are released. The field, its cast, talk counters, doors,
+    /// camera, events and generators are untouched: this must not reload the map, whose entry
+    /// would replay its triggers (`sync_day_phase` warns against it).
+    fn refresh_hero_look(&mut self) {
+        let mut look = self.look.clone();
+        if let Some(member) = self.party.leader() {
+            look.armour = member.equipment.torso;
+            look.legwear = member.equipment.legs;
+            look.gloves = member.equipment.arms;
+            look.footwear = member.equipment.feet;
+            look.headgear = member.equipment.head;
+        }
+        // The rig draws no weapon, shield or accessory: when the visible fields did not move
+        // (same clothing, a weapon-only swap, equip then undo), leave the current rig alone.
+        if look == self.look {
+            return;
+        }
+        self.look = look;
+        let Some(rom) = self.rom.as_deref() else {
+            return;
+        };
+        let Some(hero) = self.hero else {
+            return;
+        };
+        let image = match nds_rom::Rom::parse(rom) {
+            Ok(image) => image,
+            Err(e) => {
+                status(&format!("hero look: {e:#}"));
+                return;
+            }
+        };
+        let Some(runtime) = self.runtime.as_mut() else {
+            return;
+        };
+        // The same scene model and instance are reused in place; a malformed new hero
+        // leaves the previous rig and its storage untouched.
+        match runtime.replace_hero(&self.look, |path| dq9_formats::map::rom_file(&image, path)) {
+            Ok(()) => {
+                if let Some(instance) = self.hero_instance {
+                    let world =
+                        runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()));
+                    if let Some(shown) = runtime.scene.instances.get_mut(instance) {
+                        shown.world = world;
+                    }
+                }
+                self.upload();
+            }
+            Err(e) => status(&format!("hero look: {e:#}")),
         }
     }
 
@@ -1303,7 +1512,8 @@ impl App {
                 continue;
             }
             let mut events = Vec::new();
-            if !self.talk.is_active() && self.talk.confirm_pending() {
+            let menu_open = self.services.is_open();
+            if !self.talk.is_active() && !menu_open && self.talk.confirm_pending() {
                 if let (Some(rom), Some(hero), Some(field), Some((entry, _))) =
                     (&self.rom, &self.hero, &mut self.field, &self.current)
                 {
@@ -1314,6 +1524,13 @@ impl App {
                 self.talk.discard_input();
             }
             self.talk.step();
+            // A line that names a facility opens its screen; the conversation's end waits
+            // until that screen is over (`Talk::finish_service`).
+            if let Some(tag) = self.talk.take_service()
+                && !self.open_service(tag)
+            {
+                self.talk.finish_service();
+            }
             // The game fires trigger event 1 when a conversation closes (`TalkTask_Update`).
             if let Some(ended) = self.talk.take_ended()
                 && let Some(field) = &mut self.field
@@ -1325,7 +1542,8 @@ impl App {
                     &mut self.state,
                 ));
             }
-            let talking = self.talk.is_active();
+            let menu_open = self.services.is_open();
+            let talking = self.talk.is_active() || menu_open;
             let piloted = std::mem::take(&mut self.pilot_dir);
             let replay = self.replay_pad.take();
             let mut input = CameraInput {
@@ -1405,7 +1623,7 @@ impl App {
             let mut stepped = false;
             if let Some(hero) = &mut self.hero {
                 let before = hero.position();
-                if field_due {
+                if field_due && !menu_open {
                     // Two elapsed VBlanks, as `Character_Update` reads them (`ticks = 2`):
                     // `update` turns, accelerates and moves for both ticks before
                     // `read_input` samples the pad. The field task also runs on this same
@@ -1448,6 +1666,7 @@ impl App {
             }
             if field_due
                 && !talking
+                && !menu_open
                 && let Some(contact) = self.step_roaming(stepped)
             {
                 self.begin_encounter(contact);
@@ -1674,6 +1893,25 @@ impl App {
                     field,
                 );
             }
+        }
+        if messages
+            && self.services.is_open()
+            && let Some(quads) = self
+                .talk
+                .with_ui(|atlas, font| self.services.quads(atlas, font, &self.party))
+                .flatten()
+        {
+            // The menu takes the screen the field does not use; a one-screen layout lays it
+            // over the field so that it stays visible.
+            let region = screens.overlay(swapped).unwrap_or(screens.top);
+            self.talk.draw_screens(
+                &gpu.device,
+                &gpu.queue,
+                gpu.config.format,
+                &mut encoder,
+                &view,
+                &[(region, quads)],
+            );
         }
         if self.battle_cover <= 0.0
             && let (Some(fight), Some(scene)) = (&self.fight, &self.battle)

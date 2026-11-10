@@ -168,6 +168,51 @@ impl HeroIdentity {
     }
 }
 
+/// A service tag ending a talk line (`func_0206f550`, wiki *Text events*): `<INN=n>`,
+/// `<CHURCH=n>` and `<SHOP=n>`. The compiler drops the tag from the displayed text
+/// (`dq9_formats::message::SKIPPED`); the conversation keeps it here so that the application
+/// opens the facility once the window closes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceTag {
+    /// `<INN=n>` opens `str_in<n − 1>`.
+    Inn(u16),
+    /// `<CHURCH=n>` opens `str_ch<n − 1>`.
+    Church(u16),
+    /// `<SHOP=n>` opens the shop numbered `n`.
+    Shop(u16),
+}
+
+/// The first service tag of a talk line, as `func_0206f550` strips it. Tags are matched as
+/// written on the cartridge (upper case) and their number is read up to `>`.
+pub fn service_tag(text: &[u8]) -> Option<ServiceTag> {
+    let (at, prefix, kind) = [
+        (b"<INN=".as_slice(), 0u8),
+        (b"<CHURCH=".as_slice(), 1),
+        (b"<SHOP=".as_slice(), 2),
+    ]
+    .into_iter()
+    .find_map(|(prefix, kind)| {
+        text.windows(prefix.len())
+            .position(|window| window == prefix)
+            .map(|at| (at, prefix, kind))
+    })?;
+    let mut number = 0u32;
+    let mut read = false;
+    for &byte in &text[at + prefix.len()..] {
+        let Some(digit) = char::from(byte).to_digit(10) else {
+            break;
+        };
+        number = number.saturating_mul(10).saturating_add(digit);
+        read = true;
+    }
+    let tag = u16::try_from(number).ok().filter(|_| read)?;
+    Some(match kind {
+        0 => ServiceTag::Inn(tag),
+        1 => ServiceTag::Church(tag),
+        _ => ServiceTag::Shop(tag),
+    })
+}
+
 /// A closed conversation, as trigger event 1 sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ended {
@@ -208,6 +253,14 @@ pub struct Talk {
     caption_frozen: bool,
     /// The NPC and context of the open conversation (not an event message).
     conversation: Option<(u16, u16)>,
+    /// The service tag of the open talk line, if any (`<INN=n>`…): the facility opens when
+    /// the window closes.
+    service: Option<ServiceTag>,
+    /// The tag the closed line carried, until [`Talk::take_service`].
+    pending_service: Option<ServiceTag>,
+    /// The end of a conversation a service has not finished with: trigger event 1 waits for
+    /// the facility screen to close (the game's service runs inside the talk task).
+    deferred: Option<Ended>,
     /// A conversation the player closed, until [`Talk::take_ended`].
     ended: Option<Ended>,
     fade: Option<[f32; 4]>,
@@ -268,6 +321,7 @@ impl Talk {
         self.npcs = npcs;
         counts.enter_map();
         self.active = None;
+        self.abort_service();
     }
 
     /// Trigger action 0x8d built the map's cast again (`ov_017::021a2fa0`): its NPCs. The
@@ -347,11 +401,21 @@ impl Talk {
                     outcome.end, outcome.answer
                 ));
                 if let Some((npc, context)) = self.conversation.take() {
-                    self.ended = Some(Ended {
+                    let ended = Ended {
                         npc,
                         context,
                         answer: outcome.answer,
-                    });
+                    };
+                    // A line that names a facility opens it instead of ending the
+                    // conversation: the game's talk task runs the service before it fires
+                    // trigger event 1, so the end waits for the facility screen.
+                    match self.service.take() {
+                        Some(tag) => {
+                            self.pending_service = Some(tag);
+                            self.deferred = Some(ended);
+                        }
+                        None => self.ended = Some(ended),
+                    }
                 }
             }
             self.active = None;
@@ -362,6 +426,28 @@ impl Talk {
     /// trigger event 1 with it (`Field::talk_ended`).
     pub fn take_ended(&mut self) -> Option<Ended> {
         self.ended.take()
+    }
+
+    /// The facility the talk line that just closed names, if any: the application opens it
+    /// and calls [`Talk::finish_service`] once its screen closes.
+    pub fn take_service(&mut self) -> Option<ServiceTag> {
+        self.pending_service.take()
+    }
+
+    /// The facility screen is over: the closed conversation now ends as any other, so trigger
+    /// event 1 fires with its NPC, context and answer.
+    pub fn finish_service(&mut self) {
+        if let Some(ended) = self.deferred.take() {
+            self.ended = Some(ended);
+        }
+    }
+
+    /// A map change or a replaced session interrupted the facility: the conversation it
+    /// belonged to ends without firing trigger event 1 (the talk task is gone with the map).
+    pub fn abort_service(&mut self) {
+        self.pending_service = None;
+        self.deferred = None;
+        self.service = None;
     }
 
     /// Native 400: opens the window on an event's text (see [`Dialogue::for_event`]).
@@ -534,6 +620,7 @@ impl Talk {
         ));
         state.talk_counts.record(npc);
         self.conversation = Some((npc, context));
+        self.service = service_tag(text);
         self.active = Some(Dialogue::new(script));
         self.caption_alpha = None;
         self.centered_caption = false;

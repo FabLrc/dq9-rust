@@ -1,6 +1,6 @@
 //! Shared CPU animation state for native, Web and deterministic offscreen frames.
 //! ROM access stays with the caller. Only animated models have mutable vertex state.
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use dq9_formats::Gpc2;
@@ -18,7 +18,7 @@ pub(crate) use sprite::SpriteAnimation;
 
 use crate::hero::{Gait, HeroRig};
 use crate::pose::VertexPose;
-use crate::scene::{Builder, SceneModel, TextureSources, member, unpack};
+use crate::scene::{Builder, SceneModel, SceneTexture, TextureSources, member, unpack};
 use crate::{Camera, Renderer, Scene, SceneInstance};
 
 #[derive(Debug)]
@@ -146,6 +146,31 @@ fn upload_geometry(
     }
     renderer.update_draws(model, &data.draws);
     Ok(())
+}
+
+/// Whether two scene textures carry the same pixels and binding identity.
+fn same_texture(a: &SceneTexture, b: &SceneTexture) -> bool {
+    a.name == b.name
+        && a.palette == b.palette
+        && a.source == b.source
+        && a.width == b.width
+        && a.height == b.height
+        && a.translucent == b.translucent
+        && a.rgba == b.rgba
+}
+
+/// A released texture slot: one transparent texel, keeping every other model's texture index
+/// valid while dropping the pixels of an outfit no longer drawn.
+fn released_texture() -> SceneTexture {
+    SceneTexture {
+        name: String::new(),
+        palette: None,
+        source: 0,
+        width: 1,
+        height: 1,
+        rgba: vec![0; 4],
+        translucent: false,
+    }
 }
 
 impl AnimatedScene {
@@ -529,6 +554,105 @@ impl AnimatedScene {
         let instance = rig.instance;
         self.hero = Some(rig);
         Ok(instance)
+    }
+
+    /// Replaces the protagonist with `look` in the **same** scene model and instance slots,
+    /// keeping the world instance and gait the caller keeps. The new rig is built in a
+    /// detached scene first: a malformed resource leaves the old hero and its storage
+    /// untouched. The old hero model is overwritten in place, its textures are reused for the
+    /// new parts when they match, its unreferenced texture slots are released to 1×1
+    /// placeholders (so indices of other models never move), and only the textures the new
+    /// outfit needs beyond those slots are appended. Repeated outfit changes therefore keep
+    /// the scene model, instance and texture counts bounded.
+    ///
+    /// # Errors
+    /// A missing or malformed hero resource; nothing is changed then.
+    pub fn replace_hero<'a>(
+        &mut self,
+        look: &dq9_formats::hero::HeroLook,
+        file: impl Fn(&str) -> Option<&'a [u8]>,
+    ) -> Result<()> {
+        let Some(old) = self.hero.as_ref() else {
+            return Err(Error::Malformed("no hero to replace"));
+        };
+        let (model, instance, gait) = (old.model, old.instance, old.gait());
+        let mut scratch = Scene {
+            textures: Vec::new(),
+            models: Vec::new(),
+            instances: Vec::new(),
+            unbound_textures: Vec::new(),
+            placements: Vec::new(),
+            undrawn_placements: Vec::new(),
+            warnings: Vec::new(),
+            billboards: Default::default(),
+        };
+        let mut rig = HeroRig::build(&mut scratch, look, file)?;
+        let Some(new_model) = scratch.models.pop() else {
+            return Err(Error::Malformed("hero build without a model"));
+        };
+        let new_textures = std::mem::take(&mut scratch.textures);
+        let old_textures: BTreeSet<usize> = self.scene.models[model]
+            .materials
+            .iter()
+            .filter_map(|material| material.texture)
+            .collect();
+        let used_elsewhere: BTreeSet<usize> = self
+            .scene
+            .models
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != model)
+            .flat_map(|(_, model)| {
+                model
+                    .materials
+                    .iter()
+                    .filter_map(|material| material.texture)
+            })
+            .collect();
+        let mut free: Vec<usize> = old_textures
+            .into_iter()
+            .filter(|texture| !used_elsewhere.contains(texture))
+            .collect();
+        let mut mapping = vec![0usize; new_textures.len()];
+        for (local, texture) in new_textures.into_iter().enumerate() {
+            if let Some(at) = free
+                .iter()
+                .position(|&slot| same_texture(&self.scene.textures[slot], &texture))
+            {
+                mapping[local] = free.remove(at);
+                continue;
+            }
+            if let Some(slot) = self
+                .scene
+                .textures
+                .iter()
+                .position(|existing| same_texture(existing, &texture))
+            {
+                mapping[local] = slot;
+                continue;
+            }
+            if let Some(slot) = free.pop() {
+                self.scene.textures[slot] = texture;
+                mapping[local] = slot;
+            } else {
+                self.scene.textures.push(texture);
+                mapping[local] = self.scene.textures.len() - 1;
+            }
+        }
+        for slot in free {
+            self.scene.textures[slot] = released_texture();
+        }
+        let mut new_model = new_model;
+        for material in &mut new_model.materials {
+            if let Some(texture) = material.texture {
+                material.texture = Some(mapping[texture]);
+            }
+        }
+        self.scene.models[model] = new_model;
+        rig.rebind(model, instance);
+        rig.set_gait(gait);
+        self.hero = Some(rig);
+        Ok(())
     }
 
     /// World matrix of the hero at `position`, facing the game's object `angle` (0 faces +z,
