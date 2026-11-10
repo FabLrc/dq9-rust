@@ -12,14 +12,14 @@ Fixed 60 Hz loop; hero, field and model pose at 30 Hz. Chapter 2 events: 47/50 c
 
 ## Combat and monsters — integrated on main
 
-Both batches used Orca / OMP / **`opencode-go/deepseek-v4.1-flash`**; no model escalation.
-Each passed its single full `verify.ps1 -RequireRom` gate (fmt, clippy, tests, wasm, coverage).
+Combat batches used Orca / OMP / **`opencode-go/deepseek-v4.1-flash`**; each passed its full ROM gate.
 
 | Batch / commit | Result | Gate |
 |---|---|---|
 | `j4-battle-held-items` / `c064473` | Acting member's held slots, duplicates, execution-only consumption, cancellation, skipped actor, reusable stone; bag unchanged | 5/5, 104.7 s, app 71/71 |
 | `j4-roaming-play` / `2801473` | Animated field models, natural contact → battle → field, RNG continuity, equipment-aware inputs, preset companies, released models hidden; Esc cancels, previews run once | 5/5, 90.4 s, app 82/82; parity 2/2 |
 | `j4-battle-lifecycle` / `749ae40` | Completed preview keeps stage/camera; dialogue pauses roamers and resumes them on close | 5/5, 103.5 s, app 83/83 |
+| `add-graphics-tech` / `49843de` | Optional wide 16:9, cinematic post pass, HUD and shader validation; native captures and local browser wide → stacked → wide checked | 5/5, 150.3 s, app 86/86 |
 
 Native roaming smoke: F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold)
 → same field without a ghost model; D01M02 models visible. Tests cover Hexagon floors
@@ -44,16 +44,16 @@ Pages `42812911849` (`6ecf718`): F01 models visible; D01M02 natural contact → 
 cancel → flight, then another monster → loss in four rounds → church 1106, all by keyboard.
 Evidence: `build/evidence/j4-combat-web-final/console.json` (`2798e51a2364`),
 `revival-church.png` (`430671952e62`). Standalone battle 26 won once (seed 7: 2 XP, 4 gold).
-Final build `ccb1811`: CI `42815645466` and Pages `42815645558` green; fixed preview framing visually checked (`j4-battle-lifecycle/preview-finished-after.png`, `50eadc1365fe`).
+Combat build `ccb1811`: CI `42815645466` and Pages `42815645558` green; graphics `49843de` passed local native/Web smoke (`add-graphics-tech/web-wide-restored.png`, `5b598af7e34f`), publication pending.
 These direct-map checks do not certify continuous new-game play to chapter 2.
 
 ## Active work and next steps
 
 Active wave: three Orca / OMP / `opencode-go/deepseek-v4.1-flash` batches, separate ownership.
 `j4-field-services`: field menu and inn/shop/church implementation in progress.
-`j4-battle-motions`: `7406ba9` delivered; review corrections requested for motion replacement,
-hit/message barriers, skipped scripts and capture callers. Not integrated or certified yet.
+`j4-battle-motions`: fixes 1–4 committed as `05e67cd`; paired native capture API cutover
+authorized after graphics integration. Not integrated or certified yet.
 `j4-chapter2-route`: worker reports real-fight pilot reaches 1.4.1; Observatory route still blocked.
 Headless parity keeps stand-ins unless `--fight` is given and disables roaming.
-Evidence stays local under `build/evidence/<batch>/`; never committed. Orca worktree cleanup
-can hit a directory lock: remove junctions before release (`orchestration/README.md`).
+Graphics Git/Orca worktree and local branch removed; an empty Windows-locked directory remains.
+Evidence stays local under `build/evidence/<batch>/`; never committed.

@@ -82,8 +82,9 @@ What it changes, all from the ROM data the rest of the demo already reads:
   window in a bottom-left glass panel;
 - the battle windows keep their 4:3 shape in the corners.
 
-The stack is WebGL 2 compatible and its shaders are validated without a GPU by
-`crates/dq9-render/tests/shaders.rs`. Native equivalent:
+Its shaders are validated without a GPU by `crates/dq9-render/tests/shaders.rs`.
+Native and local-browser rendering were exercised; forced WebGL 2 fallback is not separately
+certified. Native equivalent:
 
 ```sh
 cargo run -p dq9-app --release -- --map M01 --layout wide \

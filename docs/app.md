@@ -999,8 +999,8 @@ old `--ds-aspect` and `ds=` are removed.
 - The field is rendered to an offscreen target and composed by `post.wgsl`: FXAA-lite,
   screen-space contact shadows from the depth buffer, threshold bloom, filmic tonemapping mixed
   with the DS colours, cool-shadow/warm-highlight grading, vignette and dithering. Edge marking
-  stays as a single-pixel accent. All of it is WebGL 2 compatible; the shaders are parsed and
-  validated by `crates/dq9-render/tests/shaders.rs` without a GPU.
+  stays as a single-pixel accent. The shaders are parsed and validated by
+  `crates/dq9-render/tests/shaders.rs` without a GPU; this does not certify backend support.
 - The interface is a 960×540 virtual canvas (`hud.rs`): location, map code and time of day,
   the leader's HP/MP bars and purse, and the game's message window scaled into a bottom-left
   glass panel. Battle windows keep their 4:3 shape in the upper and lower left corners.
@@ -1013,6 +1013,14 @@ Screenshot of the demo:
 cargo run -p dq9-app --release -- --map M01 --layout wide --size 1920x1080 `
     --eye=-5,20,40 --target=-20,0,5 --screenshot build/scratch/app/wide.png
 ```
+
+Integration `49843de` passed `verify.ps1 -RequireRom` (5/5, 150.3 s; app 86/86).
+Native Vulkan offscreen captures and an actual local-browser M01 session exercised wide →
+stacked → wide, including the HUD and renderer recreation without reported shader errors.
+Evidence: `build/evidence/add-graphics-tech/native-wide.png` (`684fb0b30e4c`),
+`web-wide-restored.png` (`5b598af7e34f`), `web-console.json` (`ac1c4bafeb61`).
+The browser smoke used the gate's debug wasm; forced WebGL 2 fallback and a continuous
+new-game route were not exercised.
 
 ## Verification
 
