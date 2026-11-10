@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 use dq9_formats::Table;
 use dq9_formats::map::{self, Context, Map, PartKind};
 use dq9_formats::maplist::{self, MapList, MapRecord};
+use dq9_render::Camera;
 use dq9_render::Scene;
 use dq9_render::scene::{PolygonMode, world_matrix};
 use glam::{Mat4, Vec3};
@@ -109,6 +110,7 @@ fn all_maps() {
     let mut seen = HashSet::new();
     let (mut scenes, mut models, mut instances, mut textures, mut triangles) = (0, 0, 0, 0, 0);
     let (mut materials, mut untextured, mut unbound, mut tex_matrices) = (0, 0, 0, 0);
+    let (mut billboard_models, mut billboard_commands) = (0, 0);
     let mut modes = BTreeMap::new();
     let mut warnings = Vec::new();
     for record in list.records.iter().filter(|r| r.id != 0) {
@@ -116,7 +118,7 @@ fn all_maps() {
         if !seen.insert((m.files.ambl.to_ascii_lowercase(), m.files.amdj.clone())) {
             continue;
         }
-        let s = Scene::build(&m, |p| map::rom_file(&rom, p));
+        let mut s = Scene::build(&m, |p| map::rom_file(&rom, p));
         scenes += 1;
         models += s.models.len();
         instances += s.instances.len();
@@ -134,17 +136,136 @@ fn all_maps() {
         }
         unbound += s.unbound_textures.len();
         warnings.extend(s.warnings.iter().map(|w| format!("{}: {w}", m.files.ambl)));
+        // Billboards: every scene turns its quads toward two cameras without a panic, and no
+        // vertex leaves the world.
+        billboard_models += s.billboards.len();
+        billboard_commands += s.billboards.values().map(Vec::len).sum::<usize>();
+        for yaw in [0.0f32, std::f32::consts::PI] {
+            let camera = Camera {
+                yaw,
+                ..Camera::default()
+            };
+            s.face_billboards(&camera);
+            for model in s.billboards.keys() {
+                for v in &s.models[*model].vertices {
+                    assert!(v.position.iter().all(|x| x.is_finite() && x.abs() < 1e5));
+                }
+            }
+        }
     }
     println!(
         "{scenes} archive sets: {models} models, {instances} instances, {textures} textures, \
          {triangles} triangles; {materials} materials, {untextured} without texture, \
          {unbound} textures unbound, {tex_matrices} with a texture matrix; modes {modes:?}"
     );
+    println!("billboards: {billboard_models} models, {billboard_commands} commands");
+    assert!(billboard_models > 0 && billboard_commands > billboard_models * 2);
     assert!(
         warnings.is_empty(),
         "{} warnings: {warnings:#?}",
         warnings.len()
     );
+}
+
+/// The trees of Angel Falls (`M01M0003`, twelve quads one per `tre` node, all `0x08`) turn
+/// toward the render camera: two cameras 180° apart see the same quad in different
+/// orientations, both facing the eye and standing upright. A model without a billboard keeps
+/// every vertex, and hidden placements are left alone.
+#[test]
+fn billboarded_objects_turn_with_the_camera() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+    let list = MapList::parse(&table).unwrap();
+    let record = list
+        .records
+        .iter()
+        .find(|r| r.code == "M01".as_bytes())
+        .unwrap();
+    let m = assemble(&rom, &table, &list, record);
+    let mut s = Scene::build(&m, |p| map::rom_file(&rom, p));
+    // The village: twelve tree quads in one model, eight in another, the rainbow's one.
+    assert_eq!(s.billboards.len(), 3);
+    let commands: usize = s.billboards.values().map(Vec::len).sum();
+    assert_eq!(commands, 21);
+    assert!(s.billboards.values().flatten().all(|b| b.y_only));
+
+    // The first drawn instance whose model has a billboard (the rainbow is hidden at this
+    // time of day: a null world scale).
+    let instance = s
+        .instances
+        .iter()
+        .position(|i| i.drawn() && s.billboards.contains_key(&i.model))
+        .unwrap();
+    let world = s.instances[instance].world;
+    let model = s.instances[instance].model;
+    let record = s.billboards[&model][0].clone();
+    let pivot = world.transform_point3(record.pivot);
+    assert_eq!(record.vertices.len(), 4);
+
+    // A model without a billboard keeps every vertex, from any camera.
+    let plain = (0..s.models.len())
+        .find(|m| !s.billboards.contains_key(m) && s.instances.iter().any(|i| i.model == *m))
+        .unwrap();
+    let before: Vec<[f32; 3]> = s.models[plain]
+        .vertices
+        .iter()
+        .map(|v| v.position)
+        .collect();
+    let drawn = s
+        .instances
+        .iter()
+        .filter(|i| i.drawn() && s.billboards.contains_key(&i.model))
+        .count();
+
+    let camera = |yaw: f32| Camera {
+        yaw,
+        pitch: 0.4,
+        distance: 9.0,
+        target: pivot + Vec3::Y,
+        ..Camera::default()
+    };
+    let ids: Vec<usize> = record.vertices.iter().map(|&(i, _)| i as usize).collect();
+    let mut seen = Vec::new();
+    for yaw in [0.0f32, std::f32::consts::PI] {
+        let camera = camera(yaw);
+        assert_eq!(s.face_billboards(&camera), drawn);
+        let p: Vec<Vec3> = ids
+            .iter()
+            .map(|&i| {
+                world.transform_point3(Vec3::from_array(s.models[model].vertices[i].position))
+            })
+            .collect();
+        // The plane of the quad: its normal is horizontal and points at the camera.
+        let normal = (p[1] - p[0]).cross(p[3] - p[0]).normalize();
+        let to_eye = (camera.eye() - pivot).with_y(0.0).normalize();
+        assert!(normal.y.abs() < 1e-3, "yaw {yaw}: normal {normal}");
+        assert!(normal.dot(to_eye) > 0.99, "yaw {yaw}: {normal} vs {to_eye}");
+        let (lo, hi) = p.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| {
+            (lo.min(v.y), hi.max(v.y))
+        });
+        seen.push((p, hi - lo));
+    }
+    let (first, second) = (&seen[0], &seen[1]);
+    // `0x08` keeps the quad upright: the same height, seen from either side.
+    assert!(
+        (first.1 - second.1).abs() < 1e-3,
+        "{:?}",
+        (first.1, second.1)
+    );
+    let moved = first
+        .0
+        .iter()
+        .zip(&second.0)
+        .map(|(a, b)| (*a - *b).length())
+        .fold(0.0f32, f32::max);
+    assert!(moved > 0.5, "the quad did not turn ({moved})");
+    let after: Vec<[f32; 3]> = s.models[plain]
+        .vertices
+        .iter()
+        .map(|v| v.position)
+        .collect();
+    assert_eq!(before, after);
 }
 
 #[test]

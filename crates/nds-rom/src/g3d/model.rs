@@ -44,6 +44,28 @@ pub struct Model<'a> {
     /// Every "multiply by object" render command (`0x06`), in bytecode order: the object
     /// hierarchy the Maya and Softimage scaling rules walk.
     pub object_links: Vec<ObjectLink>,
+    /// Every billboard command (`0x07`/`0x08`), in bytecode order. The commands carry no
+    /// object: they replace the rotation of the current matrix by a camera-facing one, so the
+    /// draws that follow them are billboarded. Kept beside [`render_ops`](Self::render_ops)
+    /// rather than in it so that existing op order and indices stay as they are.
+    pub billboards: Vec<BillboardCommand>,
+}
+
+/// One billboard render command: `0x07` (`BB`, the object faces the camera flat) or `0x08`
+/// (`BBY`, the object keeps its up axis and turns around it).
+///
+/// NITRO SDK: `RenderCommand_7` / `RenderCommand_8` (`src/NitroSDK/NSBXX/RenderCommands.cpp`,
+/// USA addresses in the note `docs/re/g3d.md`). The opcode's low five bits select the
+/// operation and its top three bits its modifier; the cartridge only holds the plain form
+/// (modifier 0), which consumes one parameter byte and ignores it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BillboardCommand {
+    /// Index in [`Model::render_ops`] before which the command sits.
+    pub op: usize,
+    /// The command's parameter byte.
+    pub parameter: u8,
+    /// `0x08`: billboard about the vertical axis only.
+    pub y_only: bool,
 }
 
 /// One render command `0x06`: multiply the current matrix by `object_idx`, child of
@@ -71,7 +93,8 @@ pub(crate) fn read_model<'a>(data: &'a [u8], base: usize, name: Name) -> Result<
     let inv_binds_off = u32h(16)?;
     let num_objects = u8h(23)?;
 
-    let (render_ops, object_links) = read_render_cmds(data, at(base, render_cmds_off)?)?;
+    let (render_ops, object_links, billboards) =
+        read_render_cmds(data, at(base, render_cmds_off)?)?;
     let meshes = read_meshes(data, at(base, meshes_off)?)?;
     let materials = read_materials(data, at(base, materials_off)?)?;
     let objects = read_objects(data, at(base, 64u8)?)?;
@@ -99,6 +122,7 @@ pub(crate) fn read_model<'a>(data: &'a [u8], base: usize, name: Name) -> Result<
         inv_binds,
         render_ops,
         object_links,
+        billboards,
     };
     validate_render_ops(&model)?;
     Ok(model)
@@ -128,6 +152,13 @@ fn validate_render_ops(model: &Model) -> Result<()> {
         .any(|l| usize::from(l.parent_idx) >= model.objects.len())
     {
         return Err(Error::Malformed("G3D object parent index out of bounds"));
+    }
+    if model
+        .billboards
+        .iter()
+        .any(|b| b.op > model.render_ops.len())
+    {
+        return Err(Error::Malformed("G3D billboard op out of bounds"));
     }
     Ok(())
 }
@@ -485,15 +516,20 @@ pub enum RenderOp {
 
 /// Decodes the render command bytecode at `off` into render ops, up to its end command.
 /// apicula `nitro::render_cmds::parse_render_cmds`; billboard, env/projection map and other
-/// commands are skipped.
+/// commands are skipped (billboards are in [`Model::billboards`]).
 pub fn parse_render_cmds(data: &[u8], cur: usize) -> Result<Vec<RenderOp>> {
     Ok(read_render_cmds(data, cur)?.0)
 }
 
-/// [`parse_render_cmds`], also returning the object links of the `0x06` commands.
-fn read_render_cmds(data: &[u8], mut cur: usize) -> Result<(Vec<RenderOp>, Vec<ObjectLink>)> {
+/// [`parse_render_cmds`], also returning the object links of the `0x06` commands and the
+/// billboard commands.
+fn read_render_cmds(
+    data: &[u8],
+    mut cur: usize,
+) -> Result<(Vec<RenderOp>, Vec<ObjectLink>, Vec<BillboardCommand>)> {
     let mut ops = Vec::new();
     let mut links = Vec::new();
+    let mut billboards = Vec::new();
     loop {
         let opcode = u8_at(data, cur)?;
         cur = at(cur, 1u8)?;
@@ -511,7 +547,12 @@ fn read_render_cmds(data: &[u8], mut cur: usize) -> Result<(Vec<RenderOp>, Vec<O
         let p = slice(data, cur, len)?;
         cur = at(cur, len as u64)?;
         match opcode {
-            0x01 => return Ok((ops, links)),
+            0x01 => return Ok((ops, links, billboards)),
+            0x07 | 0x08 => billboards.push(BillboardCommand {
+                op: ops.len(),
+                parameter: p[0],
+                y_only: opcode == 0x08,
+            }),
             0x03 => ops.push(RenderOp::LoadMatrix { stack_pos: p[0] }),
             0x04 | 0x24 | 0x44 => ops.push(RenderOp::BindMaterial { material_idx: p[0] }),
             0x05 => ops.push(RenderOp::Draw { mesh_idx: p[0] }),
@@ -570,6 +611,15 @@ pub(crate) mod tests {
     /// A model with one object (translation (1,2,3)), one material bound to texture "tex"
     /// and palette "tex_pl", and one mesh whose display list draws one triangle.
     pub fn sample_mdl0(display_list: &[u8]) -> Vec<u8> {
+        sample_mdl0_with(
+            display_list,
+            // mul object 0 & store 0, bind material 0, scale up, draw mesh 0, end.
+            &[0x26, 0, 0, 0, 0, 0x04, 0, 0x0b, 0x05, 0, 0x01, 0, 0, 0],
+        )
+    }
+
+    /// [`sample_mdl0`] with its own render commands.
+    pub fn sample_mdl0_with(display_list: &[u8], render: &[u8]) -> Vec<u8> {
         // Objects dictionary at model+64, object data right after it.
         let obj_dict_len = dict(&[(&[0; 4], "root")]).len();
         let mut object = Vec::new();
@@ -584,8 +634,9 @@ pub(crate) mod tests {
             objects.push(0);
         }
 
-        // Render commands: mul object 0 & store 0, bind material 0, scale up, draw mesh 0, end.
-        let render: Vec<u8> = vec![0x26, 0, 0, 0, 0, 0x04, 0, 0x0b, 0x05, 0, 0x01, 0, 0, 0];
+        // Render commands: as given (the plain model: mul object 0 & store 0, bind material 0,
+        // scale up, draw mesh 0, end).
+        let render: Vec<u8> = render.to_vec();
 
         // Materials block: pairing offsets, material dict, material data, pairings.
         let mat_dict_len = dict(&[(&[0; 4], "mat")]).len();
@@ -689,6 +740,31 @@ pub(crate) mod tests {
             ]
         );
         assert!(m.inv_binds.is_empty());
+    }
+
+    #[test]
+    fn billboard_commands_keep_their_op_position() {
+        // mul object 0; billboard 0x08 (parameter 0); draw 0; billboard 0x07 (parameter 3);
+        // draw 1; end. Each billboard consumes its parameter byte and adds no render op.
+        let cmds = [0x06, 0, 0, 0, 0x08, 0, 0x05, 0, 0x07, 3, 0x05, 1, 0x01];
+        let (ops, links, billboards) = read_render_cmds(&cmds, 0).unwrap();
+        assert_eq!(ops.len(), 3);
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            billboards,
+            vec![
+                BillboardCommand {
+                    op: 1,
+                    parameter: 0,
+                    y_only: true
+                },
+                BillboardCommand {
+                    op: 2,
+                    parameter: 3,
+                    y_only: false
+                },
+            ]
+        );
     }
 
     #[test]

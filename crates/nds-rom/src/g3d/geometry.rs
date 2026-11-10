@@ -49,12 +49,61 @@ pub struct DrawCall {
     pub used_normals: bool,
 }
 
+/// Vertices drawn while a billboard command (`0x07`/`0x08`) was active, and the current matrix
+/// at that point decomposed into what a billboard keeps: the pivot (its translation) and the
+/// object's axes (its 3x3 part, normalized). The rotation is replaced every frame by a
+/// camera-facing one, so the drawn vertex `v` ends up at `pivot + rotation · (scale · v)`, as
+/// the camera-space matrix of `RenderCommand_7`/`RenderCommand_8` has it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Billboard {
+    /// Range of [`Geometry::vertices`] drawn under the command.
+    pub vertex_range: Range<usize>,
+    /// Translation of the current matrix.
+    pub pivot: [f32; 3],
+    /// Normalized columns of the current matrix's 3x3 part, column-major.
+    pub rotation: [f32; 9],
+    /// `0x08`: the object keeps its up axis and turns around it; `0x07`: it faces the camera
+    /// flat.
+    pub y_only: bool,
+}
+
+/// The billboard a draw is under, taken from the current matrix when the command runs.
+#[derive(Debug, Clone, PartialEq)]
+struct ActiveBillboard {
+    pivot: [f32; 3],
+    rotation: [f32; 9],
+    y_only: bool,
+}
+
+impl ActiveBillboard {
+    /// `current = T · R · S` for column vectors: the pivot is its translation and each column
+    /// of the 3x3 part is a scaled axis.
+    fn of(cur: &Mat4, y_only: bool) -> Self {
+        let mut out = [0.0; 9];
+        for (c, col) in cur.0.iter().take(3).enumerate() {
+            let len = (col[0] * col[0] + col[1] * col[1] + col[2] * col[2]).sqrt();
+            let len = if len > 0.0 { len } else { 1.0 };
+            for r in 0..3 {
+                out[c * 3 + r] = col[r] / len;
+            }
+        }
+        Self {
+            pivot: [cur.0[3][0], cur.0[3][1], cur.0[3][2]],
+            rotation: out,
+            y_only,
+        }
+    }
+}
+
 /// Indexed triangle list of a whole model.
 #[derive(Debug, Clone, Default)]
 pub struct Geometry {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub draw_calls: Vec<DrawCall>,
+    /// Vertices drawn under a billboard command (`0x07`/`0x08`), with the current matrix they
+    /// were drawn with: a renderer turns them toward the camera instead of using its rotation.
+    pub billboards: Vec<Billboard>,
 }
 
 impl Geometry {
@@ -72,13 +121,18 @@ impl Geometry {
             stack: [Mat4::IDENTITY; 32],
             sp: 0,
             material: 0,
+            billboard: None,
             out: Geometry::default(),
             prim_start: 0,
             prim_type: 0,
             next: Vertex::default(),
             call: None,
         };
-        for op in &model.render_ops {
+        let mut commands = model.billboards.iter().peekable();
+        for (index, op) in model.render_ops.iter().enumerate() {
+            while let Some(command) = commands.next_if(|c| c.op == index) {
+                b.billboard = Some(ActiveBillboard::of(&b.cur, command.y_only));
+            }
             b.op(op)?;
         }
         Ok(b.out)
@@ -110,6 +164,8 @@ struct Builder<'m, 'a> {
     /// Position matrix stack pointer, for `MTX_PUSH`/`MTX_POP`.
     sp: usize,
     material: u8,
+    /// Billboard the current matrix is under, until a command replaces that matrix.
+    billboard: Option<ActiveBillboard>,
     out: Geometry,
     prim_start: usize,
     prim_type: u32,
@@ -139,7 +195,10 @@ fn fx_columns(entries: &[Fx12], rows: usize) -> Mat4 {
 impl Builder<'_, '_> {
     fn op(&mut self, op: &RenderOp) -> Result<()> {
         match op {
-            RenderOp::LoadMatrix { stack_pos } => self.cur = self.stack[slot(*stack_pos)?],
+            RenderOp::LoadMatrix { stack_pos } => {
+                self.cur = self.stack[slot(*stack_pos)?];
+                self.billboard = None;
+            }
             RenderOp::StoreMatrix { stack_pos } => self.stack[slot(*stack_pos)?] = self.cur,
             RenderOp::MulObject { object_idx } => {
                 let m = self
@@ -147,8 +206,14 @@ impl Builder<'_, '_> {
                     .get(usize::from(*object_idx))
                     .ok_or(Error::Malformed("G3D object index out of range"))?;
                 self.cur = self.cur.mul(m);
+                self.billboard = None;
             }
-            RenderOp::Skin { terms } => self.skin(terms)?,
+            RenderOp::Skin { terms } => {
+                self.skin(terms)?;
+                self.billboard = None;
+            }
+            // A scale applied after a billboard only stretches the object's axes; the
+            // billboard keeps the rotation decision it already made.
             RenderOp::ScaleUp => {
                 let s = self.model.up_scale.to_f32();
                 self.cur = self.cur.mul(&Mat4::scale([s; 3]));
@@ -205,6 +270,7 @@ impl Builder<'_, '_> {
         }
         self.call = Some(call);
         self.prim_start = self.out.vertices.len();
+        let start = self.out.vertices.len();
         for cmd in DisplayList::new(mesh.commands) {
             self.gpu(cmd?, f32::from(w), f32::from(h))?;
         }
@@ -214,12 +280,25 @@ impl Builder<'_, '_> {
             call.index_range.end = self.out.indices.len();
             self.out.draw_calls.push(call);
         }
+        if let Some(b) = &self.billboard
+            && start < self.out.vertices.len()
+        {
+            self.out.billboards.push(Billboard {
+                vertex_range: start..self.out.vertices.len(),
+                pivot: b.pivot,
+                rotation: b.rotation,
+                y_only: b.y_only,
+            });
+        }
         Ok(())
     }
 
     fn gpu(&mut self, cmd: GpuCmd, w: f32, h: f32) -> Result<()> {
         match cmd {
-            GpuCmd::Restore(i) => self.cur = self.stack[slot(i as usize)?],
+            GpuCmd::Restore(i) => {
+                self.cur = self.stack[slot(i as usize)?];
+                self.billboard = None;
+            }
             GpuCmd::Store(i) => self.stack[slot(i as usize)?] = self.cur,
             GpuCmd::Push => {
                 self.stack[slot(self.sp)?] = self.cur;
@@ -229,16 +308,25 @@ impl Builder<'_, '_> {
                 self.sp = usize::try_from(self.sp as i64 - i64::from(n))
                     .map_err(|_| Error::Malformed("G3D matrix stack underflow"))?;
                 self.cur = self.stack[slot(self.sp)?];
+                self.billboard = None;
             }
-            GpuCmd::Identity => self.cur = Mat4::IDENTITY,
-            GpuCmd::LoadMatrix(m) => self.cur = fx_columns(&m, if m.len() == 16 { 4 } else { 3 }),
+            GpuCmd::Identity => {
+                self.cur = Mat4::IDENTITY;
+                self.billboard = None;
+            }
+            GpuCmd::LoadMatrix(m) => {
+                self.cur = fx_columns(&m, if m.len() == 16 { 4 } else { 3 });
+                self.billboard = None;
+            }
             GpuCmd::MultMatrix(m) => {
                 let rows = if m.len() == 16 { 4 } else { 3 };
                 self.cur = self.cur.mul(&fx_columns(&m, rows));
+                self.billboard = None;
             }
             GpuCmd::Scale(s) => self.cur = self.cur.mul(&Mat4::scale(s.map(Fx12::to_f32))),
             GpuCmd::Translate(t) => {
                 self.cur = self.cur.mul(&Mat4::translation(t.map(Fx12::to_f32)));
+                self.billboard = None;
             }
             GpuCmd::Begin(t) => {
                 self.end_prim();
@@ -310,7 +398,7 @@ impl Builder<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::super::G3dFile;
-    use super::super::model::tests::{sample_mdl0, triangle_list};
+    use super::super::model::tests::{sample_mdl0, sample_mdl0_with, triangle_list};
     use super::super::test_util::file;
     use super::*;
 
@@ -328,6 +416,47 @@ mod tests {
         assert_eq!(g.vertices[0].color, [1.0; 3]);
     }
 
+    /// A billboard command leaves the draws that follow it to the camera: the record keeps the
+    /// pivot and the object's axes of the current matrix, and the vertices keep the object's
+    /// own rotation (`x` of the triangle stays to the right, `up_scale` still applies).
+    #[test]
+    fn billboard_commands_leave_their_draws_to_the_camera() {
+        // Multiply by object 0 and store it; billboard about Y; scale up; draw mesh 0;
+        // billboard flat; draw mesh 0 again; end.
+        let render = [
+            0x26, 0, 0, 0, 0, 0x08, 0, 0x0b, 0x05, 0, 0x07, 0, 0x05, 0, 0x01, 0,
+        ];
+        let data = file(b"BMD0", &[sample_mdl0_with(&triangle_list(), &render)]);
+        let f = G3dFile::parse(&data).unwrap();
+        assert_eq!(f.models[0].billboards.len(), 2);
+        let g = Geometry::build(&f.models[0]).unwrap();
+        assert_eq!(g.billboards.len(), 2);
+        let [first, second] = [&g.billboards[0], &g.billboards[1]];
+        // One record per draw; the first scales up, the second re-decomposes the matrix that
+        // scale left (same pivot, same axes).
+        assert_eq!(first.vertex_range, 0..3);
+        assert_eq!(second.vertex_range, 3..6);
+        assert!(first.y_only && !second.y_only);
+        assert_eq!(first.pivot, [1.0, 2.0, 3.0]);
+        assert_eq!(second.pivot, [1.0, 2.0, 3.0]);
+        let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        assert_eq!(first.rotation, identity);
+        assert_eq!(second.rotation, identity);
+        // Unchanged geometry: the billboard is applied by the renderer, per frame.
+        let p: Vec<_> = g.vertices.iter().map(|v| v.position).collect();
+        assert_eq!(
+            p,
+            vec![
+                [1.0, 2.0, 3.0],
+                [3.0, 2.0, 3.0],
+                [1.0, 4.0, 3.0],
+                [1.0, 2.0, 3.0],
+                [3.0, 2.0, 3.0],
+                [1.0, 4.0, 3.0],
+            ]
+        );
+    }
+
     #[test]
     fn strips_and_quads() {
         let data = file(b"BMD0", &[sample_mdl0(&triangle_list())]);
@@ -339,6 +468,7 @@ mod tests {
             stack: [Mat4::IDENTITY; 32],
             sp: 0,
             material: 0,
+            billboard: None,
             out: Geometry::default(),
             prim_start: 0,
             prim_type: 2,

@@ -116,6 +116,8 @@ pub struct AnimatedScene {
     /// Scene instances of the map's cast (`<area>.npc`), replaced by
     /// [`AnimatedScene::rebuild_cast`].
     cast: Vec<usize>,
+    /// [`Scene::face_billboards`] moved vertices since the last upload.
+    billboards_dirty: bool,
     pub frame: u64,
 }
 
@@ -165,6 +167,7 @@ impl AnimatedScene {
             frame: 0,
             npc_rigs: Vec::new(),
             cast: Vec::new(),
+            billboards_dirty: false,
         };
         let ambl = Narc::parse(required(&file, &map.files.ambl)?)?;
         let tex_bytes = map
@@ -640,17 +643,26 @@ impl AnimatedScene {
                 )?;
                 target.recenter_draws();
                 state.vertices_dirty = true;
+                // A billboard's offsets are taken from the vertices as the pose left them.
+                if let Some(billboards) = self.scene.billboards.get_mut(&state.model) {
+                    let vertices = &target.vertices;
+                    for b in billboards {
+                        b.rebase(vertices);
+                    }
+                }
             }
         }
         Ok(())
     }
 
-    /// Face sprites toward the exact render camera, including when no simulation step was
-    /// due. This must run after selecting a screenshot camera and before uploading.
+    /// Face sprites and model billboards toward the exact render camera, including when no
+    /// simulation step was due. This must run after selecting a screenshot camera and before
+    /// uploading.
     pub fn face_camera(&mut self, camera: &Camera) -> Result<()> {
         for sprite in &mut self.sprites {
             sprite.face(camera, &mut self.scene)?;
         }
+        self.billboards_dirty = self.scene.face_billboards(camera) > 0;
         Ok(())
     }
 
@@ -700,6 +712,14 @@ impl AnimatedScene {
                 "sprite GPU vertex count",
             )?;
             renderer.update_material(device, queue, sprite.model, 0, &model.materials[0])?;
+        }
+        if self.billboards_dirty {
+            let models: Vec<usize> = self.scene.billboards.keys().copied().collect();
+            for index in models {
+                let model = &self.scene.models[index];
+                upload_geometry(renderer, queue, index, model, "billboard GPU vertex count")?;
+            }
+            self.billboards_dirty = false;
         }
         Ok(())
     }

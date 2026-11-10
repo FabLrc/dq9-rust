@@ -45,6 +45,7 @@ counted as a ported game function (no `port:` marker).
 | Object | `Object` | translation, 3×3 or compressed "pivot" rotation, scale and its inverse; `matrix()` = T·R·S |
 | Pose | `ObjectTransform`, `Model::rest_pose`, `Model::pose_matrices` | exact per-object transform then matrix according to the model's scaling rule |
 | Render commands | `RenderOp` | load/store a matrix, multiply by an object, skin (`Skin`), `ScaleUp`/`ScaleDown`, bind a material, draw a mesh |
+| Billboard commands | `BillboardCommand`, `Geometry::billboards` | render commands `0x07` (`BB`) and `0x08` (`BBY`): where they sit in the bytecode, their parameter byte, and the draws they leave to the camera ([§ Billboards](#billboards-render-commands-0x070x08)) |
 | Display list | `DisplayList` → `GpuCmd` | every GBATEK GPU command; positions in exact fixed-point (`Fx12`), normals 1.0.9, texture coordinates 1.11.4, RGB555 colors |
 | Geometry | `Geometry` | `build` (rest pose), `build_posed` (given object matrices): indexed triangles in model space, normals, colors, raw normalized UVs; `apply_tex_matrices` |
 | `TEX0` | `Tex0` | textures (`TextureParams`, data, 4×4 block index) and palettes |
@@ -72,7 +73,7 @@ Differences from apicula:
 
 Not ported: blending of several joint animations on one object
 (`ProcessJointAnimationsOnBoneMatrix`, `0x020b3bbc`), visibility animations (`V\0AV`,
-absent from the files read here), billboards (render commands `0x07`/`0x08`),
+absent from the files read here),
 environment mapping (`TEXIMAGE_PARAM` generation 2 and 3), lighting,
 COLLADA/glTF export, animation selection by the game.
 
@@ -101,6 +102,68 @@ The file stores each scale with its inverse (6 `fx32`). In the ROM: 6,113 models
 rule 2, 126 with rule 0, none with rule 1. Rule 2 explains the two models that
 overflowed their header box with `T·R·S`: M10M0600 and S14M01E1 nest scaled
 objects; with the rule, every model fits in its box.
+
+## Billboards (render commands `0x07`/`0x08`)
+
+Trees, lamps, cave lights and other flat scenery are quads that turn to face the camera.
+The model says so with render commands `0x07` and `0x08`; they name no object. The opcode's
+low five bits select the operation and the top three its modifier
+(`ExecuteRenderCommands`, `0x020b4030`): `0x07` is `RenderCommand_7`
+(EU `0x020b50fc`, USA `0x020b50ec`, 0x308 bytes) and `0x08` `RenderCommand_8`
+(EU `0x020b5404`, USA `0x020b53f4`, 0x364 bytes) — the decompilation's comments name them
+"free billboarding … noticeable with evac animation" and "axis-aligned billboarding —
+noticeable on trees in Angel Falls & lights in cave grottos".
+
+**The command's parameter byte is not an object index.** The plain form (modifier 0, the only
+one on the cartridge) consumes two bytes and jumps over the second without reading it
+(`numBytesConsumed = 2`); the byte is read as a matrix stack slot only in the modified forms
+(`0x27`/`0x47`/`0x67`: store the result in, retrieve a matrix from, the position stack). No
+render command hook is installed for commands 7 or 8 either: the game's only hook is command 6
+(`SetModelRenderContextRenderCommandHook(context, &BoneTrackingRenderCommandHook, 0, 6, 3)`,
+`Object3D.cpp`). The value grows with the command's place in the bytecode: 4 to 15 for the
+twelve billboards of `M01M0003`, 0 to 40 over the cartridge. The library reads it and ignores
+it. The billboard applies to **whatever the current matrix is** when the command runs: the
+`0x06`/`0x03` commands before it leave one tree node in the stack.
+
+What both variants do with that matrix:
+
+1. set the projection to identity, push it, and read the current **clip** matrix
+   (`func_020c54fc`), combined with the camera (`RenderConfig::GetCombinedWorldViewMatrix`,
+   the inverse of the matrix `func_020b39ec` recomputes, in the decompilation's USA
+   numbering): the object as the camera sees it;
+2. keep its translation — the pivot, where the object stands — and the lengths of its three
+   axes — the scale (uniform on every placement of the ROM, so the order does not matter);
+3. replace its rotation:
+   - `0x08` (`BBY`): the camera's `x` becomes the object's `x`, the normalized image of the
+     object's `y` axis in camera space becomes its `y`, and `(0, −y_z, y_y)` its `z`
+     (`data_020f1dc0` row 0 stays the identity's `(1,0,0)`). A quad standing on the ground
+     therefore stays upright and turns around the vertical to face the camera;
+   - `0x07` (`BB`): the rotation is the identity (`data_020f1d78` does not touch its 3×3
+     block): the object is drawn screen-aligned at its pivot.
+
+The result is loaded back with the inverse world-view (`GXFIFO_MATRIX_POP`,
+`GXFIFO_MATRIX_MODE = 2`, `LoadMat4x3`, `MultiplyMat4x3`, `ScaleMatrix`), so the vertex of
+the object at `v` ends up at `pivot + camera-facing rotation · scale · v` in camera space.
+`RenderCommand_8` only runs that reconstruction when the image of `y` has a non-zero `y` or
+`z`; otherwise it takes the `z` axis instead (`rows[1].y == 0 && rows[1].z == 0`: the up axis
+lies along the camera's `x`, which no upright quad does).
+
+On the ROM: the 740 `data/map/*.amdj` archives the map list names hold 342 with billboard
+commands, 549 models, 3,466 commands (2,761 of them `0x08`); the 738 archive sets a scene
+builds expose 550 such models and 3,576 commands (`crates/dq9-render/tests/real_rom.rs`), and
+no model is placed twice. `M01` (Angel Falls) has 21, all `0x08`: 12 in `M01M0003` (one per
+`tre` node), 8 in `M01M0004`, 1 in `M01M00L1` (the rainbow, hidden at this time of day).
+`D01` has 9, all `0x08`, in `D01M0000` (its lamps). `F01`, the field map around the village,
+has none: its vegetation is drawn without billboard commands, **[unknown]** how
+(`F01M0100.nsbmd`, which carries 8 of them, belongs to the archive of `M01M12`, not to `F01`).
+
+Implementation: `nds_rom::g3d::Model::billboards` keeps each command's position in the render
+op list (`BillboardCommand`), `Geometry::billboards` the draws it leaves to the camera (pivot,
+normalized axes, `y_only`), `dq9_render::Scene::face_billboards` rebuilds those vertices every
+frame from the render camera. A model with a billboard is copied per placement, since the
+result depends on the placement's world transform. **[hypothesis]** the DS sorts the affected
+translucent quads by their on-screen depth per frame; our scene sorts draws by the *static*
+model-space centre of each mesh, so a billboarded quad keeps the order of its rest pose.
 
 ## Joint animations (`JNT0`, block `J\0AC`)
 

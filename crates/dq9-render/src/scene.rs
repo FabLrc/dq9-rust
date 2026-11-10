@@ -8,16 +8,18 @@
 //! Approximations of the DS 3D engine are listed in `docs/app.md`.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
 use dq9_formats::map::{Map, PartKind, Transform};
-use glam::{Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 use nds_rom::compress::{Codec, decode};
 use nds_rom::g3d::tex::decode_texture;
 use nds_rom::g3d::{G3dFile, Geometry, Material, Model, Name, Palette, Tex0, TexMatrix, Texture};
 use nds_rom::{Error, Narc, Result};
+
+use crate::Camera;
 
 /// Texture addressing along one axis (`TEXIMAGE_PARAM` bits 16-19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -236,6 +238,41 @@ pub struct SceneModel {
     pub tinted: bool,
 }
 
+/// Vertices drawn under a billboard render command (`0x07`/`0x08`), kept in the frame of the
+/// command so that [`Scene::face_billboards`] can turn them toward the camera.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneBillboard {
+    /// `0x08`: the object keeps its up axis and turns around it; `0x07`: it faces the camera
+    /// flat (`RenderCommand_7`, `RenderCommand_8`).
+    pub y_only: bool,
+    /// Model-space pivot: the translation of the matrix the vertices were drawn with.
+    pub pivot: Vec3,
+    /// Rotation of that matrix (columns: the object's axes, unit length).
+    pub rotation: Mat3,
+    /// Each billboarded vertex ([`SceneModel::vertices`] index) and its offset from the pivot
+    /// along the object's own scaled axes: only the rotation of the matrix is replaced every
+    /// frame, so this offset stays.
+    pub vertices: Vec<(u32, Vec3)>,
+}
+
+impl SceneBillboard {
+    /// Recomputes the offsets from the vertices as they stand, after an animation posed them.
+    pub(crate) fn rebase(&mut self, vertices: &[SceneVertex]) {
+        let inverse = self.rotation.transpose();
+        for entry in &mut self.vertices {
+            let Some(v) = vertices.get(entry.0 as usize) else {
+                continue;
+            };
+            entry.1 = inverse * (Vec3::from_array(v.position) - self.pivot);
+        }
+    }
+
+    /// The object's up axis in model space (the image of its local `y` axis).
+    pub fn up(&self) -> Vec3 {
+        self.rotation.col(1)
+    }
+}
+
 impl SceneModel {
     /// Recomputes the model-space centroid of every draw from its posed vertices, to sort
     /// translucent draws.
@@ -312,6 +349,11 @@ pub struct Scene {
     pub undrawn_placements: Vec<(u32, u16)>,
     /// Files that could not be read or decoded, skipped.
     pub warnings: Vec<String>,
+    /// Billboards by [`SceneModel`] index: the vertices drawn under a billboard render command
+    /// of a map model, re-oriented toward the camera every frame
+    /// ([`Scene::face_billboards`]). A model with one is copied per placement, because the
+    /// result depends on the placement's own world transform.
+    pub billboards: BTreeMap<usize, Vec<SceneBillboard>>,
 }
 
 /// World matrix of an instance: translation, then the `y` rotation, then the scale, as the
@@ -503,6 +545,18 @@ impl Builder<'_, '_> {
         member: &str,
         model: &Model,
     ) -> Result<SceneModel> {
+        Ok(self.model_with_billboards(archive, member, model)?.0)
+    }
+
+    /// [`model`](Self::model), also returning the billboards of the vertices it draws. The
+    /// caller stores them with the model index it chooses (the scene's own loader does; a
+    /// character or a hero part has none and can drop them).
+    pub(crate) fn model_with_billboards(
+        &mut self,
+        archive: &str,
+        member: &str,
+        model: &Model,
+    ) -> Result<(SceneModel, Vec<SceneBillboard>)> {
         let geometry = Geometry::build(model)?;
         let matrices = model.tex_matrices();
         let materials: Vec<SceneMaterial> = model
@@ -563,18 +617,45 @@ impl Builder<'_, '_> {
             let p = Vec3::from_array(v.position);
             Some(b.map_or([p, p], |[lo, hi]| [lo.min(p), hi.max(p)]))
         });
-        Ok(SceneModel {
-            archive: archive.to_owned(),
-            member: member.to_owned(),
-            name: name_string(&model.name),
-            vertices,
-            indices: geometry.indices,
-            materials,
-            draws,
-            bounds,
-            lit: self.lit,
-            tinted: true,
-        })
+        let mut billboards = Vec::with_capacity(geometry.billboards.len());
+        for b in &geometry.billboards {
+            let pivot = Vec3::from_array(b.pivot);
+            let rotation = Mat3::from_cols_array(&b.rotation);
+            let inverse = rotation.transpose();
+            let ids = b
+                .vertex_range
+                .clone()
+                .map(|i| u32::try_from(i).map_err(|_| Error::Malformed("index")))
+                .collect::<Result<Vec<_>>>()?;
+            let vertices: Vec<(u32, Vec3)> = ids
+                .iter()
+                .map(|&i| {
+                    let p = Vec3::from_array(vertices[i as usize].position);
+                    (i, inverse * (p - pivot))
+                })
+                .collect();
+            billboards.push(SceneBillboard {
+                y_only: b.y_only,
+                pivot,
+                rotation,
+                vertices,
+            });
+        }
+        Ok((
+            SceneModel {
+                archive: archive.to_owned(),
+                member: member.to_owned(),
+                name: name_string(&model.name),
+                vertices,
+                indices: geometry.indices,
+                materials,
+                draws,
+                bounds,
+                lit: self.lit,
+                tinted: true,
+            },
+            billboards,
+        ))
     }
 }
 
@@ -638,6 +719,8 @@ impl Scene {
         };
         let mut archives: HashMap<&str, Option<Narc>> = HashMap::new();
         let mut loaded: HashMap<ModelCacheKey<'_>, Vec<usize>> = HashMap::new();
+        // Billboard models already placed: the others need a copy of their own.
+        let mut shared: HashSet<usize> = HashSet::new();
         for (block_idx, block) in map.blocks.iter().enumerate() {
             if !block.processed {
                 continue;
@@ -689,6 +772,21 @@ impl Scene {
                     });
                 let home = world_matrix(&inst.world);
                 for &model in models.iter() {
+                    // A billboard re-orients its vertices from the render camera and from the
+                    // instance's own world transform, so two placements cannot share one
+                    // vertex buffer: each instance after the first gets its own copy.
+                    let model = if !b.scene.billboards.contains_key(&model) || shared.insert(model)
+                    {
+                        model
+                    } else {
+                        let copy = b.scene.models[model].clone();
+                        b.scene.models.push(copy);
+                        let index = b.scene.models.len() - 1;
+                        b.scene
+                            .billboards
+                            .insert(index, b.scene.billboards[&model].clone());
+                        index
+                    };
                     let instance = b.scene.instances.len();
                     b.scene.placements.push((block.entry, inst.id, instance));
                     b.scene.instances.push(SceneInstance::placed(
@@ -702,6 +800,58 @@ impl Scene {
             }
         }
         b.scene
+    }
+
+    /// Re-orients the vertices drawn under a billboard render command toward `camera` and
+    /// returns the number of instances it updated. The original replaces the rotation of the
+    /// current matrix in camera space (`RenderCommand_7`, `RenderCommand_8`): the pivot and the
+    /// scale stay, the rotation becomes the camera's, so `0x08` keeps the object's up axis and
+    /// turns it around that axis while `0x07` faces the camera flat.
+    pub fn face_billboards(&mut self, camera: &Camera) -> usize {
+        // The camera's rotation and its inverse; the view matrix carries no scale.
+        let view = Mat3::from_mat4(camera.view());
+        let back = view.transpose();
+        let work: Vec<(usize, usize)> = self
+            .instances
+            .iter()
+            .enumerate()
+            .filter(|(_, inst)| inst.drawn() && self.billboards.contains_key(&inst.model))
+            .map(|(index, inst)| (index, inst.model))
+            .collect();
+        for &(index, model_index) in &work {
+            let world = self.instances[index].world;
+            let inverse = world.inverse();
+            let (rotation, scale) = columns(&world);
+            let (Some(billboards), Some(model)) = (
+                self.billboards.get(&model_index),
+                self.models.get_mut(model_index),
+            ) else {
+                continue;
+            };
+            for b in billboards {
+                let pivot = world.transform_point3(b.pivot);
+                let facing = if b.y_only {
+                    let up = (rotation * b.up()).normalize_or_zero();
+                    let up = (view * up).normalize_or_zero();
+                    // The object's up axis stays; its width becomes the screen's, and the
+                    // third axis is the normal of that plane.
+                    let side = Vec3::new(0.0, -up.z, up.y);
+                    back * Mat3::from_cols(Vec3::X, up, side)
+                } else {
+                    back
+                };
+                let matrix = inverse
+                    * Mat4::from_translation(pivot)
+                    * Mat4::from_mat3(facing)
+                    * Mat4::from_scale(scale);
+                for &(i, offset) in &b.vertices {
+                    if let Some(v) = model.vertices.get_mut(i as usize) {
+                        v.position = matrix.transform_point3(offset).to_array();
+                    }
+                }
+            }
+        }
+        work.len()
     }
 
     /// World-space bounding box of every instance drawn (hidden ones have a null scale).
@@ -734,6 +884,23 @@ impl Scene {
     }
 }
 
+/// The rotation and the scale of a world matrix: its columns normalized, and their lengths.
+fn columns(world: &Mat4) -> (Mat3, Vec3) {
+    let mut lengths = Vec3::ONE;
+    let mut unit = [Vec3::X, Vec3::Y, Vec3::Z];
+    for (axis, col) in [world.x_axis, world.y_axis, world.z_axis]
+        .iter()
+        .enumerate()
+    {
+        let len = col.truncate().length();
+        if len > 0.0 {
+            lengths[axis] = len;
+            unit[axis] = col.truncate() / len;
+        }
+    }
+    (Mat3::from_cols(unit[0], unit[1], unit[2]), lengths)
+}
+
 /// Every model of an `.nsbmd` member, added to the scene; nothing on failure (warned).
 fn load_models(b: &mut Builder<'_, '_>, archive: &str, narc: &Narc<'_>, name: &str) -> Vec<usize> {
     let result = member(narc, name)
@@ -743,9 +910,13 @@ fn load_models(b: &mut Builder<'_, '_>, archive: &str, narc: &Narc<'_>, name: &s
             let file = G3dFile::parse(&bytes)?;
             let mut ids = Vec::new();
             for model in &file.models {
-                let m = b.model(archive, name, model)?;
+                let (m, billboards) = b.model_with_billboards(archive, name, model)?;
+                let id = b.scene.models.len();
                 b.scene.models.push(m);
-                ids.push(b.scene.models.len() - 1);
+                if !billboards.is_empty() {
+                    b.scene.billboards.insert(id, billboards);
+                }
+                ids.push(id);
             }
             Ok(ids)
         });
@@ -817,6 +988,117 @@ mod tests {
         assert_eq!(lo, Vec3::new(9.0, -1.0, -1.0));
         assert_eq!(hi, Vec3::new(11.0, 1.0, 1.0));
         assert_eq!(scene.triangle_count(), 1);
+    }
+
+    /// A map model drawn with one billboard command: a vertical quad whose offsets are what
+    /// `Builder::model` keeps (the object's scaled axes), placed with a rotation and a scale.
+    fn billboard_scene(y_only: bool, world: Mat4) -> Scene {
+        let mut scene = Scene::default();
+        let offsets = [
+            [-0.5, -0.5, 0.0],
+            [0.5, -0.5, 0.0],
+            [0.5, 0.5, 0.0],
+            [-0.5, 0.5, 0.0],
+        ];
+        scene.models.push(SceneModel {
+            archive: String::new(),
+            member: String::new(),
+            name: String::new(),
+            vertices: offsets
+                .iter()
+                .map(|&position| SceneVertex {
+                    position,
+                    ..SceneVertex::default()
+                })
+                .collect(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+            materials: Vec::new(),
+            draws: Vec::new(),
+            bounds: None,
+            lit: false,
+            tinted: false,
+        });
+        scene.instances.push(SceneInstance {
+            model: 0,
+            world,
+            home: world,
+            block: 0,
+            instance: 0,
+        });
+        scene.billboards.insert(
+            0,
+            vec![SceneBillboard {
+                y_only,
+                pivot: Vec3::ZERO,
+                rotation: Mat3::IDENTITY,
+                vertices: offsets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &o)| (i as u32, Vec3::from_array(o)))
+                    .collect(),
+            }],
+        );
+        scene
+    }
+
+    /// The world-space normal of the quad, from the model-space vertices it drew.
+    fn quad_normal(scene: &Scene) -> (Vec3, Vec3) {
+        let world = scene.instances[0].world;
+        let p = |i: usize| {
+            world.transform_point3(Vec3::from_array(scene.models[0].vertices[i].position))
+        };
+        let (a, b, d) = (p(0), p(1), p(3));
+        // `d - a` is the quad's up axis; the cross of the two edges is its normal.
+        ((b - a).cross(d - a).normalize(), (d - a).normalize())
+    }
+
+    /// The game replaces the rotation of the current matrix in camera space
+    /// (`RenderCommand_7`/`_8`): whatever the placement's own rotation, the quad faces the
+    /// camera from every direction, and `0x08` keeps it upright.
+    #[test]
+    fn billboards_face_the_camera_from_every_direction() {
+        let world = Mat4::from_translation(Vec3::new(3.0, 1.0, -2.0))
+            * Mat4::from_rotation_y(0.7)
+            * Mat4::from_scale(Vec3::splat(2.0));
+        let pivot = world.transform_point3(Vec3::ZERO);
+        for y_only in [false, true] {
+            let mut scene = billboard_scene(y_only, world);
+            for step in 0..4 {
+                let mut camera = Camera {
+                    yaw: step as f32 * std::f32::consts::FRAC_PI_2 + 0.3,
+                    pitch: 0.6,
+                    distance: 10.0,
+                    ..Camera::default()
+                };
+                camera.target = pivot;
+                assert_eq!(scene.face_billboards(&camera), 1);
+                let (normal, up) = quad_normal(&scene);
+                let to_eye = camera.eye() - pivot;
+                let view = Mat3::from_mat4(camera.view());
+                // `0x08` keeps the object's up axis (the placement's is the world's);
+                // `0x07` is screen-aligned, so its up is the camera's.
+                let wanted_up = if y_only {
+                    Vec3::Y
+                } else {
+                    view.transpose() * Vec3::Y
+                };
+                assert!(
+                    up.dot(wanted_up) > 0.999,
+                    "y_only {y_only}: up {up} vs {wanted_up}"
+                );
+                // `0x08` turns about the vertical: the plane faces the camera's horizontal
+                // direction. `0x07` faces the eye exactly, pitch included.
+                let target = if y_only {
+                    to_eye.with_y(0.0).normalize()
+                } else {
+                    to_eye.normalize()
+                };
+                assert!(
+                    normal.dot(target) > 0.999,
+                    "y_only {y_only}, yaw {step}: normal {normal} vs {target}"
+                );
+            }
+        }
     }
 
     #[test]
