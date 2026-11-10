@@ -166,6 +166,11 @@ struct Cli {
     /// the story on, instead of stopping: a player's stand-in (docs/app.md, § New game).
     #[arg(long, requires = "auto")]
     pilot: bool,
+    /// With `--pilot --fight`: the route mode (`app/auto/route.rs`): the field's monsters roam,
+    /// the pilot rests at the inn and fights for levels after a defeat, and the run stops when
+    /// this event ends (`--route 2750`).
+    #[arg(long, requires = "pilot", requires = "fight", value_name = "EVENT")]
+    route: Option<u16>,
     /// With `--auto`: writes the story state at every checkpoint as JSONL (the field names of
     /// `dq9re state --json`), for the melonDS comparison.
     #[arg(long, requires = "auto")]
@@ -492,7 +497,11 @@ pub fn main() -> Result<()> {
         return Ok(());
     }
     if cli.auto {
-        let stop = app.play_auto(u64::from(cli.headless_steps.unwrap_or(200_000)), cli.pilot);
+        let steps = u64::from(cli.headless_steps.unwrap_or(200_000));
+        let stop = match cli.route {
+            Some(event) => app.play_route(steps, event),
+            None => app.play_auto(steps, cli.pilot),
+        };
         print!("{}", app.auto_report(&stop));
         if let Some(battle) = app.last_battle() {
             println!(

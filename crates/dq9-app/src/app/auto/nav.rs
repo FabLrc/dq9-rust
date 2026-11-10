@@ -106,6 +106,39 @@ fn diagonal_sides(direction: usize) -> Option<[usize; 2]> {
     })
 }
 
+/// Largest area of a grid at its finest spacing: 200 000 cells of half a unit.
+const MAX_AREA: f32 = 50_000.0;
+/// How far around a box the ground is looked for, and the distance between two probes.
+const SCAN: f32 = 40.0;
+const SCAN_STEP: f32 = 2.0;
+
+/// The corners (`x`, `z`) of the box of ground the map has within [`SCAN`] of the box
+/// `low..high`, found with the game's ground ray every [`SCAN_STEP`]: `None` without ground.
+fn ground_extent(
+    world: &dq9_core::CollisionWorld,
+    low: Vec3,
+    high: Vec3,
+    low_y: f32,
+    high_y: f32,
+) -> Option<(Vec3, Vec3)> {
+    let mut found_low = Vec3::splat(f32::INFINITY);
+    let mut found_high = Vec3::splat(f32::NEG_INFINITY);
+    let mut z = low.z - SCAN;
+    while z <= high.z + SCAN {
+        let mut x = low.x - SCAN;
+        while x <= high.x + SCAN {
+            if !world.floors(x, z, low_y, high_y).is_empty() {
+                let at = Vec3::new(x, 0.0, z);
+                found_low = found_low.min(at);
+                found_high = found_high.max(at);
+            }
+            x += SCAN_STEP;
+        }
+        z += SCAN_STEP;
+    }
+    found_low.is_finite().then_some((found_low, found_high))
+}
+
 /// Cell index of a grid coordinate, or `None` outside the grid.
 fn cell_at(x: i32, z: i32, width: usize, height: usize) -> Option<usize> {
     (x >= 0 && z >= 0 && (x as usize) < width && (z as usize) < height)
@@ -133,6 +166,18 @@ impl NavGrid {
         let margin = 6.0;
         low -= Vec3::splat(margin);
         high += Vec3::splat(margin);
+        // The ground may go round the box of the places to visit: the corridors of the Hexagon
+        // leave its halls sideways and meet the doors far from any point of the map's list
+        // (`D01M04`: every point has x 0, the way runs out to x 20 and back). Cover the ground
+        // the map has around the box, unless that would make the cells coarser.
+        if let Some((ground_low, ground_high)) = ground_extent(world, low, high, low_y, high_y) {
+            let wide_low = low.min(ground_low - Vec3::splat(1.0));
+            let wide_high = high.max(ground_high + Vec3::splat(1.0));
+            if (wide_high.x - wide_low.x) * (wide_high.z - wide_low.z) <= MAX_AREA {
+                low = wide_low;
+                high = wide_high;
+            }
+        }
         let mut spacing = 0.5;
         loop {
             let width = ((high.x - low.x) / spacing).ceil() as usize + 1;
@@ -238,7 +283,7 @@ impl NavGrid {
         self.levels[cell]
     }
 
-    fn center(&self, node: usize) -> Vec3 {
+    pub(super) fn center(&self, node: usize) -> Vec3 {
         let cell = self.cell(node);
         let ix = cell % self.width;
         let iz = cell / self.width;
@@ -301,6 +346,60 @@ impl NavGrid {
         cells.into_iter().map(|(_, at)| at).collect()
     }
 
+    /// Every node whose centre lies inside a trigger volume (`holds`): the nodes of a warp a
+    /// route must not cross when it does not mean to take it (see `App::warp_nodes`).
+    pub(super) fn nodes_inside(&self, holds: impl Fn(Vec3) -> bool) -> Vec<usize> {
+        (0..self.floor.len())
+            .filter(|node| {
+                let cell = self.cell(*node);
+                (node % MAX_FLOORS) < usize::from(self.levels_of(cell)) && holds(self.center(*node))
+            })
+            .collect()
+    }
+
+    /// `nodes` plus the nodes of every cell within `ring` cells of theirs, on the floors the
+    /// volume itself occupies (± 1.5). A box edge may fall a few centimetres beyond an inside
+    /// cell centre (the well warp of `M01` ends at `z -4.75` and a cell centre sits at
+    /// `-4.7048`), and the hero cuts a corner planned at cell precision by up to its turn
+    /// radius. The margin stays on the volume's own floors: a walkway above a warp is a
+    /// different node and must remain walkable (`X01M03`'s ring of `4109` warps lies under
+    /// the ramp to `4104`).
+    pub(super) fn expand(&self, nodes: &[usize], ring: i32) -> BTreeSet<usize> {
+        let low = nodes
+            .iter()
+            .map(|node| self.floor_of(*node))
+            .fold(f32::INFINITY, f32::min)
+            - 1.5;
+        let high = nodes
+            .iter()
+            .map(|node| self.floor_of(*node))
+            .fold(f32::NEG_INFINITY, f32::max)
+            + 1.5;
+        let mut cells = BTreeSet::new();
+        for node in nodes {
+            let cell = self.cell(*node);
+            let (ix, iz) = ((cell % self.width) as i32, (cell / self.width) as i32);
+            for dz in -ring..=ring {
+                for dx in -ring..=ring {
+                    if let Some(cell) = cell_at(ix + dx, iz + dz, self.width, self.height) {
+                        cells.insert(cell);
+                    }
+                }
+            }
+        }
+        let mut out = BTreeSet::new();
+        for cell in cells {
+            for level in 0..usize::from(self.levels_of(cell)) {
+                let node = cell * MAX_FLOORS + level;
+                let floor = self.floor_of(node);
+                if (low..=high).contains(&floor) {
+                    out.insert(node);
+                }
+            }
+        }
+        out
+    }
+
     /// Whether the two points' cells are joined when edges are ignored (debug: a false here
     /// means the walkable area itself is split, not the directional probes).
     pub(super) fn cells_connected(&self, from: Vec3, to: Vec3) -> bool {
@@ -330,6 +429,59 @@ impl NavGrid {
             }
         }
         false
+    }
+
+    /// The nodes the hero may step to from `node`, with the cost of the step: the edges the
+    /// build proved, a floor within [`STEP_HEIGHT`], and no node of `blocked`.
+    fn successors(&self, node: usize, blocked: &BTreeSet<usize>, out: &mut Vec<(usize, u32)>) {
+        out.clear();
+        let cell = self.cell(node);
+        let (ix, iz) = (cell % self.width, cell / self.width);
+        let here = self.floor_of(node);
+        let pass = self.pass[node];
+        for (direction, (dx, dz, step)) in STEPS.iter().enumerate() {
+            if pass & (1 << direction) == 0 {
+                continue;
+            }
+            if let Some([a, b]) = diagonal_sides(direction)
+                && pass & (1 << a) == 0
+                && pass & (1 << b) == 0
+            {
+                continue;
+            }
+            let Some(next_cell) = cell_at(ix as i32 + dx, iz as i32 + dz, self.width, self.height)
+            else {
+                continue;
+            };
+            for level in 0..usize::from(self.levels_of(next_cell)) {
+                let next = next_cell * MAX_FLOORS + level;
+                if !blocked.contains(&next) && (self.floor_of(next) - here).abs() <= STEP_HEIGHT {
+                    out.push((next, *step));
+                }
+            }
+        }
+    }
+
+    /// The standing poses of every node a walk from `from` reaches, in no particular order:
+    /// where the pilot may take the hero when the trigger it wants is not itself on a route.
+    pub(super) fn reachable(&self, from: Vec3, blocked: &BTreeSet<usize>) -> Vec<Vec3> {
+        let Some(start) = self.nearest_node(from, 2.0) else {
+            return Vec::new();
+        };
+        let mut seen = vec![false; self.floor.len()];
+        seen[start] = true;
+        let (mut open, mut next, mut poses) = (vec![start], Vec::new(), Vec::new());
+        while let Some(node) = open.pop() {
+            poses.push(self.center(node));
+            self.successors(node, blocked, &mut next);
+            for &(neighbour, _) in &next {
+                if !seen[neighbour] {
+                    seen[neighbour] = true;
+                    open.push(neighbour);
+                }
+            }
+        }
+        poses
     }
 
     /// A walkable route from `from` to `to` (cell centres, then `to`), by A* over the floors.
@@ -364,6 +516,7 @@ impl NavGrid {
         };
         let mut queue = BinaryHeap::new();
         queue.push(Reverse((heuristic(start), 0u32, start)));
+        let mut next = Vec::new();
         while let Some(Reverse((_, spent, node))) = queue.pop() {
             if spent > cost[node] {
                 continue;
@@ -378,39 +531,17 @@ impl NavGrid {
                 route.reverse();
                 return Some(route);
             }
-            let cell = self.cell(node);
-            let (ix, iz) = (cell % self.width, cell / self.width);
-            let here = self.floor_of(node);
-            let pass = self.pass[node];
-            for (direction, (dx, dz, step)) in STEPS.iter().enumerate() {
-                if pass & (1 << direction) == 0 {
-                    continue;
-                }
-                if let Some([a, b]) = diagonal_sides(direction)
-                    && pass & (1 << a) == 0
-                    && pass & (1 << b) == 0
-                {
-                    continue;
-                }
-                let Some(next_cell) =
-                    cell_at(ix as i32 + dx, iz as i32 + dz, self.width, self.height)
-                else {
-                    continue;
-                };
-                for level in 0..usize::from(self.levels_of(next_cell)) {
-                    let next = next_cell * MAX_FLOORS + level;
-                    if blocked.contains(&next) {
-                        continue;
-                    }
-                    if (self.floor_of(next) - here).abs() > STEP_HEIGHT {
-                        continue;
-                    }
-                    let next_cost = spent.saturating_add(*step);
-                    if next_cost < cost[next] {
-                        cost[next] = next_cost;
-                        came[next] = node;
-                        queue.push(Reverse((next_cost + heuristic(next), next_cost, next)));
-                    }
+            self.successors(node, blocked, &mut next);
+            for &(neighbour, step) in &next {
+                let next_cost = spent.saturating_add(step);
+                if next_cost < cost[neighbour] {
+                    cost[neighbour] = next_cost;
+                    came[neighbour] = node;
+                    queue.push(Reverse((
+                        next_cost + heuristic(neighbour),
+                        next_cost,
+                        neighbour,
+                    )));
                 }
             }
         }

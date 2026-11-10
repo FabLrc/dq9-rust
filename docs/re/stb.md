@@ -380,7 +380,77 @@ What chains the cutscenes is established (EU ROM, Ghidra, `cargo dq9re triggers`
   ends with `0xe1(1100)`; `21592` starts from the arrival trigger (3) of `M01` at stage 1.2;
   `21593` from a conversation (NPC 99) and ends with `0x84(1, 4, 1)` (stage 1.4) and `0x85(4105)`.
 - Full run: `dq9-app --new-game --headless --auto [--pilot]` (`app.md`, § "New
-  game").
+  game"); the continuous route to event 2750 is the next section.
+
+## Chapter 2 route (continuous play, J4)
+
+`dq9-app --new-game --fight --seed 7 --headless --auto --pilot --route 2750` (or
+`powershell -File scripts/chapter2-route.ps1 -Name route -Route 2750 -Steps 3000000`) plays a new
+game from the prologue to the end of event 2750 (room 1110, area 20, `0x23(5)`) with the real
+battle engine, the real conversations, doors and warps, and the facility screens of the
+application: the Hexagoon's defeat branch (events 16, 22510), its win (event 15, 2550, 2555) and
+the 2.5/2.6 scenes. Without `--route` the pilot is the story pilot, as before, and the headless
+traces keep replaying (roaming off).
+
+**The route mode** (`crates/dq9-app/src/app/auto/route.rs`; a stand-in for a player, not a game
+feature) switches the roaming monsters on, as in a window run, and adds three things to the
+story pilot, none of which injects state (stats, gold, items and flags are the game's):
+
+- *The bar.* A fight lost (a set battle, or a roamer: the journal's `wipe-out` map change) records
+  the party's strength at that moment, the sum of the levels and what the roamers' step reads of
+  its gear (`roaming_party_strength`). The story's offers wait until the party exceeds it, and
+  meanwhile the pilot walks to the nearest roamer of a field (`F01`) and fights it. Then it goes
+  back to the room where the story was interrupted (a fall in a field does not move that room),
+  where what it had done there is forgotten, so its exits and conversations are tried again. The
+  pilot knows no level the Hexagoon asks for: it knows that it lost at a strength.
+- *Healing.* When a member is under 3/5 of its HP: the inn, if some NPC of a room the pilot knows
+  offers one at this story point (the line the game's own `dialogue::select` picks opens
+  `<INN=n>`); else a medicinal herb from the bag, used through the field menu (Items, the herb's
+  row, the target: `Services::press`); else a trip to the NPC whose line opens `<SHOP=n>`, where
+  Confirm buys the first row (the herb) until six are in the bag or the purse is empty. The
+  screens are the application's (`services.rs`), driven by presses.
+- *The way.* A floor can have two stairs and one way on (D01M02): when no exit of a room leads on,
+  the entrance used is booked as a dead end and the pilot goes back out by it. Every map load
+  shuts its doors, so a room entered again forgets the doors opened on the earlier visit (the
+  first full run stopped at 2.6.4 in front of door 0/8 of M01M10, where NPC 98 waits for 22594).
+
+**Established by the runs** (`build/evidence/j4-chapter2-route/route3.*`, sha256 of `route3.out`
+`42a6508514b5`, seed 7, main `cd399c5` + this branch: pid 4440, exit 0, `stopped: event 2750 ended
+(route reached) after 3119.2 s of game time`, story 2.6.5; `route2.*` is the same trajectory,
+960 s wall, `route1.*` the run that stopped at 2.6.4 before the door fix):
+
+- *No inn from step 1 to 6 of chapter 2.* The records of NPC 7 (Ivor, `M01B0`) for those steps hold
+  no `<INN=n>` line (`dq9re talk data/scenario/M01B0.gp2 007_en.bin --step 4`: his lines are about
+  his father); the inn lines are those of step 7, of chapter 3 and of the quest 193 records (they
+  need quest 193 at state 2 or 3, which this route never sets). The HP the story gives at the
+  Hexagon is the village shop's medicinal herb (8 gold; NPC 19, `M01M03`, `Step 1..=99`), and the
+  wipe-out's revival on map 1106 with the purse halved (`fight.rs`).
+  `the_inn_is_shut_from_2_1_to_2_6_and_the_shop_is_open_all_along` pins both.
+- *The Hexagon's floors hurt.* `D01M02`–`D01M04` roam level 5 monsters (`dq9re encounters
+  D01M04`): the level 1 hero (13 HP) is wiped out on `D01M04` before the door of `D01M05`
+  (probe: `run19` inputs, then the pilot with roaming on; the party comes round on 1106).
+- *What the Hexagoon needed* (scripted battle 2, monster 300, stage 30215): lost at Lv 4, 5, 6 and
+  7 in 3, 5, 6 and 4 rounds, won at Lv 8 (527 experience, 53 max HP) in 7 rounds (175 experience,
+  100 gold) with 5 HP left, after 112 roamer fights (110 won, 2 lost), 467 gold and 8 herbs bought
+  at the shop in all (no inn stay). Before the first set battle the party was wiped out twice on
+  the Hexagon's floors, at Lv 2 and Lv 3. Victory
+  fires trigger 15 (`12 : 2`), `0x77(2550)`; the end of 2550 warps to 7100; the end of 2555 does
+  `0x84(0, 2, 5, 1)`: story 2.4.5 → 2.5.1. The loss (16) sets track flag 4: NPC 203 then offers
+  context 194 (`0xb(194)` → 22510 again).
+- *After the win*, from the events: 2620 (NPCs 5 and 6, twice), 2600 and 2610 (1102, twice), the
+  story goes 2.5.1 → 2.6.1; 2700, 22593 (2.6.2); 2720 (2.6.3); 2730 (NPC 93, 2.6.4); 22594 (NPC 98
+  behind door 0/8 of 1110, `take_item(22160)`, 2.6.5); area 20 of 1110 at substep 5 (`0x23(5)`)
+  starts 2750, whose end warps to 1100 (`0xb1`, `0x85`). Natives these scenes call that stay
+  without effect (known gaps, `stb-natives.md`): 417, 550, 556.
+
+**[hypothesis]** `D01M02`'s west stair (arrival from warp 0 of `D01M01`, at `(-7.8, 0.26, 13.35)`)
+is a dead end for the pilot: from there its walkable grid finds no way to the exit to `D01M03`,
+from the east stair (warp 1) it does; the map was not checked against the original.
+
+Open (not the pilot's): the application's map-load hook for the gate pair (`app.rs`, `gate_pair`)
+applies placements `(0, 13)` and `(0, 15)` on every map, and `M01` and `F01` have such placements
+(`dq9re map M01`: ids 13 and 15 of block 0), whereas `func_020ae7d4` starts with a guard on the
+loaded map (`*func_02012fe4() != uRam020ae88c`, return).
 
 ## Open questions
 
