@@ -330,6 +330,9 @@ movement, notice decision, contact, surprise roll, company and stage are `dq9_co
   ROM tables. The step runs only on the field's 30 Hz update, after the field task and before the
   animation; the field loop already skips it while a conversation, an event, a cast reload, a map
   change or a battle holds the field.
+  `j4-battle-lifecycle` fixes the conversation guard: a regression freezes spawned monsters
+  and generators while text is active and checks their update resumes after closure. This is
+  the application's pause contract, not an original-engine timing oracle.
 - **Models.** One field model is added per monster number of the map's `encfld` zones at load
   (`enemy/<code>_f.mon`, first `.cchr`), from that number's `mon_data` code, never another
   monster's archive. A spawn takes a free instance from that number's pool; the model is placed at

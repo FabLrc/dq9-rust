@@ -530,7 +530,7 @@ effect on the story and the wipe-out.
 **Controls** (as the conversation window): `Enter`, `Space` or `Z` confirm and close the
 window; `Backspace` or `X` cancel (back one menu, or to the previous member); the arrow keys
 or `W`/`A`/`S`/`D` move the cursor (left and up go back, right and down forward); `M` mute,
-`R` layout; `Esc` cancels during a fight and still closes the application on the field. No
+`R` layout; `Esc` cancels command menus and still closes the application on the field. No
 touch. With `--layout top` the bottom screen's windows are laid over the top screen.
 
 **Headless and parity.** The 615 checkpoints and the recorded traces pin battle 26's "won at
@@ -582,13 +582,13 @@ fleeing; the party line and every window of the fight are in the report), `menu.
 (`50124557cf7c`), `damage.png` (`dd23ba975c12`), `victory.png` (`d00681832a18`),
 `hexagoon-lost.png` (`841dac2ee401`, `--battle 2 --seed 3`), `parity.log` (`6bffa8a68372`: 2
 of 2, unchanged), `events-report-2.1-1.txt` (`0475ab6cf0dc`: 47 of 50 complete, unchanged),
-`verify.log` (`aa44613207e9`). Tests: `battle/tests.rs` (the seeded slime battle's lines,
-menus against the automatic policy, cancel, flight by seed, a lost Hexagoon, a level-up line,
-Defend, a herb from the bag, fleeing monsters, a call for backup) and `app/tests.rs` (battle
+`verify.log` (`aa44613207e9`). Current tests: `battle/tests.rs` (menus against the automatic
+policy, cancel, flight by seed, a lost Hexagoon, level-up, Defend, held-item use and bag-item
+refusal, fleeing monsters, a call for backup) and `app/tests.rs` (battle
 26 fought and paid, the lost Hexagoon's trigger 16 and wake-up in map 1106, an encounter, the
-stand-in untouched, a monster joining the scene, the window's path driven by the pad). A
-window run was not exercised interactively: its
-phases (`Entering`, `Fighting`, `Leaving`) are driven by the last test without a window.
+stand-in untouched, a monster joining the scene, the window's path driven by the pad).
+The original `j4-battle-play` evidence drove phases without a window; newer native interactive
+checks are recorded under Field encounters, and Web checks under Verification.
 
 ## New game (`--new-game`) and automatic run
 
@@ -984,6 +984,22 @@ controls and the screen's pixel density. Native: `--layout`, and `R` switches to
 layout. Web: the "Screens" select or `?layout=`. The old `--ds-aspect` and `ds=` are removed.
 
 ## Verification
+
+- Published roaming smoke (November 10, 2026), Pages
+  [`42812911849`](https://github.com/FabLrc/dq9-rust/actions/runs/42812911849), build `6ecf718`.
+  Local ROM, standard keyboard input, no game-state injection. F01 models were visibly
+  animated. Direct entry on D01M02 produced natural contact with monster 4, company 4×2,
+  stage 30214; Esc cancelled a command submenu; flight ended after one round without rewards.
+  A different monster (20) then contacted the party; four rounds of Attack ended in defeat,
+  followed by a visible revival on church map 1106. Evidence:
+  `build/evidence/j4-combat-web-final/hexagon-contact.png` (`2ca872e55958`),
+  `escape-cancel.png` (`4be4d98a7866`), `revival-church.png` (`430671952e62`),
+  `console.json` (`2798e51a2364`).
+  Standalone battle 26 (`?battle=26&seed=7`) won once in four rounds, 2 XP and 4 gold.
+  Its residual no-field rendering after closure was found in this run and corrected by
+  `749ae40`: completed previews retain their stage/camera instead of stale GPU geometry;
+  a dialogue also suspends roaming until it closes. These direct-map checks do not certify
+  the continuous new-game route or original-engine flight resumption.
 
 - Browser battle on Pages (November 10, 2026): deployment
   [`42800444183`](https://github.com/FabLrc/dq9-rust/actions/runs/42800444183),

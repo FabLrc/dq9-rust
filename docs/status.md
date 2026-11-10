@@ -19,6 +19,7 @@ Each passed its single full `verify.ps1 -RequireRom` gate (fmt, clippy, tests, w
 |---|---|---|
 | `j4-battle-held-items` / `c064473` | Acting member's held slots, duplicates, execution-only consumption, cancellation, skipped actor, reusable stone; bag unchanged | 5/5, 104.7 s, app 71/71 |
 | `j4-roaming-play` / `2801473` | Animated field models, natural contact → battle → field, RNG continuity, equipment-aware inputs, preset companies, released models hidden; Esc cancels, previews run once | 5/5, 90.4 s, app 82/82; parity 2/2 |
+| `j4-battle-lifecycle` / `749ae40` | Completed preview keeps stage/camera; dialogue pauses roamers and resumes them on close | 5/5, 103.5 s, app 83/83 |
 
 Native roaming smoke: F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold)
 → same field without a ghost model; D01M02 models visible. Tests cover Hexagon floors
@@ -39,15 +40,17 @@ only first-step waiting remains [hypothesis]. Original surprise/company/stage, F
 
 ## Browser and publication
 
-Last checked Pages deployment: `42808567716` (`f77b722`, held items included).
-Standalone battle 26 was played to victory on `b91f43b` (4 rounds, 5 XP, 9 gold).
-Its observed restart is fixed in `2801473`; final roaming Web smoke/deployment is pending.
-Continuous browser certification still stops at the raised hall, not at chapter 2.
+Pages `42812911849` (`6ecf718`): F01 models visible; D01M02 natural contact → Esc
+cancel → flight, then another monster → loss in four rounds → church 1106, all by keyboard.
+Evidence: `build/evidence/j4-combat-web-final/console.json` (`2798e51a2364`),
+`revival-church.png` (`430671952e62`). Standalone battle 26 won once (seed 7: 2 XP, 4 gold).
+The residual preview framing found there is fixed in `749ae40`; final deployment/check pending.
+These direct-map checks do not certify continuous new-game play to chapter 2.
 
 ## Active work and next steps
 
-Implementation workers finished; coordinator is publishing the roaming batch and checking
-its browser surface, followed by the docs-consistency review. No new implementation batch.
+No worker remains. Flash docs-consistency review completed; its corrections are applied.
+Coordinator is publishing/checking the final preview-framing fix; implementation branches removed.
 Next: battle motions/abilities/worn-equipment use and wipe-out details; field menu/facility
 screens; physical chapter 2 route through both Hexagoon outcomes; native 417 and missing
 placements; continuous browser play to 2750; real-battle parity references.
