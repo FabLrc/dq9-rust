@@ -250,10 +250,30 @@ chests are all a thief's lock (`C01M16`, `M05M05`, `M08M07`, `M09M05`, `M09M14`,
 *Getting-around*). A locked chest returns `Locked(kind)`; the unlocking (the ultimate, the
 thief's and the magic keys, lines 41 and 43) is not modelled.
 
-Values 2 to 4 are the position, in the maps' units, and value 5 a facing (INFERRED radians);
-one position or facing may be written as a whole number and another as a float — `M01M08`'s
-blue chest has `0` for its facing. The three-value records have no position: value 2 is the
-room's cabinet less one in the village (**[hypothesis]**, wiki *Treasure*, § Layout).
+Values 2 to 4 are the position, **in world units** (the map's placements and collision), and
+value 5 a facing (INFERRED radians); one position or facing may be written as a whole number
+and another as a float — `M01M08`'s blue chest has `0` for its facing. The loader scales them
+itself: `LootManager_CreateContainer` (EU `0x0207baa0`) copies value 0 and the kind, reads
+values 2–5 as `Script::Parameter`s (three for a pot or a barrel, four for the others) and
+converts each to `fx32` — `Int << 12`, or `Float × [0x0207bcd0]` = `4096.0` — before it
+registers the object. The reader `coordinate()` therefore keeps the values as they are; a
+division there would be wrong.
+
+Checked against the maps' own collision (`CollisionWorld`, built from the models, independent
+of the treasure file), floor at `(x, z)` versus the record's `y`: `M01M08` #25
+`(4.32, 1.17, -3.02)` → 1.170; `M01M07` #21 `(-4.05, 0.16, 2.65)` → 0.160; `D01M01` #29
+`(22.99, 1.26, 0.08)` → 1.260; `M01M04` #18 `(-2.93, 0.15, 4.86)` → 0.155; `D01M03` #32
+`(0.01, 0.95, 22.16)` → 0.947; `C01M16` #72 `(13.75, 0.1, -37.03)` → 0.100. Residuals of the
+four candidate scales, `|floor(x/S, z/S) - y/S|`: raw ≤ 0.005 on all six; `/4096` 0.099 to
+1.259 (no floor at all for `C01M16`); `/256` 0.097 to 1.254; `/64` 0.080 to 1.241. The nearest
+`.bmdj` placement is always the block's base model at the origin, which is why a
+nearest-placement metric would favour `/4096`: the containers are not map placements but
+`LootableContainer` objects made by that loader, so the floor test is the independent join.
+Evidence: `build/evidence/j4-field-containers/scale-residuals.log` (`c135a8c6a220`, the six
+records and four scales) and `scale-loader.log` (`43b61c1d3064`, the loader's `<< 0xc`, `_fmul`
+and `ToFloat` arms).
+The three-value records have no position: value 2 is the room's cabinet less one in the
+village (**[hypothesis]**, wiki *Treasure*, § Layout).
 
 ### What remembers an open
 
@@ -302,6 +322,55 @@ task. The map's talk triggers, conditions and counters are unchanged.
 Items, Equipment, Attributes, Spells, Close. `Enter`/`Space`/`Z` confirm, `Backspace`/`X`
 cancel, the arrows or `WASD` move. Movement and roaming are frozen while any menu or service
 screen is open, and a map change or a replaced session closes the menu and clears its input.
+
+**Containers.** Implementation: `crates/dq9-app/src/app/services/containers.rs`; the rules
+are `dq9_core::facility::treasure`. A map load reads `<map>.bin` of `treasure.nsarc` and the
+three tables. The action key with no conversation, event or menu tries a container **before**
+a conversation; the target is the nearest record with a position inside the talk partner's
+1.5-unit square and within a right angle of the hero's facing (`treasure::nearest`), earlier
+in file order on a tie. **[hypothesis]**: the cartridge reaches a container as an examine
+object; the treasure record carries no talk zone, so the port uses the talk partner's range
+and facing on the ground plane.
+
+The join is the record's **world** position (above): the map's collision floor at its `(x, z)`
+is at its `y` (residual ≤ 0.005 on `M01M08`, `M01M07`, `D01M01`, `M01M04` and `D01M03`), and
+the ROM test `a_record_position_is_the_world_position_of_its_floor` pins it. The `.bmdj` has
+**no placement at a treasure's position** (checked on `M01M07`, its pot and two barrels,
+`M01M08` and `D01M01`): the cartridge's `LootableContainerManager` creates the container at
+run time from the record (`LootManager_CreateContainer`, which converts the record's world
+values to `fx32` itself). The port draws no container model, so there is no placement to hide;
+the flag alone stops a second open in the same session. A cupboard's record has three values
+and no position; the cabinet join is **[hypothesis]**, so those records are counted in the
+load line and never reachable.
+
+The open draws from the **world** generator (`App::world.random`, `GetBTRandom`,
+`0x020741e0`) at the open, the same choice as the field's item and spell actions; the
+generator is **[hypothesis]** (the core rule, § "The random tables" and its two open
+questions). The `--screenshot --input` preview has no field world and uses `Random::new(0)`,
+which its line prints. A red chest sets `0x212 + id` for ever; a pot, barrel, cupboard or blue
+chest sets `0x79e + id`, and `treasure::reset_field` clears the 700 at the field's start (a
+session start restores a save's flags, then clears them). The gift is applied to `Party`:
+gold to the purse, an item to the bag with its obtained flag (`State::obtain`); a full bag is
+reported and the flag stays set. A **locked** chest shows its lock and sets no flag (the keys
+are not modelled). A **monster** row (the mimics, 38 to 40) opens nothing and gives nothing:
+it is shown and logged, no battle starts, and its flag is cleared so the container stays and
+the unmodelled battle is not swallowed; the container battle's stage and event request are not
+read. The window's text is a placeholder line (`Taken::text`), not the event script's words.
+
+Tests: the core unit tests cover the selection, one-shot vs refill, locked refusal and an
+empty rank; the ROM-backed tests in `app/services/containers.rs` read the village pots
+(`M01M04`), the leather-shield chest (`D01M01`), the 210-gold chest (`D01M03`), a locked chest
+(`C01M16`), a short `randTTT` rank and the cupboards of `M01M03`, and assert the flags, bag
+and purse rather than any wording.
+
+Evidence (`build/evidence/j4-field-containers/`, manifest `manifest.json`): gold chest
+`chest-gold.png` (`622c34bfdc02`), leather-shield chest `chest-item.png` (`dbf34a24402b`),
+pot `pot.png` (`74c2c054cd03`), the same red chest and pot refused again
+(`chest-already-open.png`, `be691a6f1acc`; `pot-already-open.png`, `ed84f0b2e951`), the
+thief-locked chest (`chest-locked.png`, `eaf8d945a066`), and the test logs (`tests-app.log`,
+`75ceea88d7fb`; `tests-core.log`, `632cb77fc4ad`). The captures come from `--screenshot
+--input`, the preview path: its log says the party is not updated, and the purse/bag changes
+are asserted by `the_app_takes_the_gold_and_refuses_the_red_chest_again` and the item test.
 
 **Items.** The list is the bag's non-empty slots in bag order, then the leader's eight held
 slots (each one item, `7578 + 18 i`). `Enter` uses the item on a chosen party member,

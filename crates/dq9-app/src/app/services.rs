@@ -18,6 +18,7 @@
 //! healing cap as a battle. An item is taken from the source the player chose (a bag stack or
 //! the held slot) only when the action executed, as the battle's `ItemUsed` rule does.
 
+pub(crate) mod containers;
 mod transfer;
 
 use std::collections::BTreeMap;

@@ -169,8 +169,10 @@ pub struct Treasure {
     pub lock: Lock,
     /// The low half of value 0: the item's id, the gold, or the random table's rank.
     pub value: u16,
-    /// Values 2 to 4, in the map files' units (0.002 to 0.02 world units over a floor);
-    /// `None` for a cupboard's treasure, which has no record of its own place.
+    /// Values 2 to 4, the **world** position (the map's units, those of its placements and
+    /// collision); `LootManager_CreateContainer` converts each to fx32 itself, `<< 12` for an
+    /// integer and ×4096.0 for a float, so this reader keeps them as they are. `None` for a
+    /// cupboard's treasure, which has no record of its own place.
     pub position: Option<[f32; 3]>,
     /// Value 5, INFERRED radians; only the six-value records have one.
     pub facing: Option<f32>,
@@ -444,8 +446,13 @@ fn integer<'a>(value: Value<'a>, what: &'static str) -> Result<u32> {
     }
 }
 
-/// A position or a facing: whole numbers and floats both appear (the wiki's "Integer and float
-/// values"), a string does not.
+/// A position or a facing, in **world units**: a whole number is world units and a float is
+/// world units too (the wiki's "Integer and float values"), not fixed point, so neither is
+/// scaled here. `LootManager_CreateContainer` (EU `0x0207baa0`) converts a script parameter to
+/// fx32 itself: `Int << 12`, or `Float × [0x0207bcd0]` = 4096.0. Measured on the European ROM:
+/// `M01M08`'s blue chest is `(4.32, 1.17, -3.02)` and the map's floor at `(4.32, -3.02)` is
+/// 1.17; dividing by 4096 would put it at `(0.001, -0.001)`, where the floor is 0.10. A string
+/// does not appear.
 fn coordinate(value: Value<'_>) -> Result<f32> {
     match value {
         Value::Int(v) => Ok(v as i32 as f32),

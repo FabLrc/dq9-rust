@@ -34,6 +34,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use self::services::Services;
+use self::services::containers::{Containers, Taken};
 use crate::audio::Audio;
 use crate::battle::{self, BattleScene};
 use crate::event::{EventPlayer, Outcome, Stage, apply_collision_changes};
@@ -61,7 +62,7 @@ mod flow;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod headless;
 mod roaming;
-mod services;
+pub(crate) mod services;
 
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
@@ -308,6 +309,8 @@ pub struct App {
     talk: Talk,
     /// The field menu and the facility screens (`app/services.rs`).
     services: Services,
+    /// The current map's treasure containers (`app/services/containers.rs`).
+    containers: Containers,
     /// Script events: the event task and what it did to the scene.
     events: EventPlayer,
     /// Set while an event loads its map: the map's own `Request::Event`s are not queued.
@@ -436,6 +439,7 @@ impl App {
             door_angles: std::collections::BTreeMap::new(),
             talk: Talk::default(),
             services: Services::default(),
+            containers: Containers::default(),
             events: EventPlayer::new(),
             quiet_events: false,
             cast_reload: false,
@@ -496,6 +500,7 @@ impl App {
         self.events = EventPlayer::new();
         self.talk.reset_session();
         self.services = Services::default();
+        self.containers = Containers::default();
         self.doors_opened.clear();
         self.door_angles.clear();
         self.roaming.reset_rom();
@@ -541,6 +546,10 @@ impl App {
             &self.options.story,
             self.options.story_override,
         );
+        // The field's start clears the 700 container refill flags (`func_ov017_0218b688`,
+        // `0x0218c180`): a pot, barrel, cupboard or blue chest is full again, a red chest is
+        // not. A save carries the refill flags it was written with; a new game has none.
+        dq9_core::facility::treasure::reset_field(&mut self.state.flags);
         self.state.compendium = self.item_table.clone();
         self.day = lighting::day_clock(
             start.state.as_ref().map(|s| s.clock),
@@ -734,6 +743,22 @@ impl App {
         if let Some(flag) = dq9_core::state::map_visit_flag(loaded.entry.id) {
             self.state.flags.insert(i32::from(flag));
         }
+        // The map's containers (`treasure.nsarc`): its `<map>.bin` and the three tables.
+        self.containers = match &self.rom {
+            Some(bytes) => match Containers::load(bytes, &loaded.entry.code) {
+                Ok(containers) => {
+                    if !containers.records().is_empty() {
+                        status(&containers.summary());
+                    }
+                    containers
+                }
+                Err(e) => {
+                    status(&format!("containers: {e:#}"));
+                    Containers::default()
+                }
+            },
+            None => Containers::default(),
+        };
         self.current = Some((loaded.entry, loaded.label));
         if let Err(e) = loaded.runtime.face_camera(&self.camera) {
             status(&format!("facing cast: {e}"));
@@ -1171,6 +1196,43 @@ impl App {
         }
     }
 
+    /// The action key on a container: opens the one the hero faces, gives its content and
+    /// shows a placeholder line. Returns whether a container was there: the key is spent even
+    /// when it refuses (`AlreadyOpen`, a lock). The draw comes from the **world** generator
+    /// (`GetBTRandom`, `0x020741e0`; the core rule labels which generator is open
+    /// **[hypothesis]**).
+    fn examine_container(&mut self) -> bool {
+        let Some(hero) = &self.hero else {
+            return false;
+        };
+        let (position, yaw) = (hero.position(), hero.yaw());
+        let Some((container, open)) =
+            self.containers
+                .open(position, yaw, &mut self.state, &mut self.world.random)
+        else {
+            return false;
+        };
+        let taken = Taken::of(open);
+        let stored = taken.give(&mut self.party, &mut self.state);
+        status(&format!(
+            "container {:?} #{} (id {}): {}",
+            container.container,
+            container.number,
+            container.id,
+            taken.line()
+        ));
+        if let (false, Taken::Item(id)) = (stored, taken) {
+            status(&format!(
+                "container #{}: item {id} did not fit the bag (the flag stays set)",
+                container.number
+            ));
+        }
+        if let Err(e) = self.talk.show_event(&taken.text()) {
+            status(&format!("container #{}: {e:#}", container.number));
+        }
+        true
+    }
+
     fn service_button(&mut self, button: Button) {
         let effect = self.services.press(
             button,
@@ -1521,7 +1583,15 @@ impl App {
             let mut events = Vec::new();
             let menu_open = self.services.is_open();
             if !self.talk.is_active() && !menu_open && self.talk.confirm_pending() {
-                if let (Some(rom), Some(hero), Some(field), Some((entry, _))) =
+                // A container in front takes the key when no conversation partner does: the
+                // original's containers are "things to examine", reached by the action key.
+                let partner = self
+                    .hero
+                    .as_ref()
+                    .is_some_and(|hero| self.talk.has_partner(hero));
+                if !partner && self.examine_container() {
+                    // The key was spent on a container.
+                } else if let (Some(rom), Some(hero), Some(field), Some((entry, _))) =
                     (&self.rom, &self.hero, &mut self.field, &self.current)
                 {
                     events = self

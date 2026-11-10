@@ -518,6 +518,13 @@ impl Talk {
         self.fade = color;
     }
 
+    /// Whether the action key would find a conversation partner. The field examines a
+    /// container only when this is false: a conversation keeps the key (the original's
+    /// container is a "thing to examine" partner too, but its zone is not modelled).
+    pub fn has_partner(&self, hero: &Hero) -> bool {
+        talk::nearest(&self.npcs, hero.position(), hero.yaw()).is_some()
+    }
+
     /// The action key with no dialogue open: talks to the NPC in front of the hero. Returns
     /// the events of a trigger that replaced the conversation (map changes, requests).
     pub fn begin(
@@ -968,8 +975,10 @@ mod script {
 
     use super::{Button, Talk};
     use crate::app::STEP;
+    use crate::app::services::containers::{Containers, Taken};
     use crate::load::LoadedMap;
     use crate::walk::{self, Walk};
+    use dq9_core::battle::Random;
 
     /// One part of an input script.
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1012,20 +1021,51 @@ mod script {
     ) -> Result<()> {
         let _ = loaded.field.enter(state, false);
         talk.enter_map(loaded.npcs.clone(), &mut state.talk_counts);
+        // The screenshot path has no field world, so the table draw uses a fixed generator
+        // (seed 0) and says so; the window and the Web pass the world generator instead.
+        let containers = match Containers::load(rom, &loaded.entry.code) {
+            Ok(containers) => containers,
+            Err(e) => {
+                crate::app::status(&format!("containers: {e:#}"));
+                Containers::default()
+            }
+        };
+        let mut random = Random::new(0);
         let mut run = |loaded: &mut LoadedMap, direction: Vec3, talk: &mut Talk| -> Result<()> {
             let talking = talk.is_active();
             if !talking && talk.confirm_pending() {
-                let events = talk.begin(
-                    rom,
-                    &loaded.entry.code,
-                    &loaded.hero,
-                    &mut loaded.field,
-                    state,
-                );
-                talk.discard_input();
-                if events.iter().any(|e| matches!(e, Event::MapChange(_))) {
-                    bail!("the script leaves the map");
+                if !talk.has_partner(&loaded.hero)
+                    && let Some((container, open)) = containers.open(
+                        loaded.hero.position(),
+                        loaded.hero.yaw(),
+                        state,
+                        &mut random,
+                    )
+                {
+                    let taken = Taken::of(open);
+                    println!(
+                        "container {:?} #{} (id {}): {} (preview: the party is not updated)",
+                        container.container,
+                        container.number,
+                        container.id,
+                        taken.line()
+                    );
+                    if let Err(e) = talk.show_event(&taken.text()) {
+                        crate::app::status(&format!("container #{}: {e:#}", container.number));
+                    }
+                } else {
+                    let events = talk.begin(
+                        rom,
+                        &loaded.entry.code,
+                        &loaded.hero,
+                        &mut loaded.field,
+                        state,
+                    );
+                    if events.iter().any(|e| matches!(e, Event::MapChange(_))) {
+                        bail!("the script leaves the map");
+                    }
                 }
+                talk.discard_input();
             }
             let direction = if talking || talk.is_active() {
                 Vec3::ZERO

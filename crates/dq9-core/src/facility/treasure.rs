@@ -24,8 +24,18 @@
 //!   library's `rand`; the batch's contract says the **world** generator. This module takes a
 //!   [`Random`] (the world's, `GetBTRandom`, `0x020741e0`) and draws
 //!   [`Random::next_max`]`(100)` from it. **[Hypothesis]**.
+//!
+//! On the field the container is found by its record's position ([`nearest`]), in **world
+//! units** (the loader scales them to `fx32` itself: `LootManager_CreateContainer`, EU
+//! `0x0207baa0`, `Int << 12` and `Float × 4096.0`; the floor at a record's `(x, z)` is at its
+//! `y`, `docs/re/facility.md`). The cartridge has no placement for the container in the map's
+//! `.bmdj` (checked on `M01M07`, `M01M08` and `D01M01`; `LootableContainerManager` makes
+//! them), so the port matches the hero against the position with the talk partner's range and
+//! facing. The liaison is the map plus the position, as `docs/re/facility.md` records.
 
 use core::ops::Range;
+use std::collections::BTreeSet;
+use std::f32::consts::{PI, TAU};
 
 use dq9_formats::facility::treasure::{
     CONTAINER_FLAG_BASE, CONTAINER_FLAG_COUNT, Contents, Lock, RandomRow, RandomTable,
@@ -41,6 +51,40 @@ pub const MIMICS: Range<u16> = 38..41;
 /// Whether `monster` is one of the three chests that come alive.
 pub fn is_mimic(monster: u16) -> bool {
     MIMICS.contains(&monster)
+}
+
+/// Half-side of the square around a container where the hero can examine it, in world units:
+/// the talk partner's range (`Talk_NearestNpc`, `talk::RANGE` = 1.5). **[Hypothesis]**: the
+/// cartridge reaches a container as a "thing to examine", whose zone the treasure record does
+/// not carry; the port uses the talk partner's range and the facing test, on the ground plane
+/// (as `talk::nearest` does).
+pub const EXAMINE_REACH: f32 = 1.5;
+
+/// The container the hero can examine: the nearest record with a position, inside
+/// [`EXAMINE_REACH`] on x and z and in front of the hero (within a right angle), earlier in
+/// file order on a tie. A cupboard's record has no position and is never chosen (the cabinet
+/// join is **[hypothesis]**, not modelled).
+pub fn nearest<'a>(treasures: &'a [Treasure], hero: [f32; 3], yaw: f32) -> Option<&'a Treasure> {
+    let facing = crate::field::angle_of_yaw(yaw);
+    let mut best: Option<(f32, &'a Treasure)> = None;
+    for treasure in treasures {
+        let Some([x, _, z]) = treasure.position else {
+            continue;
+        };
+        let (dx, dz) = (x - hero[0], z - hero[2]);
+        if dx.abs() > EXAMINE_REACH || dz.abs() > EXAMINE_REACH {
+            continue;
+        }
+        let error = (dx.atan2(dz) - facing).rem_euclid(TAU);
+        if error.min(TAU - error) > PI / 2.0 {
+            continue;
+        }
+        let distance = dx.hypot(dz);
+        if best.is_none_or(|(nearest, _)| distance < nearest) {
+            best = Some((distance, treasure));
+        }
+    }
+    best.map(|(_, treasure)| treasure)
 }
 
 /// What an opened container gave.
@@ -116,9 +160,9 @@ impl<'a> OpenState<'a> {
     }
 }
 
-/// Opens `container` and returns what it gives. The caller sets
-/// [`Treasure::flag`] on [`Open::Opened`], and clears the 700 from [`field_reset`] when the
-/// field starts.
+/// Opens `container` and returns what it gives, without remembering it:
+/// [`open_and_remember`] is the stateful entry (sets [`Treasure::flag`] on [`Open::Opened`]),
+/// and [`reset_field`] clears the 700 refill flags when the field starts.
 pub fn open(container: &Treasure, tables: &Tables, state: OpenState<'_>) -> Open {
     if state.opened {
         return Open::AlreadyOpen;
@@ -138,6 +182,23 @@ pub fn open(container: &Treasure, tables: &Tables, state: OpenState<'_>) -> Open
     }
 }
 
+/// Opens `container` with [`open`] and, when it opens, sets [`Treasure::flag`] in `flags` (the
+/// trigger state's global flags). A locked container and an open one set nothing. The caller
+/// clears the 700 refill flags with [`reset_field`] when the field starts.
+pub fn open_and_remember(
+    flags: &mut BTreeSet<i32>,
+    container: &Treasure,
+    tables: &Tables,
+    random: &mut Random,
+) -> Open {
+    let opened = flags.contains(&i32::from(container.flag()));
+    let result = open(container, tables, OpenState::new(opened, random));
+    if matches!(result, Open::Opened(_)) {
+        flags.insert(i32::from(container.flag()));
+    }
+    result
+}
+
 /// The gift of a contents kind and its value.
 fn from_contents(contents: Contents, value: u16) -> Opened {
     match contents {
@@ -152,6 +213,13 @@ fn from_contents(contents: Contents, value: u16) -> Opened {
 /// container ids 0 to 699, which no red chest uses (`docs/re/facility.md`).
 pub fn field_reset() -> Range<u16> {
     CONTAINER_FLAG_BASE..CONTAINER_FLAG_BASE + CONTAINER_FLAG_COUNT
+}
+
+/// Clears the refill flags ([`field_reset`]) from `flags`: the field's start
+/// (`func_ov017_0218b688`, `0x0218c180`). A red chest's `0x212 + id` flag is left alone.
+pub fn reset_field(flags: &mut BTreeSet<i32>) {
+    let range = field_reset();
+    flags.retain(|&flag| !(i32::from(range.start)..i32::from(range.end)).contains(&flag));
 }
 
 #[cfg(test)]
@@ -230,6 +298,119 @@ mod tests {
     fn open_with(container: &Treasure, tables: &Tables, opened: bool, seed: u64) -> Open {
         let mut random = Random::new(seed);
         open(container, tables, OpenState::new(opened, &mut random))
+    }
+
+    fn placed(container: Container, id: u16, position: [f32; 3]) -> Treasure {
+        Treasure {
+            position: Some(position),
+            ..self::container(container, Contents::Nothing, id, 1)
+        }
+    }
+
+    #[test]
+    fn the_container_under_the_hero_is_the_nearest_faced_record() {
+        use crate::field::yaw_of_angle;
+        let pot = placed(Container::Pot, 1, [-0.5, 0.16, 1.0]);
+        let barrel = placed(Container::Barrel, 2, [1.2, 0.16, 0.8]);
+        let outside = placed(Container::BlueChest, 3, [2.0, 0.0, 2.0]);
+        let behind = placed(Container::RedChest, 4, [-0.2, 0.0, -1.0]);
+        let cupboard = Treasure {
+            cabinet: Some(0),
+            ..self::container(Container::Cupboard, Contents::Nothing, 5, 16)
+        };
+        assert_eq!(cupboard.position, None);
+        let records = [pot, barrel, outside, behind, cupboard];
+        // The hero at the origin, facing the game's angle 0 (+z): the pot is nearest.
+        assert_eq!(
+            nearest(&records, [0.0; 3], yaw_of_angle(0.0)).map(|t| t.id),
+            Some(1)
+        );
+        // Facing -z, only the chest behind is in front.
+        assert_eq!(
+            nearest(&records, [0.0; 3], yaw_of_angle(PI)).map(|t| t.id),
+            Some(4)
+        );
+        // Facing +x: the barrel is in front, the pot and the chest are not.
+        assert_eq!(
+            nearest(&records, [0.0; 3], yaw_of_angle(PI / 2.0)).map(|t| t.id),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn a_container_remembers_its_open_and_the_field_start_refills_it() {
+        let tables = tables();
+        let pot = self::container(Container::Pot, Contents::Nothing, 288, 2);
+        let mut flags = BTreeSet::new();
+        let mut random = Random::new(7);
+        assert!(matches!(
+            open_and_remember(&mut flags, &pot, &tables, &mut random),
+            Open::Opened(_)
+        ));
+        assert!(flags.contains(&(0x79e + 288)));
+        assert_eq!(
+            open_and_remember(&mut flags, &pot, &tables, &mut random),
+            Open::AlreadyOpen
+        );
+        reset_field(&mut flags);
+        assert!(!flags.contains(&(0x79e + 288)));
+        assert!(matches!(
+            open_and_remember(&mut flags, &pot, &tables, &mut random),
+            Open::Opened(_)
+        ));
+
+        // A red chest's flag is outside the cleared range and survives the field's start.
+        let red = self::container(Container::RedChest, Contents::Item, 7, 21291);
+        let mut flags = BTreeSet::new();
+        assert_eq!(
+            open_and_remember(&mut flags, &red, &tables, &mut random),
+            Open::Opened(Opened::Item(21291))
+        );
+        assert!(flags.contains(&(0x212 + 7)));
+        reset_field(&mut flags);
+        assert!(flags.contains(&(0x212 + 7)));
+        assert_eq!(
+            open_and_remember(&mut flags, &red, &tables, &mut random),
+            Open::AlreadyOpen
+        );
+    }
+
+    #[test]
+    fn a_locked_container_refuses_and_sets_no_flag() {
+        let tables = tables();
+        let mut locked = self::container(Container::RedChest, Contents::Item, 7, 21291);
+        let mut flags = BTreeSet::new();
+        let mut random = Random::new(7);
+        for lock in [Lock::Thief, Lock::Magic] {
+            locked.lock = lock;
+            assert_eq!(
+                open_and_remember(&mut flags, &locked, &tables, &mut random),
+                Open::Locked(lock)
+            );
+            assert!(flags.is_empty());
+        }
+    }
+
+    #[test]
+    fn an_empty_rank_gives_nothing_and_still_sets_the_flag() {
+        let tables = tables();
+        // randTTT holds rank 2 only: rank 3 draws nothing and spends the roll.
+        let pot = self::container(Container::Pot, Contents::Nothing, 300, 3);
+        let mut flags = BTreeSet::new();
+        let mut random = Random::new(7);
+        assert_eq!(
+            open_and_remember(&mut flags, &pot, &tables, &mut random),
+            Open::Opened(Opened::Nothing)
+        );
+        assert!(flags.contains(&(0x79e + 300)));
+    }
+
+    #[test]
+    fn the_field_start_clears_only_the_700_refill_flags() {
+        let mut flags: BTreeSet<i32> = (0x79e..0x79e + 700).collect();
+        flags.extend([0x212, 0x219, 0x79e + 700]);
+        reset_field(&mut flags);
+        assert_eq!(flags, BTreeSet::from([0x212, 0x219, 0x79e + 700]));
     }
 
     #[test]
