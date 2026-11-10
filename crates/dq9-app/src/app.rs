@@ -744,7 +744,14 @@ impl App {
         self.upload();
         self.update_title();
         if let Some(field) = &mut self.field {
-            let events = field.enter(&mut self.state, transition);
+            let mut events = field.enter(&mut self.state, transition);
+            // `func_020ae53c`, the map's gimmick initialiser: the gate pair (trigger action
+            // 0xa9) follows global flag 0x347 on every load, so a room re-entered after a
+            // lost battle gets the open pair back. The application applies it because the
+            // gate objects are its scene's placements.
+            let gate =
+                dq9_core::field::gate_pair(self.state.flags.contains(&dq9_core::field::GATE_FLAG));
+            events.splice(0..0, gate.into_iter().map(Event::Request));
             self.apply_events(events);
         }
         true

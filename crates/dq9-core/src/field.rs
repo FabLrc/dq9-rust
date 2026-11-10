@@ -47,6 +47,28 @@ const EVENT_BATTLE_WON: i32 = 15;
 const EVENT_BATTLE_LOST: i32 = 16;
 const EVENT_DOORWAY: i32 = 17;
 const EVENT_LOADED: i32 = 20;
+/// Global flag `0x33e + 9` written by `func_020ae4ec(9, on)` at the end of trigger action
+/// `0xa9` (`func_020ae7d4`): set while the map's gate pair stands open. `func_020ae53c`
+/// reads it back with `func_020ae7d4(Flags_Test(0x347))` whenever the map loads.
+pub const GATE_FLAG: i32 = 0x347;
+/// The gate pair `func_020ae7d4` acts on: the block-0 objects `0xd` and `0xf`, whose hidden
+/// bit it writes in opposite directions (`func_0201b600` looks them up by placement id).
+pub fn gate_pair(open: bool) -> [Request; 2] {
+    // A hidden parent hides its collision children (D01M01: 14 under 13, 16 under 15).
+    let hidden = if open { [true, false] } else { [false, true] };
+    [
+        Request::SetPlacementHidden {
+            block: 0,
+            placement: 13,
+            hidden: hidden[0],
+        },
+        Request::SetPlacementHidden {
+            block: 0,
+            placement: 15,
+            hidden: hidden[1],
+        },
+    ]
+}
 /// Dot-product band of the doorway approach test (`0x170 - 0xccc`, `ov_017::02197a64`):
 /// the hero must walk or look within about 45 degrees of the door's axis.
 const APPROACH_BAND: i32 = 0xccc - 0x170;
@@ -858,27 +880,24 @@ impl Field {
                         // (`func_0206ea8c`); the runtime reports it as unhandled instead of
                         // faking success.
                         // `Trig_RunAction` case 0x45 (action 0xa9, `func_020ae7d4`): the
-                        // map's gate pair swaps. The function fetches the objects numbered
-                        // `0xd` and `0xf` of block 0 (`func_0201b600`, by placement id) and,
-                        // for a zero argument, clears bit 2 of the first and sets it on the
-                        // second; that bit is the placement's "hidden at this time of day"
-                        // flag (`assemble.rs`: placement `+2` bit 2), so object 13 is drawn
-                        // and object 15 hidden, and their collision children (14 and 16 in
-                        // D01M01) follow through the parent rule. The guard
-                        // `func_020ae4c8() == 0` only skips a swap already reached: setting
-                        // the same states again is idempotent, so it is not modelled.
+                        // map's gate pair. The sub-type test is the action's argument (only
+                        // 0 acts); the *value* is the high half of operand 0, the halfword
+                        // `0x95`/`0x96` pass as a placement id. `func_020ae7d4` then sets the
+                        // second object's hidden bit (placement `+2` bit 2, `assemble.rs`)
+                        // and clears the first's, or the opposite for a zero value, and ends
+                        // with `func_020ae4ec(9, value != 0)`, which writes global flag
+                        // `0x33e + 9` = `0x347`; `func_020ae53c` re-applies that flag on every
+                        // load of the map. A value of 0 closes the pair, anything else opens
+                        // it (the D01M01 rule passes 65536, whose high half is 1).
                         0xa9 => {
                             if action.arg == 0 {
-                                immediate.push(Request::SetPlacementHidden {
-                                    block: 0,
-                                    placement: 13,
-                                    hidden: false,
-                                });
-                                immediate.push(Request::SetPlacementHidden {
-                                    block: 0,
-                                    placement: 15,
-                                    hidden: true,
-                                });
+                                let open = high(action, 0) != 0;
+                                if open {
+                                    state.flags.insert(GATE_FLAG);
+                                } else {
+                                    state.flags.remove(&GATE_FLAG);
+                                }
+                                immediate.extend(gate_pair(open));
                             }
                             continue;
                         }

@@ -189,12 +189,14 @@ fn the_guest_of_2210_opens_the_mayors_scene() {
     );
 }
 
-/// The end of event 2530 swaps the Hexagon's gate pair on the real `triggerD01.bin`: action
-/// `0xa9(0, …)` is `func_020ae7d4`, which shows the block-0 object numbered 13 and hides the
-/// one numbered 15 (`assemble.rs`: placement `+2` bit 2 is the hidden flag), and their
-/// collision children follow. The trigger file holds `0xa9` once, in this rule.
+/// The end of event 2530 opens the Hexagon's gate pair on the real `triggerD01.bin`: action
+/// `0xa9(0, 65536)` is `func_020ae7d4`, whose value is the high half of operand 0 (1), so the
+/// block-0 object 13 is hidden and object 15 shown, and global flag `0x347` records the open
+/// state. The pair's collision children (14 under 13, 16 under 15) follow the parent rule:
+/// hiding 13 opens the north chamber and the warps to 7102. A map load re-applies the flag
+/// (`func_020ae53c`), so the retry after a lost Hexagoon gets the open pair back.
 #[test]
-fn the_end_of_2530_swaps_the_hexagon_gate_pair() {
+fn the_end_of_2530_opens_the_hexagon_gate_pair() {
     use dq9_core::trigger::Request;
     let Some(bytes) = testrom::load() else { return };
     let rom = Rom::parse(bytes).unwrap();
@@ -208,25 +210,59 @@ fn the_end_of_2530_swaps_the_hexagon_gate_pair() {
         substep: 1,
         ..Default::default()
     };
+    let placements = |events: &[Event]| -> Vec<(u16, bool)> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Request(Request::SetPlacementHidden {
+                    block: 0,
+                    placement,
+                    hidden,
+                }) => Some((*placement, *hidden)),
+                _ => None,
+            })
+            .collect()
+    };
+
     let mut state = field::initial_state(&story);
-    let mut hexagon = Field::new(7101, &Regions::default(), file).unwrap();
+    let mut hexagon = Field::new(7101, &Regions::default(), file.clone()).unwrap();
     let events = hexagon.event_ended(2530, &mut state);
-    let placements: Vec<(u16, bool)> = events
-        .iter()
-        .filter_map(|event| match event {
-            Event::Request(Request::SetPlacementHidden {
-                block: 0,
-                placement,
-                hidden,
-            }) => Some((*placement, *hidden)),
-            _ => None,
-        })
-        .collect();
     assert_eq!(
-        placements,
-        [(13, false), (15, true)],
-        "object 13 is shown and object 15 hidden, in that order"
+        placements(&events),
+        [(13, true), (15, false)],
+        "object 13 is hidden and object 15 shown: the pair opens"
     );
+    assert!(
+        state.flags.contains(&0x347),
+        "the rule writes the gate flag 0x347"
+    );
+
+    // The map load applies the pair from the flag (`func_020ae53c`); the application does
+    // it, since the gate objects are its scene's placements. Check the mapping itself.
+    let pair = |open: bool| -> Vec<(u16, bool)> {
+        dq9_core::field::gate_pair(open)
+            .into_iter()
+            .map(|request| match request {
+                Request::SetPlacementHidden {
+                    block: 0,
+                    placement,
+                    hidden,
+                } => (placement, hidden),
+                other => panic!("unexpected gate request: {other:?}"),
+            })
+            .collect()
+    };
+    assert_eq!(
+        pair(false),
+        [(13, false), (15, true)],
+        "flag clear: the pair is closed"
+    );
+    assert_eq!(
+        pair(true),
+        [(13, true), (15, false)],
+        "flag set: the pair is open, as the end of 2530 leaves it"
+    );
+    assert_eq!(dq9_core::field::GATE_FLAG, 0x347);
 }
 
 struct World<'r> {
