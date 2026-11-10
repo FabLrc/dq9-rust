@@ -42,17 +42,18 @@ Latest local browser build `4327fd8`: battle 26, seed 7 → one victory, 4 round
 hero lunges/returns, all defeated/fled models disappear, extra input/layout switches do not restart.
 Evidence: `j4-battle-gpu-sync/web-after-lunge.png` (`c461e1d32686`),
 `web-after-victory.png` (`c39b70b7ba1a`), `web-after-console.json` (`e616bcfb24af`).
-Motion/GPU publication pending. Direct-map checks do not certify continuous new-game play to 2750.
+Motion/GPU `af76e8d`: CI `42838706753` and Pages `42838706825` green; published help text checked.
+Direct-map checks do not certify continuous new-game play to 2750.
 
 ## Active work and next steps
 
 Two Orca / OMP Flash batches retain separate ownership; neither is integrated or certified yet.
-`j4-field-services`: menu/inn/shop/church on branch `b5ae183`; paid services and dead-member
-revival need real native surface evidence before review/integration, then browser verification.
+`j4-field-services`: `be67d13`, paid shop/inn/revival native proof viewed; two Flash reviews running.
+[Review risk] equipment refresh may replay map entry; native challenge/correction requested.
 `j4-chapter2-route`: worker reports branch `090c04c` reaches 2.2.1 with real battle 26; M01M10
 exit-volume/grid join blocks return to 1107. Continuing actual Hexagoon outcomes and event 2750.
 Headless parity keeps stand-ins unless `--fight` is given and disables roaming.
 Remaining presentation: full camera/effects, original alpha fades, companions; timing limits
 are labelled [hypothesis] in `re/battle-data.md`. Abilities/worn-item commands remain open.
-Graphics and motion worker Git/Orca worktrees/local branches removed; the graphics empty root
+Graphics/motion worker worktrees and GPU-fix Git worktree/local branches removed; graphics empty root
 remains Windows-locked. Evidence stays local under `build/evidence/<batch>/`, never committed.
