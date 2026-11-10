@@ -22,6 +22,7 @@ Workers: Orca/OMP `opencode-go/deepseek-v4.1-flash`; route → `anthropic/claude
 | `add-graphics-tech` / `49843de` | Optional wide/post/HUD; native and local browser wide → stacked → wide checked | 5/5, 150.3 s, app 86/86 |
 | `j4-battle-motions` / `de583e0` | ROM motions/scripts, weapon set, hit reactions, death/flight, summon capture, presentation barriers | 5/5, 80.4 s, app 102/102; parity 2/2 |
 | `j4-battle-gpu-sync` / `4327fd8` | Live lunge/hide matrices reach GPU; native image regression and real Web victory without ghost models | 5/5, 109.4 s, app 103/103 |
+| `j4-full-heal` / `5723a5d` | Original max-HP override after ordinary draws; real `Battle::round` HP 37 → 321, MP 40 → 16; Omniheal MP128 still refused (`re/battle.md`) | 5/5, 110.2 s, core battle-ROM 10/10 |
 
 Native F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold) → same field, no ghost;
 D01M02 models visible. Evidence: `j4-roaming-play/field-restored-after-win.png` (`61a585913e52`),
@@ -55,5 +56,4 @@ Latest run stops at 1.2.1 on 1107; M01M10 approach also remains open. Hexagoon/2
 Headless parity keeps stand-ins unless `--fight` is given and disables roaming.
 Remaining presentation: full camera/effects, original alpha fades, companions; timing limits
 are labelled [hypothesis] in `re/battle-data.md`. Abilities/worn-item commands remain open.
-Graphics/motion worker worktrees and GPU-fix Git worktree/local branches removed; graphics empty root
-remains Windows-locked. Evidence stays local under `build/evidence/<batch>/`, never committed.
+Completed graphics/motion and coordinator-fix worktrees/local branches removed; graphics empty root Windows-locked. Evidence stays local, never committed.

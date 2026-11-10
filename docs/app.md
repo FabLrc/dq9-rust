@@ -494,8 +494,8 @@ effect on the story and the wipe-out.
   party member, `+0x24` bits 0–9 at a monster, the failure lines `+0x24` bits 10–19 / 20–29
   on a dodge or a block) and the kill line (`+0x28` bits 0–9 / 10–19). The status window
   follows the HP as the windows come; damage and healing numbers float over the fighter at
-  `fighter_screen_pos`; a defeated monster is removed (`remove`). The models carry no attack
-  or damage motion, so the action scripts are not played.
+  `fighter_screen_pos`. ROM action scripts select the attack and damage motions; death and
+  flight hide the model after their one-shot motion. Windows wait for the loaded presentation.
 - *End.* Victory: `str_bres` 1 (50 for several monsters), 25 (26 for several members), a
   level line (10) and the skill points (13) for each level gained, gold (16) and a treasure
   chest (17, 18) for each drop; every window waits for a key (wiki *Battle-Stages*). The
@@ -518,6 +518,12 @@ effect on the story and the wipe-out.
   otherwise. A monster that flees (Flee `0xE1`, `0x395`: `Event::Acted` on itself) says its
   record's opening ("The slime flees.") and is removed from the scene; it pays nothing
   (`Battle::has_fled`, no kill).
+- *Fullheal.* The core kind-2 handler applies the original max-HP override after the normal
+  amount calculations and RNG draws (`ov_024::021db3a4`), not physical-strength-based healing.
+  A ROM-backed `Battle::round` smoke restored HP 37 → 321 and spent MP 40 → 16
+  (`build/evidence/j4-full-heal/smoke.log`, `2d4fc32e2122`); no interactive spell-menu claim.
+  Omniheal's MP128 policy remains unsupported. Details and regression:
+  [`re/battle.md`](re/battle.md#final-damage-ov_024021e6a90-eu-decompilation-read).
 - *Back.* The screens go to black, the field is restored (§ "Battle scene"), trigger event 15
   (won) or 16 (lost) of the scripted battle fires, a flight fires none.
 - **Wipe-out** (`func_02010604`, wiki *Travel* "A wipe-out"): the fallen members get up with
