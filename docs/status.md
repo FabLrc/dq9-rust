@@ -24,6 +24,7 @@ Workers: Orca/OMP `opencode-go/deepseek-v4.1-flash`; route → `anthropic/claude
 | `j4-battle-gpu-sync` / `4327fd8` | Live lunge/hide matrices reach GPU; native image regression and real Web victory without ghost models | 5/5, 109.4 s, app 103/103 |
 | `j4-full-heal` / `5723a5d` | Original max-HP override after ordinary draws; real `Battle::round` HP 37 → 321, MP 40 → 16; Omniheal MP128 still refused (`re/battle.md`) | 5/5, 110.2 s, core battle-ROM 10/10 |
 | `j4-field-services` / `660d682` | Field menu (items/equipment/attributes/spells), inn/shop/church screens, bounded hero rebuild, copied-item and group-heal fixes; one copy per trade, no copy lost to a 99 stack | 5/5, 95.6 s, app 131/131 |
+| `j4-guest-slot` / `d079b97` | Condition 0x56's `0xce` slot is the field guest (actions `0xcd`/`0xcc`); the M01 2.2 scene now starts event 2230, without a hero tag | 5/5, 122.0 s, core 264 unit + field-ROM 7/7 |
 
 Native F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold) → same field, no ghost;
 D01M02 models visible. Evidence: `j4-roaming-play/field-restored-after-win.png` (`61a585913e52`),
@@ -69,12 +70,14 @@ Direct-map checks do not certify continuous new-game play to 2750.
 One implementation batch retains its own ownership; nothing else is unmerged.
 `j4-chapter2-route`: two Flash failures; the Sonnet retry `ctx_273f59bcad5d` now crosses
 M01M10 by a generic warp-volume approach and reaches **2.2.3 in D01M01** with real battles
-(commits `c9227e6`, `42b0174`). Its stall is trigger **0x56** at M01M05: the party tag
+(commits `c9227e6`, `42b0174`). The stall it hit was **trigger 0x56** at M01M05: the party tag
 `+0x56b` is **0** in `pro1.ml1`/`pro11.ml1` and in the demo save, so the condition resolves
-through its fallback "character `0xce` exists", which the port never holds
-(`re/trigger.md` § "The tag of `+0x56b`"). The proposed hero `tag: 1` was refused as a masking
-change. Hexagon interior routing, S01M01 events 2300–2350, Hexagoon won/lost and 2750 remain
-unreached, so v0.2 is not certified.
+through "character `0xce` exists" — the field guest (`Guest_LoadTask`, actions `0xcd`/`0xcc`),
+which the port did not hold. The proposed hero `tag: 1` was refused; the slot is now modelled
+(`j4-guest-slot` / `d079b97`, `re/trigger.md`) and a ROM regression pins that the end of 2210
+attaches the guest, the mayor's line carries `0xC0` and its end starts 2230. Hexagon interior
+routing, S01M01 events 2300–2350, Hexagoon won/lost and 2750 remain unreached, so v0.2 is not
+certified.
 `j4-field-services` progress is now integrated (table above); its field limits are recorded in
 `docs/app.md` § "Field menu and facility screens" and `re/facility.md`.
 Headless parity keeps stand-ins unless `--fight` is given and disables roaming.
