@@ -49,11 +49,11 @@ These direct-map checks do not certify continuous new-game play to chapter 2.
 
 ## Active work and next steps
 
-Active wave: `j4-field-services` (field menu, inn/shop/church), `j4-battle-motions`
-(ROM-backed attacks/damage), `j4-chapter2-route` (continuous physical route and story gaps).
-All three use Orca / OMP / `opencode-go/deepseek-v4.1-flash`; acceptance is not yet certified.
-Each owns separate files; coordinator integrates, runs the full ROM gate, documents and pushes.
-Remaining certification: both Hexagoon outcomes, browser new game → 2750, real-battle parity.
+Active wave: three Orca / OMP / `opencode-go/deepseek-v4.1-flash` batches, separate ownership.
+`j4-field-services`: field menu and inn/shop/church implementation in progress.
+`j4-battle-motions`: `7406ba9` delivered; review corrections requested for motion replacement,
+hit/message barriers, skipped scripts and capture callers. Not integrated or certified yet.
+`j4-chapter2-route`: worker reports real-fight pilot reaches 1.4.1; Observatory route still blocked.
 Headless parity keeps stand-ins unless `--fight` is given and disables roaming.
 Evidence stays local under `build/evidence/<batch>/`; never committed. Orca worktree cleanup
 can hit a directory lock: remove junctions before release (`orchestration/README.md`).
