@@ -809,6 +809,24 @@ destination is pushed, opened by the field (native 584, `trigger.md`) and the gr
 rebuilt. Door state is single (`EventPlayer::doors()`): the scene and the collision
 read the same angle (`angle_fx`). No teleport enters the evidence.
 
+**Route mode** (`--route <EVENT>`, with `--pilot --fight`; `app/auto/route.rs`): the continuous
+route to an event's end. Roaming is on, so the field's monsters can be fought; after a lost
+fight the pilot raises the strength it requires before trying again, hunting the field's
+roamers and healing through the real systems (the inn when the story opens one, otherwise
+medicinal herbs bought at a shop and used from the field menu); it then returns to the point
+where the story stopped. Nothing is injected: no state, flag or statistic is forced, and
+without the flag roaming stays off and the pilot behaves as before. The run stops when
+`EVENT` has ended.
+
+Run accepted on `main` (`ef56959`), European ROM, seed 7
+(`scripts/chapter2-route.ps1 -Name accept-2750 -Route 2750 -Steps 3000000`, pid 11008, exit 0,
+1900 s wall): battle 26 won in 4 rounds at 123 s; the Hexagoon (set battle 2, `D01` stage
+30215) lost at Lv 4, 5, 6 and 7, then **won at Lv 8 in 7 rounds** (175 experience, 100 gold)
+at 2637 s; event 15 → 2550 → 2555 → story 2.5.1, then 2620, 2600, 2610, 2700, 22593, 2720,
+2730, 22594 and **2750**, `stopped: event 2750 ended (route reached) after 3057.2 s of game
+time`, story 2.6.5. Evidence: `build/evidence/j4-route-accept/accept-2750.out` (`9f979a299fc4`),
+972 checkpoints, and the trajectory in `build/evidence/j4-chapter2-route/report-route.md`.
+
 Run verified on the European ROM, at 60 Hz (`--new-game --headless --auto --pilot`):
 
 | Time | Map | Fact |
@@ -821,17 +839,19 @@ Run verified on the European ROM, at 60 Hz (`--new-game --headless --auto --pilo
 | 370 s | `X01M01` | NPC 127, `1170` → story **1.1.2** |
 | 378 s | `X01M01` | stop: the warp to `X01M03` (y 15.5) is not reachable on foot |
 
-Precise limit: on `X01M01` (Observatory tower), the upper terrace is not connected to
-the story pose by the walking collision. A **3D** exploration (edges validated by
+Precise limit of the J3 driver: on `X01M01` (Observatory tower), the upper terrace was not
+connected to the story pose by the walking collision. A **3D** exploration (edges validated by
 `Hero::step` with the height reached, climb ≤ 1.0, drop ≤ 10) from the story pose
 as from the map's start plateaus at **y 11.25**; the `X01M03` warp is at y 15.5. The
 thin wall `X01A01S1` (block 0, placement 12, normal `+x`, `x 0.018..0.105`, `z 15.42..18.99`,
 `y 9..14`) separates the terrace from the foot of the ramp. The `0x73` zones of **type 1** (43 in the
 ROM, three on `X01M01`) are **inert**: no routine of `Field_CheckRegions` reads their
-list, it is neither a lift nor a task 8. The missing connection (moved collision
-placement, animated platform or scripted map change) is **[unknown]**, to be
-established on melonDS. The driver therefore stops at 1.1.2; chapter 2 is not reached and
-no teleport enters the evidence.
+list, it is neither a lift nor a task 8.
+
+That J3 stop no longer bounds the driver: the walkable-grid and exit-order work of the route
+batches crosses the tower, and the route mode above plays from the opening to event 2750 with
+real battles. What remains **[hypothesis]**: the west stair of `D01M02` being a dead end, and
+the driver itself, which is a stand-in for a player rather than a game feature.
 
 **Stops where and why** (end log of `--pilot`): player control with nothing that
 advances the story according to the simulation (conversations that no longer change progress or

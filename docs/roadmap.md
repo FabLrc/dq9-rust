@@ -443,11 +443,13 @@ Progress:
       (`j4-battle-held-items`); standalone battle 26 played to victory in the browser.
       ROM-backed action/damage/death/flight motions, weapon sets, hit timing and window
       barriers are integrated (`j4-battle-motions`); live GPU lunge/hide verified in the browser.
-      Remaining: abilities, using worn equipment, wipe-out details (priest line, revival by
-      save, trigger 180), continuous manual play. The references now launch the runtime with
-      `--fight --seed 7` (`j4-parity-battles`), but the compared checkpoint fields do not
-      include the party's HP/XP/gold, so the fought and stand-in runs are byte-identical:
-      widening the checkpoint is the remaining parity step.
+      Abilities are read from `skilltable.bin` and offered in battle (`j4-battle-skills`:
+      learned panels at save `+0x11A`, resolved through `Command::Act`; the window capture of
+      a cast is missing, the ROM menu test is the proof). Remaining: using worn equipment,
+      wipe-out details (priest line, revival by save, trigger 180), continuous manual play.
+      The references now launch the runtime with `--fight --seed 7` (`j4-parity-battles`), but
+      the compared checkpoint fields do not include the party's HP/XP/gold, so the fought and
+      stand-in runs are byte-identical: widening the checkpoint is the remaining parity step.
 - [ ] Battle scene: stage, grid, side camera, 547 transition done (`j4-battle-scene`). Remaining:
       action-script shots, swirl, encounter transition, companions.
 - [ ] Roaming monsters: rules in `dq9_core::encounter` (`j4-roaming`), checked against melonDS F02
@@ -463,14 +465,18 @@ Progress:
       `re/facility.md`); the field menu (items, equipment, attributes, spells) and the inn,
       shop and church screens opened by a talk tag (`j4-field-services`), with a bounded
       hero rebuild on equipment and paid/refused/revival transitions driven in real windows
-      and the Web canvas. Remaining in the field: chests/pots/barrels, "examine", vocation
-      restrictions, the church's coffin line and Benediction's unequipping.
-- [ ] Chapter 2 route 1.4.1 → 2750 in a real test, Hexagoon won and lost; battle 26 played.
+      and the Web canvas. Containers are opened on the field from `treasure.nsarc`
+      (`j4-field-containers`: one-shot red chests, refills, locks, the random tables; the
+      containers are runtime objects, so nothing is drawn or hidden). Remaining in the field:
+      vocation restrictions, the church's coffin line and Benediction's unequipping.
+- [x] Chapter 2 route: the pilot's route mode plays a new game to **event 2750** with the real
+      engine, Hexagoon lost at Lv 4–7 and won at Lv 8 (`j4-chapter2-route`, `--route 2750`;
+      acceptance on `main ef56959`: 3057 s of game time, story 2.6.5, 972 checkpoints).
 - [ ] Browser: continuous session from a new game to 2750.
 
-Next waves: (1) facility screens and the field menu, wipe-out details;
-(2) the chapter 2 route test with the Hexagoon both ways and remaining cutscene gaps;
-(3) continuous browser session, parity references with real battles, docs consistency.
+Next waves: (1) the continuous browser session to 2750; (2) widening the parity checkpoint to
+the party's HP/XP/gold, the abilities window capture, wipe-out details; (3) remaining chapter 2
+scene gaps, worn-equipment use, docs consistency.
 
 **v0.2** criterion: a new game played by hand reaches the end of 2750 natively and in the
 browser, with every battle fought; a headless run with a fixed seed reaches it in a real test;

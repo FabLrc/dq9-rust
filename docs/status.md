@@ -5,89 +5,68 @@ Plan: [`roadmap.md`](roadmap.md); rules: [`../AGENTS.md`](../AGENTS.md).
 
 ## Status as of November 10, 2026
 
-**v0.1 functional natively; v0.2 still in progress** (new game → event 2750, every battle fought).
-Opening, Observatory, physical Angel Falls return and village tasks through 1.4.1 work on main.
-Driver: 615 checkpoints; parity 2/2 at first control and 1.1.2 except flag `4135` (battle loot),
-now with battle 26 played by the engine (`--fight --seed 7`). The fought and stand-in runs give
-**byte-identical checkpoints**: the compared fields are the story, flags, quests and hero, not the
-party's HP/XP/gold, so the reference cannot yet tell a played fight from the substitute
-(`re/tools.md`, `build/evidence/j4-parity-battles/report.md`).
-Fixed 60 Hz loop; hero, field and model pose at 30 Hz. Chapter 2 events: 47/50 complete.
+**v0.1 functional natively; v0.2's native criterion is met, the browser one is not.** A new game
+played by the pilot with the real battle engine reaches **event 2750** on main: Hexagoon lost at
+Lv 4–7, won at Lv 8, story **2.6.5**, `stopped: event 2750 ended` after 3057 s of game time
+(`accept-2750`, pid 11008, exit 0). Opening, Observatory, Angel Falls, the village tasks, the
+Mountain Pass, the Hexagon and chapter 2's scenes play in order; fields and chapter 2 events are
+47/50 in the report of the earlier batch.
+Driver: 972 checkpoints on that run; parity 2/2 (references now play battle 26 with
+`--fight --seed 7`, but their checkpoint fields do not observe the party's HP/XP/gold).
+Fixed 60 Hz loop; hero, field and model pose at 30 Hz.
 
-## Combat and monsters — integrated on main
+## Integrated on main (all passed `verify.ps1 -RequireRom`)
 
-Workers: Orca/OMP `opencode-go/deepseek-v4.1-flash`; route → `anthropic/claude-sonnet-5-5` after two Flash failures (AGENTS policy).
-
-| Batch / commit | Result | Full ROM gate |
+| Batch / commit | Result | Gate |
 |---|---|---|
-| `j4-battle-held-items` / `c064473` | Held slots, duplicates, execution-only consumption, cancellation, skipped actor, reusable stone; bag unchanged | 5/5, 104.7 s, app 71/71 |
-| `j4-roaming-play` / `2801473` | Visible models, contact → battle → field, shared RNG, equipment/preset companies, released models hidden; Esc/one-shot preview | 5/5, 90.4 s, app 82/82; parity 2/2 |
-| `j4-battle-lifecycle` / `749ae40` | Finished preview retains stage/camera; dialogue pauses roamers | 5/5, 103.5 s, app 83/83 |
-| `add-graphics-tech` / `49843de` | Optional wide/post/HUD; native and local browser wide → stacked → wide checked | 5/5, 150.3 s, app 86/86 |
-| `j4-battle-motions` / `de583e0` | ROM motions/scripts, weapon set, hit reactions, death/flight, summon capture, presentation barriers | 5/5, 80.4 s, app 102/102; parity 2/2 |
-| `j4-battle-gpu-sync` / `4327fd8` | Live lunge/hide matrices reach GPU; native image regression and real Web victory without ghost models | 5/5, 109.4 s, app 103/103 |
-| `j4-full-heal` / `5723a5d` | Original max-HP override after ordinary draws; real `Battle::round` HP 37 → 321, MP 40 → 16; Omniheal MP128 still refused (`re/battle.md`) | 5/5, 110.2 s, core battle-ROM 10/10 |
-| `j4-field-services` / `660d682` | Field menu (items/equipment/attributes/spells), inn/shop/church screens, bounded hero rebuild, copied-item and group-heal fixes; one copy per trade, no copy lost to a 99 stack | 5/5, 95.6 s, app 131/131 |
-| `j4-guest-slot` / `d079b97` | Condition 0x56's `0xce` slot is the field guest (actions `0xcd`/`0xcc`); the M01 2.2 scene now starts event 2230, without a hero tag | 5/5, 122.0 s, core 264 unit + field-ROM 7/7 |
-| `j4-gate-pair` / `19906dc` | First model of trigger action `0xa9` (D01M01 gate pair); its polarity was wrong and is corrected below | 5/5, 104.4 s, field-ROM 8/8 |
-| `j4-gate-polarity` / `cd399c5` | `0xa9`'s value is the high half of operand 0: value 1 **opens** the pair (13 hidden, 15 shown), writes flag `0x347`, and the app re-applies it on every load | 5/5, 112.1 s, field-ROM 8/8 |
+| `j4-battle-motions` / `de583e0` | ROM motions/scripts, weapon sets, hit reactions, death/flight, presentation barriers | 5/5, app 102/102 |
+| `j4-battle-gpu-sync` / `4327fd8` | Live lunge/hide matrices reach the GPU; browser victory without ghost models | 5/5, 109.4 s, app 103/103 |
+| `j4-full-heal` / `5723a5d` | Original max-HP override after the ordinary draws; Omniheal MP128 still refused | 5/5, core battle-ROM 10/10 |
+| `j4-field-services` / `660d682` | Field menu, inn/shop/church screens, bounded hero rebuild, copy-loss and group-heal fixes | 5/5, 95.6 s, app 131/131 |
+| `j4-guest-slot` / `d079b97` | Condition 0x56's `0xce` slot is the field guest; M01 2.2 starts event 2230 | 5/5, 122.0 s |
+| `j4-gate-pair` / `19906dc` → `j4-gate-polarity` / `cd399c5` | Action `0xa9` opens D01M01's gate pair on its value and flag `0x347`; the first polarity was wrong and corrected | 5/5, 112.1 s |
+| `j4-chapter2-route` / `a647098` | Route mode (`--route`), story-aware exits, walkable grid; **opening → 2750 by continuous play** | 5/5 |
+| `j4-field-containers` / `b454ad4` | Field containers from `treasure.nsarc`: one-shot red chests, refills, locks, tables; positions are world units (residuals ≤ 0.005) | 5/5 |
+| `j4-gate-load-guard` / `ef56959` | The gate initialiser runs on room 7101 only (constant `0xbd1b`), so M01/F01 keep their placements | 5/5 |
+| `j4-battle-skills` / `0207b7c` | `skilltable.bin` reader, learned panels (`+0x11A`), Abilities row through `Command::Act` | 5/5 |
 
-Native F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold) → same field, no ghost;
-D01M02 models visible. Evidence: `j4-roaming-play/field-restored-after-win.png` (`61a585913e52`),
-`hexagon-field.png` (`fceee50be300`), `smoke-win.log` (`0ec1f1917e68`), under `build/evidence/`.
-Held-item UI was rasterized offscreen, not driven in a native window or browser:
-`j4-battle-held-items/item-menu.png` (`9e2260ec767e`), `item-used.png` (`f4baed36c8c8`).
-Kernel: 306 BattleEmulator vectors (Woosh critical differs); chapter 2 special actions have
-code-read rules and 20-seed tests, not an independent battle oracle (`re/battle.md`).
-Roaming F02/F38 oracle/challenge covers zone, node/point and contact. First-step waiting,
-original surprise/company/stage, F44, states 4/5/11/12 and exact post-flight state remain open.
+The route's acceptance run on `main` (`ef56959`): `build/evidence/j4-route-accept/accept-2750.out`
+(`9f979a299fc4`), 972 checkpoints; trajectory and the Hexagoon's five attempts in
+`build/evidence/j4-chapter2-route/report-route.md`. Chapter-2 battle 26, the Hexagoon both ways
+and the win branch (event 15 → 2550 → 2555 → 2.5.1 → … → 2750) are played, not substituted.
 
-Field services (`j4-field-services`, native windows on the European ROM and the Web canvas):
-paid shop (gold 100 → 92, one herb), inn (the living healed to 40/40 and 9/9, the dead left at
-0/30, night clock 0 → 210), church resurrection (0 → 30 HP for 60 gold), Divination with its
-line, Multiheal over `[0, 1]` with MP charged once, Fullheal 20 → 80 for 24 MP and a dead
-actor's visible refusal; the bounded hero rebuild is asserted over 20 alternating outfits with
-stable model/instance/texture counts. Two independent read-only reviews cleared the corrected
-state (their reports are local). Evidence: `build/evidence/j4-field-services/` (manifest at
-`0ef7a82`) and the review manifests. Direct-map and single-service checks; continuous play is
-still not certified.
+## Limits recorded, not hidden
+
+- **Parity and battle effects**: the references replay the engine's battle 26, but the compared
+  fields are the story, flags, quests and hero; the fought and stand-in runs give byte-identical
+  checkpoints (`re/tools.md`). Widening the checkpoint is the open step.
+- **Abilities**: the menu, MP cost and effects are proven by a ROM-backed menu test; one native
+  window capture of a cast is missing because `--battle` refuses `--save`, so a skilled party
+  cannot be combined with a scripted battle, and no roamer contact was reachable
+  (`build/evidence/j4-battle-skills/`).
+- **Containers**: no `.bmdj` placement sits at a treasure position — the containers are runtime
+  `LootableContainer` objects created by the loader (`0x0207baa0`), so nothing is drawn or hidden;
+  the flag alone refuses a second open. Cupboards have no position; a mimic opens nothing and its
+  battle request is unread; locked chests refuse with no flag.
+- **Route mode** is a test driver, not a game feature; `D01M02`'s west stair being a dead end is
+  **[hypothesis]**. `re/stb.md` § "Chapter 2 route" records the pass itself.
+- Patch persistence: pending placement states (`+0x41b`) are still not modelled; this gate pair is
+  restored from flag `0x347` on load.
 
 ## Browser and publication
 
-Pages `42812911849` (`6ecf718`): Hexagon contact → Esc cancel → flight, another contact → loss
-→ church 1106; `j4-combat-web-final/console.json` (`2798e51a2364`), church PNG (`430671952e62`).
-Graphics `1e0326d`: CI `42831807723` and Pages `42831807515` green; wide remains optional.
-Latest local browser build `4327fd8`: battle 26, seed 7 → one victory, 4 rounds, 2 XP, 4 gold;
-hero lunges/returns, all defeated/fled models disappear, extra input/layout switches do not restart.
-Evidence: `j4-battle-gpu-sync/web-after-lunge.png` (`c461e1d32686`),
-`web-after-victory.png` (`c39b70b7ba1a`), `web-after-console.json` (`e616bcfb24af`).
-Latest publication `deb317f` (services `660d682`): CI `42854310912` and Pages `42854311711` green.
-The deployed bundle at `https://fablrc.github.io/dq9-rust/?map=M01` loaded map 1100 and opened
-the field menu on the bottom screen (`j4-field-services/web-published-field-menu.png`,
-`ecb4ee34992f`); the ROM is read locally and never sent. The same bundle played battle 26
-(`?battle=26&seed=7&layout=wide`) to **Won after 4 rounds, 2 XP, 4 gold** with the hero's
-lunges and an empty stage afterwards (`web-published-battle-won.png`, `a3c501e11d18`), so the
-new menu input path did not disturb battle input. Latest `5a9d78b` (guest slot `d079b97`): CI `42861073884` and Pages `42861072857` green.
-Earlier `1934b83` published Fullheal
-(CI `42847350996`, Pages `42847350994`); no interactive Fullheal-menu claim there.
-Direct-map checks do not certify continuous new-game play to 2750.
+Pages `42812911849` (`6ecf718`): Hexagon contact → Esc cancel → flight → loss → church 1106.
+Graphics `1e0326d`: CI `42831807723`, Pages `42831807515`. Field services published as `deb317f`
+(CI `42854310912`, Pages `42854311711`), with the deployed bundle checked (field menu, battle 26
+won, empty stage). Fullheal `1934b83` (CI `42847350996`), guest slot `5a9d78b` (CI `42861073884`),
+gate polarity `4e54496` → docs `5d06467`.
+**No continuous browser session to 2750 exists**: the standalone fights and contacts above do not
+certify the route.
 
 ## Active work and next steps
 
-One implementation batch retains its own ownership; nothing else is unmerged.
-`j4-chapter2-route`: two Flash failures; the Sonnet retry `ctx_273f59bcad5d` now crosses
-M01M10 by a generic warp-volume approach and reaches **2.2.3 in D01M01** with real battles
-(commits `c9227e6`, `42b0174`). The stall it hit was **trigger 0x56** at M01M05: the party tag
-`+0x56b` is **0** in `pro1.ml1`/`pro11.ml1` and in the demo save, so the condition resolves
-through "character `0xce` exists" — the field guest (`Guest_LoadTask`, actions `0xcd`/`0xcc`),
-which the port did not hold. The proposed hero `tag: 1` was refused; the slot is now modelled
-(`j4-guest-slot` / `d079b97`, `re/trigger.md`) and a ROM regression pins that the end of 2210
-attaches the guest, the mayor's line carries `0xC0` and its end starts 2230. Hexagon interior
-routing, S01M01 events 2300–2350, Hexagoon won/lost and 2750 remain unreached, so v0.2 is not
-certified.
-`j4-field-services` progress is now integrated (table above); its field limits are recorded in
-`docs/app.md` § "Field menu and facility screens" and `re/facility.md`.
-Headless parity keeps stand-ins unless `--fight` is given and disables roaming.
-Remaining presentation: full camera/effects, original alpha fades, companions; timing limits
-are labelled [hypothesis] in `re/battle-data.md`. Abilities/worn-item commands remain open.
-Completed graphics/motion/field-services and coordinator-fix worktrees/local branches removed; the graphics empty root stays Windows-locked. Evidence stays local, never committed.
+Nothing is unmerged. Next: (1) the continuous browser session to 2750 with the same evidential bar
+as the native run; (2) widen the parity checkpoint to the party's HP/XP/gold so a played battle
+differs from the stand-in; (3) the abilities window capture above; (4) the remaining chapter 2
+scene gaps and the wipe-out details (priest line, revival by save, trigger 180).
+Evidence stays local under `build/evidence/<batch>/`, never committed.

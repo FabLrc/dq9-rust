@@ -124,9 +124,15 @@ What works:
   with action windows waiting for the presentation; native GPU regression and an actual
   browser battle check cover lunges, returns and hiding defeated/fled models;
 - the field menu (`I`): items with held-slot swaps and field use, equipment with a live hero
-  rebuild, attributes, healing spells; and the inn, shop and church screens opened by a talk
+  rebuild, attributes, healing spells; the inn, shop and church screens opened by a talk
   tag, with paid services, resurrection and divination driven in the window and on the Web
-  canvas (one copy per trade, no copy ever lost to a full stack);
+  canvas (one copy per trade, no copy ever lost to a full stack); the field's containers
+  (chests, pots, barrels) opened from `treasure.nsarc` with their one-shot and refill flags;
+- battle **abilities** read from `skilltable.bin` and offered next to Attack, Spells and
+  Defend, resolved through the same engine;
+- a **continuous route** driven by the headless pilot with the real battle engine
+  (`--route 2750`): a new game reaches event 2750 on the European ROM, Hexagoon lost at
+  Lv 4–7 and won at Lv 8, story 2.6.5 (`docs/app.md`, Route mode);
 - visible animated roaming monsters and contact-triggered battles, with the field restored
   afterwards; native F01 and Hexagon smoke checks (`docs/app.md`, Field encounters);
 - trees and scenery that face the camera.
@@ -135,9 +141,9 @@ Still missing:
 
 - headless runs still count scripted battles as won unless `--fight` is given, and roaming
   is disabled there to preserve the parity traces;
-- the field's chests, pots, barrels and "examine"; vocation restrictions on equipment; the
-  church's coffin line and Benediction's unequipping; full battle action-script camera/effects
-  and companions on the battle scene;
+- vocation restrictions on equipment; the church's coffin line and Benediction's unequipping;
+  full battle action-script camera/effects and companions on the battle scene; one native
+  capture of an ability being cast (the ROM menu test is the proof);
 - end-to-end browser certification (standalone battle 26 has been played to victory, but not
   the continuous route) and comparison with the original over the whole route
   (see [`docs/status.md`](docs/status.md)).
