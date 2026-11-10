@@ -133,6 +133,9 @@ fn f01_spawns_from_its_zones_on_walkable_ground() {
             let position = standing_at(&graph, &world, start);
             let mut input = StepInput::at(position, 0);
             input.time_of_day = time_of_day;
+            // A fresh arrival spawns nothing until the party's first step
+            // (`docs/re/encounter.md`, "Claims checked", (b)).
+            input.moving = true;
             let seen = run(&mut roamers, &world, &input, 1800);
             assert!(roamers.roamers().count() <= 12);
             for (zone, monster, at) in seen {
@@ -181,7 +184,8 @@ fn the_hexagon_floors_spawn_their_zone_and_other_maps_nothing() {
                 Random::new(u64::from(seed)),
             );
             let start = (seed as usize * 5) % graph.nodes.len();
-            let input = StepInput::at(standing_at(&graph, &world, start), 0);
+            let mut input = StepInput::at(standing_at(&graph, &world, start), 0);
+            input.moving = true;
             for (z, monster, _) in run(&mut roamers, &world, &input, 1800) {
                 total += 1;
                 assert_eq!(z, zone, "map {map}");
@@ -269,6 +273,7 @@ fn touching_a_roamer_opens_a_fight_on_the_ground_stage() {
             Random::new(u64::from(seed)),
         );
         let mut input = StepInput::at(standing_at(&graph, &world, 20), 0);
+        input.moving = true;
         // Wait for one, then step onto it.
         let mut target = None;
         for _ in 0..3000 {
@@ -409,8 +414,9 @@ fn field_states_hold_roamers_of_the_models_zones() {
 }
 
 /// What the model says of the spawn the log records, checked line by line: the zone is an eligible
-/// one of the hour (the node's mask preferred), the monster is the zone's, the node is among
-/// the candidates and is the most-ahead one when any is ahead, and the point is the model's.
+/// one of the hour (the node's mask preferred), the monster is the zone's, the node is among the
+/// candidates (with the game's own node as the draw) and the point is the model's, on every spawn
+/// and with no tolerance.
 #[test]
 fn logged_spawns_follow_the_model() {
     let (Some(bytes), Some(dir)) = (testrom::load(), field_dir()) else {
@@ -478,67 +484,55 @@ fn logged_spawns_follow_the_model() {
         if graph.nearest(hero) == Some(hero_node) {
             nearest_agrees += 1;
         }
-        // The node and the point.
+        // The node and the point, with the game's own node as the draw: when no candidate is
+        // ahead the game draws one, and the draw this test used before (0) could take a
+        // candidate past the 0x9fff path limit and fail a spawn the game made.
         // A roamer holds a node by its index (`+0xb8`): `func_02073d58` compares that node's id.
         let taken_ids: Vec<u8> = others
             .chunks(6)
             .filter_map(|o| graph.nodes.get(o[3] as usize).map(|n| n.id))
             .collect();
-        let plan = dq9_core::encounter::plan_spawn(
-            &graph,
-            hero,
-            angle,
-            hero_node,
-            &|id| taken_ids.contains(&id),
-            &mut |_| 0,
-        );
-        let Some(plan) = plan else {
+        let taken = |id: u8| taken_ids.contains(&id);
+        let candidates = dq9_core::encounter::spawn_candidates(&graph, hero, hero_node, &taken);
+        let Some(index) = candidates.iter().position(|&c| c == node) else {
             bad(&format!(
-                "the model finds no spawn: leader node {hero_node} links {:?}, taken {taken_ids:?}, \
-                 spawned at node {node} {at:?}, leader {hero:?} angle {angle}",
+                "node {node} is not among the candidates {candidates:?} (leader node \
+                 {hero_node} links {:?}, taken {taken_ids:?})",
                 graph.nodes[hero_node].links
             ));
             continue;
         };
-        if !plan.candidates.contains(&node) {
-            bad(&format!(
-                "node {node} is not among the candidates {:?}",
-                plan.candidates
-            ));
+        let Some(plan) =
+            dq9_core::encounter::plan_spawn(&graph, hero, angle, hero_node, &taken, &mut |n| {
+                assert_eq!(n, candidates.len());
+                index
+            })
+        else {
+            bad(&format!("the model finds no spawn at node {node} {at:?}"));
             continue;
-        }
+        };
         if plan.ahead {
             ahead_n += 1;
-            if plan.chosen != node {
-                bad(&format!(
-                    "node {node} chosen, the model's most-ahead is {}",
-                    plan.chosen
-                ));
-            }
         } else {
             random_n += 1;
         }
-        let model_point = {
-            let again = dq9_core::encounter::plan_spawn(
-                &graph,
-                hero,
-                angle,
-                hero_node,
-                &|id| taken_ids.contains(&id),
-                &mut |_| plan.candidates.iter().position(|&c| c == node).unwrap(),
-            )
-            .unwrap();
-            again.position
-        };
-        if (model_point[0] - at[0]).abs() <= 2 && (model_point[2] - at[2]).abs() <= 2 {
+        if plan.chosen != node {
+            bad(&format!(
+                "node {node} spawned, the model chose {}",
+                plan.chosen
+            ));
+            continue;
+        }
+        if (plan.position[0] - at[0]).abs() <= 2 && (plan.position[2] - at[2]).abs() <= 2 {
             point_equal += 1;
         } else {
             bad(&format!(
-                "spawned at {at:?}, the model puts it at {model_point:?}"
+                "spawned at {at:?}, the model puts it at {:?}",
+                plan.position
             ));
         }
-        // The tick: the slot's timer reached a second (30 Hz steps of 33 ms) before the spawn.
-        if timer + 34 < 1000 {
+        // The tick: the slot's timer reached a second on the update's step, 33 ms or 50 ms.
+        if timer + 50 < 1000 {
             bad(&format!("timer {timer} ms is under a second"));
         }
         // Not within 3.5 of the leader, not within the box of another roamer.
@@ -553,54 +547,92 @@ fn logged_spawns_follow_the_model() {
     for p in &problems {
         eprintln!("PROBLEM {p}");
     }
-    // On the reference run two spawns in 210 (frames 3172 and 10749) went to the leader's own
-    // node where the model's most-ahead candidate lies past the 0x9fff path limit: unexplained,
-    // so a tolerance of 2 %, not zero.
+    // No tolerance: replaying the game's own node as the draw reproduces every spawn.
     assert!(
-        problems.len() * 50 <= n,
+        problems.is_empty(),
         "{} of {n} spawns disagree with the model",
         problems.len()
     );
 }
 
+/// The step of the slot's update for each frame of a run that kept a `frames.tsv`: the game's
+/// `GetTrueDeltaTime`, 33 ms or 50 ms; frames whose timer was reset by a spawn have none, and
+/// the author's run kept no such log.
+fn frame_steps(dir: &std::path::Path) -> Option<std::collections::BTreeMap<i64, i32>> {
+    let files = files_ending(dir, "frames.tsv");
+    if files.is_empty() {
+        return None;
+    }
+    let mut steps = std::collections::BTreeMap::new();
+    for file in files {
+        for line in std::fs::read_to_string(file).unwrap().lines() {
+            // frame clock_ms phase timer_before timer_after spawned …
+            let cols: Vec<i64> = line.split('\t').map(|c| c.parse().unwrap()).collect();
+            let dt = (cols[4] - cols[3]) as i32;
+            if (1..=200).contains(&dt) {
+                steps.insert(cols[0], dt);
+            }
+        }
+    }
+    Some(steps)
+}
+
 /// The state machine's clocks, as the log shows the game's: a roamer that has just appeared
-/// stands after 1001 ms, one that is standing leaves it after 4001 ms, one that has noticed the
-/// party decides after 226 ms, a startled one resumes after 3 s.
+/// stands on the first update past 1001 ms, one that is standing leaves it on the first past
+/// 4001 ms, one that has noticed the party decides on the first past 226 ms. The update's step
+/// is the frame's own (33 ms, or 50 when a frame runs long): the thresholds are consistent with
+/// 1001/4001, not pinned to them (`docs/re/encounter.md`, "Claims checked", (c)).
 #[test]
 fn logged_state_changes_follow_the_model_clocks() {
     let Some(dir) = field_dir() else { return };
+    let steps = frame_steps(&dir);
     // frame slot monster old new old_state_ms old_awake_ms wander walk vision
     let mut table = std::collections::BTreeMap::<(i64, i64), (i64, i64, usize)>::new();
+    let mut checked = 0;
     for l in log_lines(&dir, "T") {
-        let e = table.entry((l[3], l[4])).or_insert((i64::MAX, i64::MIN, 0));
-        *e = (e.0.min(l[5]), e.1.max(l[5]), e.2 + 1);
+        let (frame, old, new, reading) = (l[0], l[3], l[4], l[5]);
+        let e = table.entry((old, new)).or_insert((i64::MAX, i64::MIN, 0));
+        *e = (e.0.min(reading), e.1.max(reading), e.2 + 1);
+        let threshold = match (old, new) {
+            (0, 1) => 1001,
+            (1, 8 | 10) | (10, 8) => continue,
+            (1, _) => 4001,
+            (10, _) => 226,
+            _ => continue,
+        };
+        checked += 1;
+        let step = steps.as_ref().and_then(|s| s.get(&frame).copied());
+        let reached = match step {
+            Some(dt) => reading + i64::from(dt) >= threshold,
+            // Without the run's per-frame log the step is one of the two the game takes.
+            None => reading + 33 >= threshold || reading + 50 >= threshold,
+        };
+        assert!(
+            reached,
+            "frame {frame}: {old} -> {new} after {reading} ms, step {step:?}, threshold {threshold}"
+        );
+        // The appear and notice states run every update: their reading is under the threshold.
+        // A standing roamer's decision waits while the party stands at its side (four seconds
+        // spent, then more), so only the lower bound holds there.
+        if matches!((old, new), (0, 1) | (10, _)) {
+            assert!(
+                reading < threshold,
+                "frame {frame}: {old} -> {new} only {reading} ms after entering, not past \
+                 {threshold}"
+            );
+        }
     }
     for ((old, new), (lo, hi, count)) in &table {
         eprintln!("state {old} -> {new}: {count}x, after {lo}..={hi} ms");
     }
-    let (lo, hi, _) = table[&(0, 1)];
-    assert!(
-        (1001 - 34..1001).contains(&lo) && hi < 1001,
-        "appear {lo}..{hi}"
-    );
-    // The reading is the one before the change: a standing roamer leaves it at its first update
-    // past 4001 ms, a noticing one decides at its first past 226 ms.
-    for ((old, new), (lo, _, _)) in &table {
-        match (*old, *new) {
-            (1, 8 | 10) | (2, _) | (3, _) | (6, _) | (4, _) | (5, _) | (7, _) => {}
-            (1, _) => assert!(*lo >= 4001 - 34, "standing -> {new} after {lo} ms"),
-            (10, 8) => {}
-            (10, _) => assert!(
-                (226 - 34..226).contains(lo),
-                "notice -> {new} after {lo} ms"
-            ),
-            _ => {}
-        }
-    }
+    assert!(checked > 0);
 }
 
-/// Every contact the run logged is a touch the model recognises: the leader is within the
-/// roamer's reach on x and z (its touch radius plus half the leader's) once both have moved.
+/// Every contact the run logged is a touch the model recognises — [`touches`] on x, on z and in
+/// distance, with no slack — and, when the run kept its `near.tsv`, the converse the challenger
+/// measured: a roamer of state other than 0, 8 or 9 inside that reach is touched within one
+/// update (two frames). The author's run kept no `near.tsv`, so only the first half is checked
+/// on it (`docs/re/encounter.md`, "Claims checked", (d)).
 #[test]
 fn logged_contacts_are_within_the_models_reach() {
     let (Some(bytes), Some(dir)) = (testrom::load(), field_dir()) else {
@@ -609,36 +641,90 @@ fn logged_contacts_are_within_the_models_reach() {
     let rom = Rom::parse(bytes).unwrap();
     let tables = tables(&rom);
     let zones = &tables.zones(20002).unwrap().zones;
-    let (mut n, mut inside) = (0, 0);
-    for l in log_lines(&dir, "C") {
-        // frame map clock_ms phase slot monster zone state hero_before(x y z angle)
-        // hero_after(x y z angle) roamer_before(x y z angle) roamer_after(x y z angle) prev_state ms
-        let (monster, zone_id) = (l[5] as u16, l[6] as u16);
-        let hero = [l[12] as i32, l[13] as i32, l[14] as i32];
-        let roamer = [l[20] as i32, l[21] as i32, l[22] as i32];
+    // The reach of a roamer the model spawns from a zone: `touch_radius` of the field size at
+    // the scale the encfld word gives, plus half the leader's radius.
+    let reach = |monster: u16, zone_id: u16| {
         let field = tables.monster(monster).unwrap();
         let def = zones
             .iter()
             .find(|z| z.id == zone_id)
-            .and_then(|z| z.roamers.iter().find(|d| d.monster() == monster))
-            .unwrap();
+            .unwrap_or_else(|| panic!("zone {zone_id}"));
+        let def = def
+            .roamers
+            .iter()
+            .find(|d| d.monster() == monster)
+            .unwrap_or_else(|| panic!("monster {monster} in zone {zone_id}"));
         let scale = fx::mul(0x10a, i32::from(def.scale));
-        let radius = ((i64::from(i32::from(field.size) >> 1) * i64::from(scale * 15) + 0x800) >> 12)
-            as i32
-            + (0x1000 >> 1);
-        let (dx, dz) = ((hero[0] - roamer[0]).abs(), (hero[2] - roamer[2]).abs());
+        (field.size, scale)
+    };
+    let mut n = 0;
+    for l in log_lines(&dir, "C") {
+        // frame map clock_ms phase slot monster zone state hero_before(x y z angle)
+        // hero_after(x y z angle) roamer_before(x y z angle) roamer_after(x y z angle) prev_state ms
+        let (slot, monster, zone_id) = (l[4], l[5] as u16, l[6] as u16);
+        let hero = [l[12] as i32, l[13] as i32, l[14] as i32];
+        let roamer = [l[20] as i32, l[21] as i32, l[22] as i32];
+        let (size, scale) = reach(monster, zone_id);
         n += 1;
-        if dx <= radius && dz <= radius {
-            inside += 1;
-        }
+        let distance = fx::distance(hero, roamer);
         eprintln!(
-            "contact with {monster}: dx {dx} dz {dz} reach {radius} (prev state {})",
+            "contact with {monster} in slot {slot}: distance {distance} reach {} (prev state {})",
+            dq9_core::encounter::touch_reach(size, scale) + (dq9_core::movement::RADIUS >> 1),
             l[24]
         );
         assert!(
-            dx <= radius + 0x1000 && dz <= radius + 0x1000,
-            "far from the roamer"
+            dq9_core::encounter::touches(size, scale, roamer, hero, dq9_core::movement::RADIUS),
+            "frame {}: slot {slot} monster {monster} at {roamer:?} is outside the reach of the \
+             leader at {hero:?}",
+            l[0]
         );
     }
-    eprintln!("{inside}/{n} contacts inside the reach exactly");
+    eprintln!("{n} contacts inside the reach exactly");
+    let mut checked = 0;
+    for file in files_ending(&dir, "near.tsv") {
+        // frame slot monster state state_ms dx dz scale zone hero(x y z angle)
+        // roamer(x y z angle) alphaish(4) flags2 — the scale byte is not the model's.
+        let rows: Vec<Vec<i64>> = std::fs::read_to_string(&file)
+            .unwrap()
+            .lines()
+            .map(|l| l.split('\t').map(|c| c.parse().unwrap()).collect())
+            .collect();
+        let Some(last) = rows.iter().map(|r| r[0]).max() else {
+            continue;
+        };
+        let touched: std::collections::HashSet<(i64, i64, i64)> = rows
+            .iter()
+            .filter(|r| r[3] == 8)
+            .map(|r| (r[0], r[1], r[2]))
+            .collect();
+        for r in &rows {
+            // The model touches past the appear state and not the touched or the fought one
+            // (`Roamers::touch`); rows within two frames of the log's end could not show it.
+            if matches!(r[3], 0 | 8 | 9) || r[0] + 2 > last {
+                continue;
+            }
+            let (slot, monster) = (r[1], r[2] as u16);
+            let hero = [r[9] as i32, r[10] as i32, r[11] as i32];
+            let roamer = [r[13] as i32, r[14] as i32, r[15] as i32];
+            let (size, scale) = reach(monster, r[8] as u16);
+            if !dq9_core::encounter::touches(size, scale, roamer, hero, dq9_core::movement::RADIUS)
+            {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                touched.contains(&(r[0] + 1, slot, r[2]))
+                    || touched.contains(&(r[0] + 2, slot, r[2])),
+                "{}: slot {slot} monster {monster} in reach at frame {} (state {}) was not \
+                 touched within one update",
+                file.file_name().unwrap().to_string_lossy(),
+                r[0],
+                r[3]
+            );
+        }
+        eprintln!(
+            "{checked} in-reach rows in {}, each touched within one update",
+            file.file_name().unwrap().to_string_lossy()
+        );
+    }
 }

@@ -1,9 +1,17 @@
-//! Unit tests on synthetic data: the draws and the geometry.
+//! Unit tests on synthetic data: the draws, the geometry and the two spawn/movement rules the
+//! field runs corrected (`docs/re/encounter.md`, "Claims checked").
 
-use super::graph::RoamGraph;
+use std::sync::Arc;
+
+use super::graph::{Node, RoamGraph};
 use super::pick::{self, rand_below};
-use super::tables::{BattleRoamer, BattleZone, ZoneDef};
+use super::roamer::{Roamer, state};
+use super::tables::{
+    BattleRoamer, BattleZone, EncounterTables, MapZones, MonsterField, RoamerDef, ZoneDef,
+};
+use super::{Roamers, StepInput, Surroundings};
 use crate::battle::{CRand, Random};
+use crate::collision::CollisionWorld;
 
 #[test]
 fn rand_below_truncates_and_never_reaches_n() {
@@ -184,4 +192,133 @@ fn monsters_38_to_40_come_alone() {
 #[test]
 fn nearest_of_an_empty_graph_is_none() {
     assert_eq!(RoamGraph::default().nearest([0; 3]), None);
+}
+
+/// A map list that names no stage.
+struct NoList;
+
+impl Surroundings for NoList {
+    fn stage_class(&self, _stage: u16) -> Option<u8> {
+        None
+    }
+}
+
+fn empty_world() -> CollisionWorld {
+    CollisionWorld::from_pieces(Vec::new(), Vec::new())
+}
+
+/// A map with one zone: kind 2 (any hour), mask 0, wait 0 (`(7 − 7) × 1000`), monster 3 alone.
+fn one_zone() -> Arc<EncounterTables> {
+    let zone = ZoneDef {
+        id: 5,
+        word: 2 | (7 << 21),
+        roamers: vec![RoamerDef {
+            word: 3 | (1 << 12),
+            scale: 0x1000,
+        }],
+    };
+    Arc::new(EncounterTables {
+        fields: vec![MapZones {
+            map: 1,
+            zones: vec![zone],
+        }],
+        battle: Vec::new(),
+        monsters: vec![MonsterField {
+            number: 3,
+            level: 1,
+            margin: 0,
+            wander: 1,
+            walk: 1,
+            vision: 0,
+            flee: 1,
+            attack: 1,
+            size: 0x1000,
+            attack_power: 1,
+            defence_power: 1,
+            radius: 0x100,
+            height: 0x100,
+        }],
+    })
+}
+
+/// Two nodes ten units apart, each linked to the other.
+fn two_nodes() -> RoamGraph {
+    RoamGraph {
+        nodes: vec![
+            Node {
+                id: 0,
+                mask: 1,
+                flags: 0,
+                position: [0, 0, 0],
+                links: vec![1],
+            },
+            Node {
+                id: 1,
+                mask: 1,
+                flags: 0,
+                position: [0, 0, 10],
+                links: vec![0],
+            },
+        ],
+    }
+}
+
+/// A fresh arrival spawns nothing while the party stands — the slot's timer keeps running — and
+/// its first step lets the spawn tick through (`docs/re/encounter.md`, "Claims checked", (b)).
+#[test]
+fn a_fresh_arrival_spawns_only_after_the_first_step() {
+    let world = empty_world();
+    let mut roamers = Roamers::new(
+        1,
+        one_zone(),
+        Some(two_nodes()),
+        CRand::new(1),
+        Random::new(1),
+    );
+    let mut input = StepInput::at([0; 3], 0);
+    for _ in 0..200 {
+        roamers.step(&input, &world, &NoList);
+    }
+    assert_eq!(roamers.roamers().count(), 0);
+    assert!(roamers.timer >= 6_000, "the timer waits: {}", roamers.timer);
+    input.moving = true;
+    roamers.step(&input, &world, &NoList);
+    let (_, r) = roamers.roamers().next().expect("a spawn after the step");
+    assert_eq!(r.number, 3);
+    assert_eq!(r.position, [0, 0, 10 << 12]);
+}
+
+/// A fleeing roamer leaves its state when its ten-unit run is done (within 1.5 of the point),
+/// not after a fixed time: at twice the speed it takes half the updates. The field runs showed
+/// 6→1 from 0 ms up to 1452 ms and beyond (`docs/re/encounter.md`, (c)).
+#[test]
+fn a_flee_ends_on_its_run_not_on_a_fixed_time() {
+    let world = empty_world();
+    let field = one_zone().monster(3).copied().unwrap();
+    let a_flee = |ticks: i32| {
+        let mut roamers = Roamers::new(1, one_zone(), None, CRand::new(1), Random::new(1));
+        let mut r = Roamer::spawn(3, 1, 5, field, 0x1000, [0x1000, 0, 0], 0, 0, 0);
+        assert!(r.enter(state::FLEE, [0; 3]));
+        roamers.slots[0] = Some(r);
+        let mut input = StepInput::at([0; 3], 0);
+        input.ticks = ticks;
+        let mut updates = 0;
+        while roamers.roamer(0).unwrap().state == state::FLEE {
+            roamers.step(&input, &world, &NoList);
+            updates += 1;
+            assert!(updates < 200);
+            let r = roamers.roamer(0).unwrap();
+            assert!(
+                r.state != state::FLEE || r.flat_distance(r.target) >= 0x1800,
+                "left the flee before the run was done"
+            );
+        }
+        let r = roamers.roamer(0).unwrap();
+        assert_eq!(r.state, state::IDLE);
+        assert!(r.flat_distance(r.target) < 0x1800);
+        updates
+    };
+    // (10.0 − 1.5) units at 0x1c2 per tick, two then four ticks an update.
+    assert_eq!(a_flee(2), 39);
+    assert_eq!(a_flee(4), 20);
 }

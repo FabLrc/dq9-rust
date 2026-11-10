@@ -4,9 +4,10 @@
 //! over the ROM tables, the map's spawn graph and the collision world.
 //!
 //! The pieces, in the order the game runs them each update (30 Hz, `Field::step`'s cadence,
-//! 33 ms): the spawn tick of the map slot (`ov_017::021b5648` loads, `0x020733e8` ticks), each
-//! roamer's state machine (`0x02076b68`), the far roamers released (`ov_017::021a1ad0`), then
-//! the encounter check (`ov_017::02196430`).
+//! 33 ms, 50 ms when the frame's update runs long): the spawn tick of the map slot
+//! (`ov_017::021b5648` loads, `0x020733e8` ticks), each roamer's state machine (`0x02076b68`),
+//! the far roamers released (`ov_017::021a1ad0`), then the encounter check
+//! (`ov_017::02196430`).
 
 pub mod graph;
 pub mod pick;
@@ -99,7 +100,9 @@ pub struct StepInput {
     pub deftness: u32,
     /// `GameState::GetTimeOfDay`: night 0, morning 1, day 2, evening 3.
     pub time_of_day: u8,
-    /// Milliseconds and frames since the last update (33 and 2 at 30 Hz).
+    /// Milliseconds and frames since the last update: 33 and 2 at 30 Hz; the game's
+    /// `GetTrueDeltaTime` gave 50 ms on some updates (`docs/re/encounter.md`, "Claims
+    /// checked", (c)).
     pub delta_ms: i32,
     pub ticks: i32,
 }
@@ -131,6 +134,11 @@ pub struct Roamers {
     slots: [Option<Roamer>; SLOTS],
     /// `+8` of the map slot: milliseconds since the last spawn.
     timer: i32,
+    /// The party has taken a step since the map was entered: until then nothing spawns, the
+    /// slot's timer still running (`docs/re/encounter.md`, "Claims checked", (b); the cause is
+    /// **[hypothesis]**: on a fresh arrival nothing spawned for 40 s, the first spawn came two
+    /// frames after the first step).
+    stepped: bool,
     next_id: u16,
     hero_node: Option<usize>,
     /// Ids of roamers the encounter check skips (`+0x44b8`, four of them).
@@ -161,6 +169,7 @@ impl Roamers {
             graph,
             slots: std::array::from_fn(|_| None),
             timer: 0,
+            stepped: false,
             next_id: 1,
             hero_node: None,
             recent: [0; 4],
@@ -249,6 +258,12 @@ impl Roamers {
         }
         let before = self.timer;
         self.timer += input.delta_ms;
+        // A fresh arrival spawned nothing until the party's first step; the timer kept running
+        // (40 s at least, `docs/re/encounter.md`, "Claims checked", (b)).
+        self.stepped |= input.moving;
+        if !self.stepped {
+            return;
+        }
         if before + input.delta_ms < SPAWN_PERIOD_MS {
             return;
         }
@@ -751,7 +766,7 @@ impl Roamers {
                 !self.recent.contains(&r.id)
                     && r.alpha == OPAQUE
                     && !matches!(r.state, state::APPEAR | state::TOUCHED | state::FOUGHT)
-                    && touching(r, hero, input.radius)
+                    && touches(r.field.size, r.scale, r.position, hero, input.radius)
             })
         })?;
         let hero_state = self.slots[slot].as_ref()?.clone();
@@ -826,14 +841,21 @@ impl Roamer {
     }
 }
 
-/// `func_ov017_02196fc8` with a margin of 0: the party's centre is within the roamer's touch
-/// radius plus half its own, on each axis and in the plane's distance, and not on it.
-pub fn touching(r: &Roamer, hero: Fx3, hero_radius: i32) -> bool {
-    let reach = r.touch_radius() + (hero_radius >> 1);
-    if (hero[0] - r.position[0]).abs() > reach || (hero[2] - r.position[2]).abs() > reach {
+/// The touch radius of a roamer of `size` (value 4 × 4096) spawned at model `scale`:
+/// `(size / 2) × (scale × 15)` in `fx32`, rounded (`func_02077a20`).
+pub fn touch_reach(size: i16, scale: i32) -> i32 {
+    let product = i64::from(i32::from(size) >> 1) * i64::from(scale * 15);
+    ((product + 0x800) >> 12) as i32
+}
+
+/// `func_ov017_02196fc8` with a margin of 0: the party's centre is within a roamer's
+/// [`touch_reach`] plus half its own radius, on each axis and in distance, and not on it.
+pub fn touches(size: i16, scale: i32, roamer: Fx3, hero: Fx3, hero_radius: i32) -> bool {
+    let reach = touch_reach(size, scale) + (hero_radius >> 1);
+    if (hero[0] - roamer[0]).abs() > reach || (hero[2] - roamer[2]).abs() > reach {
         return false;
     }
-    let distance = fx::distance(hero, r.position);
+    let distance = fx::distance(hero, roamer);
     distance <= reach && distance != 0
 }
 
@@ -864,6 +886,33 @@ pub struct SpawnPlan {
     pub position: Fx3,
 }
 
+/// The nodes a spawn may go to, in the game's order (`func_020733d8`'s list): the free nodes
+/// linked to the party's node and, when the party's own node is more than 5.0 away and free,
+/// that node. `taken` says whether a visible roamer stands on the node of an id.
+pub fn spawn_candidates(
+    graph: &RoamGraph,
+    hero: Fx3,
+    hero_node: usize,
+    taken: &dyn Fn(u8) -> bool,
+) -> Vec<usize> {
+    let Some(node) = graph.nodes.get(hero_node) else {
+        return Vec::new();
+    };
+    let mut candidates: Vec<usize> = node
+        .links
+        .iter()
+        .copied()
+        .filter(|&l| !taken(graph.nodes[l].id))
+        .collect();
+    if fx::distance(node.fx(), hero) > 0x5000
+        && !candidates.iter().any(|&c| graph.nodes[c].id == node.id)
+        && !taken(node.id)
+    {
+        candidates.push(hero_node);
+    }
+    candidates
+}
+
 /// The node choice and the spawn point of `func_020733d8` for a party of one at `hero`
 /// facing `angle`, its node `hero_node`. `taken` says whether a visible roamer stands on the
 /// node of an id; `draw(n)` is the `rand() % n` the game takes when no candidate lies ahead.
@@ -878,19 +927,7 @@ pub fn plan_spawn(
 ) -> Option<SpawnPlan> {
     let node = graph.nodes.get(hero_node)?;
     let facing = [fix32_sin(angle), 0, fix32_cos(angle)];
-    // The free nodes next to the party's, and its own when it is not on it.
-    let mut candidates: Vec<usize> = node
-        .links
-        .iter()
-        .copied()
-        .filter(|&l| !taken(graph.nodes[l].id))
-        .collect();
-    if fx::distance(node.fx(), hero) > 0x5000
-        && !candidates.iter().any(|&c| graph.nodes[c].id == node.id)
-        && !taken(node.id)
-    {
-        candidates.push(hero_node);
-    }
+    let candidates = spawn_candidates(graph, hero, hero_node, taken);
     // The one most ahead of the party, else any.
     let mut ahead: Option<(i32, usize)> = None;
     for &c in &candidates {

@@ -156,10 +156,9 @@ impl Roamer {
     }
 
     /// The touch radius: `(size / 2) × (scale × 15)` in `fx32`, rounded
-    /// (`func_ov017_02196fc8` with the model flag, `func_02077a20`).
+    /// (`func_02077a20`), without the party's half.
     pub fn touch_radius(&self) -> i32 {
-        let product = i64::from(i32::from(self.field.size) >> 1) * i64::from(self.scale * 15);
-        ((product + 0x800) >> 12) as i32
+        super::touch_reach(self.field.size, self.scale)
     }
 
     /// `func_02076ccc`: changes state through the enter function. States 8 to 10 need a party

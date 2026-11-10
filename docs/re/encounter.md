@@ -9,9 +9,12 @@ overlay addresses are the USA's, `external-resources.md`), checked against the R
 count is given, **and since 2026-11-10 against the roamer objects of the original in RAM**: states
 of `F02` (Western Stornway Region) taken from `demo.sav` by real key presses in melonDS
 (`scripts/melonds-field.ps1`, `melonds-state.md` § "Field states"), with every spawn, state change
-and contact of a 1000-second run logged frame by frame. Each claim's verdict, its evidence and the
-command that reproduces it are in the last section, **"Claims checked"**; a statement in the body
-that is not repeated there is still a reading of the code.
+and contact logged frame by frame. Two independent sets of runs are read: the author's (`F02`, 257
+spawns, four phases) and a challenger's with other seeds and the second map (`F02`: 202, 222 and
+100 spawns; `F38`: 388, 56 and 22; report in `build/evidence/j4-roaming-challenge/report.md`,
+local). Each claim's verdict, its evidence and the command that reproduces it are in the last
+section, **"Claims checked"**; a statement in the body that is not repeated there is still a
+reading of the code.
 
 
 Names are the USA decompilation's `func_xxxxxxxx` (USA address; EU is +`0x10` in the ARM9
@@ -69,12 +72,19 @@ list; bits 2–5 of byte `+0xe` give `v`, mask `1 << v`, 0 for `v = 8`; an unlis
 and no zone): the first zone of the right kind **sharing a bit** with it; none → the roamer's own zone.
 
 `F01`'s three zones: 12 (kind 0, by day), 14 (kind 1, by night), 15 (kind 2, always) — the old
-"pair" is day/night. **Confirmed on `F02`** (257 spawns, four phases): see "Claims checked", (a).
+"pair" is day/night. **Confirmed on `F02` and `F38`** (≈1,250 spawns over seven runs, 0 violations):
+see "Claims checked", (a).
 
 ## (b) Spawn (`0x020733e8`, called for the current map each update)
 
-Single player; time in ms (`GameState::GetTrueDeltaTime`, 33 at 30 Hz):
+Single player; time in ms (`GameState::GetTrueDeltaTime`: 33 ms at 30 Hz, **50 ms when an update
+runs long**, both measured in the field runs):
 
+0. **Nothing spawns until the party has stepped once since the map was entered**
+   (**[hypothesis]**: on a fresh `F02` arrival nothing spawned for 40 s of standing, and the first
+   spawn came 2 frames after the first position change, although the slot's timer was already past
+   40 s; the cause is **[unknown]**, `+0x160` below is compatible. The model keeps it as
+   `Roamers::stepped`). No other rule depends on the party standing.
 1. `timer += dt`; stop unless `timer ≥ 1000` (the timer is *kept* when a later check fails; reset to 0
    on a spawn). The map needs a graph, a free object, and not the story flag range of
    `0x02073d54` (not modelled).
@@ -196,19 +206,23 @@ touched, and the list read at `+0xf78` of the battle context is not filled by an
 
 ## Not modelled / open
 
-- **Oracle**: done for `F02` (night, morning, day, evening; "Claims checked"). Not done: the other
-  fields (`F38`, `F44`), chase/dash/startled/defeated roamers (a party of level 91 only ever saw
-  flee and vanish), the surprise roll and the facing threshold, the company, the others in the fight.
+- **Oracle**: done on `F02` (night, morning, day, evening; "Claims checked") and, by the
+  challenger, on `F38` (map 20038) over four phases. Not done: `F44` (its zone 282 holds monsters
+  of level 29–66) and every map met by a party other than level 91, so states 4, 5, 11, 12, the
+  chase and dash speeds and the losing side of the notice decision never occurred; the surprise
+  roll and the facing threshold; the company; the others in the fight.
 - The leader's node (`+0xb8`): the model recomputes the nearest node each update; the game's own
-  value equals it on 228 of 257 spawns, so **the game keeps it differently** (**[unknown]** how: it
-  changes while walking, not at each update). The spawn follows the game's node: 255 of 257 spawns
-  reproduce with it.
-- **A standing party does not spawn**: from the state `f02-enter` (arrival on `F02`, party still, the
-  slot's timer past 5 s) nothing spawned in 240 s; a three-frame tap then gave two spawns in the next
-  two seconds and none in the following eight although two roamers (< 3) were on the map. The model
-  spawns every second while fewer than three roamers are near. Cause **[unknown]** (`func_02073dfc`
-  tests the spawn point against each party member's position or its `+0x160` vector; the
-  `(byte)param_1[0xd] > 4` clause is unmodelled).
+  value equals it on 89–91 % of the spawns (228/257 author's; 179/202, 208/222, 353/388, 91/100,
+  53/56 challenger's), so **the game keeps it differently** (**[unknown]** how: it changes while
+  walking, not at each update). The spawn is reproduced with **the game's node**: on every spawn of
+  both runs (see "Claims checked", (b)).
+- **A standing party spawns** (272 spawns with no input at all over one challenger run, the longest
+  after 67 s), so there is no rule against standing still. What the data shows is **the first step
+  after a map is entered**: on a fresh `F02` arrival nothing spawned for 40 s of standing, and the
+  first spawn came 2 frames after the first position change, although the slot's timer was already
+  past 40 s. Cause **[unknown]** (`func_02073dfc` tests the spawn point against each party member's
+  position or its `+0x160` vector; the `(byte)param_1[0xd] > 4` clause is unmodelled). The model
+  waits for the party's first step (`Roamers::stepped`) and has no other standing rule.
 - Roamer movement after the state is entered is `Character_Update` with the roamer's constants; whether a roamer slows when turning like
   the hero, the wall test of `0x020322c0`, and the alpha steps of a fade are **[hypothesis]**. The `(byte)param_1[0xd] > 4` clause of the spawn,
   the story-flag range of `0x02073d54`, A-button contacts (`+0xbe == 2` objects), multiplayer, solid monsters (`+0x17d & 6`) are not modelled.
@@ -221,15 +235,24 @@ encounters" (`0x02032380 RandBelow` in the battle section).
 
 ## Claims checked
 
-For a challenger who has not read the reasoning. **Subject**: the roaming-monster rules above, on
-`F02` (map 20002, Western Stornway Region), from `demo.sav` (party level 91, so the monsters it
-meets are weak: they flee, vanish or are touched; none chased). **Method**: the original runs in the
-melonDS DS libretro core, keys are pressed frame by frame (no write to its memory); the twelve
-roamer objects of the map slot are read every frame (`melonds-state.md` § "Field states"; reader
-`crates/dq9re/src/roamers.rs`). The log has one numeric line per event: `S` spawn, `T` state
-change, `C` contact (columns in the comments of `tests/encounter_rom.rs`), and ten main RAM
-images. The model is the code in `crates/dq9-core/src/encounter*` (`plan_spawn` is the spawn's
-node choice and point, the function the game's spawn tick and the test both call).
+For a **third** reviewer who has not read the reasoning. **Subject**: the roaming-monster rules
+above, on `F02` (map 20002, Western Stornway Region) and `F38` (map 20038), from `demo.sav` (party
+level 91, so the monsters met are weak: they flee, vanish or are touched; none chased). **Method**:
+the original runs in the melonDS DS libretro core, keys are pressed frame by frame (no write to its
+memory); the twelve roamer objects of the map slot are read every frame (`melonds-state.md` §
+"Field states"; reader `crates/dq9re/src/roamers.rs`). The logs have one numeric line per event: `S`
+spawn, `T` state change, `C` contact (columns in the comments of `tests/encounter_rom.rs`), and —
+in the challenger's runs — `frames.tsv` (the slot's timer each frame, hence the update's `dt`) and
+`near.tsv` (every roamer within 3.0 on x and z, with its state). The model is the code in
+`crates/dq9-core/src/encounter*` (`spawn_candidates` and `plan_spawn` are the spawn's node list and
+point, `touches` the contact test — the functions the game's tick and the tests both read).
+
+**Two independent runs.** The author's: `F02`, `-Seed 4`, random walk (idle 0.15), 60 000 frames
+from clock 45.9 s, four phases: 257 spawns, 1197 state changes, 19 contacts. The challenger's:
+`F02` seeds 17, 5 and 11 (202, 222 and 100 spawns), `F38` seeds 77 and 31 (388 and 52, the second
+abandoned at a game freeze) and two patrols (56 and 22), with its own watcher (same keys, superset
+of the logs). Its report, scripts and logs are in `build/evidence/j4-roaming-challenge/`
+(git-ignored, local) — every verdict below was re-read on those logs while writing this section.
 
 **Reproduce everything** (needs the ROM, `tools/build/melondsds_libretro.dll`, `build/sav/demo.sav`
 and a release `dq9re`; ~3 minutes; the run is deterministic: two runs gave byte-identical logs, and
@@ -248,21 +271,48 @@ Evidence kept under `build/evidence/j4-roaming-oracle/` (sha256, first 12): `w.t
 `roamers-<state>.txt` (e.g. `roamers-c250.txt` `712a169c220a`), `battles.png` `13c77bfd3a23` (the first
 screen of each of the 19 fights), `field-test.log` `020ca8789633` (the tests' output). Run length: 60 000
 frames from the day clock 45.9 s (night), through 180 s (morning), 210 s (day), 390 s (evening) and
-420 s (night again).
+420 s (night again). The challenger's, same base (sha256, first 12): `report.md` (the verdicts),
+`runA-F02-seed17/run/w.tsv` `b77d83ff033b`, `runC-F02-seed5-wait/w.tsv` `d6c52ae20f11`,
+`runF-F02-seed11-ticks/w.tsv` `201f6dbd0084` (and its `near.tsv`/`frames.tsv`), `runB2-F38-seed77/w.tsv`
+`3be6a3f35b06`, `runD-F38-patrol-east/w.tsv` `b0d920ca0bd8`, `runE-F38-patrol-ticks/ticks.tsv`
+`1ed7b0919192`, `runG-F02-stand-push/frames.tsv` `c080b29a277b`, and its analyses `analysis-all.log`
+`0b8d59bebce8`, `analysis-box-metric.log` `0f89b71312ed`.
+
+The tests read `F02`'s map and graph, so the challenger's `F38` runs were read with a copy of the
+test pointed at `F38P00.bin` and map 20038 (not in the repository); only its numbers are cited
+here. The four runs the repository's test reads are the author's and the challenger's A, C and F:
+
+```powershell
+$env:DQ9_FIELD_DIR = '<build/oracle/field-F02/run | …/runA-F02-seed17/run | …/runC-F02-seed5-wait | …/runF-F02-seed11-ticks>'
+cargo test -p dq9-core --test encounter_rom
+```
+All four give 11 passed; this batch's logs are `build/evidence/j4-roaming-fix/test-<run>.log`.
 
 | Claim | Verdict | Evidence |
 |---|---|---|
-| (a) the zone is drawn per spawn from the hour and the node mask | **confirmed** | 257 spawns: phase 0 (night) zones 2 and 3 only (kind 1, kind 2: 140 + 4), phases 1–3 zones 0 and 3 only (kind 0, kind 2: 17 + 0, 64 + 13, 17 + 2), never a kind-0 zone at night or a kind-1 zone by day; whenever a zone met the node's mask it was one of them (`logged_spawns_follow_the_model`, 0 failures); the monster is always in the drawn zone's list and the zone id is the object's `+0x168` |
-| (b) spawn tick, count limit | **confirmed**, one **[unknown]** | consecutive spawns ≥ 990 ms apart (the slot timer is 990 the frame before: the update adds 33 ms), none with the timer under 990; the node is among the model's candidates (free linked nodes + the leader's own) on 255 of 257 and is the most-ahead candidate whenever one is ahead (201 of 255); when none is ahead (54) it is one of the candidates; the point equals the model's (node, or the point brought onto the path) to 2 `fx32` on 255 of 257; never within 3.5 of the leader. 2 of 257 (frames 3172 and 10749) are not reproduced: **[unknown]**, tolerance 2 % in the test. The leader's node is not always the nearest (228/257) and a standing party spawns nothing: see "Not modelled / open" |
-| (c) roamer states | **confirmed** for states 0, 1, 2, 3, 6, 7, 10; **[hypothesis]** for 4, 5, 11, 12 (never seen) | 0→1 at the first update past 1001 ms (252 changes, the reading before is 974–990 ms); 1→2 and 1→3 not before 4001 ms (the reading before is ≥ 3977); 3→1 after 462 ms (every one of 56); 10→6 and 10→7 at the first update past 226 ms (the reading before is 198 on all 24); 6→1 after 1386–1452 ms; state 8 follows a touch (below) |
-| (d) contact | **confirmed** for the reach; **[hypothesis]** for the 126° facing threshold and the surprise roll | 19 contacts, each with the leader inside the model's reach (`touch_radius` + half the leader's, on x and on z) at the frame the roamer entered state 8 (`logged_contacts_are_within_the_models_reach`); the reach is a necessary condition only, a roamer within reach that was **not** touched was not looked for. The openings: of the 19 first battle screens, 6 show a party-first message ("doesn't notice the party's presence", "is too stunned to move") and none a monsters-first one; the other screens had not shown their message yet, so the roll and its chances were not measured |
-| (e) company | **[hypothesis]** | all 19 fights show one monster (`battles.png`); the model's draw for these roamers was not compared |
-| (f) stage | **[hypothesis]** | not checked on `F02` (the screens show the field backdrop) |
+| (a) the zone is drawn per spawn from the hour and the node mask | **confirmed**, two maps, two branches untested | 0 violations over ≈1,250 spawns: author 257 (night → zones 2 and 3, kind 1 and 2; phases 1–3 → zones 0 and 3, kind 0 and 2), A 202, C 222, F 100 (`F02`: night on 81–89 mask-1 nodes all to zone 2, never a kind-0 zone at night nor a kind-1 one by day), B2 388, D 56, E 22 (`F38`: zones 36 kind 2 mask 3 and 37 kind 2 mask 4 — zone 37 only on mask-4 nodes and never zone 36 on one; the zone-37 `(7−4)×1000` wait respected). The monster is always in the drawn zone's list and the zone id is the object's `+0x168`. Not exercised: every spawn had a zone meeting the node's mask, so the "none → any eligible zone" fallback never ran; `F38`'s zones are all kind 2, so the hour rule was only discriminating on `F02`; the zone's monster weights and the draws' distribution were not tested (membership only) |
+| (b) spawn tick, node, point, count limit | node and point **confirmed given the game's node `+0xb8`**; tick **weaker** | The node is among `spawn_candidates` and the point equals the model's (the node, or the point brought onto the path) to 2 `fx32` on **every** spawn when the game's own node is replayed as the draw: 257/257, 202/202, 222/222, 100/100, 388/388, 56/56, 22/22; the most-ahead candidate is taken whenever one is ahead (201/201, 143/143, 143/143, 253/253, 31/31) and no spawn went behind the party while one was ahead; the leader's own node is taken only above 5.0 in **3-D** (11 spawns over the runs have x-z ≤ 5.0 and 3-D > 5.0, none the reverse); 0 spawns within 3.5 of the leader, 0 in another roamer's box, 0 with three roamers in the leader's box. Tick: spawns only at slot-timer updates whose timer reached a second (min reading 990 with `dt` 33 = 1023, none below), but the step is 33 **or 50 ms** and the threshold is only bounded to (990, 1023]; and the model's conditions are **necessary, not sufficient**: on `F38` run E 39 updates allowed a spawn and 17 did not — one episode of 17 ticks (leader at y −0.89 on node 11, its own node the only candidate, two roamers near) where the game did not spawn; the unmodelled clauses are the probable cause. The earlier "2 of 257 [unknown]" and its 2 % tolerance were a flaw of the test's draw 0, not a game behaviour: the game's node reproduces all of them |
+| (c) roamer states | **confirmed** for 0, 1, 2, 3, 6, 7, 10 with each update's own `dt`; **[hypothesis]** for 4, 5, 11, 12 (never seen) | 0→1 only at an update with reading + `dt` ≥ 1001 (author 252 changes, readings 974–990); 1→2/3 only with reading + `dt` ≥ 4001 (author, A, B2, C, D: 0 violations — the literal 3960 ms readings of B2 and C were 50 ms updates, 3960 + 50 = 4010); 3→1 after 462 ms (every one of 56); 10→6/7 at reading 198 (every one); the post-update values are 1007–1023 and 4010–4059, so the thresholds are only bounded to **(990, 1007]** and **(3993, 4010]**: consistent with 1001/4001, **not pinned** to them. "6→1 after 1386–1452 ms" holds **only for the author's run** (17/17): the challenger measured A 18/20, C 29/32, B2 90/113, D 12/17, the others shorter (792, 957, 990 and 0 ms): a flee ends when its 10.0 run is done **or on a wall**, not at a fixed time (the model ends it on the distance; test `a_flee_ends_on_its_run_not_on_a_fixed_time`) |
+| (d) contact | **confirmed**, radial, necessary and sufficient at one update | ≈100 contacts (A 23, C 15, F 12, B2 30, D 40 of 13 distinct after the replays, E a subset): the leader is inside the model's `touches` (the roamer's `touch_reach` plus half the leader's, on x, on z and in distance) at the frame the roamer entered state 8 — 0 outside, with no slack (`logged_contacts_are_within_the_models_reach`). The converse, from `near.tsv`: no roamer of state other than 0, 8 or 9 stays in that reach more than one update (2 frames) without a touch — 0 episodes in D, B2, F; 1 in C, a roamer already in state 9 (the one fought, outside the claim); the touch follows the first in-reach row by exactly 2 frames. The box test (|dx|, |dz| ≤ reach) is **not** sufficient: 7 in-reach untouched episodes of 65 in D, 12/236 in B2, 3/94 in C, 1/41 in F. The author's log has no `near.tsv`, so only the first half runs on it. **[hypothesis]** for the 126° facing threshold and the surprise roll: of the author's 19 first battle screens, 6 show a party-first message ("doesn't notice the party's presence", "is too stunned to move") and none a monsters-first one; the other screens had not shown theirs |
+| (e) company | **[hypothesis]** | all 19 fights of the author's run show one monster (`battles.png`); the challenger's fights likewise; the model's draw for these roamers was not compared |
+| (f) stage | **[hypothesis]** | not checked on `F02` or `F38` (the screens show the field backdrop) |
 | (g) others in the fight | **[unknown]** | no fight had a second monster, so there was nothing to pull in |
+
+**What was not tested.** `F44` (monsters of level 29–66 in its zone 282) and any party weaker than
+level 91: every contact was with a level 6–12 monster, so states 4, 5, 11 and 12, the chase and
+dash speeds and the losing side of the notice decision were never observed. Not tested either: a
+phase change exactly on a spawn tick; the fallback zone choice when no zone meets the node's mask;
+the zone and monster weights and the `rand()` distribution; a party of more than one member and
+multiplayer; the 126° facing threshold; the surprise roll; the company, the stage and the others
+pulled into a fight; the cause of the 17-tick `F38` no-spawn episode and of the first-step effect
+after an arrival (only bracketed: it ends with the first step); the exact threshold constants
+(1001/4001 against anything in (990, 1007] and (3993, 4010]).
 
 What would refute them: (a) a spawn at night from a kind-0 zone (or by day from kind 1) in a run
 of `scripts/melonds-field.ps1`; (b) a spawn on a node that is neither linked to the leader's node
-nor the leader's own, or that is behind the party while a node is ahead; (c) a change out of state 0
-before 968 ms or out of state 1 before 3967 ms; (d) a contact with the leader outside the reach.
-Try different seeds (`-Seed`), and start `F38`/`F44` the same way (the recipe only needs a
-different door).
+nor the leader's own, or that is behind the party while a node is ahead, or a point different from
+the model's when the game's node is replayed as the draw; (c) a change out of state 0 at an update
+with `state_ms + dt < 1001`, or out of state 1 with `state_ms + dt < 4001`, `dt` being the frame's
+own (`frames.tsv`); (d) a contact with the leader outside `touches`, or a roamer of state other
+than 0, 8 or 9 inside that reach and not touched after two frames. Try different seeds (`-Seed`),
+and start `F38`/`F44` the same way (the recipe only needs a different door).
