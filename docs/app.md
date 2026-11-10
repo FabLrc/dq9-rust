@@ -105,7 +105,8 @@ clock, otherwise night; `--clock S`: second of the 420 s day (night 0, morning 1
 evening 390); its phase replaces `--time`, and the last two seconds of a phase blend
 into the next one in an advanced zone (field); `--fog OFFSET,SHIFT,COLOR,D0..D31` replaces the
 fog (comparisons with melonDS);
-`--layout stacked|side|top`: DS screen layout (section "DS screens").
+`--layout stacked|side|top|wide`: DS screen layout (section "DS screens"); `wide` is the
+single 16:9 cinematic presentation.
 
 The cast follows the save's current scenario track when one is loaded:
 progress, flags and quests are restored. Otherwise, it is that of the prologue `1.1.1` by day.
@@ -124,8 +125,8 @@ game's `L`/`R` buttons: they rotate the camera by at most ± 45° around its yaw
 the map, together they reset it. `Tab` switches to free flight, where the movement keys
 move the camera and `Q`/`E` move the target down/up; `Shift` speeds up the camera. `F` restores
 the terrain orbit around the hero (distance 11, relative height 6, target at mid-height), or
-frames the whole map in free flight. `R` changes the screen layout (`stacked`, `side`, `top`),
-`T` next time of day ("Time" list on the Web), `M` mutes/unmutes the music,
+frames the whole map in free flight. `R` changes the screen layout (`stacked`, `side`, `top`,
+`wide`); `T` next time of day ("Time" list on the Web), `M` mutes/unmutes the music,
 `PageUp`/`PageDown` previous/next map, `Enter`/`Space` talk, `Esc` quit on the field
 (cancel while a fight is in play).
 
@@ -796,7 +797,7 @@ tools/wasm-bindgen/bin/wasm-bindgen --target web --no-typescript `
 python -m http.server 8000 -d crates/dq9-app/web     # or any static file server
 ```
 
-Open `http://localhost:8000/` (parameters `map`, `time` (name or 0 to 3), `clock`, `layout` (`stacked`, `side` or `top`), `chapter`, `step`,
+Open `http://localhost:8000/` (parameters `map`, `time` (name or 0 to 3), `clock`, `layout` (`stacked`, `side`, `top` or `wide`), `chapter`, `step`,
 `substep`, `night=1`, `mute=1`, `newgame=1`), then choose the ROM and, optionally, a `.sav` save in the
 page. Both files are read locally in the browser, never sent or hosted;
 an explicit `map` takes precedence over the save's map. The "New game" button (or `?newgame=1`)
@@ -947,7 +948,8 @@ Approximated or absent:
   `F01` none (how the field vegetation is drawn is not established). Before this, such quads kept
   their authored orientation and vanished edge-on or behind. Checked by `--screenshot` only: the
   interactive window runs the same per-frame code but was not driven by hand.
-- **Not rendered**: antialiasing, shadow polygons (mode 3) and wireframe (alpha 0), fog
+- **Not rendered**: antialiasing (the wide presentation's FXAA is a post-process, not the DS
+  engine), shadow polygons (mode 3) and wireframe (alpha 0), fog
   alpha-only mode and `FOG_COLOR` alpha, DS precision
   (6-bit colors, W depth; fog depth is recomputed on 24 bits).
 - **NPCs, limits**: NPCs neither stop nor turn toward the hero while he talks
@@ -965,7 +967,8 @@ Approximated or absent:
 
 ## DS screens
 
-The window shows both DS screens (`crates/dq9-app/src/screens.rs`):
+The window shows the two DS screens (`crates/dq9-app/src/screens.rs`), or a single 16:9 field
+in the `wide` presentation:
 
 - **Top**: the 3D field, with the game's camera and projection (`0x0202df78`, vertical
   half-angle of 15°). The screen is 256×192; only the rectangle size varies with the window.
@@ -977,11 +980,39 @@ The window shows both DS screens (`crates/dq9-app/src/screens.rs`):
   at the top of the screen (`battle/ui.rs`).
 
 Layouts: `stacked` (default, top screen above the bottom one), `side` (side by side),
-`top` (top screen alone). The screens are centered and scaled together to the maximum of the
-available space, without distorting their 4:3 ratio; margins stay black, independently
-of sky, fog and fades. On the Web, the canvas follows the available size below the
-controls and the screen's pixel density. Native: `--layout`, and `R` switches to the next
-layout. Web: the "Screens" select or `?layout=`. The old `--ds-aspect` and `ds=` are removed.
+`top` (top screen alone) and `wide` (one 16:9 field, letterboxed in the window). The first three
+are centered and scaled together to the maximum of the available space, without distorting
+their 4:3 ratio; margins stay black, independently of sky, fog and fades. On the Web, the
+canvas follows the available size below the controls and the screen's pixel density. Native:
+`--layout`, and `R` switches to the next layout. Web: the "Screens" select or `?layout=`. The
+old `--ds-aspect` and `ds=` are removed.
+
+### Wide 16:9 (cinematic presentation)
+
+`--layout wide` (Web: `?layout=wide`) is the graphics tech demo, not a DS reconstruction:
+
+- The field fills a 16:9 rectangle centred in the window (black bars elsewhere); the camera
+  keeps the game's 15° vertical half-angle, so the widescreen field widens the horizontal
+  view instead of cropping it.
+- `Renderer::new_with(..., true)` uploads mipmapped textures and samples them linearly
+  (trilinear), instead of the DS's nearest filtering with one mip level.
+- The field is rendered to an offscreen target and composed by `post.wgsl`: FXAA-lite,
+  screen-space contact shadows from the depth buffer, threshold bloom, filmic tonemapping mixed
+  with the DS colours, cool-shadow/warm-highlight grading, vignette and dithering. Edge marking
+  stays as a single-pixel accent. All of it is WebGL 2 compatible; the shaders are parsed and
+  validated by `crates/dq9-render/tests/shaders.rs` without a GPU.
+- The interface is a 960×540 virtual canvas (`hud.rs`): location, map code and time of day,
+  the leader's HP/MP bars and purse, and the game's message window scaled into a bottom-left
+  glass panel. Battle windows keep their 4:3 shape in the upper and lower left corners.
+- The renderer is rebuilt when `R` or the select enters or leaves `wide`, because texture
+  filtering and the post pass differ; the default layouts are unchanged.
+
+Screenshot of the demo:
+
+```powershell
+cargo run -p dq9-app --release -- --map M01 --layout wide --size 1920x1080 `
+    --eye=-5,20,40 --target=-20,0,5 --screenshot build/scratch/app/wide.png
+```
 
 ## Verification
 

@@ -9,6 +9,7 @@ mod audio;
 mod battle;
 mod event;
 mod gpu;
+mod hud;
 mod lighting;
 mod load;
 #[cfg(not(target_arch = "wasm32"))]

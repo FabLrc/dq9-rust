@@ -1,4 +1,10 @@
-// 2D overlay: textured, tinted quads in DS screen pixels (256x192) from one atlas.
+// 2D overlay: textured, tinted quads in screen pixels from one atlas. The canvas size is a
+// uniform so the same atlas can address a 256x192 DS screen or a 960x540 HUD.
+
+struct Screen {
+    // x, y: canvas size; z, w: unused padding.
+    size: vec4<f32>,
+}
 
 struct Vertex {
     @location(0) pos: vec2<f32>,
@@ -14,12 +20,18 @@ struct Varying {
 
 @group(0) @binding(0) var atlas: texture_2d<f32>;
 @group(0) @binding(1) var atlas_sampler: sampler;
+@group(0) @binding(2) var<uniform> screen: Screen;
 
 @vertex
 fn vs_main(v: Vertex) -> Varying {
     var out: Varying;
-    // 256x192 screen pixels to clip space, y down.
-    out.clip = vec4<f32>(v.pos.x / 128.0 - 1.0, 1.0 - v.pos.y / 96.0, 0.0, 1.0);
+    // Canvas pixels to clip space, y down.
+    out.clip = vec4<f32>(
+        v.pos.x / screen.size.x * 2.0 - 1.0,
+        1.0 - v.pos.y / screen.size.y * 2.0,
+        0.0,
+        1.0,
+    );
     out.uv = v.uv;
     out.color = v.color;
     return out;

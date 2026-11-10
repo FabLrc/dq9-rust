@@ -37,6 +37,11 @@
         Field menus and shops are still missing; effects and battle motions are incomplete.
         Recent browser with WebGPU or WebGL 2 required; computer and keyboard recommended.
         No ROM is provided.</p>
+      <p><strong>Graphics tech demo:</strong> pick "wide 16:9" (or open
+        <code>?layout=wide</code>) for a single widescreen field with the cinematic renderer:
+        mipmapped textures, bloom, screen-space contact shadows, filmic tonemapping, colour
+        grading, vignette and a 16:9 interface. "stacked", "side" and "top" keep the faithful
+        DS presentation.</p>
     </details>
     <label>ROM (.nds): <input type="file" id="rom" accept=".nds" disabled></label>
     <label>Save (.sav, optional): <input type="file" id="save" accept=".sav" disabled></label>
@@ -46,7 +51,7 @@
     </select></label>
     <label>Screens: <select id="layout" disabled>
       <option value="stacked">stacked</option><option value="side">side by side</option>
-      <option value="top">top only</option>
+      <option value="top">top only</option><option value="wide">wide 16:9</option>
     </select></label>
     <button id="newgame" type="button" disabled>New game</button>
     <span id="status" role="status" aria-live="polite" data-kind="info">loading the engine…</span>
