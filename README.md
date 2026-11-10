@@ -123,7 +123,10 @@ What works:
 - ROM-backed battle attack/damage/death/flight motions and equipped-weapon motion sets,
   with action windows waiting for the presentation; native GPU regression and an actual
   browser battle check cover lunges, returns and hiding defeated/fled models;
-- carried-item commands (ROM tests and offscreen UI checked; interactive item use not certified);
+- the field menu (`I`): items with held-slot swaps and field use, equipment with a live hero
+  rebuild, attributes, healing spells; and the inn, shop and church screens opened by a talk
+  tag, with paid services, resurrection and divination driven in the window and on the Web
+  canvas (one copy per trade, no copy ever lost to a full stack);
 - visible animated roaming monsters and contact-triggered battles, with the field restored
   afterwards; native F01 and Hexagon smoke checks (`docs/app.md`, Field encounters);
 - trees and scenery that face the camera.
@@ -132,8 +135,9 @@ Still missing:
 
 - headless runs still count scripted battles as won unless `--fight` is given, and roaming
   is disabled there to preserve the parity traces;
-- the field menu, shops, inn and church screens (their rules exist in `dq9-core`), full battle
-  action-script camera/effects and companions on the battle scene;
+- the field's chests, pots, barrels and "examine"; vocation restrictions on equipment; the
+  church's coffin line and Benediction's unequipping; full battle action-script camera/effects
+  and companions on the battle scene;
 - end-to-end browser certification (standalone battle 26 has been played to victory, but not
   the continuous route) and comparison with the original over the whole route
   (see [`docs/status.md`](docs/status.md)).

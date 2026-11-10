@@ -456,9 +456,12 @@ Progress:
       victory and D01M02 models exercised. Exact original flight resumption/recent-list writer
       remains [hypothesis]; broader oracle and continuous browser checks remain.
 - [x] Trees and scenery face the camera (`j4-billboards`, `re/g3d.md` § Billboards).
-- [ ] Facilities: **data and rules done** (`j4-facilities-core`: inn, church, shop, treasure;
-      `re/facility.md`). Remaining: their screens, chests/pots/barrels on the field, field menu,
-      "examine".
+- [x] Facilities: data and rules (`j4-facilities-core`: inn, church, shop, treasure;
+      `re/facility.md`); the field menu (items, equipment, attributes, spells) and the inn,
+      shop and church screens opened by a talk tag (`j4-field-services`), with a bounded
+      hero rebuild on equipment and paid/refused/revival transitions driven in real windows
+      and the Web canvas. Remaining in the field: chests/pots/barrels, "examine", vocation
+      restrictions, the church's coffin line and Benediction's unequipping.
 - [ ] Chapter 2 route 1.4.1 → 2750 in a real test, Hexagoon won and lost; battle 26 played.
 - [ ] Browser: continuous session from a new game to 2750.
 

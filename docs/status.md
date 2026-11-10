@@ -23,6 +23,7 @@ Workers: Orca/OMP `opencode-go/deepseek-v4.1-flash`; route → `anthropic/claude
 | `j4-battle-motions` / `de583e0` | ROM motions/scripts, weapon set, hit reactions, death/flight, summon capture, presentation barriers | 5/5, 80.4 s, app 102/102; parity 2/2 |
 | `j4-battle-gpu-sync` / `4327fd8` | Live lunge/hide matrices reach GPU; native image regression and real Web victory without ghost models | 5/5, 109.4 s, app 103/103 |
 | `j4-full-heal` / `5723a5d` | Original max-HP override after ordinary draws; real `Battle::round` HP 37 → 321, MP 40 → 16; Omniheal MP128 still refused (`re/battle.md`) | 5/5, 110.2 s, core battle-ROM 10/10 |
+| `j4-field-services` / `660d682` | Field menu (items/equipment/attributes/spells), inn/shop/church screens, bounded hero rebuild, copied-item and group-heal fixes; one copy per trade, no copy lost to a 99 stack | 5/5, 95.6 s, app 131/131 |
 
 Native F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold) → same field, no ghost;
 D01M02 models visible. Evidence: `j4-roaming-play/field-restored-after-win.png` (`61a585913e52`),
@@ -33,6 +34,16 @@ Kernel: 306 BattleEmulator vectors (Woosh critical differs); chapter 2 special a
 code-read rules and 20-seed tests, not an independent battle oracle (`re/battle.md`).
 Roaming F02/F38 oracle/challenge covers zone, node/point and contact. First-step waiting,
 original surprise/company/stage, F44, states 4/5/11/12 and exact post-flight state remain open.
+
+Field services (`j4-field-services`, native windows on the European ROM and the Web canvas):
+paid shop (gold 100 → 92, one herb), inn (the living healed to 40/40 and 9/9, the dead left at
+0/30, night clock 0 → 210), church resurrection (0 → 30 HP for 60 gold), Divination with its
+line, Multiheal over `[0, 1]` with MP charged once, Fullheal 20 → 80 for 24 MP and a dead
+actor's visible refusal; the bounded hero rebuild is asserted over 20 alternating outfits with
+stable model/instance/texture counts. Two independent read-only reviews cleared the corrected
+state (their reports are local). Evidence: `build/evidence/j4-field-services/` (manifest at
+`0ef7a82`) and the review manifests. Direct-map and single-service checks; continuous play is
+still not certified.
 
 ## Browser and publication
 
@@ -48,12 +59,13 @@ Direct-map checks do not certify continuous new-game play to 2750.
 
 ## Active work and next steps
 
-Two implementation batches retain separate ownership; neither is integrated or certified yet.
-`j4-field-services`: `93957c6` avoids map reload; reviewed full-stack item loss, group-heal and
-inn/church state bugs plus unbounded hero resources are being corrected. Paid native proof exists.
+One implementation batch retains its own ownership; nothing else is unmerged.
 `j4-chapter2-route`: two Flash failures; Sonnet retry `ctx_273f59bcad5d` owns the same task.
-Latest run stops at 1.2.1 on 1107; M01M10 approach also remains open. Hexagoon/2750 not reached.
+Latest run stops at 1.2.1 on 1107; the M01M10 warp approach also remains open. Hexagoon and
+2750 are not reached, so v0.2 is not certified.
+`j4-field-services` progress is now integrated (table above); its field limits are recorded in
+`docs/app.md` § "Field menu and facility screens" and `re/facility.md`.
 Headless parity keeps stand-ins unless `--fight` is given and disables roaming.
 Remaining presentation: full camera/effects, original alpha fades, companions; timing limits
 are labelled [hypothesis] in `re/battle-data.md`. Abilities/worn-item commands remain open.
-Completed graphics/motion and coordinator-fix worktrees/local branches removed; graphics empty root Windows-locked. Evidence stays local, never committed.
+Completed graphics/motion/field-services and coordinator-fix worktrees/local branches removed; the graphics empty root stays Windows-locked. Evidence stays local, never committed.
