@@ -3,7 +3,7 @@
 Rewritten by the coordinator at each integration; do not add a log here.
 Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 10, 2026 (`main` after wave v2-3; `j4-roaming-fix` active)
+## Status as of November 10, 2026 (`main` after wave v2-3 and `j4-roaming-fix`; orchestration paused, no active worker)
 
 - **v0.1 functional natively**: `--new-game` plays the opening, the Observatory prologue, the
   physical return to Angel Falls and the village tasks 1.2 to the return 1.4.1, covered by
@@ -41,8 +41,11 @@ Challenger on the roaming rules (Sonnet, `build/evidence/j4-roaming-challenge/re
 spawns nothing" **refuted** (272 spawns without input; only a fresh arrival waits for the first
 step); the spawn tick **weaker** than claimed (update step 33 or 50 ms; conditions necessary, not
 sufficient); "6→1 after 1386–1452 ms" **false** in general; two repo tests were brittle
-(`plan_spawn` draw 0, a 34 ms step, a box contact). Fix in progress: `j4-roaming-fix`. Not tested
-by anyone: F44, states 4/5/11/12, the 126° threshold, the surprise roll, the company, the stage.
+(`plan_spawn` draw 0, a 34 ms step, a box contact). Corrected by `j4-roaming-fix` (`05fc30f`):
+tests and `re/encounter.md` now replay the game's node, use each update's `dt` and a radial reach,
+the model waits for the first step only, and the suite passes (11/11) on the author's run and the
+challenger's three. Not tested by anyone: F44, states 4/5/11/12, the 126° threshold, the surprise
+roll, the company, the stage.
 
 What a player sees today: the chapter 2 scenes, battles fought for real in the window (scripted
 ones and, through `start_encounter`, the entry the roaming monsters will call), trees that face
@@ -50,13 +53,12 @@ the camera. No roaming monster is drawn, no field menu, inn, shop or church scre
 
 ## Active batch
 
-`j4-roaming-fix` (Flash): tests and `re/encounter.md` corrected as above, on the author's run and the
-challenger's three runs.
+None. No worker is running, no worktree or `FabLrc/*` branch is left.
 
 ## Blockers and next steps (the plan, `roadmap.md` § J4)
 
 1. **Roaming monsters on screen**: draw them with their field models, call `start_encounter` on
-   contact, the stage from the ground; after `j4-roaming-fix`. The surprise roll, company, stage and
+   contact, the stage from the ground. The surprise roll, company, stage and
    "others in the fight" stay **[hypothesis]/[unknown]** (a level-91 party never meets a fight to
    measure them: a field run with a low-level party is needed).
 2. **Facilities and field menu**: inn, church, shop screens on top of `dq9_core::facility`;

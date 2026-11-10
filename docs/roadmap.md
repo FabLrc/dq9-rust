@@ -446,8 +446,8 @@ Progress:
       action-script shots, swirl, encounter transition, companions.
 - [ ] Roaming monsters: rules in `dq9_core::encounter` (`j4-roaming`), checked against melonDS F02
       states (`j4-roaming-oracle`) and by a challenger on F02/F38: zone, node/point, contact
-      confirmed; "standing party" refuted, tick weaker, flee duration wrong (`j4-roaming-fix`
-      active). Untested: F44, states 4/5/11/12, 126° threshold, surprise roll, company, stage.
+      confirmed; "standing party" refuted, tick weaker, flee duration wrong: corrected
+      (`j4-roaming-fix`). Untested: F44, states 4/5/11/12, 126° threshold, surprise roll, company, stage.
       Not drawn yet.
 - [x] Trees and scenery face the camera (`j4-billboards`, `re/g3d.md` § Billboards).
 - [ ] Facilities: **data and rules done** (`j4-facilities-core`: inn, church, shop, treasure;
