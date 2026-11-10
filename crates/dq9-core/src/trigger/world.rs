@@ -145,8 +145,10 @@ pub trait World {
     fn gold(&self) -> u32;
     /// Party members in order (ids at save `+0x397c`, count at `+0x3980`); the first leads.
     fn party(&self) -> &[Member];
-    /// Character `id` of the character table, for ids 0 to 3 (one per player of a session
-    /// **[hypothesis]**; 0 = the hero) and `0xce` (condition 0x56).
+    /// Character `id` of the character table (`Chara_Get`, `0x0200fd80`: 233 slots,
+    /// `GameState + 8 + id × 4`, 0 = the hero), for ids 0 to 3 (one per player of a session
+    /// **[hypothesis]**; 0 = the hero) and [`GUEST_CHARACTER`] (`0xce`), which condition
+    /// 0x56 only tests for non-null.
     fn character(&self, id: usize) -> Option<Member>;
     /// Save `+0x3ac`: id of the local player's character (`FUN_0200fddc`).
     fn local_character(&self) -> usize;
@@ -165,6 +167,15 @@ pub trait World {
 
 /// Number of scenario tracks (`0x1c`-byte blocks at quest manager `+0`).
 pub const TRACKS: usize = 5;
+
+/// Character-table slot of the field guest (`Chara_Get(0xce)`): the object `Guest_LoadTask`
+/// (`ov_017::021c1e6c`) registers after trigger action `0xcd`, removed by `0xcc`
+/// (`Guest_Dismiss`, `ov_017::02191484`) and cleared with `0xc9..0xce` by `Cast_ClearNpcs`
+/// (`ov_017::021a316c`, the first step of `Cast_Rebuild`, which queues `Guest_Start` again
+/// at `ov_017::021a2fa0+444`). Condition 0x56 tests only whether the slot is non-null
+/// (`0x020617b4`), so what this table holds for the guest is an existence marker, not a
+/// member: the object itself is a `0x2d4`-byte guest task, not a character model.
+pub const GUEST_CHARACTER: usize = 0xce;
 
 /// One scenario track: progress and its scratch flags. The track in use (`+0x332`) is
 /// chosen by the room when a map is entered (`FUN_02064ba8`, [`track_of_room`]), and its
@@ -188,6 +199,27 @@ pub fn track_of_room(room: i32) -> usize {
         200..=219 | 7802..=7809 => 3,
         2100..=2109 | 8301..=8303 => 4,
         _ => 0,
+    }
+}
+
+impl State {
+    /// Trigger action `0xcd` (`Guest_Start`, `ov_017::021913d0`, record `> 0`): the guest
+    /// task takes slot `0xce`, which condition 0x56 reads as "a guest is travelling with
+    /// the party". The marker keeps the port's character table shaped like the game's; no
+    /// member is invented for it (the object is not a character).
+    pub fn attach_guest(&mut self) {
+        self.characters.insert(GUEST_CHARACTER, Member::default());
+    }
+
+    /// Trigger action `0xcc` (`Guest_Dismiss`, `ov_017::02191484`): the guest leaves and its
+    /// slot is cleared.
+    pub fn dismiss_guest(&mut self) {
+        self.characters.remove(&GUEST_CHARACTER);
+    }
+
+    /// Whether a guest holds slot `0xce` (condition 0x56's fallback).
+    pub fn guest_present(&self) -> bool {
+        self.characters.contains_key(&GUEST_CHARACTER)
     }
 }
 

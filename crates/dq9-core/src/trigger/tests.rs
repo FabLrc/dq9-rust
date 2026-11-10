@@ -195,6 +195,52 @@ fn zone_condition_needs_the_npc() {
     assert_eq!(eval(&op(1), &s, &mut mask), Some(true));
 }
 
+/// Condition 0x56 falls back to "character `0xce` exists" when no party member carries a
+/// tag, and that slot is the guest's (`GUEST_CHARACTER`): the actions that attach and
+/// dismiss the guest decide it. `pro1.ml1` has every party tag at zero, so this fallback is
+/// the branch that matters in play.
+#[test]
+fn the_guest_slot_decides_condition_0x56() {
+    let op = |arg| Op {
+        code: 0x56,
+        arg,
+        operands: vec![],
+    };
+    let mut s = State::default();
+    let mut mask = 0;
+    // No tagged member and no guest: arg 0 is true, arg 1 false.
+    assert_eq!(eval(&op(0), &s, &mut mask), Some(true));
+    assert_eq!(eval(&op(1), &s, &mut mask), Some(false));
+    // Action 0xcd with a record number attaches the guest.
+    let attach = Op {
+        code: 0xcd,
+        arg: 1,
+        operands: vec![],
+    };
+    assert_eq!(run_action(&attach, &mut s), Flow::Next);
+    assert!(s.guest_present());
+    assert_eq!(eval(&op(0), &s, &mut mask), Some(false));
+    assert_eq!(eval(&op(1), &s, &mut mask), Some(true));
+    // Argument 0 of 0xcd attaches nobody.
+    let mut other = State::default();
+    let none = Op {
+        code: 0xcd,
+        arg: 0,
+        operands: vec![],
+    };
+    run_action(&none, &mut other);
+    assert!(!other.guest_present());
+    // Action 0xcc dismisses it.
+    let dismiss = Op {
+        code: 0xcc,
+        arg: 1,
+        operands: vec![],
+    };
+    assert_eq!(run_action(&dismiss, &mut s), Flow::Next);
+    assert!(!s.guest_present());
+    assert_eq!(eval(&op(0), &s, &mut mask), Some(true));
+}
+
 fn one(words: &[u32]) -> Vec<u8> {
     let mut record = vec![1, 1, 1, 9, 9, 0, word(6, 3)];
     record.extend_from_slice(words);

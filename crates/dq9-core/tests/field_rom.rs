@@ -131,6 +131,64 @@ fn every_map_builds_its_field() {
     assert!(with_file > 400, "{with_file}");
 }
 
+/// The story gate at M01 2.2, on the real trigger file: the end of event 2210 attaches the
+/// guest (action `0xcd` → `Guest_Start`), and only then does the mayor's line carry the
+/// context `0xC0` whose end starts event 2230. Without the guest, condition 0x56 answers
+/// "true", the line is `0xC1`, event 1 matches nothing and 2230 never starts — the exact
+/// place a continuous run used to stall (`docs/re/trigger.md`, "The tag of `+0x56b`").
+#[test]
+fn the_guest_of_2210_opens_the_mayors_scene() {
+    use dq9_core::trigger::Request;
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let file = field::trigger_path("M01M05")
+        .and_then(|path| map::rom_file(&rom, &path))
+        .map(<[u8]>::to_vec);
+    assert!(file.is_some(), "M01 has a trigger file");
+    let story = dq9_formats::cast::Story {
+        chapter: 2,
+        step: 2,
+        substep: 1,
+        ..Default::default()
+    };
+    let context = |trigger: field::TalkTrigger| -> Option<u16> {
+        match trigger {
+            field::TalkTrigger::Fired(events) => events.iter().find_map(|event| match event {
+                Event::Request(Request::Talk { npc: 16, context }) => Some(*context),
+                _ => None,
+            }),
+            other => panic!("the talk trigger did not fire: {other:?}"),
+        }
+    };
+    let starts_2230 = |events: Vec<Event>| {
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Request(Request::Event(2230))))
+    };
+
+    // Without the guest: the 0x56(0) rule speaks the 0xC1 line and 2230 is not reached.
+    let mut alone = field::initial_state(&story);
+    let mut house = Field::new(1105, &Regions::default(), file.clone()).unwrap();
+    let line = context(house.talk(16, 0, &mut alone)).expect("a talk rule fired");
+    assert_eq!(line, 0xC1, "no guest, the fallback line");
+    assert!(!starts_2230(house.talk_ended(16, line, None, &mut alone)));
+
+    // The end of 2210 attaches the guest in room 1100 of the same area.
+    let mut travelled = field::initial_state(&story);
+    let mut town = Field::new(1100, &Regions::default(), file.clone()).unwrap();
+    town.event_ended(2210, &mut travelled);
+    assert!(
+        travelled.guest_present(),
+        "the 2210 rule runs 0xcd(1) and attaches the guest"
+    );
+    let line = context(house.talk(16, 0, &mut travelled)).expect("a talk rule fired");
+    assert_eq!(line, 0xC0, "the guest makes condition 0x56 answer true");
+    assert!(
+        starts_2230(house.talk_ended(16, line, None, &mut travelled)),
+        "the 0xC0 line's end starts event 2230"
+    );
+}
+
 struct World<'r> {
     rom: &'r Rom<'r>,
     collision: CollisionWorld,

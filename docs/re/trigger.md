@@ -268,22 +268,30 @@ save (the first is the leader).
 So the first half of 0x56 ("the first of characters 0 to 3 whose low tag nibble is
 non-zero has non-zero HP") never applies to the party, and the condition resolves
 through its fallback **"character `0xce` exists"**. `Chara_Get` (`0x0200fd80`) returns
-`*(manager + 8 + index × 4)` for `0 ≤ index < 0xe9` (233 entries, 0 = the hero), so
-`0xce` = 206 is one of those objects; what it holds is **[unknown]** and is being
-read from the ROM (the port's `TriggerWorld::character` only knows the party, so the
-fallback is always false today).
+`*(GameState + 8 + index × 4)` for `0 ≤ index < 0xe9` (233 entries, 0 = the hero), and
+slot `0xce` (206) is the **field guest**: `Guest_LoadTask` (`ov_017::021c1e6c`)
+allocates the `0x2d4`-byte object, copies the `attnpc` record into it and registers it
+through the setter `0x0200fd48`; trigger action `0xcd` starts it (`Guest_Start`,
+`ov_017::021913d0`), `0xcc` removes it (`Guest_Dismiss`, `ov_017::02191484`) and
+`Cast_ClearNpcs` (`ov_017::021a316c`) clears `0xc9..0xce` while `Cast_Rebuild` re-queues
+the guest. The condition only tests the pointer for null (`0x020617b4`), so the port
+keeps an existence marker at `dq9_core::trigger::GUEST_CHARACTER` and no member is
+invented for it. Measured: the slot is null in all 22 melonDS states of
+everyday play (all chapter 1), and only the guest loader writes index `0xce` of the 45
+setter call sites found.
 
 Why it matters: the M01 rules at room 1105, story 2.2, gate the story on it. Talking
 to NPC 16 tries, in file order, `0x6(16) 0x56(0)` → `talk(16, 0xC10000)`, then
-`0x6(16) 0x3(5)` (track set-1 flag 5) → `talk(16, 0xC00000)`; event 1 starts 2230
-when parameter word 5 is `0xC0` (`0xb(192)`). A port that answers 0x56 "false" says
-the `0xC1` line, so event 1 never matches and 2230 never starts — the run stalls at
-2.2.3 with no other symptom. That was the observed failure, and it is **not** fixed by
-giving the hero a non-zero tag: the original's party tag is 0, so such a change would
-satisfy the condition through a state the game never has.
+`0x6(16) 0x3(5)` (track set-0 flag 5 clear) → `talk(16, 0xC00000)`; event 1 starts 2230
+when parameter word 5 is `0xC0` (`0xb(192)`). With the guest attached by the end of
+event 2210 (`room 1100 2.2 event 11: … 0xcd(1) 0x8d(1)`) rule 1 is skipped, the `0xC0`
+line is said and 2230 starts; with the slot empty rule 1 speaks the `0xC1` line and event
+1 matches nothing. The continuous run stalled exactly there between 2.2.1 and 2.2.3, and
+a `tag: 1` on the hero would have hidden the gap rather than filled it.
 
 Local evidence: `build/evidence/j4-route-character-table/tag-and-0xce.txt` (peeks,
-record bytes and the rule dump).
+record bytes, rule dump) and `build/evidence/j4-chara-0ce/report.md` (Ghidra
+decompilation of `Chara_Get`, the setter/clearer and the three guest functions).
 
 ### The "hero word": hero's HP
 
@@ -361,6 +369,8 @@ wireless sync, HP) are ignored.
 | 0xbe / 0xbf | random log values; **stops** the list if the quest is not there | 0 |
 | 0xc5 | save `+0x5cbc` = `arg` **[meaning unknown]** | 178 |
 | 0xcb | revives members at 0 HP: max HP (`arg` = 0), half (1) or 1 | 2 |
+| 0xcc | the guest leaves: `Guest_Dismiss` (`ov_017::02191484`) clears character-table slot `0xce` | 6 |
+| 0xcd | a guest joins for `arg` above 0 (`Guest_Start`, `ov_017::021913d0`): the load task registers slot `0xce` once its two ROM loads are done; `Cast_Rebuild` re-queues it after `Cast_ClearNpcs` cleared the slot (`ov_017::021a2fa0+444`) | 8 |
 | 0xce | flag 0x79a | 1 |
 | 0xd3 | sets bit `arg` of `+0x238c` (condition 0x5d) | 0 |
 | 0xd8 | host: `+0x27b4` = `arg` (condition 0x5f) | 13 |
@@ -371,7 +381,7 @@ wireless sync, HP) are ignored.
 | 0x99 | sets bit 0x100 of the map object (type, number, angle) then removes it | 13 |
 
 † deferred. The other codes present in the data (0xa1, 0xa4, 0xa6, 0xa7, 0xa9,
-0xb2, 0xb4, 0xb9, 0xbd, 0xc7, 0xcc, 0xcd, 0xcf, 0xd0, 0xd4, 0xd5, 0xd7, 0xda–0xdd, 0xe3,
+0xb2, 0xb4, 0xb9, 0xbd, 0xc7, 0xcf, 0xd0, 0xd4, 0xd5, 0xd7, 0xda–0xdd, 0xe3,
 0xe5, 0xe7, 0xe9) touch windows, sound, wireless sessions, equipment or
 unidentified structures; they do not change the flow of the list, except 0xdb (returns
 the result of an item operation, not modelled). Absent from the data, 0xc6 and

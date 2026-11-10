@@ -310,6 +310,16 @@ pub fn run_action<'a>(op: &Op<'a>, state: &mut State) -> Flow<'a> {
         0xca => {
             state.flags.insert(arg + 0x1198);
         }
+        // 0xcc / 0xcd: the guest of the party. `Guest_Dismiss` (`ov_017::02191484`) clears
+        // character slot 0xce; `Guest_Start` (`ov_017::021913d0`, only for a record number
+        // above 0) queues the load task that registers it, which `Cast_Rebuild` re-queues
+        // after `Cast_ClearNpcs` has cleared the slot. Condition 0x56 reads that slot.
+        0xcc => state.dismiss_guest(),
+        0xcd => {
+            if arg > 0 {
+                state.attach_guest();
+            }
+        }
         0xce => {
             state.flags.insert(0x79a);
         }
