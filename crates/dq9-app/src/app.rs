@@ -1588,6 +1588,7 @@ impl App {
 
     /// The last battle a headless run built and settled at once (window and Web runs do not
     /// set it: they show the scene).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn last_battle(&self) -> Option<ShownBattle> {
         self.last_battle
     }

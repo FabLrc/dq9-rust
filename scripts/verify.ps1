@@ -33,7 +33,10 @@ $AllSteps = @(
     @{ Name = 'fmt'; Args = @('fmt', '--all', '--check') },
     @{ Name = 'clippy'; Args = @('clippy', '--workspace', '--all-targets', '--', '-D', 'warnings') },
     @{ Name = 'test'; Args = @('test', '--workspace') },
-    @{ Name = 'wasm'; Args = @(
+    # CI sets RUSTFLAGS=-D warnings for every step; locally only this step needs it, because
+    # a wasm-only dead_code warning (code used by the native entry points) passed locally and
+    # failed CI on 2bec2e2.
+    @{ Name = 'wasm'; Env = @{ RUSTFLAGS = '-D warnings' }; Args = @(
         'build',
         '-p', 'nds-rom', '-p', 'dq9-formats', '-p', 'dq9-core', '-p', 'dq9-render',
         '-p', 'dq9-audio', '-p', 'dq9-app',
@@ -103,7 +106,9 @@ try {
         Write-Host "==> $($Step.Name): cargo $($Step.Args -join ' ')"
         $StepStarted = Get-Date
         $CargoArgs = $Step.Args
-        & cargo @CargoArgs
+        $SavedFlags = $env:RUSTFLAGS
+        if ($Step.Env -and $Step.Env.RUSTFLAGS) { $env:RUSTFLAGS = $Step.Env.RUSTFLAGS }
+        try { & cargo @CargoArgs } finally { $env:RUSTFLAGS = $SavedFlags }
         $Code = $LASTEXITCODE
         $Elapsed = ((Get-Date) - $StepStarted).TotalSeconds
         $Results += [pscustomobject]@{
