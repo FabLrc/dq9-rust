@@ -222,21 +222,21 @@ fn cancel_backs_out_of_the_menus_one_level_at_a_time() {
         Some((4, 0, false)),
         "nothing before"
     );
-    // Fight: Attack, Spells, Defend, Items; the hero knows no spell at level 1 and the bag is
-    // empty, Defend is allowed.
+    // Fight: Attack, Spells, Defend, Abilities, Items; the hero knows no spell or ability at
+    // level 1 and the bag is empty, Defend is allowed.
     assert_eq!(
         press(&mut fight, &mut world, confirm()),
-        Some((4, 0, false))
+        Some((5, 0, false))
     );
-    assert_eq!(press(&mut fight, &mut world, down), Some((4, 1, false)));
+    assert_eq!(press(&mut fight, &mut world, down), Some((5, 1, false)));
     let menu = fight.view().menu.unwrap();
     assert!(
-        !menu.rows[1].1 && menu.rows[2].1 && !menu.rows[3].1,
-        "spells and Items grey, Defend allowed"
+        !menu.rows[1].1 && menu.rows[2].1 && !menu.rows[3].1 && !menu.rows[4].1,
+        "spells and Items grey, Defend allowed, no ability known"
     );
     assert_eq!(
         press(&mut fight, &mut world, confirm()),
-        Some((4, 1, false)),
+        Some((5, 1, false)),
         "a grey row stays"
     );
     // Attack opens the target list: the two standing slimes, with the scene's marker.
@@ -252,7 +252,7 @@ fn cancel_backs_out_of_the_menus_one_level_at_a_time() {
     assert_eq!(press(&mut fight, &mut world, down), Some((2, 1, true)));
     assert_eq!(
         press(&mut fight, &mut world, cancel),
-        Some((4, 0, false)),
+        Some((5, 0, false)),
         "back to Fight"
     );
     assert_eq!(
@@ -298,6 +298,100 @@ fn defend_says_so_and_the_round_goes_on() {
     assert!(!blows.is_empty());
 }
 
+/// A learned skill panel is offered in the Abilities menu with its action and MP cost; an
+/// action the engine refuses stays greyed and is never sent, and the one it models resolves
+/// like any action, spends its MP and deals its damage.
+#[test]
+fn a_learned_ability_is_cast_and_an_unmodelled_one_stays_greyed() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    let mut party = level_one_party(&data);
+    // Panel 0 is Dragon Slash (action 63, damage handler 1: refused); panel 8 is Gigaslash
+    // (action 67, 15 MP, damage handler 0, reach 4).
+    party.members[0].skill_panels[0] = 1 << 0;
+    party.members[0].skill_panels[1] = 1 << 0;
+    party.members[0].mp = 15;
+    party.members[0].max_mp = 15;
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 31);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    for _ in 0..3 {
+        fight.step(down, &mut world);
+    }
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(menu.cursor, 3);
+    assert!(menu.rows[3].1, "Abilities is allowed with a learned panel");
+    fight.step(confirm(), &mut world);
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(
+        menu.rows.len(),
+        2,
+        "one row per learned panel that names an action"
+    );
+    assert_eq!(String::from_utf8_lossy(&menu.rows[0].0), "Dragon Slash  0");
+    assert!(!menu.rows[0].1, "the kernel does not model action 63");
+    assert_eq!(String::from_utf8_lossy(&menu.rows[1].0), "Gigaslash  15");
+    assert!(menu.rows[1].1, "Gigaslash is modelled and paid for");
+    // Confirming the refused row changes nothing.
+    fight.step(confirm(), &mut world);
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(menu.cursor, 0, "the cursor stays on the refused row");
+    assert!(!menu.targets);
+    fight.step(down, &mut world);
+    fight.step(confirm(), &mut world);
+    // Reach 4 asks for a target, then the round resolves.
+    assert!(fight.view().menu.unwrap().targets);
+    fight.step(confirm(), &mut world);
+    assert_eq!(fight.battle().party()[0].fighter.mp, 0, "15 MP spent");
+    assert_eq!(fight.battle().monsters()[0].fighter.hp, 0, "the slime fell");
+    press_until(&mut fight, &mut world, |_| false);
+    assert!(
+        fight.log().iter().any(|l| l == "Hero uses Gigaslash."),
+        "{:?}",
+        fight.log()
+    );
+}
+
+/// An ability the member cannot pay for stays greyed: confirming it neither takes the command
+/// nor spends anything.
+#[test]
+fn an_ability_the_member_cannot_pay_for_stays_greyed() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    let mut party = level_one_party(&data);
+    // Gigaslash (panel 8) costs 15 MP; the level-1 Minstrel has 6.
+    party.members[0].skill_panels[1] = 1 << 0;
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 32);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    for _ in 0..3 {
+        fight.step(down, &mut world);
+    }
+    fight.step(confirm(), &mut world);
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(menu.rows.len(), 1);
+    assert!(!menu.rows[0].1, "15 MP against the member's 6");
+    let mp = fight.battle().party()[0].fighter.mp;
+    fight.step(confirm(), &mut world);
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(menu.cursor, 0, "the cursor stays on the refused row");
+    assert!(!menu.targets);
+    assert_eq!(fight.battle().party()[0].fighter.mp, mp);
+    assert!(
+        fight.log().iter().all(|l| !l.contains("Gigaslash")),
+        "{:?}",
+        fight.log()
+    );
+}
+
 /// A held item of the acting member: the medicinal herb in slot 0 is offered, heals a wounded
 /// member and leaves that held slot; the bag holds the same item and is neither read nor
 /// changed.
@@ -316,11 +410,11 @@ fn a_held_medicinal_herb_is_used_and_leaves_its_slot() {
         down: true,
         ..Pad::default()
     };
-    for _ in 0..3 {
+    for _ in 0..4 {
         fight.step(down, &mut world);
     }
     let menu = fight.view().menu.unwrap();
-    assert!(menu.rows[3].1, "Items is allowed with a held herb");
+    assert!(menu.rows[4].1, "Items is allowed with a held herb");
     fight.step(confirm(), &mut world);
     let menu = fight.view().menu.unwrap();
     assert_eq!(menu.rows.len(), 1);
@@ -361,13 +455,13 @@ fn a_bag_herb_is_not_offered_in_battle() {
         down: true,
         ..Pad::default()
     };
-    for _ in 0..3 {
+    for _ in 0..4 {
         fight.step(down, &mut world);
     }
-    assert_eq!(fight.view().menu.unwrap().cursor, 3);
+    assert_eq!(fight.view().menu.unwrap().cursor, 4);
     fight.step(confirm(), &mut world);
     assert!(
-        fight.view().menu.unwrap().rows.len() == 4,
+        fight.view().menu.unwrap().rows.len() == 5,
         "the Fight menu stays"
     );
     fight.play_out(&mut world).unwrap();
@@ -396,7 +490,7 @@ fn duplicate_held_slots_spend_only_the_chosen_one() {
         down: true,
         ..Pad::default()
     };
-    for _ in 0..3 {
+    for _ in 0..4 {
         fight.step(down, &mut world);
     }
     fight.step(confirm(), &mut world);
@@ -446,7 +540,7 @@ fn a_cancelled_item_command_spends_nothing() {
         down: true,
         ..Pad::default()
     };
-    for _ in 0..3 {
+    for _ in 0..4 {
         fight.step(down, &mut world);
     }
     fight.step(confirm(), &mut world);
@@ -459,15 +553,17 @@ fn a_cancelled_item_command_spends_nothing() {
     };
     fight.step(cancel, &mut world);
     fight.step(cancel, &mut world);
-    assert_eq!(fight.view().menu.unwrap().cursor, 3);
-    // Defend is index 2.
-    fight.step(
-        Pad {
-            up: true,
-            ..Pad::default()
-        },
-        &mut world,
-    );
+    assert_eq!(fight.view().menu.unwrap().cursor, 4);
+    // Defend is index 2: two ups from Items.
+    for _ in 0..2 {
+        fight.step(
+            Pad {
+                up: true,
+                ..Pad::default()
+            },
+            &mut world,
+        );
+    }
     assert_eq!(fight.view().menu.unwrap().cursor, 2);
     fight.step(confirm(), &mut world);
     press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
@@ -506,7 +602,7 @@ fn an_actor_defeated_before_its_turn_keeps_its_held_item() {
             down: true,
             ..Pad::default()
         };
-        for _ in 0..3 {
+        for _ in 0..4 {
             fight.step(down, &mut world);
         }
         fight.step(confirm(), &mut world);
@@ -557,7 +653,7 @@ fn a_reusable_held_item_is_never_spent() {
         down: true,
         ..Pad::default()
     };
-    for _ in 0..3 {
+    for _ in 0..4 {
         fight.step(down, &mut world);
     }
     fight.step(confirm(), &mut world);

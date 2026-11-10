@@ -28,13 +28,18 @@ const WHITE: [f32; 4] = [1.0; 4];
 const STATUS_X: i32 = 6;
 const STATUS_Y: i32 = 6;
 const STATUS_WIDTH: i32 = 244;
-const STATUS_ROW: i32 = 22;
-/// The command menu below it, and the target list beside it **[hypothesis]**.
+const STATUS_ROW: i32 = 18;
+/// The command menu below it, and the target list beside it **[hypothesis]**. The command
+/// window has five rows (Attack, Spells, Defend, Abilities, Items; `str_btl` 30004–30008), and
+/// the status window above it four; the 192-pixel screen fits both only at this pitch. A list
+/// longer than the window (the spells and the abilities) keeps the cursor's window in view.
 const MENU_X: i32 = 6;
 const MENU_WIDTH: i32 = 116;
 const TARGET_X: i32 = 128;
 const TARGET_WIDTH: i32 = 122;
-const MENU_ROW: i32 = 20;
+const MENU_ROW: i32 = 16;
+/// The bottom screen's height.
+const SCREEN_HEIGHT: i32 = 192;
 
 /// The quads of both screens.
 #[derive(Debug, Clone, Default)]
@@ -142,11 +147,19 @@ pub fn frame(
 
 fn draw_menu(atlas: &Atlas, font: &Font<'_>, menu: &MenuView, at: [i32; 3], out: &mut Vec<Quad>) {
     let rows = menu.rows.len().max(1) as i32;
-    let window = [at[0], at[1], at[2], 14 + MENU_ROW * rows];
+    let cursor = menu.cursor.min(rows as usize - 1) as i32;
+    // Only what fits under `at[1]` is drawn; the last row keeps the cursor in view.
+    let visible = ((SCREEN_HEIGHT - at[1] - 14) / MENU_ROW).clamp(1, rows);
+    let first = (cursor - visible + 1).clamp(0, rows - visible);
+    let window = [at[0], at[1], at[2], 14 + MENU_ROW * visible];
     atlas.window(window, FILL, out);
-    for (i, (label, enabled)) in menu.rows.iter().enumerate() {
-        let y = window[1] + 8 + MENU_ROW * i as i32;
-        if i == menu.cursor {
+    for i in 0..visible {
+        let index = first + i;
+        let Some((label, enabled)) = menu.rows.get(index as usize) else {
+            break;
+        };
+        let y = window[1] + 8 + MENU_ROW * i;
+        if index == cursor {
             out.push(atlas.solid(
                 [window[0] + 6, y - 2, window[2] - 12, MENU_ROW - 2],
                 SELECTED,

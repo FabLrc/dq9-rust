@@ -162,6 +162,54 @@ the level tables open, **65 `0x66`** records (place, action) and **108 `0x67`** 
 are none). Learned vocations: 2, 3, 5, 6 and 8 to 12, levels 1 to 78; every learned place is
 listed. Confirmed on the Minstrel (6): Heal (place 26) at level 3.
 
+## Skill panels — `skilltable.bin`
+
+A tagged data table, 12,704 bytes, 289 records: a `0x65` record (0), a `0x64` record (20),
+then **287 `0x66` records of nine integers** (wiki *Skill-Panels*; re-checked over every record
+on this ROM, `dq9_formats::battle::skill`). The `0x66` handler reads exactly nine values into a
+twelve-byte record (wiki *Skill-Panels*, "How it was found").
+
+| value | meaning | check over the 287 |
+|---|---|---|
+| 0 | the panel's id, 0–286 | every id present exactly once |
+| 1 | its tree, 1–26; 0 on one record | 26 trees of 11, plus `[286, 0, 0, 168, 1, 0, 0, 286, 0]` ("Egg On", panel 286) |
+| 2 | the skill points it costs | at most 100; the eleventh panel of every tree is 0 (unreachable, below) |
+| 3 | the action it teaches, 0 for none | non-zero on 148 panels, every one with value 4 == 1 and in `actdt_a`/`actdt_b`; panel 230 ("Force") has 4 == 1 and no action (placeholder) |
+| 4 | what it gives | 1 an ability; 0 its message alone, 2 attack, 3 critical rate, 4 may equip the tree's weapon, 5 block, 6–10 the five attributes, 11–12 max HP/MP, 13 MP absorption, 14 evasion, 15–16 magical mending/might, 17 spell critical — **INFERRED** from the `str_gskl` message each value goes with |
+| 5 | how much (the message's `<val_1>`) | — |
+| 6 | a second action | non-zero on ten panels, all field-usable; equals value 3 on eight — **INFERRED** the out-of-battle form |
+| 7 | a second 0–286 index | unique, eleven to a tree, ordering the trees differently; **not established** which consumer reads it |
+| 8 | the `str_gskl` message shown when bought | 1 to 23; 0 on the tree-0 record |
+
+The cost-0 panel is **eleventh** in every tree in file order; the ownership walk
+(`0x0209a678`) stops at the hundred-point panel, so the eleventh and its ability are never
+reached (wiki *Skill-Panels*, "The eleventh panel is unreachable"). The one tree-0 record is
+outside that walk; Patty's event sets its bit (wiki *Party*).
+
+### What a member has learned
+
+The learned panels are a **36-byte bit array** in the character record at `+0x11A`
+(`dq9_formats::save::Character::proficiency_flags`); the original keeps the same array per
+character at `live+0x8EC` and the record sync copies it (`0x02083acc`). Bit `p % 8` of byte
+`p / 8` is panel `p`. Checked on the demo save (`build/sav/demo.sav`, four members): the bits
+match the tree-point ownership walk (character 0: 135 of 143 panels; the eight extras are
+granted outside the walk, panel 286 "Egg On" among them), so the array — not the walk — is
+what the battle reads. `dq9_core::party::Character::skill_panels` carries it.
+
+**Unknown**: whether character creation grants panels (a new game's hero has none in this
+port, its array starts zero); which events set bits besides Patty's; what value 7 orders.
+
+### The battle's Abilities menu
+
+The battle lists one row per learned panel whose value 3 is non-zero, named by the action
+record's name (`actdt_a`/`actdt_b`, the same name `actname.nat` gives) and costing the action
+record's `mp_cost` (`docs/re/battle-text.md`, "Which message an action says"). It greys a row
+when the member's MP is short (255 is "all the member has": the row needs any MP) or when the
+kernel's `validate` refuses the action, exactly as the Spells menu does; `Command::Act`
+resolves the chosen row like any action. `str_btl` 30007 is the label ("Abilities"; 30004
+Attack, 30005 Spells, 30006 Defend, 30008 Items). The original menu's row order is not read here:
+this port places Abilities between Defend and Items, following the message numbers.
+
 ## Equipment battle parameters — `itembtlprm.nat`
 
 A `u32` count in its **low 20 bits** — 1,423 (`func_0209a088` masks it so) — then 44-byte

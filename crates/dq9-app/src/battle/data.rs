@@ -11,6 +11,7 @@ use anyhow::{Context as _, Result};
 use dq9_core::battle::{ActionTables, Tables};
 use dq9_formats::battle::equipment::BattleParams;
 use dq9_formats::battle::monster::{BattleData, Names};
+use dq9_formats::battle::skill::SkillTable;
 use dq9_formats::battle::spell::SpellTable;
 use dq9_formats::battle::text::{
     BattleFiles, BattleResult, BattleText, ItemNames, Language, MessageTable,
@@ -97,6 +98,8 @@ pub struct Data {
     pub item_meta: BTreeMap<u16, ItemMeta>,
     /// Which vocation learns which spell at which level.
     pub spells: SpellTable,
+    /// Which skill panel teaches which action, and at what cost.
+    pub skills: SkillTable,
     /// The worn items' stats (attack, defence, …).
     pub items: ItemStats,
     /// `itembtlprm.nat`: resistances and weapon elements.
@@ -233,6 +236,8 @@ impl Data {
             item_meta,
             spells: SpellTable::parse(rom.file_by_path("data/prm/spelltable.bin")?)
                 .context("parsing spelltable.bin")?,
+            skills: SkillTable::parse(rom.file_by_path("data/prm/skilltable.bin")?)
+                .context("parsing skilltable.bin")?,
             items: ItemStats::from_members(&item_members).context("parsing the item stats")?,
             params: BattleParams::parse(rom.file_by_path("data/prm/itembtlprm.nat")?)
                 .context("parsing itembtlprm.nat")?,
@@ -281,8 +286,8 @@ impl Data {
     }
 
     /// The spells `vocation` knows at `level`: the learned entries of `spelltable.bin` up to
-    /// it, as action numbers. Not the skill panels' (the game also learns through them,
-    /// **[hypothesis]** for chapter 2, where the hero is a Minstrel at a low level).
+    /// it, as action numbers. Spells come from the vocation and level; the skill panels'
+    /// abilities are [`Data::skills_known`].
     pub fn spells_known(&self, vocation: u8, level: u8) -> Vec<u16> {
         let mut known: Vec<(u8, u16)> = self
             .spells
@@ -301,6 +306,27 @@ impl Data {
             .collect();
         known.sort_unstable();
         known.into_iter().map(|(_, action)| action).collect()
+    }
+
+    /// The abilities the panel bits in `panels` teach, as action numbers, in panel order.
+    ///
+    /// The bits are the character record's `+0x11A` array
+    /// ([`Character::skill_panels`](dq9_core::party::Character::skill_panels)), one per panel;
+    /// a panel with no action (a stat or a message alone) offers nothing
+    /// (`docs/re/battle-data.md`, "Skill panels").
+    pub fn skills_known(&self, panels: &[u8]) -> Vec<u16> {
+        self.skills
+            .panels
+            .iter()
+            .filter(|panel| panel.action != 0)
+            .filter(|panel| {
+                let place = usize::from(panel.place);
+                panels
+                    .get(place / 8)
+                    .is_some_and(|byte| byte >> (place % 8) & 1 != 0)
+            })
+            .map(|panel| panel.action)
+            .collect()
     }
 }
 

@@ -38,6 +38,9 @@ use crate::battle::model::{Fighter, Side};
 pub const PARTY_MAX: usize = 4;
 /// Held items a party member carries (`7578 + 18 i`, 8 × u16).
 pub const HELD_ITEMS: usize = 8;
+/// Bytes of the learned skill panels (`+0x11A`): one bit per panel, 36 bytes for the 287
+/// panels 0 to 286 (`docs/re/battle-data.md`, "Skill panels").
+pub const SKILL_PANELS_BYTES: usize = 36;
 /// Bag slots the game keeps (`GameState_Party+0`, capacity 152 in the oracle states).
 pub const BAG_CAPACITY: usize = 152;
 /// Gold the party may hold (`func_0207d2c4`'s literal `0x98967f`, and
@@ -290,6 +293,11 @@ pub struct Character {
     pub equipment: Equipment,
     /// Skill points not yet spent (`+0xF4`).
     pub skill_points: u16,
+    /// The skill panels learned (`+0x11A`, 36 bytes): bit `p % 8` of byte `p / 8` says panel
+    /// `p`, 0 to 286. The original's per-character bit array is `live+0x8EC`, written by the
+    /// ownership walk (`0x02083acc`, `docs/re/battle-data.md`); a new game starts with none
+    /// **(the creation initialiser's bits are not read)**.
+    pub skill_panels: [u8; SKILL_PANELS_BYTES],
     /// The eight held items of the party slot (`7578 + 18 i`), [`NO_ITEM`] or 0 empty.
     pub held_items: [Option<u16>; HELD_ITEMS],
 }
@@ -304,6 +312,10 @@ impl Character {
         for slot in EquipSlot::ALL {
             equipment.set(slot, worn(record.equipment(slot)));
         }
+        let flags = record.proficiency_flags();
+        let mut skill_panels = [0u8; SKILL_PANELS_BYTES];
+        let copied = flags.len().min(SKILL_PANELS_BYTES);
+        skill_panels[..copied].copy_from_slice(&flags[..copied]);
         Self {
             name: core::array::from_fn(|i| record.name_raw()[i]),
             sex: if record.gender() & 1 == 1 {
@@ -321,6 +333,7 @@ impl Character {
             stats: BaseStats::default(),
             equipment,
             skill_points: record.unallocated_skill_points(),
+            skill_panels,
             held_items: held.map(worn),
         }
     }
@@ -354,6 +367,7 @@ impl Character {
             stats: BaseStats::default(),
             equipment,
             skill_points: 0,
+            skill_panels: [0; SKILL_PANELS_BYTES],
             held_items: [None; HELD_ITEMS],
         }
     }
@@ -372,6 +386,14 @@ impl Character {
     /// Level in the current vocation.
     pub fn level(&self) -> u8 {
         self.level_in(self.vocation)
+    }
+
+    /// Whether the character has learned skill panel `place` (`+0x11A` bit, 0 to 286).
+    pub fn has_skill_panel(&self, place: u16) -> bool {
+        let place = usize::from(place);
+        self.skill_panels
+            .get(place / 8)
+            .is_some_and(|byte| byte >> (place % 8) & 1 != 0)
     }
 
     /// Experience in `vocation`.

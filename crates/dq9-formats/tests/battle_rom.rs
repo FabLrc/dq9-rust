@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use dq9_formats::Gpc2;
-use dq9_formats::battle::{action, encounter, equipment, monster, spell};
+use dq9_formats::battle::{action, encounter, equipment, monster, skill, spell};
 use dq9_formats::maplist::{self, MapList};
 use dq9_formats::table::Table;
 use nds_rom::Rom;
@@ -442,4 +442,76 @@ fn spell_table_lists_the_spells_and_who_learns_them() {
             .any(|l| l.vocation == 6 && l.place == 26 && l.level == 3),
         "the Minstrel learns Heal at 3"
     );
+}
+
+/// `skilltable.bin`: 287 panels, 26 trees of eleven plus the one outside every tree, the
+/// action exactly on the ability rows, and every action in the action tables.
+#[test]
+fn skill_table_lists_the_panels_trees_and_abilities() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let skills = skill::SkillTable::parse(file(&rom, "data/prm/skilltable.bin")).unwrap();
+    let a_data = member(&rom, "data/prm/actdt_a.gp2", "actdt_a_en.nat");
+    let b_data = member(&rom, "data/prm/actdt_b.gp2", "actdt_b_en.nat");
+    let a = action::Actions::parse(&a_data).unwrap();
+    let b = action::Actions::parse(&b_data).unwrap();
+
+    assert_eq!(skills.panels.len(), 287);
+    let places: HashSet<u16> = skills.panels.iter().map(|p| p.place).collect();
+    assert_eq!(places.len(), 287, "ids are unique");
+    assert_eq!(places, (0..=286).collect(), "ids run 0 to 286");
+
+    let mut trees = std::collections::BTreeMap::new();
+    for panel in &skills.panels {
+        *trees.entry(panel.tree).or_insert(0usize) += 1;
+        assert!(panel.cost <= 100, "cost {} above 100", panel.cost);
+        assert!(panel.message <= 23, "message {} above 23", panel.message);
+    }
+    assert_eq!(trees.len(), 27, "26 trees and the odd record");
+    assert_eq!(trees.remove(&0), Some(1), "one record outside every tree");
+    for tree in 1..=26 {
+        assert_eq!(trees.remove(&tree), Some(11), "tree {tree}");
+    }
+
+    let with_action: Vec<&skill::Panel> = skills.panels.iter().filter(|p| p.action != 0).collect();
+    assert_eq!(with_action.len(), 148, "one action per ability panel");
+    let abilities = skills.panels.iter().filter(|p| p.effect == 1).count();
+    assert_eq!(abilities, 149, "148 abilities and the Force placeholder");
+    for panel in &skills.panels {
+        if panel.action != 0 {
+            assert_eq!(
+                panel.effect, 1,
+                "panel {} names action {} without being an ability",
+                panel.place, panel.action
+            );
+        }
+    }
+    assert_eq!(
+        skills.at(230).unwrap().action,
+        0,
+        "the Force placeholder names no action"
+    );
+    for panel in &with_action {
+        assert!(
+            a.find(panel.action).is_some() || b.find(panel.action).is_some(),
+            "panel {} names action {}, absent from both halves",
+            panel.place,
+            panel.action
+        );
+    }
+
+    let orders: HashSet<u16> = skills.panels.iter().map(|p| p.order).collect();
+    assert_eq!(orders.len(), 287, "the second index is unique too");
+    assert_eq!(
+        skills.panels.iter().filter(|p| p.field_action != 0).count(),
+        10,
+        "ten panels carry the second action"
+    );
+    let odd = skills.at(286).unwrap();
+    assert_eq!(
+        (odd.tree, odd.cost, odd.action, odd.effect, odd.order),
+        (0, 0, 168, 1, 286),
+        "the record outside every tree"
+    );
+    assert_eq!(skills.at(0).unwrap().action, 63, "the first Sword panel");
 }

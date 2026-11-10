@@ -146,6 +146,7 @@ enum Phase {
 enum Pending {
     Attack,
     Spell(usize),
+    Ability(usize),
     Item(usize),
 }
 
@@ -162,6 +163,7 @@ enum Menu {
     Top(usize),
     Fight(usize),
     Spells(usize),
+    Abilities(usize),
     Items(usize),
     Target {
         cursor: usize,
@@ -170,7 +172,7 @@ enum Menu {
     },
 }
 
-/// A spell the member can cast: its action, name and cost.
+/// A spell or ability the member can cast: its action, name and cost.
 #[derive(Debug, Clone)]
 struct Spell {
     skill: Skill,
@@ -188,6 +190,7 @@ struct Labels {
     attack: Vec<u8>,
     spells: Vec<u8>,
     defend: Vec<u8>,
+    abilities: Vec<u8>,
     items: Vec<u8>,
 }
 
@@ -214,6 +217,7 @@ pub struct Fight {
     item_rows: Vec<ItemRow>,
     attack: Skill,
     spells: Vec<Vec<Spell>>,
+    abilities: Vec<Vec<Spell>>,
     set_battle: bool,
     phase: Phase,
     queue: VecDeque<Beat>,
@@ -288,6 +292,23 @@ impl Fight {
                     .collect()
             })
             .collect();
+        let abilities: Vec<Vec<Spell>> = members
+            .iter()
+            .map(|c| {
+                data.skills_known(&c.skill_panels)
+                    .into_iter()
+                    .filter_map(|action| {
+                        let skill = tables.actions.skill(action)?;
+                        let lines = data.lines.get(&action)?;
+                        Some(Spell {
+                            skill,
+                            name: lines.name.clone(),
+                            cost: i32::from(lines.mp_cost),
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
         let monster_names: Vec<Vec<u8>> = {
             let names = data.monster_names()?;
             battle_setup
@@ -328,6 +349,7 @@ impl Fight {
                     attack: narrator.label(30004),
                     spells: narrator.label(30005),
                     defend: narrator.label(30006),
+                    abilities: narrator.label(30007),
                     items: narrator.label(30008),
                 },
                 narrator.opening(setup.surprise),
@@ -353,6 +375,7 @@ impl Fight {
             item_rows: Vec::new(),
             attack,
             spells,
+            abilities,
             set_battle: setup.set_battle,
             phase: Phase::Narrating(After::Commands),
             queue: opening.into(),
@@ -590,7 +613,7 @@ impl Fight {
                 }
             }
             Menu::Fight(cursor) => {
-                let cursor = step_cursor(cursor, dir, 4);
+                let cursor = step_cursor(cursor, dir, 5);
                 self.menu = Menu::Fight(cursor);
                 if pad.cancel {
                     self.menu = Menu::Top(0);
@@ -608,7 +631,8 @@ impl Fight {
                             self.chosen[member] = Some(Command::Defend);
                             self.next_member(world);
                         }
-                        3 if self.item_rows.iter().any(|r| r.enabled) => self.menu = Menu::Items(0),
+                        3 if !self.abilities[member].is_empty() => self.menu = Menu::Abilities(0),
+                        4 if self.item_rows.iter().any(|r| r.enabled) => self.menu = Menu::Items(0),
                         _ => {}
                     }
                 }
@@ -626,12 +650,25 @@ impl Fight {
                     self.aim(member, spell.skill, Pending::Spell(cursor), world);
                 }
             }
+            Menu::Abilities(cursor) => {
+                let count = self.abilities[member].len().max(1);
+                let cursor = step_cursor(cursor, dir, count);
+                self.menu = Menu::Abilities(cursor);
+                if pad.cancel {
+                    self.menu = Menu::Fight(3);
+                } else if pad.confirm
+                    && let Some(ability) = self.abilities[member].get(cursor).cloned()
+                    && self.can_cast(member, &ability)
+                {
+                    self.aim(member, ability.skill, Pending::Ability(cursor), world);
+                }
+            }
             Menu::Items(cursor) => {
                 let count = self.item_rows.len().max(1);
                 let cursor = step_cursor(cursor, dir, count);
                 self.menu = Menu::Items(cursor);
                 if pad.cancel {
-                    self.menu = Menu::Fight(3);
+                    self.menu = Menu::Fight(4);
                 } else if pad.confirm
                     && let Some(row) = self.item_rows.get(cursor).cloned()
                     && row.enabled
@@ -659,6 +696,7 @@ impl Fight {
                     self.menu = match pending {
                         Pending::Attack => Menu::Fight(0),
                         Pending::Spell(k) => Menu::Spells(k),
+                        Pending::Ability(k) => Menu::Abilities(k),
                         Pending::Item(k) => Menu::Items(k),
                     };
                 } else if pad.confirm {
@@ -670,6 +708,9 @@ impl Fight {
                     let skill = match &pending {
                         Pending::Attack => Some(self.attack.clone()),
                         Pending::Spell(k) => self.spells[member].get(*k).map(|s| s.skill.clone()),
+                        Pending::Ability(k) => {
+                            self.abilities[member].get(*k).map(|s| s.skill.clone())
+                        }
                         Pending::Item(k) => self.item_rows.get(*k).map(|r| r.skill.clone()),
                     };
                     if let (Some(target), Some(skill)) = (target, skill) {
@@ -1099,6 +1140,7 @@ impl Fight {
                         row(&self.labels.attack, true),
                         row(&self.labels.spells, !self.spells[member].is_empty()),
                         row(&self.labels.defend, true),
+                        row(&self.labels.abilities, !self.abilities[member].is_empty()),
                         row(&self.labels.items, self.item_rows.iter().any(|r| r.enabled)),
                     ],
                     cursor: *cursor,
@@ -1110,6 +1152,22 @@ impl Fight {
             Menu::Spells(cursor) => (
                 Some(MenuView {
                     rows: self.spells[member]
+                        .iter()
+                        .map(|s| {
+                            let mut label = s.name.clone();
+                            label.extend_from_slice(format!("  {}", s.cost).as_bytes());
+                            (label, self.can_cast(member, s))
+                        })
+                        .collect(),
+                    cursor: *cursor,
+                    member,
+                    targets: false,
+                }),
+                None,
+            ),
+            Menu::Abilities(cursor) => (
+                Some(MenuView {
+                    rows: self.abilities[member]
                         .iter()
                         .map(|s| {
                             let mut label = s.name.clone();

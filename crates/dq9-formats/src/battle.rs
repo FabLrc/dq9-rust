@@ -15,6 +15,7 @@ pub mod action;
 pub mod encounter;
 pub mod equipment;
 pub mod monster;
+pub mod skill;
 pub mod spell;
 pub mod text;
 
