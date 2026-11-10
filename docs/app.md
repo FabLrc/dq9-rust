@@ -1021,6 +1021,8 @@ Evidence: `build/evidence/add-graphics-tech/native-wide.png` (`684fb0b30e4c`),
 `web-wide-restored.png` (`5b598af7e34f`), `web-console.json` (`ac1c4bafeb61`).
 The browser smoke used the gate's debug wasm; forced WebGL 2 fallback and a continuous
 new-game route were not exercised.
+Published build `1e0326d`: [CI](https://github.com/FabLrc/dq9-rust/actions/runs/42831807723)
+and [Pages](https://github.com/FabLrc/dq9-rust/actions/runs/42831807515) passed.
 
 ## Verification
 

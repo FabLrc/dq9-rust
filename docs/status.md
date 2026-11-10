@@ -44,7 +44,7 @@ Pages `42812911849` (`6ecf718`): F01 models visible; D01M02 natural contact → 
 cancel → flight, then another monster → loss in four rounds → church 1106, all by keyboard.
 Evidence: `build/evidence/j4-combat-web-final/console.json` (`2798e51a2364`),
 `revival-church.png` (`430671952e62`). Standalone battle 26 won once (seed 7: 2 XP, 4 gold).
-Combat build `ccb1811`: CI `42815645466` and Pages `42815645558` green; graphics `49843de` passed local native/Web smoke (`add-graphics-tech/web-wide-restored.png`, `5b598af7e34f`), publication pending.
+Graphics build `1e0326d`: CI `42831807723` and Pages `42831807515` green; local wide → stacked → wide smoke (`add-graphics-tech/web-wide-restored.png`, `5b598af7e34f`). Wide mode is optional; DS layout remains default.
 These direct-map checks do not certify continuous new-game play to chapter 2.
 
 ## Active work and next steps
