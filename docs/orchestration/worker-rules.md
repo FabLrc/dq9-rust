@@ -57,6 +57,12 @@ For analysis, follow the "Where to look before analysing" order of `AGENTS.md`.
   - once before `worker_done`: `./scripts/verify.ps1 -RequireRom`. If the `README.md`
     progress block changes, **do not commit it** (`git checkout README.md`): the coordinator
     regenerates and commits it after rebasing, so it never conflicts (waves v2-1/v2-2).
+- CI runs on Linux and `crates/dq9-app/src/app.rs` compiles its tests only on Windows
+  (`#[cfg(all(test, windows))] mod tests;`): an item used **only by those tests** is dead code
+  in CI's test and clippy builds (`-D warnings`) although `verify.ps1` passes locally. Gate its
+  allowance on the same condition, `#[cfg_attr(not(all(test, windows)), allow(dead_code))]`, not
+  on `not(test)` (CI failure of `2d94e5e`). Likewise, items used only natively need
+  `cfg(not(target_arch = "wasm32"))` or `cfg_attr(target_arch = "wasm32", allow(dead_code))`.
 - Never write `docs/status.md`, `docs/roadmap.md`, `README.md`: the coordinator writes
   them. Your findings go into your `docs/re/<topic>.md` note (if it is in your scope)
   and into your report.

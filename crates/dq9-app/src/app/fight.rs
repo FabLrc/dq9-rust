@@ -183,7 +183,7 @@ impl App {
     /// lists `(monster number, count)`, `stage` the ground's battle stage (0 for the
     /// default), `opening` who has the jump. The monsters' HP are drawn and the party may
     /// flee. Settled with no trigger (`BattleTask` has no battle number to report).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, windows)), allow(dead_code))]
     pub(crate) fn start_encounter(
         &mut self,
         groups: Vec<(u16, u16)>,
@@ -349,13 +349,13 @@ impl App {
     }
 
     /// The party the next battle is fought with.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, windows)), allow(dead_code))]
     pub(crate) fn party(&self) -> &Party {
         &self.party
     }
 
     /// How the last fight went.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, windows)), allow(dead_code))]
     pub(crate) fn last_fight(&self) -> Option<&FightSummary> {
         self.last_fight.as_ref()
     }
