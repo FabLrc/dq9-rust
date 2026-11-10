@@ -67,6 +67,11 @@ pub(crate) mod services;
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
 
+/// Room whose map load re-applies the gate pair (trigger action `0xa9`): `func_020ae7d4`
+/// compares the loaded map with the constant at `0x020ae88c`, `0xbd1b` = this id with its
+/// bytes swapped, and returns on any other map.
+const GATE_ROOM: u16 = 7101;
+
 /// Fixed steps of a battle transition (native 547): the swirl narrows the view for 15, then
 /// both screens go to black over the next 20 (`SetMainBrightness(−16, 20)`).
 const BATTLE_ENTER_AT: u32 = 15;
@@ -769,14 +774,22 @@ impl App {
         self.upload();
         self.update_title();
         if let Some(field) = &mut self.field {
+            let room = self.current.as_ref().map_or(0, |(entry, _)| entry.id);
             let mut events = field.enter(&mut self.state, transition);
             // `func_020ae53c`, the map's gimmick initialiser: the gate pair (trigger action
             // 0xa9) follows global flag 0x347 on every load, so a room re-entered after a
             // lost battle gets the open pair back. The application applies it because the
-            // gate objects are its scene's placements.
-            let gate =
-                dq9_core::field::gate_pair(self.state.flags.contains(&dq9_core::field::GATE_FLAG));
-            events.splice(0..0, gate.into_iter().map(Event::Request));
+            // gate objects are its scene's placements, and only on the room the gimmick
+            // belongs to: `func_020ae7d4` starts by comparing the loaded map with the
+            // constant at `0x020ae88c`, `0xbd1b` — the room id **7101** with its bytes
+            // swapped — and returns otherwise, so M01's and F01's own placements 13 and 15
+            // are left alone.
+            if room == GATE_ROOM {
+                let gate = dq9_core::field::gate_pair(
+                    self.state.flags.contains(&dq9_core::field::GATE_FLAG),
+                );
+                events.splice(0..0, gate.into_iter().map(Event::Request));
+            }
             self.apply_events(events);
         }
         true
