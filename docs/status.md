@@ -54,7 +54,11 @@ Latest local browser build `4327fd8`: battle 26, seed 7 → one victory, 4 round
 hero lunges/returns, all defeated/fled models disappear, extra input/layout switches do not restart.
 Evidence: `j4-battle-gpu-sync/web-after-lunge.png` (`c461e1d32686`),
 `web-after-victory.png` (`c39b70b7ba1a`), `web-after-console.json` (`e616bcfb24af`).
-Latest publication `1934b83` includes Fullheal: CI `42847350996` and Pages `42847350994` green; no interactive Fullheal UI claim.
+Latest publication `deb317f` (services `660d682`): CI `42854310912` and Pages `42854311711` green.
+The deployed bundle at `https://fablrc.github.io/dq9-rust/?map=M01` loaded map 1100 and opened
+the field menu on the bottom screen (`j4-field-services/web-published-field-menu.png`,
+`ecb4ee34992f`); the ROM is read locally and never sent. Earlier `1934b83` published Fullheal
+(CI `42847350996`, Pages `42847350994`); no interactive Fullheal-menu claim there.
 Direct-map checks do not certify continuous new-game play to 2750.
 
 ## Active work and next steps
