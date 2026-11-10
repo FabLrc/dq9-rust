@@ -508,8 +508,26 @@ impl BattleScene {
         &self.runtime
     }
 
-    pub fn runtime_mut(&mut self) -> &mut AnimatedScene {
-        &mut self.runtime
+    /// Uploads geometry and fighter worlds together. Hidden fighters must be included:
+    /// their zero scale removes a defeated/fled model from an already uploaded scene.
+    pub fn upload(
+        &mut self,
+        renderer: &mut dq9_render::Renderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<()> {
+        self.runtime.face_camera(&self.camera)?;
+        self.runtime
+            .upload(renderer, device, queue)
+            .context("uploading the battle animations")?;
+        for &instance in &self.instances {
+            let world = self.runtime.scene.instances[instance].world;
+            anyhow::ensure!(
+                renderer.update_instance_world(queue, instance, world),
+                "battle GPU instance {instance} is missing"
+            );
+        }
+        Ok(())
     }
 
     /// One fixed step of the scene's animations at the battle camera.

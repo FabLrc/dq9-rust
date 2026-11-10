@@ -2036,11 +2036,7 @@ impl App {
         else {
             return camera;
         };
-        let runtime = battle.runtime_mut();
-        if let Err(e) = runtime
-            .face_camera(&camera)
-            .and_then(|()| runtime.upload(renderer, &gpu.device, &gpu.queue))
-        {
+        if let Err(e) = battle.upload(renderer, &gpu.device, &gpu.queue) {
             status(&format!("battle upload: {e:#}"));
         }
         renderer.environment = battle.environment.clone();

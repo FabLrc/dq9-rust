@@ -1070,6 +1070,81 @@ fn a_capture_run_adds_a_called_monster() {
     );
 }
 
+/// A renderer that already owns the battle must show the same lunges and removals as a
+/// newly built renderer. Rebuilding only for captures used to conceal stale GPU worlds.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn an_existing_gpu_battle_moves_and_hides_its_fighters() {
+    use dq9_render::{Renderer, Viewport};
+
+    let Some(rom) = testrom::load() else { return };
+    let (device, queue) = pollster::block_on(async {
+        let instance = crate::gpu::instance().await;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .expect("a GPU adapter for the native battle regression");
+        crate::gpu::device(&adapter).await.unwrap()
+    });
+    let mut scene = battle_scene(rom, vec![(1, 1)]);
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let mut renderer = Renderer::new(&device, &queue, format, &scene.runtime().scene);
+    renderer.environment = scene.environment.clone();
+    let hero = Fighter::party(0);
+    let slime = Fighter::monster(0);
+    let home = scene.runtime().scene.instances[scene.instances[0]].world;
+    scene.act(hero, 1, &[slime], &[slime]);
+    for _ in 0..40 {
+        scene.step().unwrap();
+    }
+    assert_ne!(
+        scene.runtime().scene.instances[scene.instances[0]].world,
+        home,
+        "the hero is lunging, not on its grid place"
+    );
+    for hidden in [false, true] {
+        if hidden {
+            scene.clear_gestures();
+            assert!(scene.remove(slime));
+            assert!(!scene.fighter(slime).unwrap().alive);
+        }
+        scene.upload(&mut renderer, &device, &queue).unwrap();
+        let mut rebuilt = Renderer::new(&device, &queue, format, &scene.runtime().scene);
+        rebuilt.environment = scene.environment.clone();
+        let viewport = Viewport {
+            x: 0,
+            y: 0,
+            width: 256,
+            height: 192,
+        };
+        let frame = |renderer: &mut Renderer| {
+            renderer
+                .render_to_rgba_with(
+                    &device,
+                    &queue,
+                    (256, 192),
+                    viewport,
+                    scene.camera(),
+                    |_, _| {},
+                )
+                .unwrap()
+        };
+        let actual = frame(&mut renderer);
+        let expected = frame(&mut rebuilt);
+        let different = actual
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(expected.as_chunks::<4>().0)
+            .filter(|(actual, expected)| actual != expected)
+            .count();
+        assert_eq!(
+            different, 0,
+            "stale GPU fighter transforms (hidden: {hidden})"
+        );
+    }
+}
+
 /// A scene of `monsters` on the field stage, as `--battle-stage 30116 --monsters` builds it.
 fn battle_scene(rom: &[u8], monsters: Vec<(u16, u16)>) -> BattleScene {
     let clock = dq9_core::state::DayClock::new(0.0, true);

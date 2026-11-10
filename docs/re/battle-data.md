@@ -352,6 +352,17 @@ The scene therefore plays `skill1` for Weird Dance, not a log-skip.
   caller (`native.rs`) passes its ROM and party weapon into `run_to_phase`, so the captured
   scene takes the hero's real motion set and a call for backup adds its model there too
   (tested: "a capture run adds a called monster").
+- **Live GPU transforms.** `BattleScene::upload` transfers each fighter's world matrix as
+  well as the animated geometry/materials; `App::draw_battle` uses that boundary on every
+  draw. Hidden fighters are included: their zero scale must replace the existing GPU
+  instance, not merely mark the CPU scene dead. A capture builds its renderer after the
+  motion, so captures alone could not expose the missing live transfer. The native GPU
+  regression compares a renderer created before the action with a fresh renderer at the
+  same lunge and hidden-monster states; it failed with 300 differing pixels before the fix
+  and passes both states afterwards. Local evidence:
+  `build/evidence/j4-battle-gpu-sync/native-before.log` (`68eda57021be`),
+  `native-after.log` (`b79d9b6cf677`); the original browser victory still showing the
+  defeated/fled models is `web-before-ghosts.png` (`a412c6933bff`).
 
 Motion lengths come from the `.bcfg` tables (`0x66`: frames and speed, ×4096): a motion's
 ticks are `(end − start) / speed`. The ROM's `attack1a` is therefore 72 ticks (1.2 s at
