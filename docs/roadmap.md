@@ -434,25 +434,32 @@ Progress:
       map of area 7100 holds.
 - [x] Battle text: `strbtl`, `actmsg`, `str_bres`, `str_btl`, `str_tm` and name inflection
       in five languages (`j4-battle-text`, `re/battle-text.md`).
-- [ ] Battle flow: **headless done** (`j4-battle-flow`: setup from ROM records, rounds,
-      monster ways and targets, flight, victory, drops; `re/battle.md`); party fighters and
-      award done (`j4-party-progress`, `re/party.md`). Remaining: statuses, damage handlers and
-      the special actions of the chapter 2 monsters (`j4-battle-actions`, list in
-      `re/battle.md`), wiring to the application.
-- [ ] Battle scene: stage, fighters on the grid, side camera, transition 547 done
-      (`j4-battle-scene`, `app.md` § "Battle scene"). Remaining: action-script shots, swirl,
-      encounter transition, companions, command and message windows.
-- [ ] Roaming monsters: rules read in code and modelled in `dq9_core::encounter`
-      (`j4-roaming`, `re/encounter.md`), **[hypothesis]** until a melonDS field state checks
-      zone and spawn (challenger pending); not drawn yet.
-- [ ] Field menu, Angel Falls facilities, chests and examine, wipe-out.
+- [x] Battle flow and rules: headless engine (`j4-battle-flow`), party fighters and award
+      (`j4-party-progress`), the chapter 2 monsters' actions, statuses, Defend and items
+      (`j4-battle-actions`; code-read, **no oracle** for them, 20-seed tests); `re/battle.md`.
+- [ ] Battle in play: **done in the window and on the Web** (`j4-battle-play`: menus, messages,
+      award, level-up, wipe-out, `--fight`; `app.md` § "Battle"); headless keeps the stand-in for
+      the parity traces. Remaining: attack and damage motions, held items and abilities,
+      wipe-out details (priest line, revival by save, trigger 180), `Esc`, checking by hand,
+      re-recording the parity references with real battles.
+- [ ] Battle scene: stage, grid, side camera, 547 transition done (`j4-battle-scene`). Remaining:
+      action-script shots, swirl, encounter transition, companions.
+- [ ] Roaming monsters: rules in `dq9_core::encounter` (`j4-roaming`), checked against melonDS F02
+      states (`j4-roaming-oracle`) and by a challenger on F02/F38: zone, node/point, contact
+      confirmed; "standing party" refuted, tick weaker, flee duration wrong (`j4-roaming-fix`
+      active). Untested: F44, states 4/5/11/12, 126° threshold, surprise roll, company, stage.
+      Not drawn yet.
+- [x] Trees and scenery face the camera (`j4-billboards`, `re/g3d.md` § Billboards).
+- [ ] Facilities: **data and rules done** (`j4-facilities-core`: inn, church, shop, treasure;
+      `re/facility.md`). Remaining: their screens, chests/pots/barrels on the field, field menu,
+      "examine".
 - [ ] Chapter 2 route 1.4.1 → 2750 in a real test, Hexagoon won and lost; battle 26 played.
 - [ ] Browser: continuous session from a new game to 2750.
 
-Next waves (paused after v2-2): (1) `j4-battle-actions`, the battle wired to the scene with
-command and message windows (stand-in removed), roaming monsters drawn and their melonDS
-check; (2) field menu, Angel Falls facilities, chests, wipe-out, the chapter 2 route test;
-(3) the Hexagoon both ways, the browser session, docs consistency.
+Next waves: (1) roaming monsters drawn and starting encounters (`start_encounter` exists),
+facility screens and the field menu, wipe-out details; (2) the chapter 2 route test with the
+Hexagoon both ways, motions of battle, the remaining cutscene gaps; (3) browser session,
+parity references with real battles, docs consistency.
 
 **v0.2** criterion: a new game played by hand reaches the end of 2750 natively and in the
 browser, with every battle fought; a headless run with a fixed seed reaches it in a real test;
