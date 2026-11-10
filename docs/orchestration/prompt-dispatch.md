@@ -21,8 +21,9 @@ Rules:
 - Only change files covered by the spec's ```owns block. Never rom/, tools/,
   build/ (except evidence), *.nds, *.sav, docs/status.md, docs/roadmap.md, README.md.
 - While working: ./scripts/verify.ps1 -Fast. Once at the end:
-  ./scripts/verify.ps1 -RequireRom (must pass; commit the README.md progress block
-  if it was regenerated).
+  ./scripts/verify.ps1 -RequireRom (must pass). Do NOT commit the README.md progress block:
+  the coordinator regenerates it at integration (a committed block conflicts on rebase,
+  waves v2-1/v2-2).
 - Evidence under build/evidence/<batch>/, then
   ./scripts/evidence.ps1 -Batch <batch> -Command '<command>' -Note '<context>'.
 - Commits on the worktree branch only; do not push, do not merge.

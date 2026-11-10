@@ -3,7 +3,7 @@
 Rewritten by the coordinator at each integration; do not add a log here.
 Plan and milestones: [`roadmap.md`](roadmap.md); working rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 9, 2026 (`main` after waves v2-1 and v2-2; orchestration paused)
+## Status as of November 10, 2026 (`main` at `81dd3cd`; wave v2-3 launched, CI green again)
 
 - **v0.1 functional natively**: `--new-game` plays the opening, the Observatory prologue, the
   physical return to Angel Falls and the village tasks 1.2 to the return 1.4.1, covered by
@@ -34,7 +34,20 @@ Names of the battle and roaming functions are in `re/symbols.txt`.
 What a player sees today: the chapter 2 scenes and the battle scene of scripted battles; the
 fight itself is still the stand-in ("won"), no roaming monster is drawn, no menu or facility.
 
-## Blockers and next steps (orchestration paused at the user's request)
+## Active wave v2-3 (run `run_5fc3a0162f54`, one Cargo target each)
+
+| Batch | Model | Goal | Owns (shared files) |
+|---|---|---|---|
+| `j4-battle-actions` | Flash | chapter 2 monster actions (Flee, buffs, Dazzle, Weird Dance, Defend, items) resolved | `dq9-core/src/battle/**` |
+| `j4-battle-play` | Sonnet | battle played in the app: commands, messages, award, wipe-out; `--fight` | `dq9-app` (`app.rs`, `battle*`), `dq9-render/**` |
+| `j4-roaming-oracle` | Sonnet | melonDS field states check the roaming rules, then a challenger | `dq9-core/src/encounter*`, `scripts/melonds-field.ps1` |
+| `j4-facilities-core` | Flash | inn, church, shop, treasure data and rules (no UI) | `dq9-formats`/`dq9-core` `facility*` |
+
+CI failure of `2bec2e2` (wasm step, `-D warnings`, a method used only natively) fixed in
+`81dd3cd`; `verify.ps1` now denies warnings in its wasm step like CI. Workers must not commit the
+README progress block (the coordinator regenerates it at integration).
+
+## Blockers and next steps
 
 1. **Battle in play**: wire `dq9_core::battle` and `Party::award` to the scene with command and
    message windows, remove `scenario::stand_in`; `j4-battle-actions` for the statuses, damage

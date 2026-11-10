@@ -148,6 +148,13 @@ Then launch the "docs consistency" batch.
 
 ## CI
 
-`.github/workflows/ci.yml` calls `verify.ps1 -Only …`. No more bot commits on `main`:
-the `README.md` progress block is updated locally by `verify.ps1` (`coverage` step) and
-committed with the batch; the coverage job fails if the block is stale.
+`.github/workflows/ci.yml` calls `verify.ps1 -Only …` with `RUSTFLAGS=-D warnings`; the local
+`wasm` step sets the same flag (a wasm-only `dead_code` warning once passed locally and failed CI).
+No more bot commits on `main`: the `README.md` progress block is updated locally by `verify.ps1`
+(`coverage` step); the coverage job fails if the block is stale.
+
+Integration with a moved `main`: in the worker's worktree run `git rebase main`, then
+`./scripts/verify.ps1 -Only coverage` and commit the regenerated `README.md` block
+(`docs: regenerate the README progress block`) **before** `integrate.ps1 -Apply`, otherwise the
+script's own verify dirties the worktree. A worker's committed block conflicts on rebase: drop it
+(`git reset --hard <last code commit>`) and regenerate.
