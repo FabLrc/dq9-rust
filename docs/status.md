@@ -43,7 +43,7 @@ Latest local browser build `4327fd8`: battle 26, seed 7 → one victory, 4 round
 hero lunges/returns, all defeated/fled models disappear, extra input/layout switches do not restart.
 Evidence: `j4-battle-gpu-sync/web-after-lunge.png` (`c461e1d32686`),
 `web-after-victory.png` (`c39b70b7ba1a`), `web-after-console.json` (`e616bcfb24af`).
-Motion/GPU `af76e8d`: CI `42838706753` and Pages `42838706825` green; published help text checked.
+Latest publication `1934b83` includes Fullheal: CI `42847350996` and Pages `42847350994` green; no interactive Fullheal UI claim.
 Direct-map checks do not certify continuous new-game play to 2750.
 
 ## Active work and next steps
