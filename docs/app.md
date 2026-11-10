@@ -1000,6 +1000,12 @@ layout. Web: the "Screens" select or `?layout=`. The old `--ds-aspect` and `ds=`
   `749ae40`: completed previews retain their stage/camera instead of stale GPU geometry;
   a dialogue also suspends roaming until it closes. These direct-map checks do not certify
   the continuous new-game route or original-engine flight resumption.
+  Final preview check on build `ccb1811`, Pages
+  [`42815645558`](https://github.com/FabLrc/dq9-rust/actions/runs/42815645558):
+  same seeded victory, reward closure and extra confirms leave the complete framed stage
+  without restarting; `build/evidence/j4-battle-lifecycle/preview-finished-after.png`
+  (`50eadc1365fe`). CI [`42815645466`](https://github.com/FabLrc/dq9-rust/actions/runs/42815645466)
+  is green on that build.
 
 - Browser battle on Pages (November 10, 2026): deployment
   [`42800444183`](https://github.com/FabLrc/dq9-rust/actions/runs/42800444183),

@@ -44,13 +44,13 @@ Pages `42812911849` (`6ecf718`): F01 models visible; D01M02 natural contact → 
 cancel → flight, then another monster → loss in four rounds → church 1106, all by keyboard.
 Evidence: `build/evidence/j4-combat-web-final/console.json` (`2798e51a2364`),
 `revival-church.png` (`430671952e62`). Standalone battle 26 won once (seed 7: 2 XP, 4 gold).
-The residual preview framing found there is fixed in `749ae40`; final deployment/check pending.
+Final build `ccb1811`: CI `42815645466` and Pages `42815645558` green; fixed preview framing visually checked (`j4-battle-lifecycle/preview-finished-after.png`, `50eadc1365fe`).
 These direct-map checks do not certify continuous new-game play to chapter 2.
 
 ## Active work and next steps
 
 No worker remains. Flash docs-consistency review completed; its corrections are applied.
-Coordinator is publishing/checking the final preview-framing fix; implementation branches removed.
+No active batch. Code and documentation pushed; implementation branches and private targets removed.
 Next: battle motions/abilities/worn-equipment use and wipe-out details; field menu/facility
 screens; physical chapter 2 route through both Hexagoon outcomes; native 417 and missing
 placements; continuous browser play to 2750; real-battle parity references.
