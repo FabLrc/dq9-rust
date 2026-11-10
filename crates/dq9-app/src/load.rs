@@ -25,6 +25,8 @@ pub struct Start {
     /// `None` for an explicit map or without a save: the hero then starts where the
     /// collisions put it.
     pub state: Option<GameState>,
+    /// The party of the save (gold and bag included), else a new game's.
+    pub party: dq9_core::party::Party,
     /// The protagonist's look: the save's hero when there is a save, else a new game's.
     pub look: HeroLook,
     /// The saved protagonist's name and sex, for the message window; `None` without a save
@@ -46,20 +48,32 @@ fn saved_hero(save: &Save) -> Option<(HeroLook, HeroIdentity)> {
     Some((HeroLook::from_character(&hero), identity))
 }
 
+/// The party of a save's current slot, when it parses.
+fn saved_party(save: &Save) -> Option<dq9_core::party::Party> {
+    let slot = save.current_slot().and_then(|i| save.slot(i))?;
+    dq9_core::party::Party::from_slot(&slot).ok()
+}
+
 /// Chooses an explicit map (the save is then ignored: its position belongs to its own map),
 /// otherwise the first valid normal slot of the save, then the prologue map.
 pub fn start(map: Option<&str>, save: Option<&[u8]>) -> Result<Start> {
     if let Some(map) = map {
         // An explicit map is permissive: a save it cannot read leaves the default hero.
-        let (look, identity) = save
-            .and_then(|bytes| Save::parse(bytes).ok())
-            .and_then(|save| saved_hero(&save))
+        let parsed = save.and_then(|bytes| Save::parse(bytes).ok());
+        let (look, identity) = parsed
+            .as_ref()
+            .and_then(saved_hero)
             .map_or((HeroLook::new_game(), None), |(look, identity)| {
                 (look, Some(identity))
             });
+        let party = parsed
+            .as_ref()
+            .and_then(saved_party)
+            .unwrap_or_else(dq9_core::party::Party::new_game);
         return Ok(Start {
             map: map.to_owned(),
             state: None,
+            party,
             look,
             identity,
         });
@@ -68,6 +82,7 @@ pub fn start(map: Option<&str>, save: Option<&[u8]>) -> Result<Start> {
         return Ok(Start {
             map: "M01".into(),
             state: None,
+            party: dq9_core::party::Party::new_game(),
             look: HeroLook::new_game(),
             identity: None,
         });
@@ -80,6 +95,7 @@ pub fn start(map: Option<&str>, save: Option<&[u8]>) -> Result<Start> {
     let state = GameState::from_save(&save).context("restoring the save")?;
     Ok(Start {
         map: state.map.to_string(),
+        party: state.party.clone(),
         state: Some(state),
         look,
         identity,

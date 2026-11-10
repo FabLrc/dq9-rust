@@ -632,6 +632,7 @@ dependencies = [
  "bytemuck",
  "dq9-formats",
  "glam",
+ "naga",
  "nds-rom",
  "testrom",
  "wgpu",

@@ -143,7 +143,7 @@ pub fn canvas_size() -> Option<(u32, u32)> {
 }
 
 /// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
-/// `layout` (`stacked`, `side` or `top`), `mute`, `battle` (an `eventbattle.bin` index),
+/// `layout` (`stacked`, `side`, `top` or `wide`), `mute`, `battle` (an `eventbattle.bin` index),
 /// `battle-stage` and `monsters` (`1x3`), `seed` (the battle generators' seed) from the page's
 /// query string.
 fn options() -> Options {

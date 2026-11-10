@@ -250,7 +250,9 @@ fn vertices(quads: &[Quad], atlas: (u32, u32)) -> Vec<[f32; VERTEX_FLOATS]> {
 #[derive(Debug)]
 pub struct Ui {
     pipeline: wgpu::RenderPipeline,
-    group: wgpu::BindGroup,
+    layout: wgpu::BindGroupLayout,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
     size: (u32, u32),
 }
 
@@ -308,20 +310,7 @@ impl Ui {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-            ],
-        });
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ui"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
+                crate::gpu::uniform_entry(2, wgpu::ShaderStages::VERTEX),
             ],
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -365,7 +354,9 @@ impl Ui {
         });
         Self {
             pipeline,
-            group,
+            layout,
+            view,
+            sampler,
             size: (atlas.width, atlas.height),
         }
     }
@@ -375,10 +366,34 @@ impl Ui {
     pub fn draw(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        region: Viewport,
+        quads: &[Quad],
+    ) {
+        self.draw_in(
+            device,
+            queue,
+            encoder,
+            target,
+            region,
+            (SCREEN.0 as f32, SCREEN.1 as f32),
+            quads,
+        );
+    }
+
+    /// Same as [`Ui::draw`] with an explicit virtual canvas (`canvas` pixels stretch to
+    /// `region`): the widescreen HUD uses 960×540 over the whole window.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_in(
+        &mut self,
+        device: &wgpu::Device,
         _queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         region: Viewport,
+        canvas: (f32, f32),
         quads: &[Quad],
     ) {
         if quads.is_empty() {
@@ -394,6 +409,29 @@ impl Ui {
             contents: bytes,
             usage: wgpu::BufferUsages::VERTEX,
         });
+        let screen = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ui screen"),
+            contents: bytemuck::bytes_of(&[canvas.0, canvas.1, 0.0, 0.0]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ui"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: screen.as_entire_binding(),
+                },
+            ],
+        });
         let mut pass = crate::gpu::load_pass(encoder, "ui", target);
         pass.set_viewport(
             region.x as f32,
@@ -404,7 +442,7 @@ impl Ui {
             1.0,
         );
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.group, &[]);
+        pass.set_bind_group(0, &group, &[]);
         pass.set_vertex_buffer(0, buffer.slice(..));
         pass.draw(0..data.len() as u32, 0..1);
     }

@@ -430,6 +430,26 @@ pub(crate) fn regions(
         return Vec::new();
     };
     let top = screens.field(false);
+    if screens.wide {
+        // One 16:9 field: the DS windows keep their 4:3 shape, anchored top left and bottom
+        // left with a margin, rather than stretched over the whole width.
+        let margin = (top.height / 30).max(8);
+        let height = (top.height / 3).max(1);
+        let width = (height * 4 / 3).min(top.width.saturating_sub(2 * margin).max(1));
+        let upper = dq9_render::Viewport {
+            x: margin,
+            y: margin,
+            width,
+            height,
+        };
+        let lower = dq9_render::Viewport {
+            x: margin,
+            y: top.height.saturating_sub(height + margin),
+            width,
+            height,
+        };
+        return vec![(upper, frame.top), (lower, frame.bottom)];
+    }
     match screens.overlay(false) {
         Some(bottom) => vec![(top, frame.top), (bottom, frame.bottom)],
         None => {

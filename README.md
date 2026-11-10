@@ -63,6 +63,36 @@ Computed by `cargo dq9re coverage` from the `port:` markers in the code (definit
 
 <img width="1467" height="801" alt="image" src="https://github.com/user-attachments/assets/55868b8e-93d1-4090-8143-bef37e079afb" />
 
+### Graphics tech demo: wide 16:9
+
+The DS-faithful presentation above stays the default. The same engine also has a single-screen
+widescreen presentation for showing what the renderer can do beyond the DS look:
+
+**[Open the wide 16:9 demo](https://fablrc.github.io/dq9-rust/?layout=wide&newgame=1)** — select
+your European ROM, then "New game" (or open `?layout=wide` on the demo).
+
+What it changes, all from the ROM data the rest of the demo already reads:
+
+- one 16:9 field letterboxed in the window, the camera keeping the game's 15° vertical
+  half-angle;
+- mipmapped, linearly filtered textures instead of the DS's nearest filtering;
+- a cinematic post pass: FXAA, screen-space contact shadows, threshold bloom, filmic
+  tonemapping, colour grading, vignette and dithering;
+- a 16:9 interface: location, time of day, the leader's HP/MP and purse, and the game's message
+  window in a bottom-left glass panel;
+- the battle windows keep their 4:3 shape in the corners.
+
+The stack is WebGL 2 compatible and its shaders are validated without a GPU by
+`crates/dq9-render/tests/shaders.rs`. Native equivalent:
+
+```sh
+cargo run -p dq9-app --release -- --map M01 --layout wide \
+    --size 1920x1080 --screenshot build/scratch/app/wide.png
+```
+
+Switch between the DS layouts and the wide one in the window with `R`, or in the page's
+"Screens" select. Details: [`docs/app.md`](docs/app.md#wide-169-cinematic-presentation).
+
 ## Status
 
 **v0.1 works natively and is partly certified in the browser; v0.2 (chapter 2 up to the
@@ -73,7 +103,8 @@ Observatory and the return to Angel Falls, then the village scenes. `--map M01`,
 passed with `--save`, opens Angel Falls directly.
 What works:
 
-- both DS screens (stacked, side by side, or top screen only);
+- both DS screens (stacked, side by side, or top screen only) and a single 16:9 cinematic
+  presentation;
 - textured maps, lighting, fog and time of day;
 - animated NPCs and an animated hero;
 - movement ported in fixed-point, with collisions and the L/R camera;

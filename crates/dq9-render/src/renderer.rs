@@ -17,6 +17,7 @@ use wgpu::util::DeviceExt;
 use crate::camera::Camera;
 use crate::gpu::{fullscreen_pipeline, load_pass, uniform_entry};
 use crate::lighting::{EnvUniform, Environment, gradient};
+use crate::post::Post;
 use crate::scene::{
     Cull, PolygonMode, Scene, SceneDraw, SceneMaterial, SceneTexture, Shade, TexelTint, Wrap,
 };
@@ -120,9 +121,21 @@ struct Targets {
     id: wgpu::TextureView,
 }
 
+/// The field's colour when the post pass composes it: rendered offscreen, then read by
+/// [`Post`].
+struct SceneTarget {
+    size: (u32, u32),
+    view: wgpu::TextureView,
+}
+
 /// GPU resources of one scene.
 pub struct Renderer {
     color_format: wgpu::TextureFormat,
+    /// Linear/mipmapped textures and the post pass (wide 16:9 presentation); nearest filtering
+    /// and direct drawing otherwise.
+    cinematic: bool,
+    post: Post,
+    scene_target: Option<SceneTarget>,
     shader: wgpu::ShaderModule,
     pipeline_layout: wgpu::PipelineLayout,
     material_layout: wgpu::BindGroupLayout,
@@ -136,7 +149,7 @@ pub struct Renderer {
     textures: Vec<wgpu::TextureView>,
     translucent_textures: Vec<bool>,
     white: wgpu::TextureView,
-    samplers: HashMap<[Wrap; 2], wgpu::Sampler>,
+    samplers: HashMap<([Wrap; 2], bool), wgpu::Sampler>,
     models: Vec<GpuModel>,
     /// Translucent draws of the current frame, sorted back to front.
     translucent_draws: Vec<(f32, usize, usize, u32)>,
@@ -228,11 +241,62 @@ fn material_uniform(m: &SceneMaterial) -> MaterialUniform {
     }
 }
 
+/// Number of mip levels of a texture, down to 1×1 (the largest dimension decides).
+fn mip_levels(width: u32, height: u32) -> u32 {
+    32 - width.max(height).max(1).leading_zeros()
+}
+
+/// Box-filtered mip levels below level 0 (RGBA8), with alpha-weighted colour so cut-out
+/// sprites keep clean edges.
+fn mip_chain(rgba: &[u8], width: u32, height: u32) -> Vec<(u32, u32, Vec<u8>)> {
+    let mut out = Vec::new();
+    let (mut w, mut h) = (width, height);
+    let mut src = rgba;
+    while w > 1 || h > 1 {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut next = vec![0; (nw * nh * 4) as usize];
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut sums = [0u32; 3];
+                let mut alpha = 0u32;
+                let mut samples = 0u32;
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let sx = (2 * x + dx).min(w - 1);
+                    let sy = (2 * y + dy).min(h - 1);
+                    let o = ((sy * w + sx) * 4) as usize;
+                    let a = u32::from(src[o + 3]);
+                    for (i, sum) in sums.iter_mut().enumerate() {
+                        *sum += u32::from(src[o + i]) * a;
+                    }
+                    alpha += a;
+                    samples += 1;
+                }
+                let o = ((y * nw + x) * 4) as usize;
+                for (i, sum) in sums.iter().enumerate() {
+                    next[o + i] = sum.checked_div(alpha).unwrap_or(0).min(255) as u8;
+                }
+                next[o + 3] = (alpha / samples).min(255) as u8;
+            }
+        }
+        out.push((nw, nh, next));
+        src = &out.last().expect("just pushed a mip level").2;
+        w = nw;
+        h = nh;
+    }
+    out
+}
+
 fn upload_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     t: &SceneTexture,
+    mipmaps: bool,
 ) -> wgpu::TextureView {
+    let levels = if mipmaps {
+        mip_levels(t.width, t.height)
+    } else {
+        1
+    };
     let size = wgpu::Extent3d {
         width: t.width,
         height: t.height,
@@ -241,7 +305,7 @@ fn upload_texture(
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&t.name),
         size,
-        mip_level_count: 1,
+        mip_level_count: levels,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         // DS colours are display values: no sRGB decoding.
@@ -249,21 +313,33 @@ fn upload_texture(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &t.rgba,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * t.width),
-            rows_per_image: Some(t.height),
-        },
-        size,
-    );
+    let write = |level, width, height, rgba: &[u8]| {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    };
+    write(0, t.width, t.height, &t.rgba);
+    if mipmaps {
+        for (level, (w, h, rgba)) in mip_chain(&t.rgba, t.width, t.height).iter().enumerate() {
+            write(level as u32 + 1, *w, *h, rgba);
+        }
+    }
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
@@ -414,12 +490,24 @@ fn cover_pipeline(
 
 impl Renderer {
     /// Uploads `scene` for drawing into targets of `color_format` (use a non-sRGB format: DS
-    /// colours are display values).
+    /// colours are display values), with the DS's nearest filtering and no post pass.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         color_format: wgpu::TextureFormat,
         scene: &Scene,
+    ) -> Self {
+        Self::new_with(device, queue, color_format, scene, false)
+    }
+
+    /// Same as [`Renderer::new`]; `cinematic` adds mipmapped linear textures and the wide 16:9
+    /// post pass ([`Post`]).
+    pub fn new_with(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        color_format: wgpu::TextureFormat,
+        scene: &Scene,
+        cinematic: bool,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dq9 map shader"),
@@ -499,11 +587,15 @@ impl Renderer {
                 rgba: vec![255; 4],
                 translucent: false,
             },
+            false,
         );
         let (edge_buffer, edge_layout, edge_pipeline) = edge_pipeline(device, color_format);
         let (cover_buffer, cover_group, cover_pipeline) = cover_pipeline(device, color_format);
         let mut renderer = Self {
             color_format,
+            cinematic,
+            post: Post::new(device, color_format),
+            scene_target: None,
             shader,
             pipeline_layout,
             material_layout,
@@ -517,7 +609,7 @@ impl Renderer {
             textures: scene
                 .textures
                 .iter()
-                .map(|t| upload_texture(device, queue, t))
+                .map(|t| upload_texture(device, queue, t, cinematic))
                 .collect(),
             translucent_textures: scene.textures.iter().map(|t| t.translucent).collect(),
             white,
@@ -608,15 +700,26 @@ impl Renderer {
     }
 
     fn sampler(&mut self, device: &wgpu::Device, wrap: [Wrap; 2]) -> wgpu::Sampler {
+        let linear = self.cinematic;
         self.samplers
-            .entry(wrap)
+            .entry((wrap, linear))
             .or_insert_with(|| {
+                let filter = if linear {
+                    wgpu::FilterMode::Linear
+                } else {
+                    wgpu::FilterMode::Nearest
+                };
                 device.create_sampler(&wgpu::SamplerDescriptor {
                     label: Some("material"),
                     address_mode_u: address_mode(wrap[0]),
                     address_mode_v: address_mode(wrap[1]),
-                    mag_filter: wgpu::FilterMode::Nearest,
-                    min_filter: wgpu::FilterMode::Nearest,
+                    mag_filter: filter,
+                    min_filter: filter,
+                    mipmap_filter: if linear {
+                        wgpu::MipmapFilterMode::Linear
+                    } else {
+                        wgpu::MipmapFilterMode::Nearest
+                    },
                     ..Default::default()
                 })
             })
@@ -933,8 +1036,43 @@ impl Renderer {
         self.targets.as_ref().expect("targets were just created")
     }
 
+    /// The offscreen colour target of the cinematic pass, sized to the window.
+    fn scene_view(&mut self, device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+        if self
+            .scene_target
+            .as_ref()
+            .is_none_or(|t| t.size != (width, height))
+        {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("cinematic scene"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.color_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            self.scene_target = Some(SceneTarget {
+                size: (width, height),
+                view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            });
+        }
+        self.scene_target
+            .as_ref()
+            .expect("scene target was just created")
+            .view
+            .clone()
+    }
+
     /// Records the frame into `encoder`: clears `target` (of `width` × `height` pixels) and
-    /// draws the scene in `viewport` seen by `camera`.
+    /// draws the scene in `viewport` seen by `camera`. In cinematic mode a full-target viewport
+    /// is drawn into an offscreen texture and composed by [`Post`].
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -965,9 +1103,24 @@ impl Renderer {
                 params: [center, 0.0, 0.0, 0.0],
             }),
         );
+        // The post pass composes a scene rendered at the viewport's size into that viewport;
+        // a DS screen keeps drawing directly.
+        let cinematic = self.cinematic;
+        let (scene_width, scene_height) = if cinematic {
+            (viewport.width, viewport.height)
+        } else {
+            (width, height)
+        };
         let (depth, ids, depth_sampled) = {
-            let t = self.targets(device, width, height);
+            let t = self.targets(device, scene_width, scene_height);
             (t.depth.clone(), t.id.clone(), t.depth_sampled.clone())
+        };
+        let scene = cinematic.then(|| self.scene_view(device, scene_width, scene_height));
+        let drawn = scene.as_ref().unwrap_or(target);
+        let draw_viewport = if cinematic {
+            Viewport::full(scene_width, scene_height)
+        } else {
+            viewport
         };
         // Translucent draws, back to front by the view depth of their centres.
         let view = camera.view();
@@ -991,7 +1144,7 @@ impl Renderer {
             label: Some("map"),
             color_attachments: &[
                 Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: drawn,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -1022,10 +1175,10 @@ impl Renderer {
             multiview_mask: None,
         });
         pass.set_viewport(
-            viewport.x as f32,
-            viewport.y as f32,
-            viewport.width as f32,
-            viewport.height as f32,
+            draw_viewport.x as f32,
+            draw_viewport.y as f32,
+            draw_viewport.width as f32,
+            draw_viewport.height as f32,
             0.0,
             1.0,
         );
@@ -1074,12 +1227,16 @@ impl Renderer {
         }
         drop(pass);
         if let Some(color) = self.environment.edge {
-            // Edge marking of the 3D engine, one DS pixel wide.
-            let step = self
-                .edge_pixels
-                .map_or((viewport.height as f32 / 192.0).round().max(1.0), |w| {
-                    w.max(1) as f32
-                });
+            // Edge marking of the 3D engine, one DS pixel wide; at the window's resolution the
+            // wide presentation keeps a single physical pixel so it stays an accent.
+            let step = if cinematic {
+                1.0
+            } else {
+                self.edge_pixels.map_or(
+                    (draw_viewport.height as f32 / 192.0).round().max(1.0),
+                    |w| w.max(1) as f32,
+                )
+            };
             let wide = color.map(|c| {
                 if c == 0 {
                     0.0
@@ -1110,8 +1267,13 @@ impl Renderer {
                     },
                 ],
             });
-            let mut pass = load_pass(encoder, "edges", target);
-            pass.set_scissor_rect(viewport.x, viewport.y, viewport.width, viewport.height);
+            let mut pass = load_pass(encoder, "edges", drawn);
+            pass.set_scissor_rect(
+                draw_viewport.x,
+                draw_viewport.y,
+                draw_viewport.width,
+                draw_viewport.height,
+            );
             pass.set_pipeline(&self.edge_pipeline);
             pass.set_bind_group(0, &group, &[]);
             pass.draw(0..3, 0..1);
@@ -1119,19 +1281,36 @@ impl Renderer {
         if let Some(color) = self.environment.cover {
             // The cover of natives 102/103: a translucent polygon over the finished frame.
             queue.write_buffer(&self.cover_buffer, 0, bytemuck::bytes_of(&color));
-            let mut pass = load_pass(encoder, "cover", target);
+            let mut pass = load_pass(encoder, "cover", drawn);
             pass.set_viewport(
-                viewport.x as f32,
-                viewport.y as f32,
-                viewport.width as f32,
-                viewport.height as f32,
+                draw_viewport.x as f32,
+                draw_viewport.y as f32,
+                draw_viewport.width as f32,
+                draw_viewport.height as f32,
                 0.0,
                 1.0,
             );
-            pass.set_scissor_rect(viewport.x, viewport.y, viewport.width, viewport.height);
+            pass.set_scissor_rect(
+                draw_viewport.x,
+                draw_viewport.y,
+                draw_viewport.width,
+                draw_viewport.height,
+            );
             pass.set_pipeline(&self.cover_pipeline);
             pass.set_bind_group(0, &self.cover_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+        if let Some(scene) = &scene {
+            self.post.draw(
+                device,
+                queue,
+                encoder,
+                target,
+                scene,
+                &depth_sampled,
+                (scene_width, scene_height),
+                viewport,
+            );
         }
     }
 

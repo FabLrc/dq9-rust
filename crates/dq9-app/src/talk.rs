@@ -669,6 +669,64 @@ impl Talk {
         ui.draw(device, queue, encoder, target, region, &quads);
     }
 
+    /// Draws the wide 16:9 interface: the HUD ([`crate::hud`]) and the message window scaled
+    /// into the virtual 960×540 canvas.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn draw_hud(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        region: Viewport,
+        info: &crate::hud::HudInfo<'_>,
+    ) {
+        let quads = {
+            let dialogue = self.quads();
+            let Some(assets) = &self.assets else {
+                return;
+            };
+            let font = match assets.font() {
+                Ok(font) => font,
+                Err(e) => {
+                    status(&format!("message font unavailable: {e:#}"));
+                    return;
+                }
+            };
+            crate::hud::frame(
+                &assets.atlas,
+                &font,
+                info,
+                &dialogue,
+                if self.frameless || self.centered_caption {
+                    crate::hud::DialogueLayout::CENTER
+                } else {
+                    crate::hud::DialogueLayout::BOTTOM
+                },
+            )
+        };
+        if self.gpu.as_ref().is_none_or(|(f, _)| *f != format) {
+            let Some(assets) = &self.assets else {
+                return;
+            };
+            self.gpu = Some((format, Ui::new(device, queue, format, &assets.atlas)));
+        }
+        let Some((_, ui)) = &mut self.gpu else {
+            return;
+        };
+        let (width, height) = crate::hud::CANVAS;
+        ui.draw_in(
+            device,
+            queue,
+            encoder,
+            target,
+            region,
+            (width as f32, height as f32),
+            &quads,
+        );
+    }
+
     /// The interface's atlas and message font, for the windows that are not conversations
     /// (the battle's, `battle/ui.rs`). `None` when the ROM resources did not load.
     pub(crate) fn with_ui<R>(&self, f: impl FnOnce(&Atlas, &Font<'_>) -> R) -> Option<R> {

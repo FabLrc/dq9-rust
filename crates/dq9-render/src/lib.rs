@@ -16,6 +16,7 @@ mod hero;
 pub mod lighting;
 pub mod panel;
 mod pose;
+mod post;
 pub mod renderer;
 pub mod scene;
 pub mod ui;

@@ -37,6 +37,7 @@ use crate::audio::Audio;
 use crate::battle::{self, BattleScene};
 use crate::event::{EventPlayer, Outcome, Stage, apply_collision_changes};
 use crate::gpu::Gpu;
+use crate::hud::{HudInfo, time_label};
 use crate::lighting;
 use crate::load::{self, MapEntry};
 use crate::talk::{Button, Talk};
@@ -541,10 +542,7 @@ impl App {
         );
         self.time = self.day.phase().index();
         self.look = start.look.clone();
-        self.party = start
-            .state
-            .as_ref()
-            .map_or_else(Party::new_game, |s| s.party.clone());
+        self.party = start.party.clone();
         self.party_ready = false;
         self.world_seeded = false;
         self.load(&start.map, true, None, start.state.as_ref());
@@ -940,11 +938,12 @@ impl App {
             (None, Some(runtime)) => (&runtime.scene, self.environment.clone()),
             (None, None) => return,
         };
-        self.renderer = Some(Renderer::new(
+        self.renderer = Some(Renderer::new_with(
             &gpu.device,
             &gpu.queue,
             gpu.config.format,
             scene,
+            self.options.layout == Layout::Wide,
         ));
         if let Some(renderer) = &mut self.renderer {
             renderer.environment = environment;
@@ -984,6 +983,19 @@ impl App {
         self.load(&id, true, None, None);
     }
 
+    /// Changes the presentation; entering or leaving `wide` rebuilds the renderer because the
+    /// cinematic mode changes texture filtering and adds the post pass.
+    fn set_layout(&mut self, layout: Layout) {
+        if layout == self.options.layout {
+            return;
+        }
+        let rebuild = layout.is_wide() != self.options.layout.is_wide();
+        self.options.layout = layout;
+        if rebuild {
+            self.upload();
+        }
+    }
+
     fn key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, pressed: bool) {
         if !pressed {
             self.held.remove(&code);
@@ -996,7 +1008,7 @@ impl App {
             // The fight reads the pad itself; the conversation's presses must not pile up.
             match code {
                 KeyCode::KeyM => self.audio.toggle_mute(),
-                KeyCode::KeyR => self.options.layout = self.options.layout.next(),
+                KeyCode::KeyR => self.set_layout(self.options.layout.next()),
                 _ => fight::pad_press(&mut self.battle_pad, code),
             }
             return;
@@ -1029,7 +1041,7 @@ impl App {
                 }
             }
             KeyCode::KeyM => self.audio.toggle_mute(),
-            KeyCode::KeyR => self.options.layout = self.options.layout.next(),
+            KeyCode::KeyR => self.set_layout(self.options.layout.next()),
             KeyCode::KeyT => {
                 let next = match self.day.phase() {
                     TimeOfDay::Night => TimeOfDay::Morning,
@@ -1634,14 +1646,34 @@ impl App {
             panel.draw(&mut encoder, &view, overlay);
         }
         if messages {
-            self.talk.draw(
-                &gpu.device,
-                &gpu.queue,
-                gpu.config.format,
-                &mut encoder,
-                &view,
-                field,
-            );
+            if self.options.layout.is_wide() {
+                if let Some((entry, label)) = &self.current {
+                    let info = HudInfo {
+                        title: label,
+                        code: &entry.code,
+                        time: time_label(self.day.phase()),
+                        party: Some(&self.party),
+                    };
+                    self.talk.draw_hud(
+                        &gpu.device,
+                        &gpu.queue,
+                        gpu.config.format,
+                        &mut encoder,
+                        &view,
+                        field,
+                        &info,
+                    );
+                }
+            } else {
+                self.talk.draw(
+                    &gpu.device,
+                    &gpu.queue,
+                    gpu.config.format,
+                    &mut encoder,
+                    &view,
+                    field,
+                );
+            }
         }
         if self.battle_cover <= 0.0
             && let (Some(fight), Some(scene)) = (&self.fight, &self.battle)
@@ -2079,7 +2111,7 @@ impl ApplicationHandler<UserEvent> for App {
             #[cfg(target_arch = "wasm32")]
             UserEvent::Time(time) => self.set_time(lighting::phase(time)),
             #[cfg(target_arch = "wasm32")]
-            UserEvent::Layout(layout) => self.options.layout = layout,
+            UserEvent::Layout(layout) => self.set_layout(layout),
             #[cfg(target_arch = "wasm32")]
             UserEvent::NewGame => {
                 self.options.new_game = true;

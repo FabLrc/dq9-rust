@@ -16,6 +16,7 @@ use winit::event_loop::EventLoop;
 use crate::app::headless::PAD_NAMES;
 use crate::app::{App, Options, UserEvent};
 use crate::event::EventPlayer;
+use crate::hud::HudInfo;
 use crate::talk::{self, Talk};
 use crate::{gpu, lighting, load, report, walk};
 
@@ -59,7 +60,8 @@ struct Cli {
     /// No music (and no sound device is opened); `M` in the window unmutes.
     #[arg(long)]
     mute: bool,
-    /// Which DS screens are shown: `stacked` (default), `side` or `top` (`screens.rs`).
+    /// Which screens are shown: `stacked` (default), `side`, `top` or `wide` (one 16:9 field
+    /// with the cinematic renderer and HUD, `screens.rs`).
     #[arg(long, default_value = "stacked", value_parser = Layout::parse)]
     layout: Layout,
     /// Render one frame offscreen into this PNG and exit, without a window.
@@ -536,6 +538,7 @@ struct Prepared {
     loaded: load::LoadedMap,
     hero: Hero,
     clock: DayClock,
+    party: dq9_core::party::Party,
     event: Option<u16>,
     script: Option<Vec<walk::Walk>>,
     talk: Talk,
@@ -589,10 +592,12 @@ fn prepare(cli: &Cli, rom: &[u8], save: Option<&[u8]>) -> Result<Prepared> {
     }
     let mut talk = Talk::default();
     talk.set_identity(start.identity);
+    if cli.layout.is_wide() || cli.input.is_some() {
+        talk.set_rom(rom);
+    }
     if let Some(input) = &cli.input {
         // The inputs start where `--start` puts the hero and leave it where they end.
         loaded.hero = hero;
-        talk.set_rom(rom);
         let steps = talk::parse_inputs(input)?;
         talk::play(&steps, &mut loaded, rom, &mut trigger_state, &mut talk)?;
         hero = loaded.hero;
@@ -614,6 +619,7 @@ fn prepare(cli: &Cli, rom: &[u8], save: Option<&[u8]>) -> Result<Prepared> {
         loaded,
         hero,
         clock,
+        party: start.party,
         event,
         script,
         talk,
@@ -641,6 +647,7 @@ fn play_event_or_walk(
         hidden,
         swapped,
         event_environment,
+        party: _,
     } = prepared;
     // The same fixed steps as the window: the hero follows the `--walk` script (standing once
     // it has ended, or without one) and plays the motion its speed asks for; an event plays
@@ -739,13 +746,15 @@ fn write_png(
     let Prepared {
         loaded,
         clock,
+        party,
         talk,
         swapped,
         event_environment,
         ..
     } = prepared;
+    let wide = cli.layout.is_wide();
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let mut renderer = Renderer::new(device, queue, format, &loaded.runtime.scene);
+    let mut renderer = Renderer::new_with(device, queue, format, &loaded.runtime.scene, wide);
     renderer.environment = event_environment
         .take()
         .unwrap_or_else(|| lighting::environment(loaded.lighting.as_ref(), *clock));
@@ -756,12 +765,22 @@ fn write_png(
     let shown = screens::screens(cli.layout, w, h);
     let field = shown.field(*swapped);
     let panel = Panel::new(device, format);
+    let info = HudInfo {
+        title: &loaded.label,
+        code: &loaded.entry.code,
+        time: crate::hud::time_label(clock.phase()),
+        party: Some(party),
+    };
     let rgba = renderer
         .render_to_rgba_with(device, queue, (w, h), field, camera, |encoder, view| {
             if let Some(overlay) = shown.overlay(*swapped) {
                 panel.draw(encoder, view, overlay);
             }
-            talk.draw(device, queue, format, encoder, view, field);
+            if wide {
+                talk.draw_hud(device, queue, format, encoder, view, field, &info);
+            } else {
+                talk.draw(device, queue, format, encoder, view, field);
+            }
         })
         .context("reading the frame back")?;
     if let Some(dir) = out.parent() {
@@ -884,7 +903,13 @@ fn battle_screenshot(
         gpu::device(&adapter).await
     })?;
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let mut renderer = Renderer::new(&device, &queue, format, &scene.runtime().scene);
+    let mut renderer = Renderer::new_with(
+        &device,
+        &queue,
+        format,
+        &scene.runtime().scene,
+        cli.layout.is_wide(),
+    );
     renderer.environment = scene.environment.clone();
     if let Some(fog) = cli.fog {
         renderer.environment.fog = Some(fog);
