@@ -12,7 +12,7 @@ Fixed 60 Hz loop; hero, field and model pose at 30 Hz. Chapter 2 events: 47/50 c
 
 ## Combat and monsters — integrated on main
 
-Workers use Orca / OMP / **`opencode-go/deepseek-v4.1-flash`**; no expensive-model escalation.
+Workers: Orca/OMP `opencode-go/deepseek-v4.1-flash`; route → `anthropic/claude-sonnet-5-5` after two Flash failures (AGENTS policy).
 
 | Batch / commit | Result | Full ROM gate |
 |---|---|---|
@@ -47,11 +47,11 @@ Direct-map checks do not certify continuous new-game play to 2750.
 
 ## Active work and next steps
 
-Two Orca / OMP Flash batches retain separate ownership; neither is integrated or certified yet.
-`j4-field-services`: `be67d13`, paid shop/inn/revival native proof viewed; two Flash reviews running.
-[Review risk] equipment refresh may replay map entry; native challenge/correction requested.
-`j4-chapter2-route`: worker reports branch `090c04c` reaches 2.2.1 with real battle 26; M01M10
-exit-volume/grid join blocks return to 1107. Continuing actual Hexagoon outcomes and event 2750.
+Two implementation batches retain separate ownership; neither is integrated or certified yet.
+`j4-field-services`: `93957c6` avoids map reload; reviewed full-stack item loss, group-heal and
+inn/church state bugs plus unbounded hero resources are being corrected. Paid native proof exists.
+`j4-chapter2-route`: two Flash failures; Sonnet retry `ctx_273f59bcad5d` owns the same task.
+Latest run stops at 1.2.1 on 1107; M01M10 approach also remains open. Hexagoon/2750 not reached.
 Headless parity keeps stand-ins unless `--fight` is given and disables roaming.
 Remaining presentation: full camera/effects, original alpha fades, companions; timing limits
 are labelled [hypothesis] in `re/battle-data.md`. Abilities/worn-item commands remain open.
