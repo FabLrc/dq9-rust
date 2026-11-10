@@ -199,6 +199,30 @@ impl Roamers {
         (&self.crand, &self.world)
     }
 
+    /// Takes the generators a battle advanced (`field -> battle` is [`Self::generators`];
+    /// this is the return leg, so the field continues the same streams).
+    pub fn set_generators(&mut self, crand: CRand, world: Random) {
+        self.crand = crand;
+        self.world = world;
+    }
+
+    /// Ends the contact in `slot` with the battle's verdict: a won monster fades out
+    /// (state 11, [`state::DEFEATED`], and the engine's own update drops the slot at alpha
+    /// 0); a fled or lost one stands startled for three seconds and then resumes wandering
+    /// (state 12), its id already in the recent list from the touch. **[hypothesis]** for the
+    /// fled and lost states: the original field log only shows won contacts, each followed by
+    /// the slot's next spawn; the three-second resumption is the model's own STARTLED rule.
+    pub fn settle(&mut self, slot: usize, won: bool, hero: Fx3) {
+        let Some(roamer) = self.slots.get_mut(slot).and_then(Option::as_mut) else {
+            return;
+        };
+        if won {
+            roamer.enter(state::DEFEATED, hero);
+        } else {
+            roamer.enter(state::STARTLED, hero);
+        }
+    }
+
     /// Ids the encounter check ignores (`func_ov017_0219735c`).
     pub fn set_recent(&mut self, ids: [u16; 4]) {
         self.recent = ids;
@@ -770,6 +794,10 @@ impl Roamers {
             })
         })?;
         let hero_state = self.slots[slot].as_ref()?.clone();
+        // `+0x44b8`: the four recent ids the touch skips. The touch is the list's natural
+        // writer (the game fills it so a contact is not immediate again).
+        self.recent.rotate_right(1);
+        self.recent[0] = hero_state.id;
         // The roamer stops and faces the party.
         if let Some(r) = self.slots[slot].as_mut() {
             r.enter(state::TOUCHED, hero);

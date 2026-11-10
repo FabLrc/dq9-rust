@@ -47,7 +47,7 @@ pub struct BattlePlay {
 impl App {
     /// Seeds the world's generators at the first battle: `--seed`, else the game's clock and
     /// the fixed-step count at entry.
-    fn ensure_world(&mut self) {
+    pub(super) fn ensure_world(&mut self) {
         if self.world_seeded {
             return;
         }
@@ -244,6 +244,17 @@ impl App {
                             }),
                         },
                     );
+                } else {
+                    status(&format!(
+                        "encounter: {:?} after {} rounds, {} experience, {} gold, drops {:?}, \
+                         stage {}",
+                        outcome.result,
+                        outcome.rounds,
+                        outcome.experience,
+                        outcome.gold,
+                        outcome.drops,
+                        request.stage
+                    ));
                 }
                 self.party = outcome.party;
             }
@@ -277,6 +288,7 @@ impl App {
         if result == Some(BattleResult::Lost) {
             self.wipe_out();
         }
+        self.settle_roaming(result);
     }
 
     /// A wiped-out party (`func_02010604`, wiki *Travel*, "A wipe-out"): every fallen member
@@ -390,7 +402,7 @@ pub(super) fn pad_press(pad: &mut Pad, code: winit::keyboard::KeyCode) {
     use winit::keyboard::KeyCode;
     match code {
         KeyCode::Enter | KeyCode::Space | KeyCode::KeyZ => pad.confirm = true,
-        KeyCode::Backspace | KeyCode::KeyX => pad.cancel = true,
+        KeyCode::Backspace | KeyCode::KeyX | KeyCode::Escape => pad.cancel = true,
         KeyCode::ArrowUp | KeyCode::KeyW => pad.up = true,
         KeyCode::ArrowDown | KeyCode::KeyS => pad.down = true,
         KeyCode::ArrowLeft | KeyCode::KeyA => pad.left = true,

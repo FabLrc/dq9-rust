@@ -296,7 +296,13 @@ fn a_flee_ends_on_its_run_not_on_a_fixed_time() {
     let world = empty_world();
     let field = one_zone().monster(3).copied().unwrap();
     let a_flee = |ticks: i32| {
-        let mut roamers = Roamers::new(1, one_zone(), None, CRand::new(1), Random::new(1));
+        let mut roamers = Roamers::new(
+            1,
+            one_zone(),
+            Some(two_nodes()),
+            CRand::new(1),
+            Random::new(1),
+        );
         let mut r = Roamer::spawn(3, 1, 5, field, 0x1000, [0x1000, 0, 0], 0, 0, 0);
         assert!(r.enter(state::FLEE, [0; 3]));
         roamers.slots[0] = Some(r);
@@ -321,4 +327,77 @@ fn a_flee_ends_on_its_run_not_on_a_fixed_time() {
     // (10.0 − 1.5) units at 0x1c2 per tick, two then four ticks an update.
     assert_eq!(a_flee(2), 39);
     assert_eq!(a_flee(4), 20);
+}
+
+/// A contact puts the touched id at the head of `+0x44b8` (the touch skips it from then on),
+/// and a flight settles it into STARTLED: after the state's three seconds it wanders again,
+/// still skipped while its id is recent.
+#[test]
+fn a_touch_fills_recent_and_a_flight_resumes_the_roamer() {
+    let world = empty_world();
+    let field = one_zone().monster(3).copied().unwrap();
+    let mut roamers = Roamers::new(
+        1,
+        one_zone(),
+        Some(two_nodes()),
+        CRand::new(1),
+        Random::new(1),
+    );
+    let mut r = Roamer::spawn(3, 7, 5, field, 0x1000, [0x800, 0, 0], 0, 0, 0);
+    assert!(r.enter(state::IDLE, [0; 3]));
+    r.started = true;
+    r.destination = 1;
+    roamers.slots[0] = Some(r);
+    let mut input = StepInput::at([0; 3], 0);
+    let contact = roamers.step(&input, &world, &NoList).expect("a touch");
+    assert_eq!(roamers.recent[0], 7);
+    assert_eq!(roamers.roamer(0).unwrap().state, state::TOUCHED);
+    roamers.settle(contact.roamer, false, input.position);
+    assert_eq!(roamers.roamer(0).unwrap().state, state::STARTLED);
+    // The three seconds of `0x02078d94`, then the walk of wander type 1; the recent id keeps
+    // the party from touching it again in this short run.
+    let mut settled = false;
+    for _ in 0..120 {
+        input.moving = true;
+        roamers.step(&input, &world, &NoList);
+        if roamers
+            .roamer(0)
+            .is_some_and(|r| r.state != state::STARTLED)
+        {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "STARTLED resumes after its three seconds");
+    assert!(roamers.recent.contains(&7));
+}
+
+/// A won contact fades the roamer (state 11) and leaves its id recent; the state's own fade
+/// reaches alpha 0, which is what lets the application remove the slot and hide the model.
+#[test]
+fn a_won_contact_fades_out_and_stays_recent() {
+    let world = empty_world();
+    let field = one_zone().monster(3).copied().unwrap();
+    let mut roamers = Roamers::new(
+        1,
+        one_zone(),
+        Some(two_nodes()),
+        CRand::new(1),
+        Random::new(1),
+    );
+    let mut r = Roamer::spawn(3, 9, 5, field, 0x1000, [0x800, 0, 0], 0, 0, 0);
+    assert!(r.enter(state::IDLE, [0; 3]));
+    roamers.slots[0] = Some(r);
+    let input = StepInput::at([0; 3], 0);
+    let contact = roamers.step(&input, &world, &NoList).expect("a touch");
+    roamers.settle(contact.roamer, true, input.position);
+    assert_eq!(roamers.roamer(0).unwrap().state, state::DEFEATED);
+    for _ in 0..10 {
+        roamers.step(&input, &world, &NoList);
+    }
+    assert!(
+        roamers.roamer(0).is_none(),
+        "the defeated object leaves its slot at alpha 0"
+    );
+    assert!(roamers.recent.contains(&9));
 }

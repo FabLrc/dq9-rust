@@ -1867,3 +1867,488 @@ fn a_monster_that_joins_the_fight_is_placed_and_the_fallen_stay_hidden() {
         "{xs:?}"
     );
 }
+
+/// Options for the roaming-monster tests: a field map, day, battles played by the engine.
+fn roaming_options(map: &str) -> Options {
+    let mut options = map_options(map, (1, 1, 1, true));
+    options.play = BattlePlay {
+        fight: true,
+        seed: Some(7),
+    };
+    options
+}
+
+/// A party that wins the level-1 monsters of F01 whatever the company draw: the level tables
+/// are skipped, the attributes are low enough that the monsters attack (a stronger party makes
+/// them flee and pay nothing) and the HP survives every round.
+fn a_winning_party(app: &mut App) {
+    app.party.members[0].stats.strength = 20;
+    app.party.members[0].stats.resilience = 20;
+    app.party.members[0].max_hp = 9999;
+    app.party.members[0].hp = 9999;
+    app.party_ready = true;
+}
+
+/// Walks the pilot in one direction for `steps` single fixed steps (the field task runs on
+/// every other one), so the roamers see a stepped party.
+fn walk_steps(app: &mut App, direction: Vec3, steps: usize) {
+    for _ in 0..steps {
+        app.pilot_dir = Some(direction);
+        app.run_steps(1);
+    }
+    app.pilot_dir = None;
+}
+
+/// Waits (walking) for the first roamer, in `steps` single fixed steps.
+fn wait_for_roamer(
+    app: &mut App,
+    steps: usize,
+) -> Option<(usize, dq9_core::encounter::roamer::Roamer)> {
+    for _ in 0..steps {
+        app.pilot_dir = Some(Vec3::new(1.0, 0.0, 0.0));
+        app.run_steps(1);
+        if let Some(found) = app.roaming_roamers().into_iter().next() {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Natural spawn on F01: the map has encfld zones and a spawn graph, its monsters get field
+/// models at load, and a roamer appears with a drawn model after the party steps.
+#[test]
+fn f01_spawns_a_visible_roamer_after_the_party_steps() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    a_winning_party(&mut app);
+    app.set_roaming_enabled(true);
+    assert_eq!(app.roaming_map(), Some(20001));
+    // F01's three zones roam six monsters; every one has its `<code>_f.mon` field model.
+    assert_eq!(app.roaming_model_count(), 6);
+    let (slot, roamer) = wait_for_roamer(&mut app, 2_000).expect("F01 must spawn a roamer");
+    assert_ne!(roamer.number, 0);
+    assert!(
+        roamer.position.iter().any(|coordinate| *coordinate != 0),
+        "a real spawn point, not the origin: {:?}",
+        roamer.position
+    );
+    let world = app
+        .roaming_slot_world(slot)
+        .expect("the roamer has a field model");
+    assert!(world.x_axis.length() > 0.0, "the model is drawn: {world:?}");
+    let at = world.w_axis;
+    assert!(
+        (at.x - roamer.position[0] as f32 / 4096.0).abs() < 0.01
+            && (at.z - roamer.position[2] as f32 / 4096.0).abs() < 0.01,
+        "the model stands at the roamer's position: {at:?} against {:?}",
+        roamer.position
+    );
+}
+
+/// Contact -> the existing encounter -> a played battle -> the same field, the defeated
+/// roamer gone, the party paid once.
+#[test]
+fn a_contact_fights_on_the_same_field_and_removes_its_roamer_once() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    a_winning_party(&mut app);
+    app.set_roaming_enabled(true);
+    // Let the roamer leave its appear state (touches skips state 0).
+    let mut target = None;
+    for _ in 0..2_000 {
+        app.pilot_dir = Some(Vec3::new(1.0, 0.0, 0.0));
+        app.run_steps(1);
+        target = app
+            .roaming_roamers()
+            .into_iter()
+            .find(|(_, roamer)| roamer.state != dq9_core::encounter::roamer::state::APPEAR);
+        if target.is_some() {
+            break;
+        }
+    }
+    let target_slot = target
+        .map(|(slot, _)| slot)
+        .expect("a roamer must be past its appear state");
+    let map = app.current.as_ref().map(|(entry, _)| entry.id);
+    let gold = app.party().gold;
+    let mut fought = false;
+    for _ in 0..8 {
+        // Stand on it: the touch is `touches`, the very function the original tick uses.
+        let Some(current) = app
+            .roaming_roamers()
+            .into_iter()
+            .find(|(slot, _)| *slot == target_slot)
+            .map(|(_, roamer)| roamer)
+            .or_else(|| app.roaming_roamers().into_iter().next().map(|(_, r)| r))
+        else {
+            continue;
+        };
+        app.hero = Some(Hero::at(
+            Vec3::new(
+                current.position[0] as f32 / 4096.0 + 0.15,
+                current.position[1] as f32 / 4096.0,
+                current.position[2] as f32 / 4096.0,
+            ),
+            0.0,
+        ));
+        app.run_steps(1);
+        if app.roaming_contacts() > 0 {
+            fought = true;
+            break;
+        }
+    }
+    assert!(fought, "the hero must touch the roamer");
+    assert_eq!(app.roaming_contacts(), 1);
+    assert!(
+        !app.battle_is_active(),
+        "the encounter settled in the same step"
+    );
+    let last = app.last_fight().expect("the encounter was fought");
+    assert_eq!(last.result, BattleResult::Won);
+    assert!(
+        last.gold > 0 && last.experience > 0,
+        "the win pays: {last:?}"
+    );
+    assert_eq!(
+        app.party().gold,
+        last.gold,
+        "the award went to the party once"
+    );
+    assert!(last.gold >= gold, "an encounter pays, it does not reset");
+    assert_eq!(
+        app.current.as_ref().map(|(entry, _)| entry.id),
+        map,
+        "the field is back, on the same map"
+    );
+    // The won monster is in its fade (state 11) when the battle settles; the field's next
+    // steps finish it and release the model. The touch picks the first eligible slot, which
+    // need not be the one the test stood on.
+    let (contact_slot, contact_id) = {
+        let (slot, roamer) = app
+            .roaming_roamers()
+            .into_iter()
+            .find(|(_, roamer)| roamer.state == dq9_core::encounter::roamer::state::DEFEATED)
+            .expect("the contacted roamer fades first");
+        (slot, roamer.id)
+    };
+    let contact_instance = app
+        .roaming_slot_instance(contact_slot)
+        .expect("the contacted roamer has a field model");
+    // The slot's spawn timer may already be near its second, so wait for the fade to end and
+    // check the released model on the first step the old id is gone, before the slot can be
+    // given another roamer.
+    for _ in 0..40 {
+        app.run_steps(1);
+        if !app
+            .roaming_roamers()
+            .iter()
+            .any(|(_, roamer)| roamer.id == contact_id)
+        {
+            break;
+        }
+    }
+    assert!(
+        !app.roaming_roamers()
+            .iter()
+            .any(|(_, roamer)| roamer.id == contact_id),
+        "the defeated roamer left its slot after the fade"
+    );
+    let released = app
+        .runtime
+        .as_ref()
+        .expect("the field is loaded")
+        .scene
+        .instances[contact_instance]
+        .world;
+    assert_eq!(
+        released.x_axis.length(),
+        0.0,
+        "the released field model is hidden: {released:?}"
+    );
+    // Settled once: more steps do not fight it again or pay twice.
+    let gold = app.party().gold;
+    for _ in 0..120 {
+        app.run_steps(1);
+    }
+    assert_eq!(app.roaming_contacts(), 1);
+    assert_eq!(app.party().gold, gold, "no second award");
+    assert!(
+        !app.roaming_roamers()
+            .iter()
+            .any(|(_, roamer)| roamer.id == contact_id),
+        "no respawn is the defeated roamer"
+    );
+}
+
+/// Maps with no `encfld` group load no roamer and no field model: `S01M01`, `D01M01` and
+/// `D01M05` are the maps the encounter note names.
+#[test]
+fn encounter_free_maps_spawn_no_roamers() {
+    let Some(rom) = testrom::load() else { return };
+    for (map, id) in [("S01M01", 5101), ("D01M01", 7101), ("D01M05", 7105)] {
+        let mut app = App::new_headless(roaming_options(map), Some(rom.to_vec()));
+        a_winning_party(&mut app);
+        app.set_roaming_enabled(true);
+        assert_eq!(app.roaming_map(), Some(id), "{map} has no encounter table");
+        assert_eq!(app.roaming_model_count(), 0, "{map} has no field models");
+        walk_steps(&mut app, Vec3::new(1.0, 0.0, 0.0), 80);
+        assert!(
+            app.roaming_roamers().is_empty(),
+            "{map} must not spawn a roamer"
+        );
+        assert_eq!(app.roaming_contacts(), 0);
+    }
+}
+
+/// A battle preview (`--battle`, `?battle=`) is fought once: closing its reward windows must
+/// not start it again (the Web defect observed after a won battle 26).
+#[test]
+fn a_battle_preview_is_fought_once_and_not_restarted() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("1100"), Some(rom.to_vec()));
+    let request = crate::battle::Request {
+        record: None,
+        stage: 0,
+        monsters: vec![(1, 2)],
+        track: None,
+        surprise: Some(dq9_core::battle::Surprise::None),
+    };
+    app.options.battle = Some(request.clone());
+    // The preview has no field behind it, as `set_rom` sets it up.
+    app.save_field();
+    let resolved = request.resolve(rom).unwrap();
+    app.battle_change = Some(BattleChange::Entering {
+        ticks: BATTLE_ENTER_DONE - 1,
+        request: resolved,
+        auto_leave: false,
+    });
+    let mut fought = false;
+    for _ in 0..20_000 {
+        if !app.battle_is_active() {
+            fought = true;
+            break;
+        }
+        app.battle_pad.confirm = true;
+        app.run_steps(1);
+    }
+    assert!(fought, "the preview must end");
+    let last = app.last_fight().expect("the preview was played").clone();
+    assert!(!app.battle_is_active());
+    assert!(app.battle().is_none() && app.fight.is_none());
+    let gold = app.party().gold;
+    for _ in 0..2_000 {
+        app.run_steps(1);
+    }
+    assert_eq!(app.party().gold, gold, "the preview must not pay twice");
+    assert!(
+        !app.battle_is_active(),
+        "the preview must not start again: {:?}",
+        app.last_fight().map(|fight| fight.gold)
+    );
+    assert_eq!(app.last_fight().map(|fight| fight.gold), Some(last.gold));
+}
+
+/// Esc cancels in a fight (the pad owns it); the field's Esc is not touched.
+#[test]
+fn escape_is_cancel_in_a_fight() {
+    let mut pad = Pad::default();
+    super::fight::pad_press(&mut pad, winit::keyboard::KeyCode::Escape);
+    assert!(pad.cancel && !pad.confirm);
+}
+
+/// A Hexagon floor with `encfld`/spawn graph loads the field models of its zones (`D01M02` to
+/// `D01M04`); the map with no group loads none.
+#[test]
+fn hexagon_encounter_floors_load_their_field_models() {
+    let Some(rom) = testrom::load() else { return };
+    for (map, id) in [("D01M02", 7102), ("D01M03", 7103), ("D01M04", 7104)] {
+        let mut app = App::new_headless(roaming_options(map), Some(rom.to_vec()));
+        a_winning_party(&mut app);
+        app.set_roaming_enabled(true);
+        assert_eq!(app.roaming_map(), Some(id));
+        assert!(
+            app.roaming_model_count() > 0,
+            "{map} must load its roamer field models"
+        );
+        let mut spawned = false;
+        for _ in 0..2_000 {
+            app.pilot_dir = Some(Vec3::new(1.0, 0.0, 0.0));
+            app.run_steps(1);
+            if !app.roaming_roamers().is_empty() {
+                spawned = true;
+                break;
+            }
+        }
+        assert!(spawned, "{map} must spawn a roamer");
+        let (slot, roamer) = app.roaming_roamers().into_iter().next().unwrap();
+        assert!(
+            app.roaming_slot_world(slot)
+                .is_some_and(|world| world.x_axis.length() > 0.0),
+            "{map}: the {:?} model is drawn",
+            roamer.number
+        );
+    }
+}
+
+/// The leader's attack plus defence comes from `Character::fighter`, so worn equipment changes
+/// the number the notice decision reads (not the level table alone).
+#[test]
+fn equipment_is_counted_in_the_party_strength() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    app.set_roaming_enabled(true);
+    app.party.members[0].stats.strength = 10;
+    app.party.members[0].stats.resilience = 10;
+    app.party.members[0].hp = 100;
+    app.party.members[0].max_hp = 100;
+    app.party.members[0].equipment = Default::default();
+    app.party_ready = true;
+    let unarmed = app.roaming_party_strength();
+    app.party.members[0].equipment.weapon = Some(dq9_core::state::NEW_GAME_WEAPON);
+    let armed = app.roaming_party_strength();
+    assert!(
+        armed.0 > unarmed.0,
+        "the copper sword adds attack: {unarmed:?} -> {armed:?}"
+    );
+    // A dead member is neither the leader's sum nor a deftness source.
+    app.party.members[0].hp = 0;
+    assert_eq!(app.roaming_party_strength(), (0, 0));
+}
+
+/// The scripted companies the `encbtl` roamer words name are read from `eventbattle.bin`, not
+/// dropped: every found preset equals its record's monsters and counts.
+#[test]
+fn scripted_companies_come_from_eventbattle() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    a_winning_party(&mut app);
+    app.set_roaming_enabled(true);
+    let presets = app.roaming_presets();
+    assert!(!presets.is_empty(), "the encbtl tables name presets");
+    let parsed = nds_rom::Rom::parse(rom).unwrap();
+    let mut found = 0;
+    for preset in presets {
+        let Some(company) = app.roaming_event_company(preset) else {
+            continue;
+        };
+        let record = dq9_core::scenario::battle(&parsed, u16::from(preset))
+            .unwrap_or_else(|| panic!("preset {preset} has no eventbattle record"));
+        let mut expected = [(0u16, 0i16); 3];
+        for (slot, &(monster, count)) in record.monsters.iter().take(3).enumerate() {
+            expected[slot] = (monster as u16, count as i16);
+        }
+        assert_eq!(company, expected, "preset {preset}");
+        found += 1;
+    }
+    assert!(found > 0, "at least one encbtl preset names a battle");
+}
+
+/// The two-way generator transfer: a battle's draws replace the field's stream (a scripted
+/// battle has no contact pending), and the next field step hands the same state back, so no
+/// draw is replayed and the state is not a constant copy.
+#[test]
+fn battle_generators_continue_the_field_stream() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    a_winning_party(&mut app);
+    app.set_roaming_enabled(true);
+    app.pilot_dir = Some(Vec3::new(1.0, 0.0, 0.0));
+    app.run_steps(2);
+    let before = app.roaming_world().expect("roamers loaded");
+    // What a battle does to the world's generators.
+    let mut advanced = before.clone();
+    advanced.crand.rand();
+    advanced.random.next_u32();
+    app.world = advanced.clone();
+    // A scripted battle settles with no contacted roamer; the field must adopt the stream.
+    app.settle_roaming(None);
+    let adopted = app.roaming_world().expect("roamers loaded");
+    assert_eq!(
+        (adopted.crand.clone(), adopted.random.clone()),
+        (advanced.crand.clone(), advanced.random.clone())
+    );
+    assert_ne!(
+        (adopted.crand.clone(), adopted.random.clone()),
+        (before.crand, before.random),
+        "the transfer is a real advance, not a copy of the pre-battle state"
+    );
+    // The next field step exports the same stream again (field -> world).
+    app.pilot_dir = Some(Vec3::new(1.0, 0.0, 0.0));
+    app.run_steps(2);
+    let field = app.roaming_world().expect("roamers loaded");
+    assert_eq!(
+        (field.crand.clone(), field.random.clone()),
+        (app.world.crand.clone(), app.world.random.clone()),
+        "the world and the field share one live stream"
+    );
+}
+
+/// A map change seeds the new map's roamers from the live stream (the world the last field
+/// step exported), not from a fresh seed: no pre-change draw is replayed.
+#[test]
+fn a_map_change_continues_the_same_generator_stream() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    a_winning_party(&mut app);
+    app.set_roaming_enabled(true);
+    app.pilot_dir = Some(Vec3::new(1.0, 0.0, 0.0));
+    app.run_steps(2);
+    // A battle (or a script) advances the world; the field adopts it, then the map changes.
+    app.world.crand.rand();
+    app.world.random.next_u32();
+    let advanced = app.world.clone();
+    app.settle_roaming(None);
+    assert!(app.load("D01M02", true, None, None), "D01M02 loads");
+    let next = app.roaming_world().expect("the new map has roamers");
+    assert_eq!(
+        (next.crand.clone(), next.random.clone()),
+        (advanced.crand, advanced.random),
+        "the new map's roamers start on the live stream"
+    );
+}
+
+/// A flight does not delete the live roamer: the settlement puts it in STARTLED, its model
+/// stays drawn, and its id is recent so the party cannot touch it at once.
+#[test]
+fn a_flight_keeps_and_resumes_the_roamer() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    a_winning_party(&mut app);
+    app.set_roaming_enabled(true);
+    let (slot, found) = wait_for_roamer(&mut app, 2_000).expect("F01 spawns");
+    let id = found.id;
+    app.roaming.set_pending(slot);
+    app.settle_roaming(Some(BattleResult::Fled));
+    let roamer = app
+        .roaming_roamers()
+        .into_iter()
+        .find(|(slot_now, _)| *slot_now == slot)
+        .map(|(_, roamer)| roamer)
+        .expect("a flight leaves the roamer alive");
+    assert_eq!(roamer.id, id);
+    assert_eq!(roamer.state, dq9_core::encounter::roamer::state::STARTLED);
+    let instance = app
+        .roaming_slot_instance(slot)
+        .expect("the fled roamer keeps its model");
+    for _ in 0..6 {
+        app.run_steps(1);
+    }
+    assert_eq!(
+        app.roaming_slot_instance(slot),
+        Some(instance),
+        "the model is still bound to the fled roamer"
+    );
+    assert!(
+        app.runtime
+            .as_ref()
+            .expect("the field is loaded")
+            .scene
+            .instances[instance]
+            .world
+            .x_axis
+            .length()
+            > 0.0,
+        "the fled roamer stays drawn"
+    );
+    assert!(app.roaming_roamers().iter().any(|(_, r)| r.id == id));
+}

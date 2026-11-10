@@ -316,3 +316,53 @@ with `state_ms + dt < 1001`, or out of state 1 with `state_ms + dt < 4001`, `dt`
 own (`frames.tsv`); (d) a contact with the leader outside `touches`, or a roamer of state other
 than 0, 8 or 9 inside that reach and not touched after two frames. Try different seeds (`-Seed`),
 and start `F38`/`F44` the same way (the recipe only needs a different door).
+
+## Application wiring (j4-roaming-play)
+
+`crates/dq9-app/src/app/roaming.rs` draws the roamers of the loaded map and hands their contact to
+the existing battle entry (`App::start_encounter`). It is wiring, not a second model: the spawn tick,
+movement, notice decision, contact, surprise roll, company and stage are `dq9_core::encounter`'s.
+
+- **Lifecycle.** `enter_roaming` runs after every map load. A different map starts a fresh
+  `Roamers` (timer, spawn count, graph and generators); a reload of the same map (time of day, a
+  scene rebuild) keeps the `Roamers` and drops only the scene indices of the field models, because
+  the new scene's instances are different objects. A new ROM, save or new game clears the cached
+  ROM tables. The step runs only on the field's 30 Hz update, after the field task and before the
+  animation; the field loop already skips it while a conversation, an event, a cast reload, a map
+  change or a battle holds the field.
+- **Models.** One field model is added per monster number of the map's `encfld` zones at load
+  (`enemy/<code>_f.mon`, first `.cchr`), from that number's `mon_data` code, never another
+  monster's archive. A spawn takes a free instance from that number's pool; the model is placed at
+  the roamer's `position` and `angle` with scale `scale / 4096`, its motion follows the state
+  (`stand`, `walk`, `run`, `appear`; a missing name falls back within the same archive), and its
+  alpha is `GetInheritedAlpha`. A model added after the scene was uploaded forces one renderer
+  rebuild; nothing else does.
+- **Generators.** One live stream is shared by the field and every battle. A map's `Roamers` are
+  seeded from the application's `World` (so `--seed` reaches the spawns and companies); every field
+  step copies the roamers' `CRand` and world generator into `World`, a battle starts from that state
+  (contact or scripted), and `App::settle_roaming` copies the advanced state back through
+  `Roamers::set_generators`. No pre-battle draw is replayed after a map change or a scripted battle.
+- **Settlement.** A contact stores its slot. A won monster enters state 11 and fades out; the
+  engine's own update drops the slot at alpha 0 and the application releases its field model. A
+  fled or lost monster enters state 12 (STARTLED): it stands three seconds and resumes wandering.
+  The touch that starts the battle also puts the roamer's id at the head of the four-entry recent
+  list (`+0x44b8`), so the same roamer is not touched again while it is recent. The party, drops
+  and story triggers are settled only by `settle_battle`, so a contact pays once. **[hypothesis]**:
+  the field log only has won contacts (each followed by the slot's next spawn), so the fled/lost
+  resumption is the engine's STARTLED rule, not a measured post-battle state; filling `+0x44b8` at
+  the contact is the only place its four ids can come from without inventing a second writer.
+- **Party numbers.** The notice decision and the surprise roll read the first living member's
+  attack plus defence and the highest deftness among living members from
+  `Character::fighter` with the cached `ItemStats` and `BattleParams`: level table and worn
+  equipment both count. The level tables are applied at the first contact (or fight), so a new
+  game's empty attributes are filled first.
+- **Scripted companies.** `Surroundings::event_company` is the `eventbattle.bin` record the
+  `encbtl` roamer word names (its preset bits); the tables are read once with the map tables, so a
+  scripted company is no longer silently replaced by the drawn one.
+- **Field models.** Every pooled field model's instance matrix is uploaded each frame, including a
+  released model's zero matrix: a defeated, despawned or respawned roamer leaves no ghost on the
+  renderer. The per-frame path allocates nothing for the twelve slots.
+- **Headless.** A run without a window does not roam (its recorded traces keep replaying); the
+  window and the Web always do. The native behaviour tests switch it on explicitly.
+- **Not modelled** (unchanged from the core): the story-flag range of `0x02073d54`, the
+  `(byte)param_1[0xd] > 4` clause, A-button contacts, multiplayer and solid monsters.

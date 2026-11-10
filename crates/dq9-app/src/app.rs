@@ -57,6 +57,7 @@ pub(crate) use self::fight::run_to_phase;
 mod flow;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod headless;
+mod roaming;
 
 /// Fixed update step (60 Hz, the DS frame rate).
 pub const STEP: f32 = 1.0 / 60.0;
@@ -345,6 +346,8 @@ pub struct App {
     /// The party: members, gold and bag. Its level tables are applied at the first fight.
     party: Party,
     party_ready: bool,
+    /// The roaming monsters of the loaded map and their field models (`app/roaming.rs`).
+    roaming: self::roaming::Roaming,
     /// Where a wiped-out party comes round.
     revival_map: u16,
     /// How the last fight went.
@@ -404,6 +407,7 @@ impl App {
         if options.record_sound {
             audio.record();
         }
+        let roaming = self::roaming::Roaming::new(proxy.is_some());
         let mut app = Self {
             proxy,
             options,
@@ -448,6 +452,7 @@ impl App {
             world_seeded: false,
             party: Party::new_game(),
             party_ready: false,
+            roaming,
             revival_map: fight::NEW_GAME_REVIVAL_MAP,
             last_fight: None,
             renderer: None,
@@ -485,6 +490,7 @@ impl App {
         self.talk.reset_session();
         self.doors_opened.clear();
         self.door_angles.clear();
+        self.roaming.reset_rom();
     }
 
     fn set_rom(&mut self, rom: Vec<u8>) {
@@ -726,6 +732,7 @@ impl App {
             return true;
         }
         self.runtime = Some(loaded.runtime);
+        self.enter_roaming();
         self.upload();
         self.update_title();
         if let Some(field) = &mut self.field {
@@ -988,7 +995,6 @@ impl App {
         if self.fight.is_some() {
             // The fight reads the pad itself; the conversation's presses must not pile up.
             match code {
-                KeyCode::Escape => event_loop.exit(),
                 KeyCode::KeyM => self.audio.toggle_mute(),
                 KeyCode::KeyR => self.options.layout = self.options.layout.next(),
                 _ => fight::pad_press(&mut self.battle_pad, code),
@@ -1384,6 +1390,7 @@ impl App {
                 }
                 (None, None) => Vec3::ZERO,
             };
+            let mut stepped = false;
             if let Some(hero) = &mut self.hero {
                 let before = hero.position();
                 if field_due {
@@ -1418,12 +1425,17 @@ impl App {
                             instance.world = world;
                         }
                     }
+                    stepped = hero.position() != before;
                 }
                 // Held pose on the intermediate VBlank: the camera still follows it, as the
                 // original's follow runs per VBlank, not per game update.
                 self.camera.follow_hero(hero.position());
             }
             if self.apply_events(events) {
+                continue;
+            }
+            if field_due && let Some(contact) = self.step_roaming(stepped) {
+                self.begin_encounter(contact);
                 continue;
             }
             if let Some(runtime) = &mut self.runtime
@@ -1546,6 +1558,10 @@ impl App {
                 if let Some(instance) = runtime.scene.instances.get(index) {
                     renderer.update_instance_world(&gpu.queue, index, instance.world);
                 }
+            }
+            // The roaming monsters move each field step (at most twelve instances).
+            for (index, world) in self.roaming.instance_worlds(runtime) {
+                renderer.update_instance_world(&gpu.queue, index, world);
             }
         }
         if let (Some(gpu), Some(renderer), Some(runtime), Some(hero), Some(index)) = (
@@ -1853,13 +1869,6 @@ impl App {
                     let outcome = outcome.take();
                     finished = true;
                     self.settle_battle(&request, outcome);
-                    // A preview (`--battle`) has no story to go back to: it fights again.
-                    if self.field.is_none()
-                        && self.battle_change.is_none()
-                        && let Some(again) = self.options.battle.clone()
-                    {
-                        self.start_battle(again, false, true);
-                    }
                 }
             }
         }
