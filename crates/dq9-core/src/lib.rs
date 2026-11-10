@@ -5,6 +5,7 @@ pub mod camera;
 pub mod collision;
 pub mod cutscene;
 pub mod encounter;
+pub mod facility;
 pub mod field;
 pub mod fx;
 pub mod lighting;

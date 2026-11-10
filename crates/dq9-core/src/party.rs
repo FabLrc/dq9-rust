@@ -237,6 +237,34 @@ impl Bag {
         }
         false
     }
+
+    /// Removes up to `quantity` copies of `item` (`Bag_Remove`, `0x020a0a18`: "decrements a bag
+    /// slot, frees it at 0"), across the stacks that hold it, and returns how many went.
+    ///
+    /// A stack that reaches 0 empties its slot; no slot is merged with another and the slots
+    /// keep their order, so a bag that held one stack of an item still does. A quantity past
+    /// what the bag holds removes what there is. `0` for an item the bag does not hold
+    /// (`docs/re/save.md` reads `Bag_Remove(…, 0x5612, 99)` as the save's own call).
+    pub fn remove(&mut self, item: u16, quantity: u8) -> u32 {
+        let mut left = u32::from(quantity);
+        let mut removed = 0;
+        for stack in &mut self.slots {
+            if left == 0 {
+                break;
+            }
+            if stack.item != Some(item) {
+                continue;
+            }
+            let taken = u32::from(stack.quantity).min(left);
+            stack.quantity -= taken as u8;
+            left -= taken;
+            removed += taken;
+            if stack.quantity == 0 {
+                *stack = ItemStack::default();
+            }
+        }
+        removed
+    }
 }
 
 /// One party member: the character record plus the party slot's held items.
@@ -794,6 +822,29 @@ mod tests {
         assert_eq!(party.bag.count(22000), 1);
         assert_eq!(party.bag.count(20004), 0);
         assert_eq!(party.bag.slots()[2], ItemStack::default());
+    }
+
+    #[test]
+    fn a_removal_takes_copies_and_frees_the_slot_at_nought() {
+        let mut bag = Bag::empty(4);
+        bag.add_copies(22000, 5);
+        bag.add_copies(22001, 3);
+        assert_eq!(bag.remove(22000, 2), 2);
+        assert_eq!(bag.count(22000), 3);
+        assert_eq!(
+            bag.slots()[0],
+            ItemStack {
+                item: Some(22000),
+                quantity: 3
+            }
+        );
+        assert_eq!(bag.slots()[1].item, Some(22001), "the next stack stays put");
+        // More than the bag holds removes what there is, and the slot is freed.
+        assert_eq!(bag.remove(22000, 9), 3);
+        assert_eq!(bag.slots()[0], ItemStack::default());
+        assert_eq!(bag.remove(22000, 1), 0);
+        assert_eq!(bag.remove(22001, 0), 0);
+        assert_eq!(bag.count(22001), 3);
     }
 
     #[test]

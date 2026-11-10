@@ -8,6 +8,7 @@ pub mod bgm;
 pub mod cast;
 pub mod chr;
 pub mod dialogue;
+pub mod facility;
 pub mod font;
 pub mod gpc2;
 pub mod hero;
