@@ -25,6 +25,7 @@ Workers: Orca/OMP `opencode-go/deepseek-v4.1-flash`; route → `anthropic/claude
 | `j4-full-heal` / `5723a5d` | Original max-HP override after ordinary draws; real `Battle::round` HP 37 → 321, MP 40 → 16; Omniheal MP128 still refused (`re/battle.md`) | 5/5, 110.2 s, core battle-ROM 10/10 |
 | `j4-field-services` / `660d682` | Field menu (items/equipment/attributes/spells), inn/shop/church screens, bounded hero rebuild, copied-item and group-heal fixes; one copy per trade, no copy lost to a 99 stack | 5/5, 95.6 s, app 131/131 |
 | `j4-guest-slot` / `d079b97` | Condition 0x56's `0xce` slot is the field guest (actions `0xcd`/`0xcc`); the M01 2.2 scene now starts event 2230, without a hero tag | 5/5, 122.0 s, core 264 unit + field-ROM 7/7 |
+| `j4-gate-pair` / `19906dc` | Trigger action `0xa9` swaps D01M01's gate pair (object 13 shown, 15 hidden → collision 14 solid, 16 open) at the end of 2530 | 5/5, 104.4 s, field-ROM 8/8 |
 
 Native F01 contact with monster 57 → victory in 3 rounds (3 XP, 5 gold) → same field, no ghost;
 D01M02 models visible. Evidence: `j4-roaming-play/field-restored-after-win.png` (`61a585913e52`),
