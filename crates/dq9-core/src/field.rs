@@ -857,6 +857,31 @@ impl Field {
                         // from the loaded map would be kept as pending by the game
                         // (`func_0206ea8c`); the runtime reports it as unhandled instead of
                         // faking success.
+                        // `Trig_RunAction` case 0x45 (action 0xa9, `func_020ae7d4`): the
+                        // map's gate pair swaps. The function fetches the objects numbered
+                        // `0xd` and `0xf` of block 0 (`func_0201b600`, by placement id) and,
+                        // for a zero argument, clears bit 2 of the first and sets it on the
+                        // second; that bit is the placement's "hidden at this time of day"
+                        // flag (`assemble.rs`: placement `+2` bit 2), so object 13 is drawn
+                        // and object 15 hidden, and their collision children (14 and 16 in
+                        // D01M01) follow through the parent rule. The guard
+                        // `func_020ae4c8() == 0` only skips a swap already reached: setting
+                        // the same states again is idempotent, so it is not modelled.
+                        0xa9 => {
+                            if action.arg == 0 {
+                                immediate.push(Request::SetPlacementHidden {
+                                    block: 0,
+                                    placement: 13,
+                                    hidden: false,
+                                });
+                                immediate.push(Request::SetPlacementHidden {
+                                    block: 0,
+                                    placement: 15,
+                                    hidden: true,
+                                });
+                            }
+                            continue;
+                        }
                         0x95 | 0x96 => {
                             if !action.operands.is_empty() {
                                 immediate.push(Request::SetPlacementHidden {

@@ -189,6 +189,46 @@ fn the_guest_of_2210_opens_the_mayors_scene() {
     );
 }
 
+/// The end of event 2530 swaps the Hexagon's gate pair on the real `triggerD01.bin`: action
+/// `0xa9(0, …)` is `func_020ae7d4`, which shows the block-0 object numbered 13 and hides the
+/// one numbered 15 (`assemble.rs`: placement `+2` bit 2 is the hidden flag), and their
+/// collision children follow. The trigger file holds `0xa9` once, in this rule.
+#[test]
+fn the_end_of_2530_swaps_the_hexagon_gate_pair() {
+    use dq9_core::trigger::Request;
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let file = field::trigger_path("D01M01")
+        .and_then(|path| map::rom_file(&rom, &path))
+        .map(<[u8]>::to_vec);
+    assert!(file.is_some(), "D01 has a trigger file");
+    let story = dq9_formats::cast::Story {
+        chapter: 2,
+        step: 4,
+        substep: 1,
+        ..Default::default()
+    };
+    let mut state = field::initial_state(&story);
+    let mut hexagon = Field::new(7101, &Regions::default(), file).unwrap();
+    let events = hexagon.event_ended(2530, &mut state);
+    let placements: Vec<(u16, bool)> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Request(Request::SetPlacementHidden {
+                block: 0,
+                placement,
+                hidden,
+            }) => Some((*placement, *hidden)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        placements,
+        [(13, false), (15, true)],
+        "object 13 is shown and object 15 hidden, in that order"
+    );
+}
+
 struct World<'r> {
     rom: &'r Rom<'r>,
     collision: CollisionWorld,

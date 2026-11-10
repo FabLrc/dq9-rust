@@ -371,6 +371,7 @@ wireless sync, HP) are ignored.
 | 0xcb | revives members at 0 HP: max HP (`arg` = 0), half (1) or 1 | 2 |
 | 0xcc | the guest leaves: `Guest_Dismiss` (`ov_017::02191484`) clears character-table slot `0xce` | 6 |
 | 0xcd | a guest joins for `arg` above 0 (`Guest_Start`, `ov_017::021913d0`): the load task registers slot `0xce` once its two ROM loads are done; `Cast_Rebuild` re-queues it after `Cast_ClearNpcs` cleared the slot (`ov_017::021a2fa0+444`) | 8 |
+| 0xa9 | with `arg` = 0: the map's gate pair swaps — `func_020ae7d4` takes the block-0 objects numbered `0xd` and `0xf` (`func_0201b600`, placement id) and clears bit 2 of the first (drawn, solid) while setting it on the second (hidden); that bit is placement `+2` bit 2 (`assemble.rs`), and the collision children of a hidden parent go with it. Called from `Trig_RunAction` case 0x45; runs at once, not deferred. The guard `func_020ae4c8() == 0` only skips an already-reached state. D01M01's `0xa9(0, 65536)` swaps objects 13 and 15 (collision 14/16) at the end of 2530 | 1 |
 | 0xce | flag 0x79a | 1 |
 | 0xd3 | sets bit `arg` of `+0x238c` (condition 0x5d) | 0 |
 | 0xd8 | host: `+0x27b4` = `arg` (condition 0x5f) | 13 |
@@ -380,7 +381,7 @@ wireless sync, HP) are ignored.
 | 0xe8 | conversation type of NPC `arg` (bits 3–5 of byte 10 of its definition) = `high` | 1 |
 | 0x99 | sets bit 0x100 of the map object (type, number, angle) then removes it | 13 |
 
-† deferred. The other codes present in the data (0xa1, 0xa4, 0xa6, 0xa7, 0xa9,
+† deferred. The other codes present in the data (0xa1, 0xa4, 0xa6, 0xa7,
 0xb2, 0xb4, 0xb9, 0xbd, 0xc7, 0xcf, 0xd0, 0xd4, 0xd5, 0xd7, 0xda–0xdd, 0xe3,
 0xe5, 0xe7, 0xe9) touch windows, sound, wireless sessions, equipment or
 unidentified structures; they do not change the flow of the list, except 0xdb (returns
