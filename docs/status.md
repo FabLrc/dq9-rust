@@ -9,8 +9,9 @@ Plan: [`roadmap.md`](roadmap.md); rules: [`../AGENTS.md`](../AGENTS.md).
   village tasks 1.2 through return 1.4.1. Driver: 615 checkpoints; parity 2/2 at first
   control and 1.1.2, except flag `4135` (battle 26 loot).
 - **Cadence**: fixed 60 Hz; hero, field and model pose at 30 Hz.
-- **Browser**: Pages build `21e1e42`, opening through raised hall; no continuous
-  certification further (`app.md`, Verification). No new browser deployment claimed.
+- **Browser**: Pages deployment `42800444183`, build `b91f43b`; standalone battle 26
+  played to victory (4 rounds, 5 XP, 9 gold). Reward closure restarts that standalone fight;
+  assigned to `j4-roaming-play`. Continuous certification still stops at the raised hall.
 - **CI**: last recorded `main` green after Windows-only app-test dead-code fix;
   `cfg(all(test, windows))` must also govern test-only allowances on Linux.
 

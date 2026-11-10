@@ -94,8 +94,9 @@ Still missing:
   won (the parity traces depend on it);
 - attack animations in battle, the field menu, shops, inn and church screens (their rules exist in
   `dq9-core`);
-- end-to-end browser certification (battles and the window have not been driven by hand) and
-  comparison with the original over the whole route (see [`docs/status.md`](docs/status.md)).
+- end-to-end browser certification (standalone battle 26 has been played to victory, but not
+  the continuous route) and comparison with the original over the whole route
+  (see [`docs/status.md`](docs/status.md)).
 
 Status, limits and evidence: [`docs/status.md`](docs/status.md); plan and milestones:
 [`docs/roadmap.md`](docs/roadmap.md); running and commands: [`docs/app.md`](docs/app.md).

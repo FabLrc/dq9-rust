@@ -720,8 +720,9 @@ without an extra click. Arrows: walk; Enter/Space: talk and advance messages;
 Q/E: camera; M: sound. A DS save is optional.
 Files are read locally: no ROM or save is sent to GitHub.
 A computer with a keyboard and a recent browser with WebGPU or WebGL 2 are recommended.
-The limits of the technical proof still apply: battles skipped, incomplete effects
-and provisional bottom screen.
+Battles are interactive; standalone battle 26 has been played to victory in the browser
+(Verification below). Roaming monsters and field-menu/facility screens are still missing;
+effects and battle motions are incomplete. The continuous chapter 2 route is not certified.
 
 The ROM/save fields and the selectors stay disabled during the download and
 initialization of the engine. "New game" stays disabled until the bytes of
@@ -956,6 +957,18 @@ controls and the screen's pixel density. Native: `--layout`, and `R` switches to
 layout. Web: the "Screens" select or `?layout=`. The old `--ds-aspect` and `ds=` are removed.
 
 ## Verification
+
+- Browser battle on Pages (November 10, 2026): deployment
+  [`42800444183`](https://github.com/FabLrc/dq9-rust/actions/runs/42800444183),
+  commit `b91f43b`, URL `https://fablrc.github.io/dq9-rust/?battle=26&mute=1`.
+  Local European ROM; Orca embedded browser, real focus and Enter presses, no game-state
+  injection. Commands, targeting, damage, victory and reward windows exercised: 4 rounds,
+  5 experience, 9 gold, one drop, hero HP 10/20 at victory. Evidence:
+  `build/evidence/j4-combat-web-baseline/report.md` (`44aa2de407fe`),
+  `victory.png` (`981849bfdefc`), `gold.png` (`b131f23efcf2`).
+  **Observed defect**: closing rewards starts standalone battle 26 again;
+  `restarted.png` (`637807d124a5`). Cause not established; assigned to `j4-roaming-play`.
+  This proves neither natural field contact/return nor continuous new-game progress.
 
 - Browser run on Pages (November 7, 2026, partial evidence, final build): successful
   deployment `42384404646`, commit `21e1e42`, URL
