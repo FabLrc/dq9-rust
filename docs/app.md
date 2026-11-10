@@ -599,9 +599,55 @@ once" timeline, so a headless run, `--replay` and the application's tests keep t
 unless `--fight` is given; the window and the Web always fight. `--fight` plays the battle in
 the same fixed step (no step is spent on a presentation) with the automatic policy (Attack
 the first standing monster, as holding confirm through the menus does: a test asserts the
-two play the same fight) and the world's generators on `--seed`. Follow-up: re-record the
-references with real battles (`scripts/parity.ps1` still compares the stand-in; the loot of
-`--fight` depends on the seed: seed 7 drops nothing now that the fleeing monsters pay nothing).
+two play the same fight) and the world's generators on `--seed`. The parity references replay
+the same inputs with `--new-game --fight --seed 7 --mute`, so battle 26 is the engine's:
+"Won after 4 rounds, 2 experience, 4 gold, drops []" on the European ROM, in the same fixed
+step (the run keeps its 615 checkpoints, byte for byte). The comparison reads the story,
+flags, quests and the hero, not the party, the rewards or the fight's log. Seed 7 draws no
+drop, so the female original's herb flag `4135` stays an `accepted` deviation
+(`docs/re/tools.md`) and the runtime has none; a seed that draws the herb would set `4135` in
+the runtime's flags and fail the male reference, which is why the seed is part of the
+reference.
+
+**Recording a reference.** The inputs are the combined native route, and the originals are
+real-game checkpoints aligned by story point (`scripts/compare-runs.ps1`), never a
+frame-synced replay of our trace: the runtime's fixed steps and melonDS's VBlanks do not
+share a base (1.1.1 at step 12625 against VBlank 23033; 1.1.2 at 20068 against 58392).
+Everything below lives under `build/` (ignored); the file and its schema are documented in
+`docs/re/tools.md`.
+
+```powershell
+# 1. Inputs: the driver's native route. The current references pin the archived 40,432-step
+#    trace (inputs/combined-final-inputs.jsonl, sha256 5394e04ed1cb...) and replay it as is;
+#    a fresh driver run records its own file, which the reference then pins by sha256.
+cargo run -p dq9-app --release -- --new-game --headless --auto --pilot `
+  --trace-inputs build/route.jsonl --checkpoints build/route-checkpoints.jsonl
+
+# 2. Runtime side: the same inputs with battle 26 played by the engine and seeded.
+cargo run -p dq9-app --release -- --new-game --fight --seed 7 --mute --headless `
+  --replay build/route.jsonl --checkpoints build/parity/run1-checkpoints.jsonl
+#    The log (stderr) must say: battle 26: Won after 4 rounds, 2 experience, 4 gold, drops [].
+
+# 3. Original 1.1.1 (male, first control): libretro run to VBlank 23033, then dq9re.
+#    The harness and its frame-exact inputs are documented in docs/re/melonds-state.md.
+python scripts/melondsds_host.py --rom <ROM> --core tools/build/melondsds_libretro.dll `
+  --input build/oracle-host/inputs/in12.jsonl --frames 23050 `
+  --dump-ram build/oracle-host/ram_male.bin --state-out build/oracle-host/core_male.bin
+cargo run -p dq9re --release -- state --ram build/oracle-host/ram_male.bin --json
+#    Add "kind":"control" to the object (the original does not expose a checkpoint kind).
+
+# 4. Original 1.1.2: 90 frames without input from the continuous run's state, the checkpoint
+#    captured at frame 89 by build/v01-20261107/oracle/control112.jsonl.
+python scripts/melondsds_host.py --rom <ROM> --core tools/build/melondsds_libretro.dll `
+  --state-in build/v01-20261107/oracle/continuous-state.bin `
+  --input build/v01-20261107/oracle/control112.jsonl --frames 90 `
+  --checkpoints build/control112-cp.jsonl --dump-ram build/control112-ram.bin `
+  --state-out build/control112-state.bin
+#    Then rename that checkpoint's "kind":"control112" to "control"; nothing else changes.
+
+# 5. Compare every reference: exit 0 with 2/2.
+powershell -ExecutionPolicy Bypass -File scripts/parity.ps1
+```
 
 **Open and [hypothesis].**
 

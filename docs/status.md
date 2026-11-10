@@ -7,7 +7,11 @@ Plan: [`roadmap.md`](roadmap.md); rules: [`../AGENTS.md`](../AGENTS.md).
 
 **v0.1 functional natively; v0.2 still in progress** (new game → event 2750, every battle fought).
 Opening, Observatory, physical Angel Falls return and village tasks through 1.4.1 work on main.
-Driver: 615 checkpoints; parity 2/2 at first control and 1.1.2 except flag `4135` (battle loot).
+Driver: 615 checkpoints; parity 2/2 at first control and 1.1.2 except flag `4135` (battle loot),
+now with battle 26 played by the engine (`--fight --seed 7`). The fought and stand-in runs give
+**byte-identical checkpoints**: the compared fields are the story, flags, quests and hero, not the
+party's HP/XP/gold, so the reference cannot yet tell a played fight from the substitute
+(`re/tools.md`, `build/evidence/j4-parity-battles/report.md`).
 Fixed 60 Hz loop; hero, field and model pose at 30 Hz. Chapter 2 events: 47/50 complete.
 
 ## Combat and monsters — integrated on main

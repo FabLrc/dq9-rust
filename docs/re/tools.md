@@ -265,7 +265,7 @@ its side is stale and fails too (remove it from the reference).
       "description": "Free control after 1170 in X01M01 (4101), story 1.1.2.",
       "inputs":   { "path": "inputs/combined-final-inputs.jsonl", "sha256": "5394e04e…", "source": "…" },
       "original": { "path": "original/control-1.1.2.jsonl", "sha256": "22554295…", "source": "…" },
-      "args": ["--new-game", "--mute"],
+      "args": ["--new-game", "--fight", "--seed", "7", "--mute"],
       "heroTolerance": 0.01,
       "accepted": [
         { "flag": 4135, "only": "original", "reason": "random loot of battle 26…" }
@@ -302,11 +302,21 @@ Batch `build/evidence/parity/` (`manifest.json` via `scripts/evidence.ps1 -Batch
 
 - `first-control-1.1.1-male`: first player control (4105, 1.1.1), no accepted discrepancy.
 - `control-1.1.2`: free control 1.1.2 (4101, VBlank 58392), accepted discrepancy `4135`
-  (medicinal herb, random loot of battle 26 of the female run; the runtime substitutes the
-  battle and does not roll loot, no forced flag: [`melonds-state.md`](melonds-state.md),
-  [`item.md`](item.md)).
+  (medicinal herb, random loot of battle 26 of the female run; the runtime plays the battle
+  with `--fight --seed 7`, which draws no drop and sets no flag — a seed that drew the herb
+  would fail the male reference, so the seed belongs to the reference:
+  [`melonds-state.md`](melonds-state.md), [`item.md`](item.md)).
+- Both references launch the runtime with `["--new-game", "--fight", "--seed", "7", "--mute"]`
+  since batch `j4-parity-battles`, so battle 26 is the engine's fight ("Won after 4 rounds, 2
+  experience, 4 gold, drops []"). **What this proves is limited, and the limit is measured**:
+  the fought run's 615 checkpoints are byte-identical to the stand-in run's, because the
+  compared fields are the story, the flags, the quests and the hero — not the party's HP,
+  experience or gold, nor the fight's log. Parity therefore still cannot tell a played battle
+  from the stand-in; the fields that would show it are a follow-up
+  (`build/evidence/j4-parity-battles/report.md`).
 
-Output on `5b32cf1` (modified working tree, European ROM):
+Output after `j4-parity-battles` (European ROM; the references now launch the runtime with
+`--fight --seed 7`, the engine's battle 26):
 
 ```text
 ok      first-control-1.1.1-male  aligned 1/1 original checkpoint(s), runtime 615
@@ -317,7 +327,11 @@ parity: 2 reference(s), 2 ok, 0 failed
 Falsification: without the `4135` entry, `control-1.1.2` fails on
 `DIFF 4101:1.1.2 control global flags: original [… 4135 …], runtime […]`; an altered
 original fails on the hash, then, hash updated, on
-`DIFF 4101:1.1.2 control track 0 step flags: original [1,2,3], runtime [1,2,3,4]`.
+`DIFF 4101:1.1.2 control track 0 step flags: original [1,2,3], runtime [1,2,3,4]`. With the
+fought run the last check was repeated the other way: flag `4414` changed to `4413` in the
+1.1.1 original (hash updated) fails on
+`DIFF 4105:1.1.1 control global flags: original [… 4410,4413], runtime [… 4410,4414]`, and the
+canonical references pass again (`build/evidence/j4-parity-battles/`).
 
 Missing data, not fabricated: no original checkpoint exists beyond 1.1.2 (Yggdrasil 1.2.1,
 Angel Falls, village tasks, 1.4.1); these points remain without a reference.

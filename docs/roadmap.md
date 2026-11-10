@@ -444,7 +444,10 @@ Progress:
       ROM-backed action/damage/death/flight motions, weapon sets, hit timing and window
       barriers are integrated (`j4-battle-motions`); live GPU lunge/hide verified in the browser.
       Remaining: abilities, using worn equipment, wipe-out details (priest line, revival by
-      save, trigger 180), continuous manual play, parity references with real battles.
+      save, trigger 180), continuous manual play. The references now launch the runtime with
+      `--fight --seed 7` (`j4-parity-battles`), but the compared checkpoint fields do not
+      include the party's HP/XP/gold, so the fought and stand-in runs are byte-identical:
+      widening the checkpoint is the remaining parity step.
 - [ ] Battle scene: stage, grid, side camera, 547 transition done (`j4-battle-scene`). Remaining:
       action-script shots, swirl, encounter transition, companions.
 - [ ] Roaming monsters: rules in `dq9_core::encounter` (`j4-roaming`), checked against melonDS F02
