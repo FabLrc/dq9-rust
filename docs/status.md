@@ -67,9 +67,14 @@ Direct-map checks do not certify continuous new-game play to 2750.
 ## Active work and next steps
 
 One implementation batch retains its own ownership; nothing else is unmerged.
-`j4-chapter2-route`: two Flash failures; Sonnet retry `ctx_273f59bcad5d` owns the same task.
-Latest run stops at 1.2.1 on 1107; the M01M10 warp approach also remains open. Hexagoon and
-2750 are not reached, so v0.2 is not certified.
+`j4-chapter2-route`: two Flash failures; the Sonnet retry `ctx_273f59bcad5d` now crosses
+M01M10 by a generic warp-volume approach and reaches **2.2.3 in D01M01** with real battles
+(commits `c9227e6`, `42b0174`). Its stall is trigger **0x56** at M01M05: the party tag
+`+0x56b` is **0** in `pro1.ml1`/`pro11.ml1` and in the demo save, so the condition resolves
+through its fallback "character `0xce` exists", which the port never holds
+(`re/trigger.md` § "The tag of `+0x56b`"). The proposed hero `tag: 1` was refused as a masking
+change. Hexagon interior routing, S01M01 events 2300–2350, Hexagoon won/lost and 2750 remain
+unreached, so v0.2 is not certified.
 `j4-field-services` progress is now integrated (table above); its field limits are recorded in
 `docs/app.md` § "Field menu and facility screens" and `re/facility.md`.
 Headless parity keeps stand-ins unless `--fight` is given and disables roaming.

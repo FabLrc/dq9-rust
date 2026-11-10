@@ -253,6 +253,38 @@ save (the first is the leader).
 | 0x1FB | destination room (`+0x3f8`, written by transport actions) == `arg` |
 | 0x18, 0x47, 0x48, 0x61, others | always false |
 
+### The tag of `+0x56b`: zero on the party, and the `0xce` branch
+
+`+0x56b` is loaded from the save record (`+1` bits 5–7 → bits 0–2, `+0x13f` bits
+0–2 → bits 4–6, `save.md` § "Party members"). Measured on the European ROM:
+
+- **New game**: all four member objects at `GameState+0x474 + i × 0x964` have
+  `+0x56b` = 0 in `pro1.ml1` and `pro11.ml1` (base checked through `+0x950` = 6, the
+  new-game hero's vocation).
+- **Played save**: `build/sav/demo.sav` records 0–3 have `+1` bits 5–7 = 0 and
+  `+0x13f` bits 0–2 = 0, i.e. tag 0 for every member; the same table's `+0x94c` = 5
+  (bits 3–7 of the same byte) is the value already verified against the demo.
+
+So the first half of 0x56 ("the first of characters 0 to 3 whose low tag nibble is
+non-zero has non-zero HP") never applies to the party, and the condition resolves
+through its fallback **"character `0xce` exists"**. `Chara_Get` (`0x0200fd80`) returns
+`*(manager + 8 + index × 4)` for `0 ≤ index < 0xe9` (233 entries, 0 = the hero), so
+`0xce` = 206 is one of those objects; what it holds is **[unknown]** and is being
+read from the ROM (the port's `TriggerWorld::character` only knows the party, so the
+fallback is always false today).
+
+Why it matters: the M01 rules at room 1105, story 2.2, gate the story on it. Talking
+to NPC 16 tries, in file order, `0x6(16) 0x56(0)` → `talk(16, 0xC10000)`, then
+`0x6(16) 0x3(5)` (track set-1 flag 5) → `talk(16, 0xC00000)`; event 1 starts 2230
+when parameter word 5 is `0xC0` (`0xb(192)`). A port that answers 0x56 "false" says
+the `0xC1` line, so event 1 never matches and 2230 never starts — the run stalls at
+2.2.3 with no other symptom. That was the observed failure, and it is **not** fixed by
+giving the hero a non-zero tag: the original's party tag is 0, so such a change would
+satisfy the condition through a state the game never has.
+
+Local evidence: `build/evidence/j4-route-character-table/tag-and-0xce.txt` (peeks,
+record bytes and the rule dump).
+
 ### The "hero word": hero's HP
 
 0x24, 0x38 and lines of types 5/6 (`dialogue.md`) read the half-word
