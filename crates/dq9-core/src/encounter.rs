@@ -267,57 +267,24 @@ impl Roamers {
         let Some(hero_node) = self.hero_node else {
             return;
         };
-        let node = &graph.nodes[hero_node];
-        if node.links.is_empty() {
+        if graph.nodes[hero_node].links.is_empty() {
             return;
         }
-        let facing = [fix32_sin(input.angle), 0, fix32_cos(input.angle)];
-        // The free nodes next to the party's, and its own when it is not on it.
-        let mut candidates: Vec<usize> = node
-            .links
-            .iter()
-            .copied()
-            .filter(|&l| !self.occupied(graph.nodes[l].id, None))
-            .collect();
-        if fx::distance(node.fx(), hero) > 0x5000
-            && !candidates.iter().any(|&c| graph.nodes[c].id == node.id)
-            && !self.occupied(node.id, None)
-        {
-            candidates.push(hero_node);
-        }
-        // The one most ahead of the party, else any.
-        let mut ahead: Option<(i32, usize)> = None;
-        for &c in &candidates {
-            let direction = fx::normalize(fx::sub(graph.nodes[c].fx(), hero));
-            let dot = fx::dot(facing, direction);
-            if dot > 0 && ahead.is_none_or(|(best, _)| best < dot) {
-                ahead = Some((dot, c));
-            }
-        }
-        let chosen = match ahead {
-            Some((_, c)) => c,
-            None if candidates.is_empty() => return,
-            None => candidates[(self.crand.rand() as usize) % candidates.len()],
+        let slots = &self.slots;
+        let taken = |id: u8| {
+            slots
+                .iter()
+                .flatten()
+                .any(|r| graph.nodes.get(r.node).is_some_and(|n| n.id == id))
         };
-        let mut position = graph.nodes[chosen].fx();
-        // Far from the party: bring the spawn onto the segment, within ten units of it.
-        if chosen != hero_node && fx::distance(position, hero) > 0xa000 {
-            let (distance, closest) = segment_distance(position, node.fx(), hero);
-            if distance > 0 {
-                if distance > 0x9fff {
-                    return;
-                }
-                let square = ((i64::from(distance) * i64::from(distance) + 0x800) >> 12) as i32;
-                let ratio = fx::div(square, 0x64000);
-                let chord = fx::mul(fx::sqrt(0x1000 - ratio), 0xa000);
-                if chord > 0x5000 {
-                    let toward = fx::sub(position, closest);
-                    let length = fx::mag(toward);
-                    let step = fx::scale(fx::normalize(toward), length.min(chord));
-                    position = fx::add(closest, step);
-                }
-            }
-        }
+        let crand = &mut self.crand;
+        let Some(plan) = plan_spawn(&graph, hero, input.angle, hero_node, &taken, &mut |n| {
+            (crand.rand() as usize) % n
+        }) else {
+            return;
+        };
+        let chosen = plan.chosen;
+        let mut position = plan.position;
         if fx::distance(hero, position) < 0x3800 {
             return;
         }
@@ -882,6 +849,87 @@ pub fn stage_under(world: &CollisionWorld, position: Fx3) -> u16 {
         }
     }
     record.unwrap_or(30000)
+}
+
+/// Where a spawn goes: the node picked and the point brought onto the path to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnPlan {
+    /// The node picked (an index of the graph).
+    pub chosen: usize,
+    /// Every node it was picked among, in the game's order.
+    pub candidates: Vec<usize>,
+    /// Whether one candidate lay ahead of the party (no draw); otherwise `draw` picked.
+    pub ahead: bool,
+    /// The spawn point before the ground height (`func_020733d8`, `0x02073740`–`0x02073a80`).
+    pub position: Fx3,
+}
+
+/// The node choice and the spawn point of `func_020733d8` for a party of one at `hero`
+/// facing `angle`, its node `hero_node`. `taken` says whether a visible roamer stands on the
+/// node of an id; `draw(n)` is the `rand() % n` the game takes when no candidate lies ahead.
+/// `None` where the game gives up (no candidate, or a leader more than `0x9fff` from the path).
+pub fn plan_spawn(
+    graph: &RoamGraph,
+    hero: Fx3,
+    angle: i32,
+    hero_node: usize,
+    taken: &dyn Fn(u8) -> bool,
+    draw: &mut dyn FnMut(usize) -> usize,
+) -> Option<SpawnPlan> {
+    let node = graph.nodes.get(hero_node)?;
+    let facing = [fix32_sin(angle), 0, fix32_cos(angle)];
+    // The free nodes next to the party's, and its own when it is not on it.
+    let mut candidates: Vec<usize> = node
+        .links
+        .iter()
+        .copied()
+        .filter(|&l| !taken(graph.nodes[l].id))
+        .collect();
+    if fx::distance(node.fx(), hero) > 0x5000
+        && !candidates.iter().any(|&c| graph.nodes[c].id == node.id)
+        && !taken(node.id)
+    {
+        candidates.push(hero_node);
+    }
+    // The one most ahead of the party, else any.
+    let mut ahead: Option<(i32, usize)> = None;
+    for &c in &candidates {
+        let direction = fx::normalize(fx::sub(graph.nodes[c].fx(), hero));
+        let dot = fx::dot(facing, direction);
+        if dot > 0 && ahead.is_none_or(|(best, _)| best < dot) {
+            ahead = Some((dot, c));
+        }
+    }
+    let chosen = match ahead {
+        Some((_, c)) => c,
+        None if candidates.is_empty() => return None,
+        None => candidates[draw(candidates.len())],
+    };
+    let mut position = graph.nodes[chosen].fx();
+    // Far from the party: bring the spawn onto the segment, within ten units of it.
+    if chosen != hero_node && fx::distance(position, hero) > 0xa000 {
+        let (distance, closest) = segment_distance(position, node.fx(), hero);
+        if distance > 0 {
+            if distance > 0x9fff {
+                return None;
+            }
+            let square = ((i64::from(distance) * i64::from(distance) + 0x800) >> 12) as i32;
+            let ratio = fx::div(square, 0x64000);
+            let chord = fx::mul(fx::sqrt(0x1000 - ratio), 0xa000);
+            if chord > 0x5000 {
+                let toward = fx::sub(position, closest);
+                let length = fx::mag(toward);
+                let step = fx::scale(fx::normalize(toward), length.min(chord));
+                position = fx::add(closest, step);
+            }
+        }
+    }
+    Some(SpawnPlan {
+        chosen,
+        candidates,
+        ahead: ahead.is_some(),
+        position,
+    })
 }
 
 /// `func_02031468`: the distance from `point` to the segment `a`–`b` and the nearest point on

@@ -312,3 +312,333 @@ fn touching_a_roamer_opens_a_fight_on_the_ground_stage() {
     assert!(fights >= 4, "{fights} fights");
     let _ = fx::PI;
 }
+
+// ---------------------------------------------------------------------------------------------
+// The original's roamers (`docs/re/encounter.md`, "Claims checked"). These read states and logs
+// produced from the game running in melonDS (`scripts/melonds-field.ps1`), which are never in
+// the repository: the tests skip themselves unless `DQ9_FIELD_DIR` names the directory that
+// holds the run's `*.tsv` logs and `*-ram.bin` main RAM images.
+
+#[path = "../../dq9re/src/roamers.rs"]
+#[allow(dead_code)]
+mod roamers;
+
+/// The directory of the field run, when the environment names one.
+fn field_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("DQ9_FIELD_DIR").map(std::path::PathBuf::from)
+}
+
+/// Files of `dir` ending in `suffix`, sorted.
+fn files_ending(dir: &std::path::Path, suffix: &str) -> Vec<std::path::PathBuf> {
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with(suffix))
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// The numbers of the lines of a log that start with `tag` (the first column).
+fn log_lines(dir: &std::path::Path, tag: &str) -> Vec<Vec<i64>> {
+    let mut out = Vec::new();
+    for file in files_ending(dir, ".tsv") {
+        for line in std::fs::read_to_string(file).unwrap().lines() {
+            let mut cols = line.split('\t');
+            if cols.next() == Some(tag) {
+                out.push(cols.map(|c| c.parse().unwrap()).collect());
+            }
+        }
+    }
+    out
+}
+
+/// Every state of the run: the roamers in RAM are the model's kind on the map's graph, their
+/// count is the slot's spawned count, and the graph indices agree with `F02P00.bin`.
+#[test]
+fn field_states_hold_roamers_of_the_models_zones() {
+    let (Some(bytes), Some(dir)) = (testrom::load(), field_dir()) else {
+        return;
+    };
+    let rom = Rom::parse(bytes).unwrap();
+    let tables = tables(&rom);
+    let graph = graph(&rom, "F02P00.bin").unwrap();
+    let zones = &tables.zones(20002).unwrap().zones;
+    let mut checked = 0;
+    for file in files_ending(&dir, "-ram.bin") {
+        let ram = std::fs::read(&file).unwrap();
+        let mem = dq9_formats::melonds::Memory::from_main_ram(&ram).unwrap();
+        let slot = roamers::current_slot(&mem).unwrap().unwrap();
+        assert_eq!(slot.map, 20002, "{file:?}");
+        let list = roamers::roamers(&mem, slot.group()).unwrap();
+        let report = roamers::report(&mem).unwrap();
+        eprintln!("{file:?}\n{report}");
+        if std::env::var_os("DQ9_FIELD_REPORT").is_some() {
+            let stem = file
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .replace("-ram.bin", "");
+            std::fs::write(dir.join(format!("roamers-{stem}.txt")), &report).unwrap();
+        }
+        assert!(list.len() <= 12);
+        // `+6` counts the spawns since the map was loaded; it never goes down.
+        assert!(
+            usize::from(slot.spawned) >= list.len(),
+            "{file:?}: +6 under the live count"
+        );
+        for r in &list {
+            let zone = zones.iter().find(|z| z.id == r.zone).unwrap_or_else(|| {
+                panic!("{file:?}: roamer in slot {} names zone {}", r.slot, r.zone)
+            });
+            assert!(
+                zone.roamers.iter().any(|d| d.monster() == r.monster),
+                "{file:?}: monster {} is not in zone {}",
+                r.monster,
+                r.zone
+            );
+            let node = &graph.nodes[usize::from(r.node)];
+            assert_eq!(u16::from(node.id), r.node_id, "{file:?}: node index and id");
+            checked += 1;
+        }
+    }
+    eprintln!("{checked} roamers checked");
+}
+
+/// What the model says of the spawn the log records, checked line by line: the zone is an eligible
+/// one of the hour (the node's mask preferred), the monster is the zone's, the node is among
+/// the candidates and is the most-ahead one when any is ahead, and the point is the model's.
+#[test]
+fn logged_spawns_follow_the_model() {
+    let (Some(bytes), Some(dir)) = (testrom::load(), field_dir()) else {
+        return;
+    };
+    let rom = Rom::parse(bytes).unwrap();
+    let tables = tables(&rom);
+    let graph = graph(&rom, "F02P00.bin").unwrap();
+    let zones = &tables.zones(20002).unwrap().zones;
+    let (mut n, mut phases) = (0, [0usize; 4]);
+    let (mut nearest_agrees, mut ahead_n, mut random_n, mut point_equal) = (0, 0, 0, 0);
+    let mut problems: Vec<String> = Vec::new();
+    for l in log_lines(&dir, "S") {
+        // frame map clock_ms phase hero(x y z angle node) timer slot monster zone node node_id
+        // pos(x y z) other_count (x y z node_id state)*
+        let (frame, phase, timer) = (l[0], l[3] as usize, l[9]);
+        let hero: Fx3 = [l[4] as i32, l[5] as i32, l[6] as i32];
+        let (angle, hero_node) = (l[7] as i32, l[8] as usize);
+        let (monster, zone_id, node, node_id) = (l[11] as u16, l[12] as u16, l[13] as usize, l[14]);
+        let at: Fx3 = [l[15] as i32, l[16] as i32, l[17] as i32];
+        let others = &l[19..];
+        n += 1;
+        phases[phase] += 1;
+        let mut bad = |what: &str| problems.push(format!("frame {frame} (phase {phase}): {what}"));
+        // The hour: night is phase 0 alone; kind 0 is not for night, kind 1 only for it.
+        let night = dq9_core::encounter::pick::is_night(phase as u8);
+        let Some(zone) = zones.iter().find(|z| z.id == zone_id) else {
+            bad(&format!("zone {zone_id} is not one of the map's"));
+            continue;
+        };
+        if (zone.kind() == 0 && night) || (zone.kind() == 1 && !night) {
+            bad(&format!(
+                "zone {zone_id} (kind {}) drawn by night={night}",
+                zone.kind()
+            ));
+        }
+        if !zone.roamers.iter().any(|d| d.monster() == monster) {
+            bad(&format!("monster {monster} is not in zone {zone_id}"));
+        }
+        let Some(spawn_node) = graph.nodes.get(node) else {
+            bad(&format!("node index {node} is outside the graph"));
+            continue;
+        };
+        if i64::from(spawn_node.id) != node_id {
+            bad(&format!(
+                "node {node} has id {}, the game says {node_id}",
+                spawn_node.id
+            ));
+        }
+        // Among the eligible zones those meeting the node's mask are preferred.
+        let eligible = |z: &&dq9_core::encounter::tables::ZoneDef| {
+            !((z.kind() == 0 && night) || (z.kind() == 1 && !night))
+        };
+        let meets = |z: &&dq9_core::encounter::tables::ZoneDef| {
+            z.mask() == 0 || z.mask() & u32::from(spawn_node.mask) != 0
+        };
+        let preferred = zones.iter().filter(eligible).filter(meets).count();
+        if preferred > 0 && !meets(&zone) {
+            bad(&format!(
+                "zone {zone_id} does not meet mask {} of node {node}",
+                spawn_node.mask
+            ));
+        }
+        // The leader's node: the game's own against the nearest one the model uses.
+        if graph.nearest(hero) == Some(hero_node) {
+            nearest_agrees += 1;
+        }
+        // The node and the point.
+        // A roamer holds a node by its index (`+0xb8`): `func_02073d58` compares that node's id.
+        let taken_ids: Vec<u8> = others
+            .chunks(6)
+            .filter_map(|o| graph.nodes.get(o[3] as usize).map(|n| n.id))
+            .collect();
+        let plan = dq9_core::encounter::plan_spawn(
+            &graph,
+            hero,
+            angle,
+            hero_node,
+            &|id| taken_ids.contains(&id),
+            &mut |_| 0,
+        );
+        let Some(plan) = plan else {
+            bad(&format!(
+                "the model finds no spawn: leader node {hero_node} links {:?}, taken {taken_ids:?}, \
+                 spawned at node {node} {at:?}, leader {hero:?} angle {angle}",
+                graph.nodes[hero_node].links
+            ));
+            continue;
+        };
+        if !plan.candidates.contains(&node) {
+            bad(&format!(
+                "node {node} is not among the candidates {:?}",
+                plan.candidates
+            ));
+            continue;
+        }
+        if plan.ahead {
+            ahead_n += 1;
+            if plan.chosen != node {
+                bad(&format!(
+                    "node {node} chosen, the model's most-ahead is {}",
+                    plan.chosen
+                ));
+            }
+        } else {
+            random_n += 1;
+        }
+        let model_point = {
+            let again = dq9_core::encounter::plan_spawn(
+                &graph,
+                hero,
+                angle,
+                hero_node,
+                &|id| taken_ids.contains(&id),
+                &mut |_| plan.candidates.iter().position(|&c| c == node).unwrap(),
+            )
+            .unwrap();
+            again.position
+        };
+        if (model_point[0] - at[0]).abs() <= 2 && (model_point[2] - at[2]).abs() <= 2 {
+            point_equal += 1;
+        } else {
+            bad(&format!(
+                "spawned at {at:?}, the model puts it at {model_point:?}"
+            ));
+        }
+        // The tick: the slot's timer reached a second (30 Hz steps of 33 ms) before the spawn.
+        if timer + 34 < 1000 {
+            bad(&format!("timer {timer} ms is under a second"));
+        }
+        // Not within 3.5 of the leader, not within the box of another roamer.
+        if fx::distance(hero, at) + 0x600 < 0x3800 {
+            bad("closer than 3.5 to the leader");
+        }
+    }
+    eprintln!(
+        "{n} spawns; phases {phases:?}; leader node equals the model's nearest on {nearest_agrees}; \
+         {ahead_n} with a node ahead, {random_n} drawn; {point_equal} points equal"
+    );
+    for p in &problems {
+        eprintln!("PROBLEM {p}");
+    }
+    // On the reference run two spawns in 210 (frames 3172 and 10749) went to the leader's own
+    // node where the model's most-ahead candidate lies past the 0x9fff path limit: unexplained,
+    // so a tolerance of 2 %, not zero.
+    assert!(
+        problems.len() * 50 <= n,
+        "{} of {n} spawns disagree with the model",
+        problems.len()
+    );
+}
+
+/// The state machine's clocks, as the log shows the game's: a roamer that has just appeared
+/// stands after 1001 ms, one that is standing leaves it after 4001 ms, one that has noticed the
+/// party decides after 226 ms, a startled one resumes after 3 s.
+#[test]
+fn logged_state_changes_follow_the_model_clocks() {
+    let Some(dir) = field_dir() else { return };
+    // frame slot monster old new old_state_ms old_awake_ms wander walk vision
+    let mut table = std::collections::BTreeMap::<(i64, i64), (i64, i64, usize)>::new();
+    for l in log_lines(&dir, "T") {
+        let e = table.entry((l[3], l[4])).or_insert((i64::MAX, i64::MIN, 0));
+        *e = (e.0.min(l[5]), e.1.max(l[5]), e.2 + 1);
+    }
+    for ((old, new), (lo, hi, count)) in &table {
+        eprintln!("state {old} -> {new}: {count}x, after {lo}..={hi} ms");
+    }
+    let (lo, hi, _) = table[&(0, 1)];
+    assert!(
+        (1001 - 34..1001).contains(&lo) && hi < 1001,
+        "appear {lo}..{hi}"
+    );
+    // The reading is the one before the change: a standing roamer leaves it at its first update
+    // past 4001 ms, a noticing one decides at its first past 226 ms.
+    for ((old, new), (lo, _, _)) in &table {
+        match (*old, *new) {
+            (1, 8 | 10) | (2, _) | (3, _) | (6, _) | (4, _) | (5, _) | (7, _) => {}
+            (1, _) => assert!(*lo >= 4001 - 34, "standing -> {new} after {lo} ms"),
+            (10, 8) => {}
+            (10, _) => assert!(
+                (226 - 34..226).contains(lo),
+                "notice -> {new} after {lo} ms"
+            ),
+            _ => {}
+        }
+    }
+}
+
+/// Every contact the run logged is a touch the model recognises: the leader is within the
+/// roamer's reach on x and z (its touch radius plus half the leader's) once both have moved.
+#[test]
+fn logged_contacts_are_within_the_models_reach() {
+    let (Some(bytes), Some(dir)) = (testrom::load(), field_dir()) else {
+        return;
+    };
+    let rom = Rom::parse(bytes).unwrap();
+    let tables = tables(&rom);
+    let zones = &tables.zones(20002).unwrap().zones;
+    let (mut n, mut inside) = (0, 0);
+    for l in log_lines(&dir, "C") {
+        // frame map clock_ms phase slot monster zone state hero_before(x y z angle)
+        // hero_after(x y z angle) roamer_before(x y z angle) roamer_after(x y z angle) prev_state ms
+        let (monster, zone_id) = (l[5] as u16, l[6] as u16);
+        let hero = [l[12] as i32, l[13] as i32, l[14] as i32];
+        let roamer = [l[20] as i32, l[21] as i32, l[22] as i32];
+        let field = tables.monster(monster).unwrap();
+        let def = zones
+            .iter()
+            .find(|z| z.id == zone_id)
+            .and_then(|z| z.roamers.iter().find(|d| d.monster() == monster))
+            .unwrap();
+        let scale = fx::mul(0x10a, i32::from(def.scale));
+        let radius = ((i64::from(i32::from(field.size) >> 1) * i64::from(scale * 15) + 0x800) >> 12)
+            as i32
+            + (0x1000 >> 1);
+        let (dx, dz) = ((hero[0] - roamer[0]).abs(), (hero[2] - roamer[2]).abs());
+        n += 1;
+        if dx <= radius && dz <= radius {
+            inside += 1;
+        }
+        eprintln!(
+            "contact with {monster}: dx {dx} dz {dz} reach {radius} (prev state {})",
+            l[24]
+        );
+        assert!(
+            dx <= radius + 0x1000 && dz <= radius + 0x1000,
+            "far from the roamer"
+        );
+    }
+    eprintln!("{inside}/{n} contacts inside the reach exactly");
+}

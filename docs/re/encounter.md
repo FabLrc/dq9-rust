@@ -4,14 +4,15 @@ Implementation: `crates/dq9-core/src/encounter.rs` and `encounter/{tables, graph
 real-ROM checks `crates/dq9-core/tests/encounter_rom.rs`. Data: `encfld.bin`, `encbtl.bin`,
 `fld_mondata.bin` (`battle-data.md`), `encmons.bin`, and `data/pack_lv5/path.gp2` (new).
 
-**Status of the evidence.** Every statement below is a **reading of the code** (Ghidra, EU
-addresses; overlay addresses are the USA's, `external-resources.md`), checked against the ROM
-tables where a count is given. **No melonDS state was produced for this batch** (turn cap
-reached before the harness was set up on a field), so nothing here is *fact with an original
-state* in the sense of `AGENTS.md`: the rules (a) and (b) are **[hypothesis]** until a state of
-`F02`/`F38` (`demo.sav`, `C01` exit) reads the roamer objects and compares spawn positions,
-counts and zone. The code reading is complete for the spawn rule: the function is one piece of
-code, not an inference from data.
+**Status of the evidence.** The rules below are a reading of the code (Ghidra, EU addresses;
+overlay addresses are the USA's, `external-resources.md`), checked against the ROM tables where a
+count is given, **and since 2026-11-10 against the roamer objects of the original in RAM**: states
+of `F02` (Western Stornway Region) taken from `demo.sav` by real key presses in melonDS
+(`scripts/melonds-field.ps1`, `melonds-state.md` § "Field states"), with every spawn, state change
+and contact of a 1000-second run logged frame by frame. Each claim's verdict, its evidence and the
+command that reproduces it are in the last section, **"Claims checked"**; a statement in the body
+that is not repeated there is still a reading of the code.
+
 
 Names are the USA decompilation's `func_xxxxxxxx` (USA address; EU is +`0x10` in the ARM9
 module). Object fields are offsets of the 0x198-byte monster object.
@@ -68,7 +69,7 @@ list; bits 2–5 of byte `+0xe` give `v`, mask `1 << v`, 0 for `v = 8`; an unlis
 and no zone): the first zone of the right kind **sharing a bit** with it; none → the roamer's own zone.
 
 `F01`'s three zones: 12 (kind 0, by day), 14 (kind 1, by night), 15 (kind 2, always) — the old
-"pair" is day/night. **[hypothesis]** for the whole rule until a state confirms the picks (below).
+"pair" is day/night. **Confirmed on `F02`** (257 spawns, four phases): see "Claims checked", (a).
 
 ## (b) Spawn (`0x020733e8`, called for the current map each update)
 
@@ -195,8 +196,19 @@ touched, and the list read at `+0xf78` of the battle context is not filled by an
 
 ## Not modelled / open
 
-- **Oracle**: spawn counts, positions and zone on a melonDS field state (`C01` → `F02`/`F38` from `demo.sav`);
-  the leader's node (`+0xb8`) is recomputed each update here (**[hypothesis]**; the game sets it at map entry, other writers not found).
+- **Oracle**: done for `F02` (night, morning, day, evening; "Claims checked"). Not done: the other
+  fields (`F38`, `F44`), chase/dash/startled/defeated roamers (a party of level 91 only ever saw
+  flee and vanish), the surprise roll and the facing threshold, the company, the others in the fight.
+- The leader's node (`+0xb8`): the model recomputes the nearest node each update; the game's own
+  value equals it on 228 of 257 spawns, so **the game keeps it differently** (**[unknown]** how: it
+  changes while walking, not at each update). The spawn follows the game's node: 255 of 257 spawns
+  reproduce with it.
+- **A standing party does not spawn**: from the state `f02-enter` (arrival on `F02`, party still, the
+  slot's timer past 5 s) nothing spawned in 240 s; a three-frame tap then gave two spawns in the next
+  two seconds and none in the following eight although two roamers (< 3) were on the map. The model
+  spawns every second while fewer than three roamers are near. Cause **[unknown]** (`func_02073dfc`
+  tests the spawn point against each party member's position or its `+0x160` vector; the
+  `(byte)param_1[0xd] > 4` clause is unmodelled).
 - Roamer movement after the state is entered is `Character_Update` with the roamer's constants; whether a roamer slows when turning like
   the hero, the wall test of `0x020322c0`, and the alpha steps of a fade are **[hypothesis]**. The `(byte)param_1[0xd] > 4` clause of the spawn,
   the story-flag range of `0x02073d54`, A-button contacts (`+0xbe == 2` objects), multiplayer, solid monsters (`+0x17d & 6`) are not modelled.
@@ -206,3 +218,51 @@ touched, and the list read at `+0xf78` of the battle context is not filled by an
 
 The names this note establishes are in `re/symbols.txt`, section "Roaming monsters and
 encounters" (`0x02032380 RandBelow` in the battle section).
+
+## Claims checked
+
+For a challenger who has not read the reasoning. **Subject**: the roaming-monster rules above, on
+`F02` (map 20002, Western Stornway Region), from `demo.sav` (party level 91, so the monsters it
+meets are weak: they flee, vanish or are touched; none chased). **Method**: the original runs in the
+melonDS DS libretro core, keys are pressed frame by frame (no write to its memory); the twelve
+roamer objects of the map slot are read every frame (`melonds-state.md` § "Field states"; reader
+`crates/dq9re/src/roamers.rs`). The log has one numeric line per event: `S` spawn, `T` state
+change, `C` contact (columns in the comments of `tests/encounter_rom.rs`), and ten main RAM
+images. The model is the code in `crates/dq9-core/src/encounter*` (`plan_spawn` is the spawn's
+node choice and point, the function the game's spawn tick and the test both call).
+
+**Reproduce everything** (needs the ROM, `tools/build/melondsds_libretro.dll`, `build/sav/demo.sav`
+and a release `dq9re`; ~3 minutes; the run is deterministic: two runs gave byte-identical logs, and
+main RAM images that differ in two bytes at `0x023ffded`):
+
+```powershell
+cargo build --release -p dq9re
+powershell -ExecutionPolicy Bypass -File scripts/melonds-field.ps1 -Out build/field
+$env:DQ9_FIELD_DIR = (Resolve-Path build/field/run).Path; $env:DQ9_FIELD_REPORT = 1
+cargo test -p dq9-core --test encounter_rom -- --nocapture
+```
+
+Evidence kept under `build/evidence/j4-roaming-oracle/` (sha256, first 12): `w.tsv` `ff9c9ceb1c75`
+(the log), `recipe.txt` `543bc7cc8491` and `recipe.log` `3c97bbdb1aa3` (the route to `F02`),
+`states-index.json` `1e525e98c84a` (20 states: ten RAM images and their core states, all map 20002),
+`roamers-<state>.txt` (e.g. `roamers-c250.txt` `712a169c220a`), `battles.png` `13c77bfd3a23` (the first
+screen of each of the 19 fights), `field-test.log` `020ca8789633` (the tests' output). Run length: 60 000
+frames from the day clock 45.9 s (night), through 180 s (morning), 210 s (day), 390 s (evening) and
+420 s (night again).
+
+| Claim | Verdict | Evidence |
+|---|---|---|
+| (a) the zone is drawn per spawn from the hour and the node mask | **confirmed** | 257 spawns: phase 0 (night) zones 2 and 3 only (kind 1, kind 2: 140 + 4), phases 1–3 zones 0 and 3 only (kind 0, kind 2: 17 + 0, 64 + 13, 17 + 2), never a kind-0 zone at night or a kind-1 zone by day; whenever a zone met the node's mask it was one of them (`logged_spawns_follow_the_model`, 0 failures); the monster is always in the drawn zone's list and the zone id is the object's `+0x168` |
+| (b) spawn tick, count limit | **confirmed**, one **[unknown]** | consecutive spawns ≥ 990 ms apart (the slot timer is 990 the frame before: the update adds 33 ms), none with the timer under 990; the node is among the model's candidates (free linked nodes + the leader's own) on 255 of 257 and is the most-ahead candidate whenever one is ahead (201 of 255); when none is ahead (54) it is one of the candidates; the point equals the model's (node, or the point brought onto the path) to 2 `fx32` on 255 of 257; never within 3.5 of the leader. 2 of 257 (frames 3172 and 10749) are not reproduced: **[unknown]**, tolerance 2 % in the test. The leader's node is not always the nearest (228/257) and a standing party spawns nothing: see "Not modelled / open" |
+| (c) roamer states | **confirmed** for states 0, 1, 2, 3, 6, 7, 10; **[hypothesis]** for 4, 5, 11, 12 (never seen) | 0→1 at the first update past 1001 ms (252 changes, the reading before is 974–990 ms); 1→2 and 1→3 not before 4001 ms (the reading before is ≥ 3977); 3→1 after 462 ms (every one of 56); 10→6 and 10→7 at the first update past 226 ms (the reading before is 198 on all 24); 6→1 after 1386–1452 ms; state 8 follows a touch (below) |
+| (d) contact | **confirmed** for the reach; **[hypothesis]** for the 126° facing threshold and the surprise roll | 19 contacts, each with the leader inside the model's reach (`touch_radius` + half the leader's, on x and on z) at the frame the roamer entered state 8 (`logged_contacts_are_within_the_models_reach`); the reach is a necessary condition only, a roamer within reach that was **not** touched was not looked for. The openings: of the 19 first battle screens, 6 show a party-first message ("doesn't notice the party's presence", "is too stunned to move") and none a monsters-first one; the other screens had not shown their message yet, so the roll and its chances were not measured |
+| (e) company | **[hypothesis]** | all 19 fights show one monster (`battles.png`); the model's draw for these roamers was not compared |
+| (f) stage | **[hypothesis]** | not checked on `F02` (the screens show the field backdrop) |
+| (g) others in the fight | **[unknown]** | no fight had a second monster, so there was nothing to pull in |
+
+What would refute them: (a) a spawn at night from a kind-0 zone (or by day from kind 1) in a run
+of `scripts/melonds-field.ps1`; (b) a spawn on a node that is neither linked to the leader's node
+nor the leader's own, or that is behind the party while a node is ahead; (c) a change out of state 0
+before 968 ms or out of state 1 before 3967 ms; (d) a contact with the leader outside the reach.
+Try different seeds (`-Seed`), and start `F38`/`F44` the same way (the recipe only needs a
+different door).

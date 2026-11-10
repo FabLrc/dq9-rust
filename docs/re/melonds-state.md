@@ -635,6 +635,50 @@ run: the branch that sets it is not yet established and **no flag was forced** t
 match. `bat6` was also taken 3346 frames (VBlank) later than the frame above, in the same
 cutscene: the two points are not the same instant.
 
+### Field states with roaming monsters (2026-11-10, `scripts/melonds-field.ps1`)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/melonds-field.ps1 -Out build/field
+$env:DQ9_FIELD_DIR = (Resolve-Path build/field/run).Path; $env:DQ9_FIELD_REPORT = 1
+cargo test -p dq9-core --test encounter_rom -- --nocapture   # reads the run, writes roamers-*.txt
+```
+
+What the script does, and what was learned doing it:
+
+- **The save reaches the core through `SAVE_RAM`.** `scripts/melondsds_host.py` boots the ROM but
+  does not load a `.sav`: a `demo.sav` placed in the save directory (even under `melonDS DS/`) is
+  ignored and the title screen offers only "Create a new adventure log". The core exposes the
+  save as `retro_get_memory_data(0)` (65536 bytes, the save's size): copying `demo.sav` there right
+  after `retro_load_game` makes the title menu offer **"Continue your adventure"** with the
+  adventure log (party level 91, Stornway). The script imports the host as a module and does
+  exactly this; nothing else is written to the emulated machine.
+- **Route** (60 Hz frames, all real key presses): START at frame 1300 (10 frames), A at 1500
+  (Continue), 600 frames, A twice (the greeting), `Down` 180 frames: out of the church
+  (`C01M09`, map 109) onto `C01` (map 100, (14.85, −10.05)); a 22-segment route found by a
+  best-first search over savestates (the hero stays on the walkable ground; each segment a held
+  direction, 16 frames per search step) reaches the south door (`0x72` volume at (−0.22, 34),
+  `C01` → `F02`) and `Down` crosses it: **`F02` (map 20002), frame 3722, (−39.5, 0.43, −14.5),
+  night** (day clock 45.87 s, phase 0). `Down` from the church door is the whole of the church
+  part; the town route is the `hold` lines of the recipe embedded in the script.
+- **Reproducible**: the recipe run twice gives main RAM images that differ in two bytes
+  (`0x023ffded..e`, the end of main RAM, not the game) and the same core state otherwise.
+- **Where the roamers are**: `func_02027ca4` returns `0x020fdd44` (EU; four slots of `0x318`
+  bytes); slot 0 holds the map (`+0` 20002, `+2` flags `0xc`), `+6` is the **number of spawns
+  since the map was loaded** (it never goes down), `+8` the spawn timer. The slot's group-0
+  objects are `GameState+8` entries `0x70..0x7b`, contiguous, `0x198` bytes each. Fields read
+  (checked against the spawn code `0x020733e8`, `ov_017::021a2128`): `+2` the **monster number**,
+  `+0x44` position, `+0x54` angle, `+0xb8` the graph node index, `+0x130` state, `+0x14c` /
+  `+0x154` state / awake ms, `+0x164` the destination node id, `+0x168` the **encfld zone id** the
+  monster was drawn from, `+0x138..+0x13a` wander, walk class, vision. A free object has `+2 < 0`.
+  The day clock is `GameState+0x3cc` (seconds, float) and the phase `+0x3dc` (0 night … 3 evening).
+  The reader is `crates/dq9re/src/roamers.rs` (included by `tests/encounter_rom.rs`).
+- **The watch loop** (stage 2 of the script, a seeded random walk): reads the twelve objects each
+  frame and writes `S` (spawn), `T` (state change), `C` (contact) lines of numbers and a JSONL;
+  on a contact it captures the battle screen and rolls back to an older snapshot of its own to
+  keep patrolling. A full run covers the day clock from 45 s to its wrap and again to 55 s
+  (night, morning, day, evening, night).
+
+
 ### Limits
 
 - Character creation is driven in real time (A, touch OK): the sequence is reproducible but
