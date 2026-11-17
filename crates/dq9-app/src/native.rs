@@ -4,7 +4,7 @@ use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
-use crate::screens::{self, Layout};
+use crate::screens::{self, Layout, ScreenMode};
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 use dq9_core::state::DayClock;
@@ -64,6 +64,12 @@ struct Cli {
     /// with the cinematic renderer and HUD, `screens.rs`).
     #[arg(long, default_value = "stacked", value_parser = Layout::parse)]
     layout: Layout,
+    /// Where the field's 3D view and its message window are drawn: `port` (default, top screen,
+    /// the port's own assignment) or `original` (bottom screen, as the field runs with
+    /// `POWCNT1` bit 15 set, `docs/re/bottom-screen.md`); the other screen keeps the
+    /// placeholder panel, and a battle is unchanged.
+    #[arg(long, default_value = "port", value_parser = ScreenMode::parse)]
+    screens: ScreenMode,
     /// Render one frame offscreen into this PNG and exit, without a window.
     #[arg(long)]
     screenshot: Option<PathBuf>,
@@ -488,6 +494,7 @@ pub fn main() -> Result<()> {
         Some(event_loop) => App::new(event_loop.create_proxy(), options, Some(rom)),
         None => App::new_headless(options, Some(rom)),
     };
+    app.set_screens(cli.screens);
     if let Some(path) = &cli.replay {
         let frames = read_inputs(path)?;
         for (bits, confirm) in &frames {
@@ -776,7 +783,7 @@ fn write_png(
     }
     let (w, h) = cli.size;
     let shown = screens::screens(cli.layout, w, h);
-    let field = shown.field(*swapped);
+    let field = shown.field_for(cli.screens, *swapped);
     let panel = Panel::new(device, format);
     let info = HudInfo {
         title: &loaded.label,
@@ -786,7 +793,7 @@ fn write_png(
     };
     let rgba = renderer
         .render_to_rgba_with(device, queue, (w, h), field, camera, |encoder, view| {
-            if let Some(overlay) = shown.overlay(*swapped) {
+            if let Some(overlay) = shown.overlay_for(cli.screens, *swapped) {
                 panel.draw(encoder, view, overlay);
             }
             if wide {
@@ -968,6 +975,8 @@ fn battle_screenshot(
         renderer.environment.fog = Some(fog);
     }
     let shown = screens::screens(cli.layout, cli.size.0, cli.size.1);
+    // A battle keeps the port's assignment whatever `--screens` says: the original's 3D view
+    // is on the top LCD in a fight (`re/bottom-screen.md` § 3).
     let field = shown.field(false);
     let panel = Panel::new(&device, format);
     let rgba = renderer

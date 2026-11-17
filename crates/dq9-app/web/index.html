@@ -47,6 +47,12 @@
         mipmapped textures, bloom, screen-space contact shadows, filmic tonemapping, colour
         grading, vignette and a 16:9 interface. "stacked", "side" and "top" keep the faithful
         DS presentation.</p>
+      <p><strong>Field screens:</strong> the original draws the field's 3D view and its
+        message window on the bottom (touch) screen and its map screen on the top one; this
+        port draws them on the top screen by default. "3D at the bottom" (or
+        <code>?screens=original</code>) is the original's assignment; the top screen is then a
+        plain placeholder until the map screen is read, and a battle is unchanged. Both work
+        with every screen layout.</p>
     </details>
     <label>ROM (.nds): <input type="file" id="rom" accept=".nds" disabled></label>
     <label>Save (.sav, optional): <input type="file" id="save" accept=".sav" disabled></label>
@@ -57,6 +63,10 @@
     <label>Screens: <select id="layout" disabled>
       <option value="stacked">stacked</option><option value="side">side by side</option>
       <option value="top">top only</option><option value="wide">wide 16:9</option>
+    </select></label>
+    <label>Field: <select id="screens" disabled>
+      <option value="port">3D on top (port)</option>
+      <option value="original">3D at the bottom (original)</option>
     </select></label>
     <button id="newgame" type="button" disabled>New game</button>
     <span id="status" role="status" aria-live="polite" data-kind="info">loading the engine…</span>

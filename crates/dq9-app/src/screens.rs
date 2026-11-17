@@ -1,7 +1,7 @@
 //! The DS screens in the window. Each screen is 256×192 pixels; a layout places one or two of
-//! them, scaled to fit, except `wide`: one 16:9 field over the whole window. The top screen
-//! shows the field (and the message window, `talk.rs`); the bottom one is a placeholder
-//! (`dq9_render::Panel`).
+//! them, scaled to fit, except `wide`: one 16:9 field over the whole window. Where the field
+//! and its message window (`talk.rs`) go is a [`ScreenMode`]: the port's own assignment (top,
+//! the bottom one a placeholder) or the original's (bottom, `docs/re/bottom-screen.md`).
 
 use dq9_render::Viewport;
 
@@ -69,6 +69,55 @@ impl Layout {
     }
 }
 
+/// Which screen holds the field's 3D view and its message window (`--screens`, the page's
+/// "Screens" select, `?screens=`). The other screen shows the placeholder panel; where the
+/// original draws its map screen, nothing is read or drawn yet (`re/bottom-screen.md` § 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScreenMode {
+    /// The port's own assignment: the field on the top screen. A cutscene's natives 109/110
+    /// move it to the bottom for the length of the script's swap.
+    #[default]
+    Port,
+    /// The original's field assignment: the 3D view and the message window on the bottom
+    /// (touch) screen, as the field runs with `POWCNT1` bit 15 set (`ov_017::021b17ec`). A
+    /// battle keeps the port's assignment, which is the original's for a battle.
+    Original,
+}
+
+impl ScreenMode {
+    /// Parses a mode name (`port` or `original`).
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "port" => Ok(Self::Port),
+            "original" => Ok(Self::Original),
+            _ => Err(format!("expected port or original, not `{s}`")),
+        }
+    }
+
+    /// The name `parse` accepts for this mode.
+    #[cfg(target_arch = "wasm32")]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Port => "port",
+            Self::Original => "original",
+        }
+    }
+
+    /// Whether the field and its message window are drawn on the bottom screen. `swapped` is
+    /// the script's display swap (natives 109/110, `POWCNT1` bit 15).
+    ///
+    /// The port starts with the bit clear, so only a cutscene moves the field down. The
+    /// original's field runs with the bit set for free control and for field cutscenes alike,
+    /// so `original` ignores the script's swap: `re/bottom-screen.md` § 1 gives the bit for the
+    /// whole field and says nothing of a 110 inside a field cutscene **[hypothesis]**.
+    pub fn field_on_bottom(self, swapped: bool) -> bool {
+        match self {
+            Self::Port => swapped,
+            Self::Original => true,
+        }
+    }
+}
+
 /// Rectangles of the screens in a window, in pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Screens {
@@ -123,26 +172,37 @@ pub fn screens(layout: Layout, width: u32, height: u32) -> Screens {
 }
 
 impl Screens {
-    /// The viewport of the 3D field and of the message window. Native 109/110 swap the DS
-    /// display engines (`POWCNT1` bit 15): with `swapped`, the field moves to the bottom screen
-    /// and the other screen stays empty (or shows the panel); `top` layouts have one screen and
-    /// ignore the swap.
-    pub fn field(self, swapped: bool) -> Viewport {
-        if swapped {
+    /// The viewport of the 3D field and of the message window for `mode`.
+    pub fn field_for(self, mode: ScreenMode, swapped: bool) -> Viewport {
+        if mode.field_on_bottom(swapped) {
             self.bottom.unwrap_or(self.top)
         } else {
             self.top
         }
     }
 
-    /// The viewport the panel (the other DS engine) fills: the bottom screen normally, the top
-    /// one after a display swap. A one-screen layout has no second engine: no overlay.
-    pub fn overlay(self, swapped: bool) -> Option<Viewport> {
-        if swapped {
-            self.bottom.map(|_| self.top)
+    /// The viewport of the other DS engine for `mode`: the panel, the original's map screen or
+    /// the field menus. A one-screen layout has no second engine: no overlay.
+    pub fn overlay_for(self, mode: ScreenMode, swapped: bool) -> Option<Viewport> {
+        let bottom = self.bottom?;
+        Some(if mode.field_on_bottom(swapped) {
+            self.top
         } else {
-            self.bottom
-        }
+            bottom
+        })
+    }
+
+    /// The viewport of the 3D field and of the message window in the port's assignment. The
+    /// battle and the cutscene previews use it: a fight keeps the field's screen of the port
+    /// (the original's for a battle, `re/bottom-screen.md` § 3).
+    pub fn field(self, swapped: bool) -> Viewport {
+        self.field_for(ScreenMode::Port, swapped)
+    }
+
+    /// The other DS engine in the port's assignment: the bottom screen normally, the top one
+    /// after a display swap. A one-screen layout has no second engine: no overlay.
+    pub fn overlay(self, swapped: bool) -> Option<Viewport> {
+        self.overlay_for(ScreenMode::Port, swapped)
     }
 }
 
@@ -292,5 +352,49 @@ mod tests {
         assert_eq!(wide.field(true), wide.top);
         assert_eq!(wide.overlay(true), None);
         assert_eq!(wide.overlay(false), None);
+    }
+
+    #[test]
+    fn the_original_assignment_puts_the_field_and_window_on_the_bottom_screen() {
+        for layout in [Layout::Stacked, Layout::Side] {
+            let s = screens(layout, 1024, 768);
+            assert_eq!(
+                s.field_for(ScreenMode::Original, false),
+                s.bottom.unwrap(),
+                "{layout:?}: the 3D field and its window"
+            );
+            // The original's field runs with `POWCNT1` bit 15 set: a script's swap changes
+            // nothing there.
+            assert_eq!(s.field_for(ScreenMode::Original, true), s.bottom.unwrap());
+            assert_eq!(
+                s.overlay_for(ScreenMode::Original, false),
+                Some(s.top),
+                "{layout:?}: the freed screen"
+            );
+        }
+        // A one-screen layout keeps the message window visible: the field takes the only
+        // screen and there is no placeholder to draw.
+        let top = screens(Layout::Top, 1024, 768);
+        assert_eq!(top.field_for(ScreenMode::Original, false), top.top);
+        assert_eq!(top.overlay_for(ScreenMode::Original, false), None);
+        // `wide` is one 16:9 field: neither DS screen shape nor a second engine.
+        let wide = screens(Layout::Wide, 1600, 900);
+        assert_eq!(wide.field_for(ScreenMode::Original, false), wide.top);
+        assert_eq!(wide.overlay_for(ScreenMode::Original, false), None);
+    }
+
+    #[test]
+    fn the_port_assignment_is_the_default_and_names_parse() {
+        assert_eq!(ScreenMode::default(), ScreenMode::Port);
+        assert_eq!(ScreenMode::parse("port"), Ok(ScreenMode::Port));
+        assert_eq!(ScreenMode::parse("original"), Ok(ScreenMode::Original));
+        assert!(ScreenMode::parse("swapped").is_err());
+        assert!(!ScreenMode::Port.field_on_bottom(false));
+        assert!(ScreenMode::Port.field_on_bottom(true));
+        let s = screens(Layout::Stacked, 512, 768);
+        assert_eq!(s.field_for(ScreenMode::Port, false), s.field(false));
+        assert_eq!(s.field_for(ScreenMode::Port, true), s.field(true));
+        assert_eq!(s.overlay_for(ScreenMode::Port, false), s.overlay(false));
+        assert_eq!(s.overlay_for(ScreenMode::Port, true), s.overlay(true));
     }
 }

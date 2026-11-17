@@ -14,7 +14,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::screens::{self, Layout};
+use crate::screens::{self, Layout, ScreenMode};
 use dq9_core::camera::FieldCamera;
 use dq9_core::cutscene::PlacementChange;
 use dq9_core::field::{self, Cause, Event, Field, Leader, MapChange};
@@ -170,6 +170,9 @@ pub enum UserEvent {
     /// Layout picked in the page.
     #[cfg(target_arch = "wasm32")]
     Layout(Layout),
+    /// Field screen assignment picked in the page (`--screens`).
+    #[cfg(target_arch = "wasm32")]
+    Screens(ScreenMode),
     /// "New game" clicked in the page: starts the prologue (now, or once the ROM is read).
     #[cfg(target_arch = "wasm32")]
     NewGame,
@@ -285,6 +288,10 @@ pub struct App {
     /// callers that never deliver a `UserEvent`.
     proxy: Option<EventLoopProxy<UserEvent>>,
     options: Options,
+    /// Where the field and its message window are drawn (`--screens`, the page's "Screens"
+    /// select, `?screens=`): the port's own assignment or the original's. Not in [`Options`]
+    /// because the headless drivers and their tests never draw a frame.
+    screens: ScreenMode,
     /// Time of day in use (`LightingManager+0x98`).
     time: u32,
     /// The one day clock (a save's, else the start of the night): drives the lighting.
@@ -430,6 +437,7 @@ impl App {
         let mut app = Self {
             proxy,
             options,
+            screens: ScreenMode::default(),
             time: 0,
             day: DayClock::new(0.0, true),
             window: None,
@@ -1054,6 +1062,12 @@ impl App {
         if rebuild {
             self.upload();
         }
+    }
+
+    /// Picks where the field and its message window are drawn (`--screens`, the page's
+    /// "Screens" select, `?screens=`); a battle keeps the port's assignment.
+    pub fn set_screens(&mut self, screens: ScreenMode) {
+        self.screens = screens;
     }
 
     fn key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, pressed: bool) {
@@ -1944,9 +1958,15 @@ impl App {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let (w, h) = (gpu.config.width, gpu.config.height);
         let screens = screens::screens(self.options.layout, w, h);
-        // 109/110 (`POWCNT1` bit 15): the field and the message window move to the other DS
-        // screen; the panel fills the one they leave.
-        let field = screens.field(swapped);
+        // 109/110 (`POWCNT1` bit 15) and `--screens` decide where the field and the message
+        // window go. A fight keeps the port's assignment, which is the original's for a battle
+        // (`re/bottom-screen.md` § 3), so the battle scene is never moved by `--screens`.
+        let mode = if self.battle.is_some() {
+            ScreenMode::Port
+        } else {
+            self.screens
+        };
+        let field = screens.field_for(mode, swapped);
         let panel = self
             .panel
             .get_or_insert_with(|| Panel::new(&gpu.device, gpu.config.format));
@@ -1963,7 +1983,7 @@ impl App {
             field,
             camera,
         );
-        if let Some(overlay) = screens.overlay(swapped) {
+        if let Some(overlay) = screens.overlay_for(mode, swapped) {
             panel.draw(&mut encoder, &view, overlay);
         }
         if messages {
@@ -2005,7 +2025,7 @@ impl App {
         {
             // The menu takes the screen the field does not use; a one-screen layout lays it
             // over the field so that it stays visible.
-            let region = screens.overlay(swapped).unwrap_or(screens.top);
+            let region = screens.overlay_for(mode, swapped).unwrap_or(screens.top);
             self.talk.draw_screens(
                 &gpu.device,
                 &gpu.queue,
@@ -2448,6 +2468,8 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Time(time) => self.set_time(lighting::phase(time)),
             #[cfg(target_arch = "wasm32")]
             UserEvent::Layout(layout) => self.set_layout(layout),
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::Screens(screens) => self.set_screens(screens),
             #[cfg(target_arch = "wasm32")]
             UserEvent::NewGame => {
                 self.options.new_game = true;

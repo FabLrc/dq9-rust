@@ -90,7 +90,8 @@ Hugo screenshot above (step 2 of Angel Falls, `<N_TURN>//Hugo// …`).
 
 The drawing of the frame, name, text and arrow comes from `dq9_render::ui`; the
 layout constants are those of `MsgWin_Show` where they have been read, otherwise
-hypotheses (`dialogue.md`, § "Message window"). The window is drawn on the top screen,
+hypotheses (`dialogue.md`, § "Message window"). The window is drawn on the field's screen
+(the top one by default, the bottom one with `--screens original` or after a cutscene's 109),
 within the area it occupies (`screens.rs`).
 
 `--map`: code (`M01`, `C01M09`) or id (`1100`) from the map list; it takes precedence over the
@@ -106,7 +107,9 @@ evening 390); its phase replaces `--time`, and the last two seconds of a phase b
 into the next one in an advanced zone (field); `--fog OFFSET,SHIFT,COLOR,D0..D31` replaces the
 fog (comparisons with melonDS);
 `--layout stacked|side|top|wide`: DS screen layout (section "DS screens"); `wide` is the
-single 16:9 cinematic presentation.
+single 16:9 cinematic presentation. `--screens port|original`: where the field's 3D view and
+its message window are drawn, `port` (default) on the top screen or `original` on the bottom
+one (section "DS screens").
 
 The cast follows the save's current scenario track when one is loaded:
 progress, flags and quests are restored. Otherwise, it is that of the prologue `1.1.1` by day.
@@ -247,7 +250,8 @@ NPC motions (`play_npc`), the script `.spr` sheets (`add_sprite`) and the palett
   the terrain camera resumes at the end, recentered on the
   hero's final pose without keeping the cutscene's close-up, roll or field of view. If the chain
   changed map, it resumes the destination's orbit; free flight gets back its independent
-  view. A cutscene is framed in 4:3 on the top screen (`screens.rs`).
+  view. A cutscene is framed in 4:3 on the field's screen (`screens.rs`: the top one by
+  default, the bottom one with `--screens original`).
 - **Messages.** The conversation window (`talk.rs`) shows text from the cutscene's table;
   without an end tag it waits for action (`Dialogue::for_event`); native 401 closes it,
   native 410 removes its frame. Natives 409, 411 and 413 make it a **caption**: timed
@@ -352,7 +356,10 @@ outside the v0.2 target.)
   placement's drawn instance (not its collision).
 - **Screen swap (109/110).** The `POWCNT1` bit 15 state is shared with the layout; six
   swaps in the opening move the field and the window from one screen to the other. Screenshots
-  `stacked`/`side`/`top` before/after the first 109 (frames 100 and 5000 of 21500).
+  `stacked`/`side`/`top` before/after the first 109 (frames 100 and 5000 of 21500). In
+  `--screens original` the field already runs with the bit set, so the script's swap changes
+  no screen there **[hypothesis]**: [`re/bottom-screen.md`](re/bottom-screen.md) § 1 gives the
+  bit for the whole field and says nothing of a 110 inside a field cutscene.
 
 `--eye`/`--target` with `--event` and `--screenshot` look at the scene the script left
 (they replace the script's camera): useful to inspect an actor.
@@ -938,7 +945,8 @@ tools/wasm-bindgen/bin/wasm-bindgen --target web --no-typescript `
 python -m http.server 8000 -d crates/dq9-app/web     # or any static file server
 ```
 
-Open `http://localhost:8000/` (parameters `map`, `time` (name or 0 to 3), `clock`, `layout` (`stacked`, `side`, `top` or `wide`), `chapter`, `step`,
+Open `http://localhost:8000/` (parameters `map`, `time` (name or 0 to 3), `clock`, `layout` (`stacked`, `side`, `top` or `wide`), `screens` (`port` or `original`: where the field
+and its message window are drawn, § "DS screens"), `chapter`, `step`,
 `substep`, `night=1`, `mute=1`, `newgame=1`, `seed`, and the pilot session's `pilot`, `fight`, `route`,
 `speed`, `budget`, `render`, `battles`: § "Route mode in the browser"), then choose the ROM and, optionally, a `.sav` save in the
 page. Both files are read locally in the browser, never sent or hosted;
@@ -1278,20 +1286,43 @@ in the `wide` presentation:
 - **Bottom**: in the field the original draws its 3D view, message window and touch UI
   ("X Menu", stylus hand) there and the map screen on the top one; during a fight the party
   panels and command menus are at the bottom and the 3D view on top. Elements, draw
-  functions, assets and coordinates: [`re/bottom-screen.md`](re/bottom-screen.md). The port
-  draws the field on the top screen, which is the inverse of the original; the current
-  behaviour is a plain background (`dq9_render::Panel`) on the freed screen, no ROM data is
-  displayed there.
-- **Message window**: drawn on the top screen (`talk.rs`, `dialogue.md`); the battle's own is
-  at the top of the screen (`battle/ui.rs`).
+  functions, assets and coordinates: [`re/bottom-screen.md`](re/bottom-screen.md).
+- **Field screen assignment.** `--screens port` (default; Web: the "Field" select, or
+  `?screens=port`) draws the field on the top screen, the port's own assignment. `--screens
+  original` (Web: `?screens=original`) puts the 3D view and the message window on the bottom
+  (touch) screen, as the original runs with `POWCNT1` bit 15 set (`ov_017::021b17ec`), and the
+  top screen shows the plain placeholder (`dq9_render::Panel`, `panel.wgsl`): the map screen
+  needs the map picture and the party strips (`re/bottom-screen.md` § 4, steps 2 and 3), so no
+  ROM data is read or drawn there yet. No invented element stands in for it. A field cutscene
+  keeps the bottom screen as the note states; the script's 109/110 swap is not applied in
+  `original` mode **[hypothesis]** (§ "Events", Screen swap). A battle is unchanged in both
+  modes: 3D and battle text on the top screen, panels and command windows at the bottom. The
+  field menu opens on the free screen, which is the top one in `original` mode, like the
+  original's facilities.
+- **Message window**: drawn on the field's screen (`talk.rs`, `dialogue.md`), so the top
+  screen by default and the bottom one in `original` mode or after a cutscene's 109; the
+  battle's own is at the top of the screen (`battle/ui.rs`).
 
 Layouts: `stacked` (default, top screen above the bottom one), `side` (side by side),
 `top` (top screen alone) and `wide` (one 16:9 field, letterboxed in the window). The first three
 are centered and scaled together to the maximum of the available space, without distorting
-their 4:3 ratio; margins stay black, independently of sky, fog and fades. On the Web, the
+their 4:3 ratio; margins stay black, independently of sky, fog and fades. Every layout works
+in both screen modes; `top` has one screen, so the field takes it in either mode and the
+message window stays visible (no placeholder). On the Web, the
 canvas follows the available size below the controls and the screen's pixel density. Native:
-`--layout`, and `R` switches to the next layout. Web: the "Screens" select or `?layout=`. The
+`--layout`, and `R` switches to the next layout; `--screens`. Web: the "Screens" select or
+`?layout=`, the "Field" select or `?screens=`. The
 old `--ds-aspect` and `ds=` are removed.
+
+Captures of both modes (local, never committed, `build/evidence/j4-screens-original/`):
+`after-port-m01.png` (`69b60fca0327`, `--map M01`, pixel-identical to the capture before the
+option existed), `original-m01.png` (`dadac22d6bca`, 3D view at the bottom, placeholder at the
+top), `original-m01-side.png` (`ebbca9caf9d0`), `original-conversation.png` (`dd113de81d1c`,
+Hugo's window on the bottom screen with the 3D view), `original-conversation-top.png`
+(`49828f3975b9`: `top` keeps the field and its window on the only screen), and
+`battle-original.png` (`dd025965b166`, identical to `battle-port.png`: a fight ignores the
+option) and `wide-original.png` (`7867f9fee551`, identical to `wide-port.png`: one 16:9 field
+has no second screen to move).
 
 ### Wide 16:9 (cinematic presentation)
 
@@ -1311,7 +1342,8 @@ old `--ds-aspect` and `ds=` are removed.
   the leader's HP/MP bars and purse, and the game's message window scaled into a bottom-left
   glass panel. Battle windows keep their 4:3 shape in the upper and lower left corners.
 - The renderer is rebuilt when `R` or the select enters or leaves `wide`, because texture
-  filtering and the post pass differ; the default layouts are unchanged.
+  filtering and the post pass differ; the default layouts are unchanged. `--screens` has no
+  effect in `wide`: one 16:9 field, no second DS screen and no placeholder.
 
 Screenshot of the demo:
 
