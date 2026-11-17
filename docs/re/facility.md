@@ -196,6 +196,47 @@ the divination, 1030 to 1032 Resurrection, 1040 to 1042 Purification, 1050 to 10
 Benediction, 1061 the price, 1062 refused, 1063 too poor, 1070 back to the menu, 1100 a
 coffin brought in, 1081/1082 waking after a stay.
 
+### After a wipe-out — `data/scenario/chur_messet.bin`
+
+`func_ov017_0219bfb4` (mode 2) is the map request the wipe-out makes; once the revival map is
+loaded it picks **which priest speaks**. The file has 21 tagged records: three headers
+(`0x65` date, `0x64` time, `0x66` count 18) and **18 `0x67` map records**, each a map then
+**three spans of four strings**: the lowest and highest story major the span covers, and the
+voice by day and by night. The first span that holds wins; a span whose two ends are `0` (or
+empty) holds for every major, which is how the last span works as a catch-all. An empty voice
+string is 1 (`0x020d3018` tests the string, `0x02005a94` is `atoi`; `Save_IsDaytime` chooses
+the column). **Voice 3 says nothing**; any other voice runs overlay 3's church in mode 2
+(`ov_017::021ba998`: `ov_003::02158bb8` builds it, `02159174` sets the mode, `+0x5a0` holds
+the voice, `02158e94` steps it), whose state 10 (`ov_003::0215af9c`) shows
+`str_ch<voice - 1>` message **1080 + mode = 1082**, and whose state 11 ends the visit. Voice 0
+reaches `str_ch0` too (the task clamps `voice - 1` to 0). A map with no record uses voice 1
+(the wiki's "the rest").
+
+The European voices, read from the file:
+
+| map | story majors | day / night voice |
+|---|---|---|
+| 1106, Angel Falls | 1 only | **3 (silent)** |
+| 1106 | 2 to 17 | 1 |
+| 216, Gleeba | 1 to 16 | 1 / 2 |
+| 216 | 17 | 1 |
+| 1800, Dourbridge | any | 5 |
+| 2005, Batsureg | any | 6 |
+| 406, Wormwood | any | 7 |
+| 5700, Gortress | any | 7 |
+| 4506, the Observatory | any | 4 |
+| 4106 | any | 4 |
+| 2205, 5801 | any | 2 |
+| 109, 1202, 1307, 1506, 1903, 2104, 2309, 4201 | any | 1 |
+
+A record's third span is the catch-all `0 0 0 0`, so major 18 and above at 1106 give voice 0,
+which the task turns into `str_ch0` as well.
+
+**No line announces the halved purse.** `func_02010604` halves it (`lsr #1`) and says nothing;
+the church files' messages 1080 to 1083 are only 1081 and 1082, both prayers, so a "gold
+line" does not exist on the cartridge. The application's `status` log prints the amount; the
+game does not.
+
 The prices, by the member's level in the vocation they stand in L
 (`0x0215a8e0`–`0x0215a99c`):
 
@@ -465,6 +506,14 @@ and its price (1061), then execute `church::cure` with the caller's `MemberStatu
 (dead = HP 0) and charge the party; a NotNeeded refusal also names the member. Confession
 shows the core's "not available in this build" and nothing is saved (v0.3).
 
+**Wipe-out.** `App::wipe_out` (battle end, `app/fight.rs`) heals, halves the purse and loads
+the revival map; `App::wipe_out_arrival` (`app/flow.rs`) then reads `chur_messet.bin` through
+`facility::church::VoiceTable`, and a voice other than 3 opens `Services::open_priest`: the
+church's mode-2 screen with line 1082 of `str_ch<voice - 1>`, which a key closes before the
+party gets control. Voice 3 opens nothing. The line keeps its bytes (`*:` is drawn, as the
+game's `MsgWin_ParseSpeakerName` only sets an arrow byte for it); the window is the notice's
+geometry **[hypothesis]**. The gold halving has no line (above).
+
 **Open.** The window geometry, colours and title/footer are **[hypotheses]**: the menu uses
 the field message window's rectangle grown to the DS screen, drawn on the screen the field
 does not use. The field action of an item is the record's first action number, read here
@@ -527,6 +576,57 @@ smoke drives real windows; the browser capture is the coordinator's.
   (`field-menu-rebased.png`, `76f62ffeec95`); the paid and revival runs above are from the
   services commit they prove, before that rebase.
 
+## Trigger action 180 — a set battle's own revival map
+
+`Trig_RunAction` case `0x50` (EU `0x020633ac`; the wiki's USA `0x0206339c`, inside
+`func_02061c04`), read on the European ROM:
+
+- `func_02046b60(gameres+0x36fc, 10)` must find the **battle task** (kind 10);
+- `func_0x021b8478(gameres+0x3718)` gives the **battle request**;
+- `func_020a3694()` must be non-zero; the wiki reads this test as **a set battle** (the
+  request's `+0x0c` then holds a battle number);
+- if the request's `+0x0c` equals the action's argument (`180 : b, m` stores `b` as the
+  argument), its **`+0x22`** (the battle task's `+0x3e`) receives **`m`**, the parameter's
+  high half (`func_0205ec70` case 72; the record's operand is `m << 16`); otherwise 0.
+
+The record runs with the battle's **lost** record (event 16), which the game fires **before**
+the wipe-out (`func_0206f81c` then `func_ov017_021b790c`), so the write decides where the
+party wakes. **Two European records carry it**, re-read on the ROM (`dq9re triggers`):
+
+- `triggerD16.bin`, room 8612 at `14.4`, event 16: `if 0xc(14) then 0x68(1) 0xb4(14,
+  151322624)` — the action's first operand is the battle **14** and the second's high half is
+  **2309** (`151322624 = 2309 << 16`), Upover's church;
+- `triggerS07.bin`, room 5704 at `14.6`, event 16: `if 0xc(16) then 0x68(3) 0xc5(119)
+  0xb4(16, 373555200)` — battle **16**, map **5700** (`373555200 = 5700 << 16`), the Gortress
+  exterior.
+
+The wiki *Travel* gives the same two (its "record 14/16" is the battle number here, not an
+index).
+
+**Not modelled.** `crates/dq9-core/src/trigger/action.rs` has **no `0xb4` arm**: the action
+falls into the `_ => {}` of the immediate match, so the trigger neither writes anything nor
+stops — unlike `Request::Other`, it is not even reported. The application's
+`battle::Request` has no wake-map field, and `App::wipe_out` always uses `App::revival_map`.
+The exact change needed, when the trigger crate is open:
+
+1. `trigger/action.rs`: an arm for `0xb4` pushing
+   `Request::SetBattleRevivalMap { battle: op.arg, map: high(op, 0) }` (`op.arg` is the
+   record's first operand, `m` the parameter's high half, as action `0xe6` reads its own);
+2. the application applies that request to the running battle's resolved request (a
+   `wake_map: Option<u16>` beside its number) as `field.battle_ended` returns the lost
+   record's events, **before** `wipe_out`;
+3. `wipe_out` prefers `wake_map` to `revival_map`.
+
+## The revival map a save carries (v0.3)
+
+`GameState+0x5698` is the map the wipe-out returns to. A new game sets **1106** (Angel
+Falls' church); a save made in a church (save bit 0) carries the map it was saved on unless
+flag `0x113c` is set, a save with bit 3 carries **109** (Stornway's church); trigger action
+208 sets it to its argument, action 179 to its second value with `0x113c` (**EU only:** on no
+record), and the battle that opens the postgame sets 109 (wiki *Travel*). The application
+holds it in `App::revival_map` and `start_new_game` sets 1106; there is no save writer yet
+(v0.3), so the field is documented and nothing more is done here.
+
 ## Symbols
 
 Names to add to `re/symbols.txt` (not applied by this batch; an address must be a function
@@ -540,6 +640,8 @@ start in `re/functions.txt`):
 | `0x02032370` | already `RandBelow` (`0x02032380`) | `re/symbols.txt`; the draw the tables use |
 | `0x0215c924` (overlay 3) | `Inn_Function` **[proposed]** | wiki *Inns-and-Churches*, `func_ov003_0215c924` |
 | `0x02158e94` (overlay 3) | `Church_Function` **[proposed]** | wiki *Inns-and-Churches*, `func_ov003_02158e94` |
+| `0x0215af9c` (overlay 3) | `Church_ModeLine` **[proposed]** | read: state 10 shows `1080 + mode`, state 11 ends |
+| `0x021ba998` (overlay 17) | `WipeOut_PriestTask` **[proposed]** | read: builds overlay 3's church, sets mode and voice, steps it |
 | `0x0215d0c4` | `QUESTERS_REST_PRICE` **[proposed, data]** | wiki *The Quester's Rest*: the flat 3 |
 | `0x020a0a18` | already `Bag_Remove` | `re/symbols.txt`; `Bag::remove` |
 
@@ -563,3 +665,13 @@ releases (`AGENTS.md`); they are still unconfirmed against `re/functions.txt`.
   both `facility_rom` tests; `chapter2-facilities.txt` (`8d7c1878650b`), the tags, the village
   shop's prices, the inns', the churches' and the chapter 2 containers, printed from the ROM by
   `build/facility/chapter2.py`.
+- Wipe-out (`build/evidence/j4-wipeout-priest/`, `manifest.json`): `chur-messet.txt`
+  (`88aa38556fd9`), the 18 map records and the voice each gives; `voice-table-tests.log`
+  (`56014e52bcd0`), the synthetic and real-ROM `VoiceTable` tests; `wipe-out-priest-church-2.log`
+  (`6aaf3df7b85e`) and `wipe-out-silent-major-1.log` (`6be13bb4d73a`), the native headless runs
+  (map 1106, voice 1 at story major 2 / voice 3 silent at major 1);
+  `priest-line-1082-services.log` (`d6d91ed974bc`), `str_ch0` and `str_ch4` line 1082;
+  `trigger-180.log` (`ed6830dd9dd4`), the two room records. **No window capture**: `--battle`
+  skips the field on a loss and `--new-game` conflicts with `--screenshot`, so the scene cannot
+  be reached by the screenshot driver; `priest-line-font.png` (`d5f8626c732d`) is line 1082
+  drawn with the game font, not the window.

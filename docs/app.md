@@ -581,12 +581,15 @@ effect on the story and the wipe-out.
 - **Wipe-out** (`func_02010604`, wiki *Travel* "A wipe-out"): the fallen members get up with
   full HP and MP, the purse is **halved rounding down** (the bank is spared), and the party
   comes round on the revival map at its start point: **1106** (Angel Falls' church) after a
-  new game. The trigger 16 of the battle runs **before** (the Hexagoon's, `D01` room 7105,
-  sets track flag 4). Not modelled: what the priest says there (`chur_messet.bin` picks the
-  voice, wiki *Travel*), the revival map a save carries (a church saved in, Stornway's), a
-  set battle's own revival map (trigger action 180, the Magmaroo and Gortress only), the
-  jingle `ME_009`. A wipe-out during a running scene (an event queued by trigger 16) leaves
-  the party on the map.
+  new game. Its church then says its priest's line before the party gets control:
+  `chur_messet.bin` picks the voice for the map and story major (`str_ch<voice − 1>` message
+  **1082**; voice 3 says nothing), shown in the church's mode-2 window and closed with a key.
+  **No line says the purse was halved**: `func_02010604` only halves it. The trigger 16 of
+  the battle runs **before** (the Hexagoon's, `D01` room 7105, sets track flag 4). Not
+  modelled: the revival map a save carries (a church saved in, Stornway's; v0.3), a set
+  battle's own revival map (trigger action 180, the Magmaroo and Gortress only), the jingle
+  `ME_009` (the battle's state-10 presentation has no step here). A wipe-out during a
+  running scene (an event queued by trigger 16) leaves the party on the map.
 
 **Controls** (as the conversation window): `Enter`, `Space` or `Z` confirm and close the
 window; `Backspace` or `X` cancel (back one menu, or to the previous member); the arrow keys

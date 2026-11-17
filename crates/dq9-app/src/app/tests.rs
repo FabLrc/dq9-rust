@@ -1708,6 +1708,48 @@ fn a_lost_hexagoon_fires_trigger_16_and_the_party_wakes_in_the_church() {
             |(_, s)| matches!(s, Step::MapChange { to: 1106, cause, .. } if cause == "wipe-out")
         )
     );
+    // `chur_messet.bin` gives map 1106 voice 1 from story major 2 (`str_ch0`), and the church
+    // in mode 2 says line 1082 before the party gets control.
+    assert!(
+        app.services.is_open(),
+        "the priest waits on the revival map"
+    );
+    let line = app
+        .services
+        .priest_line()
+        .expect("voice 1 says line 1082 of str_ch0");
+    let line = String::from_utf8_lossy(line);
+    assert!(line.contains("O Almighty One"), "{line}");
+    assert!(line.contains("Amen!"), "{line}");
+    // A key ends the visit: control comes back with the halved purse.
+    app.service_button(Button::Confirm);
+    assert!(!app.services.is_open(), "the priest's line is over");
+    assert!(!app.talk.is_active() && !app.battle_is_active());
+    assert_eq!(app.party().gold, 50, "the halved purse stands");
+    assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(1106));
+    app.run_steps(1);
+    assert!(
+        app.hero.is_some(),
+        "the party has control on the church map"
+    );
+}
+
+/// The same fall at story major 1: `chur_messet.bin` gives 1106 **voice 3**, which says
+/// nothing, so no window opens and the party simply has control in the church.
+#[test]
+fn a_wipe_out_at_story_major_one_has_no_priest_line() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(
+        fighting(map_options("7105", (1, 4, 1, true)), 3),
+        Some(rom.to_vec()),
+    );
+    assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(7105));
+    app.party.gold = 101;
+    app.run_battle(2);
+    assert_eq!(app.party().gold, 50, "the purse is halved all the same");
+    assert_eq!(app.current.as_ref().map(|(e, _)| e.id), Some(1106));
+    assert!(!app.services.is_open(), "voice 3 says nothing: no window");
+    assert_eq!(app.services.priest_line(), None);
 }
 
 /// `start_encounter`, the roaming monsters' entry: an encounter has no battle number, so no

@@ -80,6 +80,8 @@ enum Screen {
     Church,
     ChurchMembers,
     ChurchConfirm,
+    /// The church in mode 2 after a wipe-out: the priest's line 1082, no menu.
+    Priest,
     Notice,
 }
 
@@ -155,6 +157,13 @@ struct ChurchState {
     confirm: usize,
 }
 
+/// The church's mode 2 (`func_ov003_02158e94`, state 10): one line, then the visit ends.
+#[derive(Debug, Clone)]
+struct PriestState {
+    /// The line of `str_ch<voice - 1>` (message 1082).
+    text: Vec<u8>,
+}
+
 /// The field menu, the facility screen and their state. One instance lives in
 /// [`App`](crate::app::App); a map change or a replaced session closes it.
 #[derive(Debug, Default)]
@@ -173,6 +182,7 @@ pub struct Services {
     shop_number: u16,
     inn: Option<InnState>,
     church: Option<ChurchState>,
+    priest: Option<PriestState>,
     notice: Option<Notice>,
     statuses: Vec<MemberStatus>,
     look_dirty: bool,
@@ -190,6 +200,7 @@ impl Services {
     pub fn close(&mut self) {
         self.screen = Screen::Closed;
         self.notice = None;
+        self.priest = None;
         self.pending = None;
         self.held_item = None;
         self.cursor = 0;
@@ -365,6 +376,42 @@ impl Services {
         Ok(())
     }
 
+    /// The church in mode 2, after a wipe-out: `func_ov017_0219bfb4` hands overlay 3 the
+    /// revival map and the voice `chur_messet.bin` gave; state 10 says line 1082 of
+    /// `str_ch<voice - 1>` and state 11 ends the visit. Voice 0 and 1 both use `str_ch0`.
+    ///
+    /// # Errors
+    /// The voice's archive or member is missing, or the file has no line 1082.
+    pub fn open_priest(&mut self, rom: &[u8], voice: u8) -> Result<()> {
+        let file = dq9_core::facility::church::wipe_out_voice_file(voice)
+            .context("voice 3 says nothing")?;
+        let tag = u16::from(file) + 1;
+        let member = Church::member(tag, Language::English)
+            .with_context(|| format!("voice {voice} names no str_ch file"))?;
+        let archive = Church::archive(tag).context("church archive")?;
+        let bytes = archive_member(rom, &archive, &member)?;
+        let church =
+            Church::parse(&bytes).with_context(|| format!("parsing {archive}/{member}"))?;
+        let text = church
+            .message(dq9_core::facility::church::WIPE_OUT_LINE)
+            .with_context(|| format!("{archive}/{member} has no line 1082"))?
+            .to_vec();
+        self.close();
+        status(&format!(
+            "wipe-out: voice {voice} of {archive}/{member}, line {}",
+            dq9_core::facility::church::WIPE_OUT_LINE
+        ));
+        self.priest = Some(PriestState { text });
+        self.screen = Screen::Priest;
+        Ok(())
+    }
+
+    /// The priest's line while [`Screen::Priest`] is open (tests).
+    #[cfg(test)]
+    pub fn priest_line(&self) -> Option<&[u8]> {
+        self.priest.as_ref().map(|priest| priest.text.as_slice())
+    }
+
     /// The item at the cursor when the screen is a list of the bag and the held slots.
     fn item_source(&self, party: &Party) -> Option<Source> {
         self.item_sources(party).get(self.cursor).copied()
@@ -465,6 +512,13 @@ impl Services {
         }
         match self.screen {
             Screen::Closed | Screen::Notice => Effect::None,
+            Screen::Priest => {
+                // State 10 waits for a key, then state 11 ends the visit (`0215af9c`).
+                if matches!(button, Button::Confirm | Button::Cancel) {
+                    self.close();
+                }
+                Effect::None
+            }
             Screen::Menu => {
                 let rows = 5;
                 match button {
@@ -1424,6 +1478,9 @@ impl Services {
         if self.screen == Screen::Notice {
             return Some(self.notice_quads(atlas, font));
         }
+        if self.screen == Screen::Priest {
+            return Some(self.priest_quads(atlas, font));
+        }
         let mut title = Vec::new();
         let mut rows: Vec<(Vec<u8>, bool)> = Vec::new();
         let mut footer = Vec::new();
@@ -1708,6 +1765,7 @@ impl Services {
                 footer.extend_from_slice(b"Enter: answer   X: back");
             }
             Screen::Notice => {}
+            Screen::Priest => {}
         }
         Some(draw_rows(atlas, font, &title, &rows, cursor, &footer))
     }
@@ -1740,6 +1798,32 @@ impl Services {
         let lines = glyph_lines(font, &text, WINDOW[2] - 2 * MARGIN[0]);
         for (index, line) in lines.iter().take(VISIBLE_ROWS).enumerate() {
             let y = WINDOW[1] + MARGIN[1] + 20 + index as i32 * ROW;
+            atlas.text(line, WINDOW[0] + MARGIN[0], y, WHITE, &mut out);
+        }
+        let footer = b"Enter: continue";
+        atlas_text(
+            atlas,
+            font,
+            footer,
+            WINDOW[0] + MARGIN[0],
+            WINDOW[1] + WINDOW[3] - MARGIN[1] - 8,
+            GREY,
+            &mut out,
+        );
+        out
+    }
+
+    /// The church in mode 2: the priest's line in the same window as a notice, no title and
+    /// no menu; a key ends the visit (`func_ov003_0215af9c`, states 10 and 11).
+    fn priest_quads(&self, atlas: &Atlas, font: &Font<'_>) -> Vec<Quad> {
+        let mut out = Vec::new();
+        atlas.window(WINDOW, crate::talk::FILL, &mut out);
+        let Some(priest) = &self.priest else {
+            return out;
+        };
+        let lines = glyph_lines(font, &priest.text, WINDOW[2] - 2 * MARGIN[0]);
+        for (index, line) in lines.iter().take(VISIBLE_ROWS).enumerate() {
+            let y = WINDOW[1] + MARGIN[1] + index as i32 * ROW;
             atlas.text(line, WINDOW[0] + MARGIN[0], y, WHITE, &mut out);
         }
         let footer = b"Enter: continue";

@@ -1071,3 +1071,35 @@ fn equipping_a_single_copy_beside_a_99_stack_reuses_the_freed_slot() {
         "the successful equip rebuilds the hero"
     );
 }
+
+/// The church in mode 2 after a wipe-out (`func_ov017_0219bfb4`): `chur_messet.bin` gives the
+/// voice, and state 10 shows line 1082 of `str_ch<voice - 1>`. Angel Falls' voice 1 is
+/// `str_ch0`; the silent voice 3 opens nothing.
+#[test]
+fn the_wipe_out_priest_says_line_1082_of_the_voices_file() {
+    let Some(rom) = testrom::load() else {
+        eprintln!("skipping: DQ9_ROM missing");
+        return;
+    };
+    let mut services = Services::default();
+    services.open_priest(rom, 1).expect("voice 1 opens str_ch0");
+    let text = String::from_utf8_lossy(services.priest_line().expect("line 1082")).into_owned();
+    assert!(text.contains("O Almighty One"), "{text}");
+    assert!(text.contains("Amen!"), "{text}");
+    assert!(services.is_open());
+    let mut party = party();
+    let mut rng = Random::new(1);
+    let mut clock = DayClock::new(0.0, true);
+    assert_eq!(
+        services.press(Button::Confirm, &mut party, &mut rng, &mut clock),
+        Effect::None
+    );
+    assert!(!services.is_open(), "the visit ends on the key");
+    assert!(services.priest_line().is_none());
+    // Dourbridge's voice 5 is `str_ch4`, whose line is the wipe-out scolding.
+    services.open_priest(rom, 5).expect("voice 5 opens str_ch4");
+    let text = String::from_utf8_lossy(services.priest_line().expect("str_ch4 line 1082"));
+    assert!(text.contains("wiped out"), "{text}");
+    // Voice 3 says nothing: the caller shows no window.
+    assert!(services.open_priest(rom, 3).is_err());
+}

@@ -335,7 +335,11 @@ impl App {
             },
         );
         let map = self.revival_map.to_string();
-        if !self.load_map(&map, true, None, None, true) {
+        if self.load_map(&map, true, None, None, true) {
+            // `func_ov017_0219bfb4` (mode 2): `chur_messet.bin` then the church's line, on
+            // the revival map, before the party gets control.
+            self.wipe_out_arrival();
+        } else {
             status(&format!("wipe-out: map {map} did not load"));
         }
     }

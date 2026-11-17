@@ -243,6 +243,122 @@ pub fn cure(
     Ok(Cure::Done { price })
 }
 
+/// The line the priest says when the party wakes after a wipe-out: overlay 3's church in
+/// mode 2 reads `str_ch<voice - 1>` message `1080 + 2` (`func_ov003_0215af9c`, state 10).
+pub const WIPE_OUT_LINE: u16 = 1082;
+
+/// The voice that says nothing: `chur_messet.bin`'s `3` (`func_ov017_0219bfb4`).
+pub const WIPE_OUT_SILENT: u8 = 3;
+
+/// `data/scenario/chur_messet.bin`: which priest speaks after a wipe-out.
+///
+/// `func_ov017_0219bfb4` (mode 2) reads the file once the revival map has loaded: each
+/// `0x67` record holds the map, then **three spans of four strings** — the lowest and highest
+/// story major it covers (both `0`, or both empty, hold for every major), the voice by day and
+/// the voice by night. The first span that holds gives the voice (`atoi`; an empty string is
+/// 1). Voice 3 says nothing; any other runs the church in mode 2 with `str_ch<voice - 1>`.
+/// A map with no record, or no span that holds, uses voice 1 (the wiki's "the rest").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceTable<'a> {
+    records: Vec<(u16, [VoiceSpan<'a>; WIPE_OUT_SPANS])>,
+}
+
+/// One `chur_messet.bin` span: the story majors it covers and its two voices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VoiceSpan<'a> {
+    low: &'a [u8],
+    high: &'a [u8],
+    day: &'a [u8],
+    night: &'a [u8],
+}
+
+/// The record kind of a `chur_messet.bin` map entry.
+const WIPE_OUT_RECORD: u16 = 0x67;
+/// Spans a record holds.
+const WIPE_OUT_SPANS: usize = 3;
+
+impl<'a> VoiceTable<'a> {
+    /// Parses `data/scenario/chur_messet.bin`.
+    ///
+    /// # Errors
+    /// [`nds_rom::Error`] when the table is malformed or a map does not fit a halfword.
+    pub fn parse(data: &'a [u8]) -> nds_rom::Result<Self> {
+        let table = dq9_formats::table::Table::parse(data)?;
+        let mut records = Vec::new();
+        for record in table.records {
+            if record.kind != WIPE_OUT_RECORD {
+                continue;
+            }
+            let Some(dq9_formats::table::Value::Int(map)) = record.values.first() else {
+                continue;
+            };
+            let map = u16::try_from(*map)
+                .map_err(|_| nds_rom::Error::Malformed("chur_messet map above 0xffff"))?;
+            let string = |i: usize| match record.values.get(i) {
+                Some(dq9_formats::table::Value::Str(Some(text))) => *text,
+                _ => &[][..],
+            };
+            let mut spans = [VoiceSpan {
+                low: &[],
+                high: &[],
+                day: &[],
+                night: &[],
+            }; WIPE_OUT_SPANS];
+            for (index, span) in spans.iter_mut().enumerate() {
+                let at = 1 + 4 * index;
+                *span = VoiceSpan {
+                    low: string(at),
+                    high: string(at + 1),
+                    day: string(at + 2),
+                    night: string(at + 3),
+                };
+            }
+            records.push((map, spans));
+        }
+        Ok(Self { records })
+    }
+
+    /// The voice of `map` at story major `chapter` and `daytime`; 1 when the file has no
+    /// record or no span that holds.
+    pub fn voice(&self, map: u16, chapter: u32, daytime: bool) -> u8 {
+        let Some((_, spans)) = self.records.iter().find(|(entry, _)| *entry == map) else {
+            return 1;
+        };
+        let Some(span) = spans.iter().find(|span| span.holds(chapter)) else {
+            return 1;
+        };
+        let text = if daytime { span.day } else { span.night };
+        if text.is_empty() {
+            1
+        } else {
+            u8::try_from(atoi(text)).unwrap_or(1)
+        }
+    }
+}
+
+impl VoiceSpan<'_> {
+    /// `func_ov017_0219bfb4`'s test: both ends 0 hold for every major, otherwise
+    /// `low <= chapter <= high`.
+    fn holds(&self, chapter: u32) -> bool {
+        let (low, high) = (atoi(self.low), atoi(self.high));
+        (low == 0 && high == 0) || (low <= chapter && chapter <= high)
+    }
+}
+
+/// The decimal number a `chur_messet.bin` voice or span string holds; 0 for none.
+fn atoi(bytes: &[u8]) -> u32 {
+    core::str::from_utf8(bytes)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// The `str_ch` file a voice speaks through: voice 1 and 0 use `str_ch0`, voice 5 `str_ch4`;
+/// the silent voice 3 has none.
+pub fn wipe_out_voice_file(voice: u8) -> Option<u8> {
+    (voice != WIPE_OUT_SILENT).then(|| voice.saturating_sub(1))
+}
+
 /// What this build does with a service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Offer {
@@ -469,5 +585,109 @@ mod tests {
         assert_eq!(Divination::Experience(120).line(), 1021);
         assert_eq!(Divination::Complete.line(), 1022);
         assert_eq!(Divination::Battle.line(), 1023);
+    }
+
+    /// A tagged table (`data/scenario/chur_messet.bin`'s layout): each record a `0x67` with
+    /// its map and `spans` of `(low, high, day, night)`.
+    fn chur_messet(records: &[(u16, [[&str; 4]; 3])]) -> Vec<u8> {
+        fn intern(pool: &mut Vec<u8>, text: &str) -> u32 {
+            let at = pool.len() as u32;
+            pool.extend_from_slice(text.as_bytes());
+            pool.push(0);
+            at
+        }
+        let (mut body, mut pool) = (Vec::new(), Vec::new());
+        for (map, spans) in records {
+            body.extend_from_slice(&0x67u16.to_le_bytes());
+            body.push(13);
+            // Field 0 is the map, the twelve others are strings.
+            body.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]);
+            body.push(0xff);
+            body.extend_from_slice(&u32::from(*map).to_le_bytes());
+            for span in spans {
+                for text in span {
+                    body.extend_from_slice(&intern(&mut pool, text).to_le_bytes());
+                }
+            }
+        }
+        let pool_at = (0x10 + body.len()).next_multiple_of(16);
+        let mut out = Vec::new();
+        for word in [records.len(), pool_at, pool.len(), 0] {
+            out.extend_from_slice(&(word as u32).to_le_bytes());
+        }
+        out.extend_from_slice(&body);
+        out.resize(pool_at, 0xff);
+        out.extend_from_slice(&pool);
+        out.resize(out.len().next_multiple_of(16), 0);
+        out
+    }
+
+    #[test]
+    fn the_wipe_out_voice_follows_the_story_major_and_the_hour() {
+        let data = chur_messet(&[
+            // Angel Falls: silent at major 1, voice 1 from 2 to 17, then the catch-all.
+            (
+                1106,
+                [
+                    ["1", "1", "3", "3"],
+                    ["2", "17", "1", "1"],
+                    ["0", "0", "0", "0"],
+                ],
+            ),
+            // Gleeba: voice 1 by day, 2 by night, up to 16.
+            (
+                216,
+                [
+                    ["1", "16", "1", "2"],
+                    ["17", "17", "1", "1"],
+                    ["0", "0", "0", "0"],
+                ],
+            ),
+            // The Observatory: always voice 4 (both ends 0 hold for every major).
+            (
+                4506,
+                [
+                    ["0", "0", "4", "4"],
+                    ["0", "0", "0", "0"],
+                    ["0", "0", "0", "0"],
+                ],
+            ),
+        ]);
+        let table = VoiceTable::parse(&data).expect("chur_messet");
+        assert_eq!(table.voice(1106, 1, true), WIPE_OUT_SILENT);
+        assert_eq!(table.voice(1106, 1, false), WIPE_OUT_SILENT);
+        assert_eq!(table.voice(1106, 2, true), 1);
+        assert_eq!(table.voice(1106, 17, false), 1);
+        assert_eq!(table.voice(1106, 18, true), 0, "the catch-all span");
+        assert_eq!(table.voice(216, 1, true), 1);
+        assert_eq!(table.voice(216, 1, false), 2);
+        assert_eq!(table.voice(216, 17, true), 1);
+        assert_eq!(table.voice(4506, 9, true), 4);
+        assert_eq!(table.voice(999, 1, true), 1, "a map with no record");
+        assert_eq!(wipe_out_voice_file(0), Some(0));
+        assert_eq!(wipe_out_voice_file(1), Some(0));
+        assert_eq!(wipe_out_voice_file(5), Some(4));
+        assert_eq!(wipe_out_voice_file(WIPE_OUT_SILENT), None);
+    }
+
+    #[test]
+    fn the_cartridges_wipe_out_voices() {
+        let Some(rom) = testrom::load() else {
+            return;
+        };
+        let image = nds_rom::Rom::parse(rom).expect("the ROM");
+        let data = image
+            .file_by_path("data/scenario/chur_messet.bin")
+            .expect("chur_messet.bin");
+        let table = VoiceTable::parse(data).expect("chur_messet.bin");
+        assert_eq!(table.voice(1106, 1, true), WIPE_OUT_SILENT);
+        assert_eq!(table.voice(1106, 2, true), 1);
+        assert_eq!(table.voice(1106, 17, false), 1);
+        assert_eq!(table.voice(216, 2, true), 1);
+        assert_eq!(table.voice(216, 2, false), 2);
+        assert_eq!(table.voice(4506, 2, true), 4);
+        assert_eq!(table.voice(5700, 2, true), 7);
+        assert_eq!(table.voice(2309, 2, true), 1);
+        assert_eq!(table.voice(999, 2, true), 1, "the rest");
     }
 }

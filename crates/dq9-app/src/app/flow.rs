@@ -145,6 +145,45 @@ impl App {
         self.start_session();
     }
 
+    /// The wake-up after a wipe-out (`func_ov017_0219bfb4`, mode 2): `chur_messet.bin` gives
+    /// the revival map's voice; voice 3 says nothing, any other runs the church in mode 2,
+    /// whose line is 1082 of `str_ch<voice - 1>`, before the party gets control. The purse
+    /// was halved by `func_02010604`; **no line says so** — the ROM has no gold line here.
+    pub(super) fn wipe_out_arrival(&mut self) {
+        let Some(rom) = self.rom.as_deref() else {
+            return;
+        };
+        let table = nds_rom::Rom::parse(rom)
+            .map_err(|e| format!("{e:#}"))
+            .and_then(|image| {
+                image
+                    .file_by_path("data/scenario/chur_messet.bin")
+                    .map_err(|e| format!("{e:#}"))
+            })
+            .and_then(|data| {
+                dq9_core::facility::church::VoiceTable::parse(data).map_err(|e| format!("{e:#}"))
+            });
+        let table = match table {
+            Ok(table) => table,
+            Err(e) => {
+                status(&format!("wipe-out: chur_messet.bin: {e}"));
+                return;
+            }
+        };
+        let chapter = u32::from(self.state.tracks[self.state.track].chapter);
+        let voice = table.voice(self.revival_map, chapter, self.day.phase().is_daytime());
+        if voice == dq9_core::facility::church::WIPE_OUT_SILENT {
+            status(&format!(
+                "wipe-out: map {}'s priest is silent at story major {chapter}",
+                self.revival_map
+            ));
+            return;
+        }
+        if let Err(e) = self.services.open_priest(rom, voice) {
+            status(&format!("wipe-out: the priest's line: {e:#}"));
+        }
+    }
+
     /// Action 0x78: a scripted battle. The scene is shown through the transition (native
     /// 547's black screens and the record's track), then the fight is played on it
     /// (`app/fight.rs`; a headless run without `--fight` keeps the J4 stand-in,
