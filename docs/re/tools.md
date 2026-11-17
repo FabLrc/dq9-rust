@@ -308,19 +308,22 @@ Batch `build/evidence/parity/` (`manifest.json` via `scripts/evidence.ps1 -Batch
   [`melonds-state.md`](melonds-state.md), [`item.md`](item.md)).
 - Both references launch the runtime with `["--new-game", "--fight", "--seed", "7", "--mute"]`
   since batch `j4-parity-battles`, so battle 26 is the engine's fight ("Won after 4 rounds, 2
-  experience, 4 gold, drops []"). **What this proves is limited, and the limit is measured**:
-  the fought run's 615 checkpoints are byte-identical to the stand-in run's, because the
-  compared fields are the story, the flags, the quests and the hero — not the party's HP,
-  experience or gold, nor the fight's log. Parity therefore still cannot tell a played battle
-  from the stand-in; the fields that would show it are a follow-up
-  (`build/evidence/j4-parity-battles/report.md`).
+  experience, 4 gold, drops []"). Since `j4-parity-party` the checkpoints also carry each party
+  member's level, HP/MP (current and max), experience and the gold (`dq9re state --json` reads
+  them from the oracle RAM, the runtime writes them in `checkpoints_jsonl`; `compare-runs.ps1`
+  compares them exactly). The fought run and the stand-in now differ on 611 of 615 lines, so
+  parity tells a played battle from the stand-in. The original's own RNG drew another battle-26
+  monster set (HP 16/20 vs 13, experience 7 vs 2, gold 13 vs 4), so the references carry three
+  `accepted` party entries that **pin the runtime's exact value** (reason required; an entry
+  that stops matching fails): a seed-7 fight is a stand-in for that draw, not a proof of it
+  (`build/evidence/j4-parity-party/report.md`, `references.json` in the same folder).
 
 Output after `j4-parity-battles` (European ROM; the references now launch the runtime with
-`--fight --seed 7`, the engine's battle 26):
+`--fight --seed 7`, the engine's battle 26; party fields since `j4-parity-party`):
 
 ```text
-ok      first-control-1.1.1-male  aligned 1/1 original checkpoint(s), runtime 615
-ok      control-1.1.2  aligned 1/1 original checkpoint(s), runtime 615; accepted: flag 4135 original only (1 checkpoint(s))
+ok      first-control-1.1.1-male  aligned 1/1 original checkpoint(s), runtime 615; accepted: party 0/hp -> 13, party 0/experience -> 2, party gold -> 4
+ok      control-1.1.2  aligned 1/1 original checkpoint(s), runtime 615; accepted: flag 4135 original only, party 0/hp -> 13, party 0/experience -> 2, party gold -> 4
 parity: 2 reference(s), 2 ok, 0 failed
 ```
 
