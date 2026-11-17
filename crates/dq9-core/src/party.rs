@@ -658,20 +658,46 @@ impl Party {
         }
     }
 
-    /// Applies a won battle's experience, gold and drops, and levels the members up.
+    /// Applies a won battle's experience, gold and drops, and levels the members up, with
+    /// the neutral share: every member counts one round and no equipment table is given, so
+    /// the counter cancels in every share. [`Party::award_with`] takes the battle's own
+    /// counters and the worn items' battle parameters.
+    pub fn award(
+        &mut self,
+        experience: u32,
+        gold: u32,
+        drops: &[u16],
+        tables: &LevelTables,
+    ) -> Vec<LevelUp> {
+        self.award_with(experience, gold, drops, tables, &Share::neutral())
+    }
+
+    /// [`Party::award`] with the share's own inputs.
     ///
     /// Experience is shared the way `func_ov023_021f4098` does it: a member who is down
     /// (`func_02061bd8`; this model's `hp == 0`) receives and weighs nothing; for the rest
     ///
     /// ```text
-    /// share = ⌈ total × (k + level) ÷ Σ (k + level) ⌉
+    /// weight = (k + level) × rounds
+    /// share  = ⌈ total × weight ÷ Σ weight ⌉      (× 1.05 before the rounding, with the bonus)
     /// ```
     ///
-    /// with `k` the band of `expadj.nat` the total falls in (4 up to 10,000, 3 up to 20,000,
-    /// 2 beyond; `func_ov023_021f5534`). The battle's `rounds` factor cancels in the share,
-    /// so it is not needed. The game's `× 1.05` for an experience-bonus item is not modelled:
-    /// the award carries no equipment table. The share is added to the current vocation's
-    /// experience (`func_ov023_021f5150`), never to the other vocations.
+    /// `level` is the member's level in its current vocation (`func_0202053c`, the halfword
+    /// at `+0x16c + 2 × vocation`); `rounds` is the battle's per-member counter
+    /// ([`Share::rounds`]); `k` is the band of `expadj.nat` the truncated total falls in (4
+    /// up to 10,000, 3 up to 20,000, 2 beyond; `func_ov023_021f5534`). The game first
+    /// multiplies the total by `1 + (n − 1) ÷ 10` for `n` connected players; this model has
+    /// one player, so that factor is exactly 1 (`0x021f4214`).
+    ///
+    /// The division and the rounding are the original's 32-bit float operations in its order
+    /// (`weight ÷ Σ weight` then `× total`, `0x021f4370`), so a share whose exact value the
+    /// format cannot represent rounds up where integer arithmetic would not. A sum of 0
+    /// counts as 1 (`0x021f4318`), so counters all 0 give every member 0.
+    ///
+    /// × 1.05 (`0x3f866666`) applies when any worn item's `itembtlprm.nat` record carries
+    /// flag bit 16 (`func_0208539c`): the share is then multiplied before the rounding, so
+    /// the shares can come to more than the total. The share is added to the current
+    /// vocation's experience (`func_ov023_021f5150`), never to the other vocations.
     ///
     /// A level is reached when the row's column 0 (`experience`) is not above the new total
     /// (`func_ov023_021f0a5c`, `func_02082064`): every level gained at once is taken. The
@@ -683,37 +709,52 @@ impl Party {
     /// Gold is added whole and held to [`GOLD_MAX`] (`func_ov023_021f5150`); each drop takes
     /// [`Bag::add`]'s rule. [`Character::apply_level_tables`] must have run before a level-up
     /// is awarded.
-    pub fn award(
+    pub fn award_with(
         &mut self,
         experience: u32,
         gold: u32,
         drops: &[u16],
         tables: &LevelTables,
+        share: &Share<'_>,
     ) -> Vec<LevelUp> {
         self.gold = self.gold.saturating_add(gold).min(GOLD_MAX);
         for &item in drops {
             self.bag.add(item);
         }
-        let k = EXP_BANDS
+        // `_ffltu([battle + 0x58c0])`: the total is a float, truncated once for the band
+        // lookup (`0x021f4240`) and kept whole for the shares (`0x021f4348`).
+        let total = experience as f32;
+        let band = EXP_BANDS
             .iter()
-            .find(|(bound, _)| experience <= *bound)
-            .map_or(2, |(_, k)| u64::from(*k));
-        let recipients: Vec<usize> = self
-            .members
-            .iter()
-            .enumerate()
-            .filter(|(_, member)| member.hp > 0)
-            .map(|(i, _)| i)
-            .collect();
-        let weights: Vec<u64> = recipients
-            .iter()
-            .map(|&i| k + u64::from(self.members[i].level()))
-            .collect();
-        let sum: u64 = weights.iter().sum::<u64>().max(1);
+            .find(|(bound, _)| (total as u32) <= *bound)
+            .map_or(2, |(_, k)| *k);
+        let k = band as f32;
+        let mut weights = [0.0f32; PARTY_MAX];
+        for (index, member) in self.members.iter().enumerate().take(PARTY_MAX) {
+            if member.hp == 0 {
+                continue;
+            }
+            weights[index] = (k + f32::from(member.level())) * share.rounds[index] as f32;
+        }
+        // `p3 + (p2 + (p0 + p1))` (`0x021f42e8`), with a sum of 0 taken as 1.
+        let mut sum = weights[3] + (weights[2] + (weights[0] + weights[1]));
+        if sum == 0.0 {
+            sum = 1.0;
+        }
         let mut level_ups = Vec::new();
-        for (&index, &weight) in recipients.iter().zip(&weights) {
-            let share = (u64::from(experience) * weight).div_ceil(sum) as u32;
-            if let Some(level_up) = self.members[index].gain_experience(share, tables) {
+        for (index, &weight) in weights.iter().enumerate() {
+            let Some(member) = self.members.get(index) else {
+                break;
+            };
+            if member.hp == 0 {
+                continue;
+            }
+            let mut value = total * (weight / sum);
+            if wears_experience_bonus(member, share.equipment) {
+                value *= 1.05;
+            }
+            let amount = rounded_up(value);
+            if let Some(level_up) = self.members[index].gain_experience(amount, tables) {
                 level_ups.push(LevelUp {
                     member: index,
                     level: self.members[index].level(),
@@ -723,6 +764,56 @@ impl Party {
         }
         level_ups
     }
+}
+
+/// The inputs `func_ov023_021f4098` takes besides the battle's totals.
+#[derive(Debug, Clone, Copy)]
+pub struct Share<'a> {
+    /// The battle's counter for each party slot, in party order: `[[member + 0x19c] + 8]`
+    /// (`func_02053dfc`). The battle installs the block and clears the counter
+    /// (`func_02053da0`, `0x02053db0`), then adds one for each present member on every pass
+    /// of its loop (`func_02053dd0`, `ov_026::021dacb0`), unless bit 0 of
+    /// `[[member + 0x138] + 0x14]` holds it. Equal values cancel in every share; the game's
+    /// step per pass is the battle's, not this crate's. **[hypothesis]**: the counter counts
+    /// the rounds a member was alive for, the wiki's reading of the call site.
+    pub rounds: [u32; PARTY_MAX],
+    /// `itembtlprm.nat`, for the experience bonus; `None` applies none.
+    pub equipment: Option<&'a BattleParams>,
+}
+
+impl<'a> Share<'a> {
+    /// One round for every slot and no equipment table: the counter cancels in every share
+    /// and no bonus applies, so the split is the level weight alone.
+    pub fn neutral() -> Self {
+        Self {
+            rounds: [1; PARTY_MAX],
+            equipment: None,
+        }
+    }
+}
+
+/// `⌈ value ⌉` as the original rounds it (`0x021f43a8`): truncate, and add 1.0 when the
+/// fraction is above 0, then truncate again.
+fn rounded_up(value: f32) -> u32 {
+    let truncated = value.trunc();
+    let fraction = value - truncated;
+    let adjusted = if 0.0 < fraction { value + 1.0 } else { value };
+    adjusted as u32
+}
+
+/// Whether a worn item's `itembtlprm.nat` record carries flag bit 16 (`func_0208539c`, which
+/// walks the eight equipment slots of the live member).
+fn wears_experience_bonus(member: &Character, equipment: Option<&BattleParams>) -> bool {
+    let Some(equipment) = equipment else {
+        return false;
+    };
+    EquipSlot::ALL.iter().any(|&slot| {
+        member
+            .equipment
+            .get(slot)
+            .and_then(|id| equipment.find(id as i16))
+            .is_some_and(|param| param.experience_bonus())
+    })
 }
 
 /// Why a party could not be read from a slot.
@@ -1075,6 +1166,101 @@ mod tests {
         assert_eq!(party.members[0].current_experience(), 11);
         assert_eq!(party.members[1].current_experience(), 0);
         assert!(level_ups.is_empty());
+    }
+
+    #[test]
+    fn one_member_takes_the_whole_total_whatever_its_counter() {
+        let mut party = Party::new_game();
+        let tables = synthetic_tables(&leveling_file());
+        party.apply_level_tables(&tables);
+        // The counter cancels against itself: 11 × 5 × c ÷ (5 × c) is 11 for any c above 0.
+        for rounds in [1, 7] {
+            party.members[0].experience[6] = 0;
+            let share = Share {
+                rounds: [rounds, 0, 0, 0],
+                equipment: None,
+            };
+            party.award_with(11, 0, &[], &tables, &share);
+            assert_eq!(party.members[0].current_experience(), 11);
+        }
+        // No counter at all: the sum is taken as 1 and every weight is 0 × (k + level).
+        party.members[0].experience[6] = 0;
+        let share = Share {
+            rounds: [0; PARTY_MAX],
+            equipment: None,
+        };
+        party.award_with(11, 0, &[], &tables, &share);
+        assert_eq!(party.members[0].current_experience(), 0);
+    }
+
+    #[test]
+    fn the_counters_weight_each_share() {
+        let mut party = two_member_party();
+        let tables = synthetic_tables(&leveling_file());
+        party.apply_level_tables(&tables);
+        // k = 4: the weights are (4 + 1) × 3 and (4 + 2) × 1, 15 and 6 of 21, so 8 and 4
+        // after the rounding rather than the even split of the counter-less rule.
+        let share = Share {
+            rounds: [3, 1, 0, 0],
+            equipment: None,
+        };
+        party.award_with(11, 0, &[], &tables, &share);
+        assert_eq!(party.members[0].current_experience(), 8);
+        assert_eq!(party.members[1].current_experience(), 4);
+    }
+
+    #[test]
+    fn the_share_follows_the_originals_float_rounding() {
+        let mut party = two_member_party();
+        party.members[0].levels[6] = 3;
+        party.members[1].levels[6] = 2;
+        let tables = synthetic_tables(&leveling_file());
+        party.apply_level_tables(&tables);
+        // Weights 7 and 6 of 13. In 32-bit floats 7 ÷ 13 is a hair above the exact ratio, so
+        // 13 × it is 7.0000005 and rounds up to 8; 6 ÷ 13 lands exactly and stays 6
+        // (`0x021f4370`).
+        party.award_with(13, 0, &[], &tables, &Share::neutral());
+        assert_eq!(party.members[0].current_experience(), 8);
+        assert_eq!(party.members[1].current_experience(), 6);
+    }
+
+    #[test]
+    fn an_experience_bonus_item_multiplies_the_share_before_the_rounding() {
+        let mut party = Party::new_game();
+        let tables = synthetic_tables(&leveling_file());
+        party.apply_level_tables(&tables);
+        party.members[0].equipment.accessory = Some(22000);
+        let params = bonus_params(22000);
+        let share = Share {
+            rounds: [1; PARTY_MAX],
+            equipment: Some(&params),
+        };
+        // 7 experience with the whole weight: 7 × 1.05 = 7.35, rounded up to 8.
+        party.award_with(7, 0, &[], &tables, &share);
+        assert_eq!(party.members[0].current_experience(), 8);
+        // The same award without the table keeps the total whole.
+        party.members[0].experience[6] = 0;
+        party.award_with(7, 0, &[], &tables, &Share::neutral());
+        assert_eq!(party.members[0].current_experience(), 7);
+    }
+
+    /// The hero and a second Minstrel one level above him, both at full health.
+    fn two_member_party() -> Party {
+        let mut party = Party::new_game();
+        let mut second = Character::hero();
+        second.levels[6] = 2;
+        party.members.push(second);
+        party
+    }
+
+    /// `itembtlprm.nat` with one record whose flags carry the experience bonus (bit 16).
+    fn bonus_params(id: u16) -> BattleParams {
+        let mut record = [0u8; 44];
+        record[..4].copy_from_slice(&(1u32 << 16).to_le_bytes());
+        record[0x28..0x2a].copy_from_slice(&(id as i16).to_le_bytes());
+        let mut data = 1u32.to_le_bytes().to_vec();
+        data.extend(record);
+        BattleParams::parse(&data).unwrap()
     }
 
     #[test]

@@ -203,15 +203,17 @@ wiki and the item descriptions, not from a battle state; the rate fields are rea
 
 `Party::award` follows the victory routine (`func_ov023_021edf54`) and its helpers:
 
-1. **Experience is shared** by `func_ov023_021f4098`, per member:
-   `ceil(total × (k + level) × rounds / Σ (k + level) × rounds)`. A member who is down
-   (`func_02061bd8`) receives and weighs nothing. The `rounds` factor is the same for
-   every member and cancels in the share. `k` is the band of `expadj.nat`
-   (`func_ov023_021f5534`): 4 up to 10,000 experience, 3 up to 20,000, 2 beyond; the
-   European file has no second block. The total is first multiplied by
-   `1 + (n − 1) ÷ 10` for `n` connected players (1 alone, so no change here).
-   **Not modelled:** the `× 1.05` for a member wearing an item with `itembtlprm` flag bit
-   16 (`func_0208538c`) — the award carries no equipment table; and the multiplayer path.
+1. **Experience is shared** by `func_ov023_021f4098`, per member, in 32-bit floats:
+   `ceil(total × (k + level) × counter ÷ Σ (k + level) × counter)`. `level` is the current
+   vocation's (`func_0202053c`), the counter the battle's (`func_02053dfc`), and the share is
+   multiplied by 1.05 before the rounding for a member whose equipment carries the
+   experience bonus (`func_0208538c`). A member who is down (`func_02061bd8`) receives and
+   weighs nothing. `k` is the band of `expadj.nat` (`func_ov023_021f5534`): 4 up to 10,000
+   experience, 3 up to 20,000, 2 beyond; the European file has no second block. The total is
+   first multiplied by `1 + (n − 1) ÷ 10` for `n` connected players (1 alone, so no change
+   here). The counter, the bonus and the float rounding are in
+   [§ Sharing the experience: the second factor](#sharing-the-experience-the-second-factor);
+   the multiplayer path is **not modelled**.
 2. The share is added to the **current vocation's** experience (`func_ov023_021f5150`),
    never to the other twelve (`GetExperience`, `ov_023::021eea98`).
 3. **Level-up** is the field's result window (`func_ov023_021f0a5c`): it loads
@@ -334,3 +336,82 @@ a stand-in reference.
 - The exact default name and the creation screen's default sex: the oracle run typed `1` and
   kept the man's look; the model starts empty/man.
 - A new-game event block (`GameState::new_game` still leaves it empty; `state.rs`).
+
+## Sharing the experience: the second factor
+
+Read 17 November 2026 on the European ROM from `func_ov023_021f4098` (overlay 23,
+`0x021f4098`) and its helpers. The audit note quoted the USA addresses (`0x0202053c`,
+`0x02053dfc`, `0x0208538c`); on the European ARM9 they are `0x0202054c`, `0x02053e0c` and
+`0x0208539c` (`+0x10` in `0x0200FB20..0x020EEBD0`). Decompilation and disassembly:
+`build/evidence/j4-xp-share/xp-share-decomp.txt` (`0143d3a2ffa9`).
+
+**The share has three factors, in 32-bit floats.** The loop at `0x021f4134` fills two arrays
+for each of the four party slots that the battle's mask (`[battle + 0x2a0]`,
+`func_020a35f0`) says are filled and whose member is not down (`func_02061bd8`): the counter
+`0x02053e0c` returns (`0x021f416c`) and the level `0x0202054c` returns (`0x021f4180`). The
+share of member `i` is then
+
+```text
+share_i = total × ((k + level_i) × counter_i) ÷ Σ_j ((k + level_j) × counter_j)
+```
+
+(`0x021f4350`–`0x021f4384`: `i2f(k)`, add the level, multiply the counter, divide by the
+sum, multiply by the total). The sum is `p3 + (p2 + (p0 + p1))` (`0x021f42e8` on); a sum of
+0 is replaced by 1.0 (`0x021f4318`: `moveq r11,#0x3f800000`); the total is truncated once
+for the `k` band lookup (`0x021f4240`, `_ffix`) and kept whole for the share (`0x021f4348`).
+The rounding is a ceiling in floats: truncate, add 1.0 when the fraction is above 0,
+truncate again (`0x021f43a8`). A share whose exact value is not representable therefore
+rounds up where integer arithmetic would not — 13 experience at weights 7 and 6 gives 8
+and 6, not 7 and 6.
+
+**`0x0202054c`, the level** (`PartyMember_GetLevel`): the halfword at
+`+0x16c + 2 × vocation` of the live record (`[member + 0x150]`, its vocation at `+0x950`),
+the value `GetExperience` reads as well (`0x021eea98`).
+
+**`0x02053e0c`, the counter** (`PartyMember_GetBattleCounter`): the word at
+`[[member + 0x19c] + 8]`, 0 when the member has no block. Its writers:
+
+| address | what it does | callers |
+|---|---|---|
+| `0x02053db0` `PartyMember_SetBattleCounter` | stores the caller's block at `member + 0x19c`, then clears `+0x0` (u16), `+0x2`, `+0x3`, `+0x4` (bytes) and `+0x8` (word) | `func_ov000_021643d4` +1812, `func_ov000_02166e5c` +240, `func_ov026_021dce34` +416 |
+| `0x02053dd0` `PartyMember_BattleCounter` | returns `[member + 0x19c]` (the block, 0 without one) | `func_ov000_021540fc`, `func_ov000_02169850`, `func_ov024_021f8628`, `func_ov026_021d8ba0` |
+| `0x02053de0` `PartyMember_AddBattleCounter` | `++[[member + 0x19c] + 8]`, unless bit 0 of `[[member + 0x138] + 0x14]` is set (then nothing) | `ov_026::021dacb0` only |
+
+`member + 0x138` points at the live record `+ 0x94` (`func_02053c4c` sets it), so the gate
+word is `live + 0xA8` bit 0. The increment's single call site (`ov_026::021dacb0`) sits in a
+loop over the same four occupied slots, once per pass of the battle overlay's state machine,
+in the block that clears `[battle + 0x7749]` and calls `0x02160fbc` with `0x4000000`,
+`0x8000000`, `0x10000000` and `0x20000000` (`0x021dab90`–`0x021dacb4`).
+
+**So the counter is per member and per battle.** All members present at the same passes get
+the same count, and equal counts cancel exactly in the division: the single-member pilot's 7
+experience stays 7, at any count above 0. `Party::award` therefore takes the neutral
+`Share` (one for every slot), which is identical to any equal count above 0;
+`Party::award_with` takes the battle's own counts. `dq9-app` still calls `award`: its battle
+does not track the counter, and modelling it there is another batch's. Counters all 0 are
+**not** neutral — the sum becomes 1 and every share is 0 × the level weight, i.e. 0.
+**[hypothesis]**: the counter counts the rounds a member was alive for (the wiki's reading
+of the call site). **[unknown]**: what bit 0 of `live + 0xA8` is.
+
+**The × 1.05 experience bonus** (`0x0208539c`, `HasExperienceBonus`): it walks the eight
+equipment slots of the live member and answers 1 when any worn item's `itembtlprm.nat`
+record has flag bit 16 (`(flags & 0x1ffff) >> 16 != 0`, the table offset `i * 0x2c`). The
+share is then multiplied by `[0x021f4434]` — 1.05 (`0x3f866666`, wiki *Battle resolution*) —
+**before** the rounding (`0x021f4398`–`0x021f43a4`), so the shares can come to more than the
+total: 14 experience split 5/9 becomes 6/9 for the wearer. `Party::award_with` applies it
+from `BattleParams` (`experience_bonus`), `None` applying none; `Party::award` passes none.
+
+Tests: `crates/dq9-core/src/party.rs` (`one_member_takes_the_whole_total_whatever_its_counter`,
+`the_counters_weight_each_share`, `the_share_follows_the_originals_float_rounding`,
+`an_experience_bonus_item_multiplies_the_share_before_the_rounding`) and
+`crates/dq9-core/tests/party_rom.rs`
+(`two_member_share_on_the_real_level_tables_takes_the_bonus_flag`, a synthetic two-Minstrel
+party on the cartridge's level tables and `itembtlprm.nat`).
+
+Parity: the seed-7 reference replayed on this branch matches `first-control-1.1.1-male`'s
+aligned checkpoint exactly, and `control-1.1.2` differs only on flag 4135,
+the battle 26 drop the reference already accepts (`parity-first-control.txt`
+`cbde6fdc34f8`, `parity-control-112.txt` `3a2d05063e7c`, runtime
+`runtime-checkpoints.jsonl` `c2b10c767640`). The checkpoint carries no party or gold on this
+branch, so it observes no share either way; the award of the pilot's single member is the
+whole total in both the old and the new arithmetic.

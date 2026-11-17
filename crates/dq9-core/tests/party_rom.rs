@@ -7,7 +7,7 @@
 use dq9_core::party::{
     BAG_CAPACITY, GOLD_MAX, NEW_GAME_ARMOUR, NEW_GAME_FOOTWEAR, NEW_GAME_LEGWEAR,
 };
-use dq9_core::party::{NOVICE_VOCATION, Party};
+use dq9_core::party::{Character, NOVICE_VOCATION, PARTY_MAX, Party, Share};
 use dq9_core::state::{GameState, NEW_GAME_WEAPON};
 use dq9_formats::Gpc2;
 use dq9_formats::battle::equipment::BattleParams;
@@ -261,6 +261,55 @@ fn awarding_experience_to_level_three_takes_the_minstrel_rows() {
     assert_eq!((hero.max_hp, hero.max_mp), (level3.max_hp, level3.max_mp));
     assert_eq!((hero.hp, hero.mp), (level1.max_hp, level1.max_mp));
     assert_eq!(hero.skill_points, level3.skill_points - level1.skill_points);
+}
+
+/// `func_ov023_021f4098` on the cartridge's own level tables: two Minstrels, levels 1 and 5,
+/// split 14 experience by the weights `k + level` (5 and 9 of 14) as 5 and 9. The item whose
+/// `itembtlprm.nat` flags carry bit 16 (`func_0208539c`) multiplies its wearer's share by
+/// 1.05 before the rounding, so the first member takes 6 and the total comes to 15.
+#[test]
+fn two_member_share_on_the_real_level_tables_takes_the_bonus_flag() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let tables = level_tables(&rom);
+    let params = battle_params(&rom);
+    let mut state = GameState::new_game();
+    state.party.apply_level_tables(&tables);
+    let mut second = Character::hero();
+    second.levels[usize::from(NOVICE_VOCATION)] = 5;
+    state.party.members.push(second);
+    state.party.apply_level_tables(&tables);
+    assert_eq!(state.party.members.len(), 2);
+    assert_eq!(
+        (
+            state.party.members[0].level(),
+            state.party.members[1].level()
+        ),
+        (1, 5)
+    );
+
+    state
+        .party
+        .award_with(14, 0, &[], &tables, &Share::neutral());
+    assert_eq!(state.party.members[0].current_experience(), 5);
+    assert_eq!(state.party.members[1].current_experience(), 9);
+
+    let bonus = params
+        .items
+        .iter()
+        .find(|param| param.experience_bonus())
+        .expect("an item whose battle parameters carry the experience bonus");
+    for member in &mut state.party.members {
+        member.experience = [0; VOCATION_COUNT];
+    }
+    state.party.members[0].equipment.accessory = Some(bonus.id as u16);
+    let share = Share {
+        rounds: [1; PARTY_MAX],
+        equipment: Some(&params),
+    };
+    state.party.award_with(14, 0, &[], &tables, &share);
+    assert_eq!(state.party.members[0].current_experience(), 6);
+    assert_eq!(state.party.members[1].current_experience(), 9);
 }
 
 /// A state restored from the demo save lists the slot's four members with the values

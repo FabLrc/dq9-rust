@@ -590,7 +590,12 @@ ov_017::021d6148 StbArg_SetFloat    # writes through an address argument (type 3
 0x02010838 GameState_Party          # returns GameState+0x2a04: bag, +0xf68 bank, +0xf6c gold, +0xf78 party list, +0xf80 standby characters
 0x020108e8 GameState_PartyMember    # (GameState, i): GameState+0x474 + i*0x964
 0x02012ff4 Zone3D_GetCurrent        # returns g_Zone3D
+0x0202054c PartyMember_GetLevel      # current vocation's level: halfword at record+0x16c + 2*vocation (func_0202053c)
 0x020399c0 Object_Place             # (object, map id, position, angle): SetField06, position +0x44, angle, clears motion state
+0x02053db0 PartyMember_SetBattleCounter # (member, block): stores it at +0x19c, then clears +0x0,+0x2,+0x3,+0x4,+0x8
+0x02053dd0 PartyMember_BattleCounter # returns [[member+0x19c]], 0 without a block
+0x02053de0 PartyMember_AddBattleCounter # ++[[member+0x19c]+0x8] unless bit 0 of [[member+0x138]+0x14] holds it
+0x02053e0c PartyMember_GetBattleCounter # [[member+0x19c]+0x8], 0 without a block (func_02053dfc)
 0x0205ec44 QuestManager_Get         # returns g_QuestManager
 0x02082d7c PartyMember_LoadRecord   # member object <- 572-byte character record (fields in docs/re/save.md)
 0x020838d4 PartyMember_DropHeldItem # first held copy of an item -> 0xffff, then one compaction pass
@@ -917,6 +922,7 @@ ov_017::021c1e6c Guest_LoadTask        # loads attnpc.gp2 and data/chara_sub/s%0
 0x02074848 CalculateCriticalDamage     # attack power x between(0.95, 1.05) (action 1) or damage x between(1.5, 2.0)
 0x02074908 CalculateMonsterCritRate    # literal zero
 0x02074958 GetMultiTargetFalloff       # 1.0 0.8 0.6 0.4 0.2
+0x0208539c HasExperienceBonus        # (live member): a worn item's itembtlprm flags carry bit 16 (func_0208538c)
 0x02089640 InitMonsterBattleStatus     # HP draw from the world generator, skipped for a set battle
 0x0208a04c IsWayUsable                 # a monster way's usability test
 0x0208a380 ChooseWayByWeights          # weighted pick among the usable ways
