@@ -278,7 +278,9 @@ manifests, `rust-toolchain*`).
 - **melonDS** (`tools/melonds`): visual reference and dynamic analysis through its GDB stub.
 - **Before analysing**: symbols and code of the
   [USA decompilation](https://github.com/DQIX/dqix-decomp) (addresses to convert for the
-  European ROM) and the [DQIX formats wiki](https://github.com/DQIX/wiki), see
+  European ROM), the [DQIX formats wiki](https://github.com/DQIX/wiki) and the
+  [DQ9 Encyclopedia](https://dq9encyclopedia.com/) (mechanics read from the code, with the
+  address of each one), see
   [`docs/external-resources.md`](docs/external-resources.md).
 
 Recording a finding:

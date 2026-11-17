@@ -21,7 +21,10 @@ Recommended order, so as not to rediscover what is already published (`docs/exte
    overlays, ITCM, DTCM and ARM7 identical.
 3. [DQIX formats wiki](https://github.com/DQIX/wiki): observed on our European ROM.
    Trigger and native codes there are **in decimal** (`trigger.md` writes them in hex).
-4. Ghidra (`scripts/ghidra-query.ps1`) and melonDS to check or complete.
+4. [DQ9 Encyclopedia](https://dq9encyclopedia.com/): mechanics read from the code (battle
+   formulas, companion AI, random tables, spawn nodes, loot), each "Under the hood" block
+   citing its address. Overlay addresses as they are, **ARM9 ones in USA** (`+0x10`).
+5. Ghidra (`scripts/ghidra-query.ps1`) and melonDS to check or complete.
 
 Every fact taken from elsewhere is cited in the docs and re-checked on the ROM.
 

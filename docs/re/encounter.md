@@ -16,6 +16,14 @@ local). Each claim's verdict, its evidence and the command that reproduces it ar
 section, **"Claims checked"**; a statement in the body that is not repeated there is still a
 reading of the code.
 
+Cross-check, added 2026-11-17: the [DQ9 Encyclopedia](https://dq9encyclopedia.com/en/guide/the-games-randomness-for-speedrunners)
+describes the same spawn loop (node linked to the hero's, the node most in front picked without
+a roll, the 5- and 10-unit distances, the 3.5-unit party block, the twelve-monster cap, the
+frames that roll nothing — the community's "stop spots"), which table rolls the species, the
+group make-up and the pre-emptive strike, and the battle's ~153 KB monster memory that drops a
+species that no longer fits with every species after it. No license: facts only, never copied,
+and **[hypothesis]** here until re-checked on our ROM (`external-resources.md`).
+
 
 Names are the USA decompilation's `func_xxxxxxxx` (USA address; EU is +`0x10` in the ARM9
 module). Object fields are offsets of the 0x198-byte monster object.

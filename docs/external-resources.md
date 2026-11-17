@@ -22,6 +22,10 @@ verified is marked **[unverified]**.
 5. **[apicula](https://github.com/scurest/apicula)** is an NSBMD/NSBTX/NSBCA reader/viewer
    in Rust, under 0BSD: its readers are ported into `nds_rom::g3d`
    ([`re/g3d.md`](re/g3d.md)), credited at the top of the module.
+6. **[DQ9 Encyclopedia](https://dq9encyclopedia.com/)** (added 17 November 2026) states the
+   game's **mechanics read from the code, with the original addresses**: battle formulas,
+   companion AI, the three random tables, monster spawn nodes, loot, grottoes. No license:
+   reusable as facts and as an oracle, cited and re-checked (addresses to convert, below).
 
 ## DQ9-specific projects
 
@@ -170,6 +174,58 @@ mapping matches the conversion already documented above. Smoke-runner `--help` s
 `build/evidence/dqix-modern-review/inspection-commands.json` (`cdb69a7771ea`),
 `report.md` (`4c269f6db909`). Relevant leads were sent to the three active v0.2 workers.
 
+### DQ9 Encyclopedia — mechanics and tables read from the code
+
+<https://dq9encyclopedia.com/> (author `spiffwastaken`, free, no ads, EN/FR/JA) ·
+**no license stated** (reuse the facts citing the page, do not copy the prose, the tables or
+the extracted data)
+
+A reference site built from the ROM then checked in the code: 1,176 items with every source,
+307 monsters (drops and rates, day/night share per place), 109 places, 184 quests, 444
+accolades, grottoes (the 393,216 maps sifted through). Its interest for us is not the
+player-facing lists but the **"Under the hood" blocks of the guides**, which give formulas,
+thresholds and probabilities **with the address of the code that implements them**, and say
+where each claim comes from (read in the code, checked in game, community). It regularly
+corrects the community (about twenty wrong claims out of 2,000 about grottoes), and names
+the measurements it keeps (TKG, Eru1203, hurblub, Sylwer, daisukedaisuke).
+
+**Address convention, checked here on `re/functions.txt`** (17 November 2026): overlay
+addresses are given as they are and are region-independent — `ov00 0x02154F30` (target draw),
+`0x02154C68` (multi-hits), `0x02156648` (metal), `0x0215ED8C`/`0x02161380` (letters),
+`ov24 0x021E6A90` (metal damage), `0x021ED8C0` (per-hit target), `0x021EB08C` (enrage codes),
+`0x021D923C`/`0x021E57E0` (Body Slam) all land on a function start of our European map;
+**ARM9 code addresses are USA** and need the usual `+0x10` (`0x0208776C`/`0x020877C0`, buffs
+→ `0x0208777C`/`0x020877D0`; `0x0208978C`, last two actors → `0x0208979C`), while an address
+past the end of the ARM9 code (`0x020F015C`, the "A".."Q" letter table) is data and
+identical in both regions.
+
+**Use it for** (v0.2 and the battle/field milestones):
+
+- [Battle formulas](https://dq9encyclopedia.com/en/guide/battle-the-games-formulas): damage
+  and its multiplication order (tension, caps, critical, element, family, defence stance,
+  rank), metal rules, buff/debuff levels and durations, evasion/block/critical, coups de
+  grâce and co-op de grâces, enraged monsters, **the 21 "wants" of the companion tactics**
+  with their chances, minimum lengths and weights, monster targeting (front/back line ×2,
+  grudge +2/+1).
+- [Randomness](https://dq9encyclopedia.com/en/guide/the-games-randomness-for-speedrunners):
+  the three tables (same LCGs as our table above), what each one rolls, the roll counts
+  measured per action, **spawn nodes and the stop spots that freeze table A**, the battle's
+  ~153 KB monster memory that removes species, loot rules (rare if
+  `floor(N × (roll − 1) ÷ 32767) = 0`), the 8-item cap per battle.
+- [JP vs US/EU differences](https://dq9encyclopedia.com/en/guide/game-versions-jp-us-eu),
+  [vocations](https://dq9encyclopedia.com/en/guide/vocations),
+  [spells and abilities](https://dq9encyclopedia.com/en/guide/spells-and-abilities) (per-action
+  multipliers, hit counts, caps), [stats and effects](https://dq9encyclopedia.com/en/guide/stats-and-effects).
+- **As a test oracle**: its item/monster/place pages give expected values (drop rates, shop
+  prices, chest contents) against which a reader of `.nat`/`mon_btldata`/`treasure.nsarc` can
+  be checked — the check runs on the player's ROM, the expected values stay in the test as a
+  cited constant, never a copy of its data.
+
+**Limits**: a single author, no license, no public data dump or API; the texts are an
+editorial synthesis (the formulas are stated in words, not as the original code). A fact
+taken from there is **[hypothesis]** until re-checked on our ROM or in its cited function,
+exactly like a wiki page. Where it and the DQIX wiki disagree, the address decides.
+
 ### Other DQI-haX projects
 
 | Project | Contribution | License |
@@ -242,6 +298,8 @@ Random generators (from the dqix-functions glossary):
 
 Useful for writing tests or invariants against the real ROM:
 
+- [DQ9 Encyclopedia](https://dq9encyclopedia.com/) (above): the game's mechanics with the
+  address of the code that implements them, and per-item/monster/place expected values.
 - [Dragon Quest Wiki](https://dragon-quest.org/wiki/Dragon_Quest_IX:_Sentinels_of_the_Starry_Skies)
   (dragon-quest.org) and [Fandom](https://dragonquest.fandom.com/): lists of items, monsters,
   grotto locations.
@@ -264,7 +322,7 @@ keeps GPL and unlicensed sources as read-only references.
 |---|---|---|
 | Integrable (with attribution) | dqix-decomp (Unlicense), apicula (0BSD), ds-decomp/ds-rom, dsd-ghidra, ndskit, libntr, dqix-script-disasm, ArchiveTool, BattleEmulator, DualRip (MIT), objdiff (Apache-2.0), SSEQPlayer/FSS (WTFPL) | reusable code and data; cite the source |
 | Read-only | DQIX Enhanced, Dragon Quest IX Modern, melonDS, Kuriimu2, dqix-functions, Collapsus (GPL-3.0), FFmpeg (LGPL) | learn the facts, reimplement yourself; do not copy or translate the code |
-| No license | DQIX wiki, editor, desmume-scripts, auction, pret | facts reusable citing the page; do not copy text or code |
+| No license | DQIX wiki, DQ9 Encyclopedia, editor, desmume-scripts, auction, pret | facts reusable citing the page; do not copy text or code |
 
 Facts about the game (offsets, formulas, constants) are not protected by these licenses;
 code and prose are. In `docs/re/`, cite the external source of a fact and

@@ -16,6 +16,14 @@ Sources, in the order of `AGENTS.md`: the USA decompilation (DQIX/dqix-decomp, c
 `build/evidence/j4-battle-actions/ghidra-{handlers,helpers,kinds,status,status3}.txt`); DQIX/BattleEmulator (MIT, commit
 `6c4ad874d1c84579690c22c16efc58c945a6b218`) as the differential oracle.
 
+Cross-check, added 2026-11-17: the [DQ9 Encyclopedia](https://dq9encyclopedia.com/en/guide/battle-the-games-formulas)
+states the multiplication order (tension, caps, critical, element, weapon family, guard,
+multi-target falloff), the metal rules, the coup-de-grâce thresholds, the enrage triggers, the
+front/back-line and grudge target weights and the 21 "wants" of the companion tactics, each
+block citing the function that implements it (overlay addresses as they are, ARM9 ones in USA).
+No license: facts only, never copied, and **[hypothesis]** here until re-checked on our ROM or
+in the cited function (`external-resources.md`).
+
 **Addresses.** EU first, USA in brackets where the ARM9 module shifts them (`AGENTS.md`: USA
 `0x0200F3B8..0x0200FB20` is +`0x8`, `0x0200FB20..0x020EEBD0` is +`0x10`); overlays are identical.
 
