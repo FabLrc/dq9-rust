@@ -24,6 +24,17 @@ block citing the function that implements it (overlay addresses as they are, ARM
 No license: facts only, never copied, and **[hypothesis]** here until re-checked on our ROM or
 in the cited function (`external-resources.md`).
 
+Audited 2026-11-17 in [`encyclopedia-audit.md`](encyclopedia-audit.md), function by function. The
+verdicts that touch this note: the multiplication order **agrees** except the cap's place in the
+page's list — `ov_024::021e6a90` truncates once and clamps `+0x1C` bits 0–13 last, as this note
+already read. The metal rules, the coup-de-grâce thresholds, the enrage triggers (`ov_024::021eb08c`),
+the companion tactics and the family bonus are **not implemented** (refused or absent), so nothing
+diverges silently. Two rules **differ**: the buff wear-off chances — `ov_000::0215858c` reads two
+different chance arrays, one for dazzle (`0x02158d6c`) and one for defence and agility
+(`0x02158d68`, four bytes earlier), while our `wear_off_chance` is one array keyed one index late
+(below, "Statuses' run-down") — and the grudge weights, refused instead of modelled. Flight has one
+rule we lack: species 38–40 forbid it (below, "Flight").
+
 **Addresses.** EU first, USA in brackets where the ARM9 module shifts them (`AGENTS.md`: USA
 `0x0200F3B8..0x0200FB20` is +`0x8`, `0x0200FB20..0x020EEBD0` is +`0x10`); overlays are identical.
 
@@ -352,6 +363,9 @@ nested calls: the direct calls were searched and none draws; `func_ov000_0215704
 `ov_026::021dd3dc`)
 
 In order: the setup is a set battle → refused for good (`BattleError::FleeForbidden`, before any draw);
+a monster of species 38, 39 or 40 in the battle → refused, no draw (`func_ov000_0215ed34`'s list
+tested against `0x26..0x28`, read on the EU ROM: `build/evidence/j4-encyclopedia-audit/ghidra-flight.txt`,
+`7db44aa86f32`; the page names them cannibox, mimic and Pandora's box — **[hypothesis]**);
 the first round with surprise 1 → away, no draw; no monster standing → away; the party's mean
 attack + defence at least three times the monsters' mean (integer means over the standing) → away,
 no draw; otherwise `max over the fleeing members of (int)(deftness × 0.05f) + 10`, held up to
@@ -359,8 +373,10 @@ no draw; otherwise `max over the fleeing members of (int)(deftness × 0.05f) + 1
 on every such call), and `NextRandomMax(100) < percentage` on the **world's** generator.
 Success ends the battle (`Fled`, no round). **[hypothesis]**: a failed flight costs the fleeing
 members their turn and the round goes on (the flight state `ov_026::021d8ba0` state 0xb shows the
-failure; what follows was not read). **[unknown]** the list `func_ov000_0215ed34` checks against
-`0x26..0x28` (members that forbid flight).
+failure; what follows was not read). The species test above settles the list
+`func_ov000_0215ed34` checks: its ids are the monsters' species, not members (the same three the
+encounter code never lets surprise the party, `encounter.rs`'s `NO_SURPRISE`); our engine does not
+implement it (`encyclopedia-audit.md`, B22).
 
 ### End (`end.rs`)
 
@@ -540,6 +556,19 @@ second count starts at 4 (`data_ov000_02182efc`, 4 for defence, agility and dazz
 0.75, 0.625, by the remaining count from 1 to 4) is above the draw. A defence level therefore
 holds six of its holder's passes; the model's counts and second counts are in `Status`.
 
+**Correction, 2026-11-17** (EU decompilation of `0x0215858c`,
+`build/evidence/j4-encyclopedia-audit/ghidra-status-tick.txt`, `8078738699e2`): the routine reads
+**two** chance arrays, `0x02158d68` for defence and agility and `0x02158d6c` (four bytes later) for
+dazzle, and it decrements the second count *before* indexing it. With a second count of 4 the four
+rolls are therefore `T[3]`, `T[2]`, `T[1]`, `T[0]` — `0.625, 0.75, 0.875, 1.0` if `T` is read
+ascending by remaining count (the page's 63/75/88/100), and the dazzle array's first roll is a
+harsher value (the page's 38/63/88/100). `battle/round.rs`'s `wear_off_chance` keys
+`4 → 0.625, 3 → 0.75, …` but is called with the already-decremented count, so our four rolls are
+75/88/100/100; and dazzle reuses the defence table. The arrays' contents are **[unknown]** (they
+live in RAM at `0x02158d68`, past the extracted ARM9 image, initialised by code not read); the
+page's two sequences are the only published reading and stay **[hypothesis]** until the writers
+are read (`encyclopedia-audit.md`, B16–B17).
+
 ## Open points
 
 - **[hypothesis]** the two draws BattleEmulator spends before every action are `func_ov000_0215fbe0`
@@ -569,7 +598,9 @@ holds six of its holder's passes; the model's counts and second counts are in `S
   `func_02089630`; the call into it was not read, only the handler's `func_0x02161380`.
 - **[hypothesis]** the wear-off second count starts at 4 for defence, agility and dazzle
   (`data_ov000_02182efc`'s 4), and the chance table `0x02182ad4` is indexed by the count that
-  remains, from 1 (1.0) to 4 (0.625).
+  remains, from 1 (1.0) to 4 (0.625). The 2026-11-17 reading corrects both halves: the arrays are
+  two (`0x02158d68`, `0x02158d6c`) and the index is taken after the decrement — see "Statuses'
+  run-down", "Correction".
 - **[hypothesis]** a scaling accuracy's critical does not land outright: `RollAccuracy` returns 1
   before the multiplier when the target's resistance is above 0 and the cast was a critical
   (`0x02156a90`'s neighbourhood), which the model does not carry (a Dazzle critical would land

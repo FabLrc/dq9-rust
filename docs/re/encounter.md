@@ -24,6 +24,19 @@ group make-up and the pre-emptive strike, and the battle's ~153 KB monster memor
 species that no longer fits with every species after it. No license: facts only, never copied,
 and **[hypothesis]** here until re-checked on our ROM (`external-resources.md`).
 
+Audited 2026-11-17 in [`encyclopedia-audit.md`](encyclopedia-audit.md). The spawn loop, the 5- and
+10-unit distances, the no-roll stop spots, the twelve-object cap, the species on table A, the
+company on table B, the pre-emptive strike on table A (with the +10 of a turned back and the
+2 % + deftness/20) and the 25-unit vanish all **agree**. Three verdicts differ: the 3.5-unit block
+is tested against **every party member and the spawn point** (`0x02073e0c`, read:
+`build/evidence/j4-encyclopedia-audit/ghidra-spawn-point-test.txt`, `d95f141a2a59`), where the
+model keeps the leader alone; the company's order is shuffled **on land too** (the coin and the six
+permutations of `0x020e8e3c` are drawn inside `0x0209afe4`,
+`build/evidence/j4-encyclopedia-audit/ghidra-company.txt`, `2e7ef7fd4150`), so the page's "the group
+touched stays first" is wrong and this model right; and the battle's memory of species is **not
+implemented** (no address cited, **[hypothesis]** that chapter 2's groups fit). The page's Hoimi
+counts at a battle's start (**[unknown]**) are not measured against our draw order.
+
 
 Names are the USA decompilation's `func_xxxxxxxx` (USA address; EU is +`0x10` in the ARM9
 module). Object fields are offsets of the 0x198-byte monster object.
@@ -109,7 +122,10 @@ runs long**, both measured in the field runs):
    10 around the leader**: `d` = distance of the leader to the segment (`func_02031468`), fail if `d > 0x9fff`;
    half-chord `√(1 − (d/10)²) × 10`; if above 5.0 the point is `closest + dir × min(|node − closest|, chord)`.
 7. Reject when the point is within `0x3800` (3.5) of the leader, or a visible roamer lies in
-   `±(0x3000, 0x5000, 0x3000)` of it, or the node's flag byte has bit 1.
+   `±(0x3000, 0x5000, 0x3000)` of it, or the node's flag byte has bit 1. `func_02073dfc`
+   (`0x02073e0c`) tests **every** party member against the point, and only a member whose own
+   field id equals the point's (`encyclopedia-audit.md`, R4); the model keeps the leader alone
+   (`crates/dq9-core/src/encounter.rs`, the `0x3800` test).
 8. **Zone** by (a) with the node's mask, **wait check** `(7 − n) × 1000 ≤ timer`, then the **monster**
    by weight. At most one attempt per update for a party of one (a second pass excludes the leader and fails).
 9. Spawn (`ov_017::021a2128`): the object at the point (height from `Zone3D_GroundHeight`), facing
