@@ -548,6 +548,38 @@ fn a_script_sprite_is_an_object_the_slots_of_type_two_designate() {
 }
 
 #[test]
+fn native_573_destroys_the_object_of_a_type_two_slot() {
+    let mut c = scene();
+    c.apply(&Event::CreateSprite {
+        name: "n013a".into(),
+        handle: 0,
+    });
+    c.apply(&Event::BindSlot {
+        slot: 17,
+        character: 0,
+        kind: 2,
+    });
+    // Two slots may designate the same object; the registry entry goes with the first 573.
+    c.apply(&Event::BindSlot {
+        slot: 18,
+        character: 0,
+        kind: 6,
+    });
+    c.apply(&Event::SlotObjectRelease { slot: 17 });
+    assert!(c.node(Target::Object(0)).is_none());
+    assert_eq!(c.slot_target(17), None);
+    assert_eq!(c.slot_target(18), None);
+    // 573 leaves the other slot types (characters) alone.
+    c.apply(&Event::BindSlot {
+        slot: 3,
+        character: 0,
+        kind: 4,
+    });
+    c.apply(&Event::SlotObjectRelease { slot: 3 });
+    assert_eq!(c.slot_target(3), Some(Target::Hero));
+}
+
+#[test]
 fn balloons_follow_the_script_and_end_with_it() {
     let mut c = scene();
     c.apply(&Event::Balloon {
@@ -749,6 +781,33 @@ fn a_timed_caption_ramps_in_holds_and_ramps_out() {
     });
     assert_eq!(c.caption_alpha(), 1.0);
     assert!(!c.caption().centered && !c.caption().silent);
+}
+
+#[test]
+fn a_shaken_window_cycles_through_the_signed_offsets() {
+    let mut c = Cutscene::new();
+    assert_eq!(c.message_shake(), [0, 0]);
+    // `0215e900`: 30 ticks; `0206b804` reads the tables on `W+0x195d & 3`.
+    c.apply(&Event::ShakeMessage { frames: 30 });
+    assert_eq!(c.message_shake(), [0, -3], "30 & 3 = 2");
+    run(&mut c, 1);
+    assert_eq!(c.message_shake(), [0, 0], "29 & 3 = 1");
+    run(&mut c, 1);
+    assert_eq!(c.message_shake(), [-2, 0], "28 & 3 = 0");
+    run(&mut c, 1);
+    assert_eq!(c.message_shake(), [0, 0], "27 & 3 = 3");
+    run(&mut c, 25);
+    assert_eq!(c.message_shake(), [0, -3], "2 & 3 = 2");
+    run(&mut c, 2);
+    // The countdown reached 0: `020658ac` clears `W+0x19c0` and the window is still again.
+    assert_eq!(c.message_shake(), [0, 0]);
+    // Native 421 makes it repeat: the next tick restarts at 30.
+    c.apply(&Event::RepeatMessageShake);
+    run(&mut c, 2);
+    assert_eq!(c.message_shake(), [-2, 0], "29 then 28 & 3 = 0");
+    // The event ends: the shake does not outlive it.
+    c.clear_fades();
+    assert_eq!(c.message_shake(), [0, 0]);
 }
 
 #[test]

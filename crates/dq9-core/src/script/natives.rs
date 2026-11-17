@@ -488,7 +488,15 @@ impl Ctx<'_> {
             410 => self.events.push(Event::HideMessageFrame),
             411 => self.events.push(Event::CaptionCentered),
             413 => self.events.push(Event::CaptionSilent),
+            // 417 (`0215e900`): `W+0x19c0 = 1`, `W+0x195d = 30`; the argument is not read.
+            417 => self.events.push(Event::ShakeMessage { frames: 30 }),
+            // 421 (`0215e920`): `W+0x19c1 = 1`, the countdown of 417 then repeats.
+            421 => self.events.push(Event::RepeatMessageShake),
             558 => out.int(a, 0, self.rt.answer),
+            // 560 (`ov_001::02160a00`): 1 if the wireless session object (`0202ae18`) has a
+            // null first word — no session — or its local peer byte (`0202c1b4`,
+            // `+0x1038 + 0202df58()`) is zero. This runtime has no session, so 1.
+            560 => out.int(a, 0, 1),
             // 559 (`ov_001::021609e4`): `*(u8*)(quest manager + 0x490) = StbArg_Int(arg)`.
             // The store truncates to a byte; trigger condition 0x1f sign-extends it again.
             559 => self.events.push(Event::SetQuestSignal(a.int(0) as u8)),
@@ -542,6 +550,11 @@ impl Ctx<'_> {
                 slot: a.int(0),
                 visible: a.int(1) != 0,
             }),
+            // `ov_001::02161754`: only a type 2 or 6 slot (a script sprite or a map object) has
+            // an object to destroy.
+            573 => self
+                .events
+                .push(Event::SlotObjectRelease { slot: a.int(0) }),
             575 => self.events.push(Event::PlacementMove {
                 group: a.int(0),
                 id: a.int(1),
@@ -694,6 +707,19 @@ impl Ctx<'_> {
     /// argument shapes per mode are in `docs/re/stb-natives.md`.
     fn declare_cast(&mut self, a: &Args) {
         let mode = a.int(0) & 0xf;
+        // Modes 11, 12 and 13 (`LAB_ov_001__02160f44`) declare the character `Chara_Get(3)`,
+        // `(2)` and `(1)` — the other party members — with category 2 and the second argument
+        // as attachment. A null character makes the handler return 0 **without appending a
+        // descriptor**, so the attachment stays bound to nothing; the solo party of chapter 2
+        // is this case (`State::character` holds the hero alone).
+        if let 11..=13 = mode
+            && self
+                .world
+                .character(usize::try_from(14 - mode).unwrap_or(0))
+                .is_none()
+        {
+            return;
+        }
         let (path, reference, n) = match mode {
             2 | 3 | 6 | 7 => (Some(text(a, 1)), None, 2),
             4 | 5 => (None, Some(a.int(1)), 2),
@@ -713,8 +739,8 @@ impl Ctx<'_> {
         };
         // The category native 596 reports (high nibble of the descriptor's first byte): 1 for
         // the local hero, 2 for another existing character, 0 where the game leaves it
-        // unset. Modes 9 (reads `E+0x116`) and 10 (searches the party) are not modelled
-        // **[unknown]**.
+        // unset. Modes 11 to 13 set 2 explicitly; mode 9 (reads `E+0x116`) is not modelled
+        // **[unknown]**, and mode 10's category is the guest's own (`021612ac`).
         let category = match mode {
             0 => 1,
             1 => 1 + i32::from(self.world.local_character() != 0),

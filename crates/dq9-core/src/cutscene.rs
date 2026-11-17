@@ -45,6 +45,51 @@ pub use props::{Balloon, Caption, Door, PlacementChange, TexelOp};
 
 /// Ticks per script update: durations of timed commands count updates (`stb-natives.md`).
 const TICKS_PER_UNIT: f32 = 2.0;
+/// Native 417's countdown (`W+0x195d = 30`) and the offsets `0206b804` reads while it runs:
+/// four signed bytes each at `0x020e7e20` (x) and `0x020e7e2c` (y), indexed by `W+0x195d & 3`.
+const WINDOW_SHAKE_FRAMES: i32 = 30;
+const WINDOW_SHAKE_X: [i32; 4] = [-2, 0, 0, 0];
+const WINDOW_SHAKE_Y: [i32; 4] = [0, 0, -3, 0];
+
+/// The message window's shake (natives 417 and 421; `W+0x19c0`, `W+0x195d`, `W+0x19c1`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct MessageShake {
+    /// `W+0x195d`: ticks left; 0 while `W+0x19c0` is clear.
+    frames: i32,
+    /// `W+0x19c1`: restart the countdown when it ends (native 421).
+    repeat: bool,
+}
+
+impl MessageShake {
+    /// `020658ac(W, ticks)` with one tick per call: start the repeating shake, then count down
+    /// and either stop or restart at 30.
+    fn tick(&mut self) {
+        if self.repeat && self.frames == 0 {
+            self.frames = WINDOW_SHAKE_FRAMES;
+        }
+        if self.frames == 0 {
+            return;
+        }
+        if self.frames > 1 {
+            self.frames -= 1;
+        } else if self.repeat {
+            self.frames = WINDOW_SHAKE_FRAMES;
+        } else {
+            self.frames = 0;
+        }
+    }
+
+    /// `0206b804(W, &x, &y)`: the drawn offset of the window and its text, `(0, 0)` when the
+    /// shake is off.
+    fn offset(self) -> [i32; 2] {
+        if self.frames == 0 {
+            return [0, 0];
+        }
+        let phase = (self.frames & 3) as usize;
+        [WINDOW_SHAKE_X[phase], WINDOW_SHAKE_Y[phase]]
+    }
+}
+
 /// Alpha of an opaque object (5 bits, `Object3D` `+0x40`).
 pub const OPAQUE: i32 = 31;
 /// Scale of the character models (`NpcTable_Build`, `0x0203d038`; `ShallowCloneTo` constant of
@@ -321,6 +366,8 @@ pub struct Cutscene {
     /// and is not a per-scene effect; the application applies it to its screen layout.
     display_swap: bool,
     props: Props,
+    /// Natives 417 and 421: the message window's shake (`W+0x19c0`, `W+0x195d`, `W+0x19c1`).
+    shake: MessageShake,
     /// Eye and target of the field camera relative to the hero (native 328).
     field_camera: (Vec3, Vec3),
     cam: Cam,
@@ -348,6 +395,7 @@ impl Cutscene {
             light: SceneLight::default(),
             display_swap: false,
             props: Props::default(),
+            shake: MessageShake::default(),
             cam: Cam::default(),
             saved_cam: None,
             serial: 0,
@@ -381,6 +429,14 @@ impl Cutscene {
         self.fades = Fades::new();
         self.light = SceneLight::default();
         self.props.balloon = None;
+        // The message window closes with the event; its shake does not outlive it.
+        self.shake = MessageShake::default();
+    }
+
+    /// Natives 417 and 421 (`0206b804`): the message window's drawn offset in DS pixels,
+    /// `(0, 0)` when the script did not ask for a shake.
+    pub fn message_shake(&self) -> [i32; 2] {
+        self.shake.offset()
     }
 
     /// The lighting the script set up.
@@ -612,6 +668,15 @@ impl Cutscene {
             }
             Event::CaptionCentered => self.props.caption.centered = true,
             Event::CaptionSilent => self.props.caption.silent = true,
+            Event::ShakeMessage { frames } => {
+                // `0215e900`: `W+0x19c0 = 1`, `W+0x195d = 30`. The field is kept through a
+                // message: 400 and 401 do not touch it.
+                self.shake.frames = *frames;
+            }
+            Event::RepeatMessageShake => {
+                // `0215e920`: `W+0x19c1 = 1`; `020658ac` then restarts the countdown at 30.
+                self.shake.repeat = true;
+            }
             Event::OpenDoor {
                 block,
                 placement,
@@ -778,6 +843,21 @@ impl Cutscene {
                             .is_some_and(|m| m.ends_with(".spr")))
                 {
                     self.node_mut(target).visible = *visible;
+                }
+            }
+            Event::SlotObjectRelease { slot } => {
+                // `02161754`: a type 2 or 6 slot's object is destroyed, its components freed
+                // (`02040504`) and its registry entry cleared (`0203dd10`). The slot then
+                // designates nothing; every binding to the same object follows.
+                if let Some(target) = self.slot_target(*slot)
+                    && matches!(target, Target::Object(_))
+                {
+                    self.nodes.remove(&target);
+                    for bound in &mut self.slots {
+                        if *bound == Some(target) {
+                            *bound = None;
+                        }
+                    }
                 }
             }
             Event::Balloon {
@@ -991,6 +1071,8 @@ impl Cutscene {
         self.fades.main.tick(1);
         self.fades.sub.tick(1);
         self.light.tick();
+        // `020658ac(W, numTicks_)`: one tick of 1/60 s here, two in the game's 30 Hz update.
+        self.shake.tick();
         for door in &mut self.props.doors {
             door.tick();
         }

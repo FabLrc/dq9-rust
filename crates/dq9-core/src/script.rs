@@ -362,7 +362,7 @@ mod tests {
 
     use super::testing::*;
     use super::*;
-    use crate::trigger::State;
+    use crate::trigger::{Member, State};
 
     fn script(funcs: &[Func], entries: &[(i32, usize)]) -> Script {
         Script::new(build(0, funcs, entries), Entries::default()).unwrap()
@@ -562,6 +562,17 @@ mod tests {
     }
 
     #[test]
+    fn native_560_reports_no_wireless_session() {
+        // `ov_001::02160a00`: the predicate is 1 when there is no session, whatever the local
+        // peer byte then holds; the script reads it through the address it passes.
+        let code = [native(560, &[addr(0)]), probe(var(0)), vec![op(END)]].concat();
+        let mut s = script(&[func(0, 0, vec![op(END)]), func(2, 0, code)], &[(100, 1)]);
+        let events = s.step(Frame::default(), &State::default());
+        assert_eq!(events.last(), Some(&message(1)));
+        assert!(s.unimplemented().get(&560).is_none());
+    }
+
+    #[test]
     fn declared_cast_members_take_negative_ids_in_order() {
         let code = [
             native(566, &[int(4), int(100), int(1)]),
@@ -574,7 +585,13 @@ mod tests {
         ]
         .concat();
         let mut s = script(&[func(0, 0, vec![op(END)]), func(2, 0, code)], &[(100, 1)]);
-        let events = s.step(Frame::default(), &State::default());
+        // Mode 11 declares `Chara_Get(3)`: the character must exist for the descriptor to be
+        // appended (`LAB_ov_001__02160f44`).
+        let mut world = State::default();
+        for id in 1..=3 {
+            world.characters.insert(id, Member::default());
+        }
+        let events = s.step(Frame::default(), &world);
         let declared: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
@@ -589,6 +606,51 @@ mod tests {
             [(4, Some(-1)), (8, Some(-2)), (5, Some(105)), (11, None)]
         );
         assert_eq!(events.last(), Some(&message(2)), "mode 11 is category 2");
+    }
+
+    #[test]
+    fn cast_modes_11_to_13_of_a_solo_party_declare_nothing() {
+        // `LAB_ov_001__02160f44`: modes 11, 12 and 13 declare `Chara_Get(3)`, `(2)`, `(1)`;
+        // a null character makes the handler return 0 and append no descriptor, which is the
+        // state of chapter 2's solo party.
+        let code = [
+            native(566, &[int(11), int(12)]),
+            native(566, &[int(12), int(13)]),
+            native(566, &[int(13), int(14)]),
+            native(596, &[int(12), addr(0), addr(1)]),
+            probe(var(0)),
+            vec![op(END)],
+        ]
+        .concat();
+        let mut s = script(
+            &[func(0, 0, vec![op(END)]), func(2, 0, code.clone())],
+            &[(100, 1)],
+        );
+        let events = s.step(Frame::default(), &State::default());
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::DeclareCast { .. })),
+            "no descriptor without the characters"
+        );
+        // 596 finds no declaration: category -1.
+        assert_eq!(events.last(), Some(&message(-1)));
+
+        let mut world = State::default();
+        for id in 1..=3 {
+            world.characters.insert(id, Member::default());
+        }
+        let mut s = script(&[func(0, 0, vec![op(END)]), func(2, 0, code)], &[(100, 1)]);
+        let events = s.step(Frame::default(), &world);
+        let declared: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::DeclareCast { mode, attach, .. } => Some((*mode, *attach)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(declared, [(11, 12), (12, 13), (13, 14)]);
+        assert_eq!(events.last(), Some(&message(2)), "category 2");
     }
 
     /// A script whose entry 100 chains to event `next` (native 538) when it is not 0.

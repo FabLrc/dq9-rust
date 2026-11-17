@@ -797,6 +797,10 @@ impl EventPlayer {
         stage.talk.set_event_centered(caption.centered);
         stage.talk.set_event_silent(caption.silent);
         stage.talk.set_event_frozen(caption.time.is_some());
+        // Natives 417/421 (`0206b804`): the window's shake, as the script asked it.
+        stage
+            .talk
+            .set_event_window_offset(self.cutscene.message_shake());
         if stage.talk.take_closed() {
             self.director.signal(Signal::MessageClosed);
         }
@@ -1029,6 +1033,14 @@ impl EventPlayer {
                         }
                         _ => false,
                     };
+                    // An actor with no binding (`+0x70 = -1`) resolves no object: `02164578`
+                    // returns 0 for a slot outside 0..31 without touching anything, so the
+                    // command is over rather than missing (cast modes 11 to 13 of a solo party
+                    // leave actors 12 to 14 unbound in the original too).
+                    if matches!(target, Target::Detached(_)) {
+                        finished.push((target, animation.serial));
+                        continue;
+                    }
                     if has_model {
                         // `MaybeSetRegularAnimation` (`02036e44`) searches the model's motion
                         // tables by name and returns without changing anything when none has it.

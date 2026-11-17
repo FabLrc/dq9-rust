@@ -232,9 +232,11 @@ mode 9 (reads `E+0x116`) is not modelled **[unknown]**.
 the 30 scripts run to completion, with no machine error, from 56 updates (`ev01140`) to
 3,579 (`ev21500`, 1,023 events, about two minutes at 30 Hz; it chains `ev21507` via
 native 538); every `Text::Id` message
-exists in the script's table; 7 natives remain without a modelled effect in `dq9-core`:
-547, 560, 571, 581, 582, 809 and 815 (the same as "unidentified" in
-[stb-natives.md](stb-natives.md)). Native 559 now writes the `+0x490` signal read by
+exists in the script's table; 6 natives remain without a modelled effect in `dq9-core`:
+547, 571, 581, 582, 809 and 815 (the same as "unidentified" in
+[stb-natives.md](stb-natives.md)); 547 is the battle transition the application plays, 571 and
+581/582 only flags of shadows that are not drawn, 809 two objects of the hero's winged form and
+815 an integrity probe. Native 559 now writes the `+0x490` signal read by
 trigger condition `0x1f`; this write must precede the end-of-cutscene trigger.
 This is
 not an emulator validation: order and durations are not compared against melonDS.
@@ -352,11 +354,13 @@ movements 545/546; palette (238); camera return (328) — details and evidence i
   events; `screens::field/overlay` and `app.rs` (window and capture) put the field and the
   window on the other screen.
 
-**Not executed** (reported by `--events-report`): 560, 815, 581, 582 and 809 have no
+**Not executed** (reported by `--events-report`): 815, 581, 582 and 809 have no
 established visible effect or no drawn object; 571 sets the shadow flag (`Object3D` bit `0x10`,
 read by `Character_DrawShadow`) and the engine draws no blob shadow. Native 547 (battle
 transition) is executed by the battle scene (`app.md`, § "Battle scene"); the door sound (584)
-is played.
+is played. 560 is executed as the wireless session test and answers 1 without a session
+(chapter 2 scripts poll it 20 times: `stb-natives.md`); 573 destroys the object of a type 2/6
+slot (`ev02900`), and the runtime drops it.
 
 ## Prologue chaining (`dq9-core::scenario`)
 
@@ -441,7 +445,19 @@ story pilot, none of which injects state (stats, gold, items and flags are the g
   story goes 2.5.1 → 2.6.1; 2700, 22593 (2.6.2); 2720 (2.6.3); 2730 (NPC 93, 2.6.4); 22594 (NPC 98
   behind door 0/8 of 1110, `take_item(22160)`, 2.6.5); area 20 of 1110 at substep 5 (`0x23(5)`)
   starts 2750, whose end warps to 1100 (`0xb1`, `0x85`). Natives these scenes call that stay
-  without effect (known gaps, `stb-natives.md`): 417, 550, 556.
+  without effect are only those with no drawn object (`stb-natives.md`): 550 and 556 (the hero's
+  weapon and shield), 571/581/582 (shadows). 417, 421 (window shake), 560 (session test) and 573
+  (a slot's object destroyed) are executed.
+
+**`--events-report 2.1-1` after the chapter 2 gaps batch**: **49 complete, 1 partial**. The
+row left is `2535`+`22510`, whose only gap is the placement requests `(0, 28)`/`(0, 30)` that
+`D01M05` does not hold and the original also drops (its `574` handler returns 0 when
+`Zone3D_FindPlacement` finds nothing; evidence `build/evidence/j4-ch2-gaps/maps-area7100.txt`,
+`ebe06d855b4a`). The script run (`cargo dq9re script 2.1 --quiet`) leaves 7 natives
+unimplemented — 509, 547, 550, 556, 571, 581, 582 — all without a drawn object except 547,
+which the battle scene plays. Before the batch the report was 47/50 with 573 and 417 as gaps
+(`build/evidence/j4-ch2-gaps/events-report-2.1-1-before.txt` and `-after.txt`; the intermediate
+run that implemented 560 alone shows why cast modes 11–13 matter, `-intermediate-560-573.txt`).
 
 **[hypothesis]** `D01M02`'s west stair (arrival from warp 0 of `D01M01`, at `(-7.8, 0.26, 13.35)`)
 is a dead end for the pilot: from there its walkable grid finds no way to the exit to `D01M03`,
@@ -454,8 +470,11 @@ loaded map (`*func_02012fe4() != uRam020ae88c`, return).
 
 ## Open questions
 
-- Natives still without a role (560, 815): "unidentified" table of
-  [stb-natives.md](stb-natives.md#angel-falls-prologue-natives-used-j0).
+- Natives still without a role (815): "unidentified" table of
+  [stb-natives.md](stb-natives.md#angel-falls-prologue-natives-used-j0). 560 is identified: the
+  wireless session test (`ov_001::02160a00`).
+- 417/421: the drawn offsets are established, but the consumers of `W+0x40` (cleared by the
+  draw) and of `W+0x19cd` (set by `0206b804`) are not found.
 - Palette of 238: modes 1 and 2 are not observed; objects of 809 and shadows of 581/582
   **[hypothesis]**.
 - Nature (30 Hz or 60 Hz) of `currentNumTicks_`: [hypothesis] VBlank, not demonstrated.

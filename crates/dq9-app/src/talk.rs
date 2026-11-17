@@ -248,6 +248,8 @@ pub struct Talk {
     centered_caption: bool,
     /// Native 413: no blip while the caption types.
     silent_caption: bool,
+    /// Natives 417/421 (`0206b804`): the drawn offset of the message window and of its text.
+    window_offset: [i32; 2],
     /// Native 409's message-tick freeze: the action key is not processed while the timed
     /// caption runs, so 405 cannot close the message before the alpha envelope ends.
     caption_frozen: bool,
@@ -490,6 +492,12 @@ impl Talk {
         self.silent_caption = silent;
     }
 
+    /// Natives 417/421: the message window and its text are drawn `offset` DS pixels from
+    /// their place (`0206b804`, applied to the window rect at `02043b6c`).
+    pub fn set_event_window_offset(&mut self, offset: [i32; 2]) {
+        self.window_offset = offset;
+    }
+
     /// Native 409: suspend the message tick (no input, no close) while the timed caption runs
     /// (`020657c8` returns 1 until the flag is cleared by 400/401).
     pub fn set_event_frozen(&mut self, frozen: bool) {
@@ -505,6 +513,9 @@ impl Talk {
             self.centered_caption = false;
             self.silent_caption = false;
             self.caption_frozen = false;
+            // 417/421 are fields of the window, not of the text: a window drawn again starts
+            // where the field put it until the script shakes it again.
+            self.window_offset = [0, 0];
         }
     }
 
@@ -731,6 +742,15 @@ impl Talk {
         {
             for quad in &mut out {
                 quad.color[3] *= alpha;
+            }
+        }
+        // Natives 417/421: `0206b804` offsets the window rect (`02043b6c`), so the frame, the
+        // name plate, the text and the arrow move together.
+        let [dx, dy] = self.window_offset;
+        if dx != 0 || dy != 0 {
+            for quad in &mut out {
+                quad.dst[0] += dx as f32;
+                quad.dst[1] += dy as f32;
             }
         }
         out

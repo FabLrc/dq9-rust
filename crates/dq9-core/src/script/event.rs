@@ -296,6 +296,15 @@ pub enum Event {
     CaptionTime {
         ticks: i32,
     },
+    /// 417 (`ov_001::0215e900`): the message window shakes for `frames` ticks of 1/60 s
+    /// (`W+0x19c0 = 1`, `W+0x195d = 30`); `0206b804` offsets the window and its text by the
+    /// signed tables `{-2,0,0,0}`/`{0,0,-3,0}` indexed by `W+0x195d & 3`.
+    ShakeMessage {
+        frames: i32,
+    },
+    /// 421 (`ov_001::0215e920`): `W+0x19c1 = 1` makes the shake of 417 repeat — the countdown
+    /// restarts at 30 instead of stopping (`020658ac`).
+    RepeatMessageShake,
     /// 411: the caption is centred vertically in the screen instead of the message box
     /// (`W+0x195b` flag 0x40, `0206b6c8`).
     CaptionCentered,
@@ -389,6 +398,12 @@ pub enum Event {
     SlotObjectVisible {
         slot: i32,
         visible: bool,
+    },
+    /// 573 (`ov_001::02161754`): destroys the object a type 2 or 6 slot holds
+    /// (`Object3D::Destroy`, `02040504`, `0203dd10`) and removes it from the registry, so the
+    /// slot designates nothing afterwards; other slot types are left alone.
+    SlotObjectRelease {
+        slot: i32,
     },
     /// 541: a balloon sprite of the field (`kind` 14 to 16, `docs/re/stb-natives.md`) over the
     /// actor `actor`, nudged by `offset` DS pixels.
