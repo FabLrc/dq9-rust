@@ -273,15 +273,20 @@ impl Status {
     }
 }
 
-/// The chance a wear-off roll clears a status with `second` rolls left (`0x02182ad4`:
-/// 1.0, 0.875, 0.75, 0.625, read from the fourth roll down).
-fn wear_off_chance(second: u8) -> f32 {
-    match second {
-        4 => 0.625,
-        3 => 0.75,
-        2 => 0.875,
-        _ => 1.0,
-    }
+/// Defence and agility's wear-off chances (`0x02182ad4`, reached through the pointer at
+/// `0x02158d68`): 1.0, 0.875, 0.75, 0.625, indexed by the **decremented** second count. The four
+/// rolls therefore clear 62.5 %, 75 %, 87.5 % and 100 % of the time (`func_ov000_0215858c`).
+const WEAR_OFF_CHANCE: [f32; 4] = [1.0, 0.875, 0.75, 0.625];
+
+/// Dazzle's own wear-off chances (`0x02182bd4`, through the pointer at `0x02158d6c`): 1.0, 0.875,
+/// 0.625, 0.375 — the four rolls are 37.5 %, 62.5 %, 87.5 % and 100 %, read on the ROM.
+const DAZZLE_WEAR_OFF_CHANCE: [f32; 4] = [1.0, 0.875, 0.625, 0.375];
+
+/// The chance a wear-off roll clears a status whose second count is now `second`. The original
+/// decrements its byte *before* it indexes the table (`func_ov000_0215858c`), so the first of the
+/// four rolls reads index 3 and the last index 0.
+fn wear_off_chance(table: [f32; 4], second: u8) -> f32 {
+    table[usize::from(second).min(table.len() - 1)]
 }
 
 #[derive(Clone, Debug)]
@@ -330,6 +335,9 @@ pub struct Battle {
 /// The party's flight floors by attempt (`0x02182c04`, read on the European ROM): the fifth
 /// always gets away.
 const FLEE_FLOOR: [i32; 5] = [25, 50, 75, 100, 65535];
+
+/// Species 38, 39 and 40 refuse flight outright (`func_ov000_0215f7a8`: `species - 0x26 < 3`).
+const NO_FLIGHT_SPECIES: std::ops::RangeInclusive<u16> = 38..=40;
 
 /// What the world's generator is held under by the surprise-round roll of a monster after the
 /// first (`NextRandomMax(100) < 67`).
@@ -677,9 +685,20 @@ impl Battle {
     }
 
     /// `func_ov000_0215f7a8`: whether the members in `fleeing` get away, and the percentage the
-    /// world's draw was held under. Steps in the code's order: the surprise round, no monster
-    /// left to act, the party at least three times as strong, then a percentage.
+    /// world's draw was held under. Steps in the code's order: species 38–40 refuse flight, the
+    /// surprise round, no monster left to act, the party at least three times as strong, then a
+    /// percentage.
     fn try_flee(&mut self, world: &mut Random, fleeing: &[usize]) -> (bool, Option<i32>) {
+        // `func_ov000_0215f7a8` enumerates the battle's groups (`func_ov000_0215ed34`, the species
+        // word at `+0x81b4` stride 0x18) and returns "no" on `species - 0x26 < 3`: cannibox, mimic
+        // and Pandora's box refuse flight before the surprise round and before any draw.
+        if self
+            .monsters
+            .iter()
+            .any(|m| NO_FLIGHT_SPECIES.contains(&m.number))
+        {
+            return (false, None);
+        }
         if self.round == 0 && self.surprise == Surprise::Party {
             return (true, None);
         }
@@ -1092,14 +1111,14 @@ impl Battle {
     }
 
     /// `func_ov000_0215858c`'s wear-off: one roll per status with a second count running, cleared
-    /// where the chance by the count is above the draw (`0x02182ad4`).
-    fn tick_status(&mut self, who: Who) {
+    /// where the chance by the decremented count is above the draw. Dazzle reads its own table.
+    pub(super) fn tick_status(&mut self, who: Who) {
         let mut status = *self.status(who);
-        // `func_ov000_0215858c`'s blocks run dazzle before attack, defence and agility.
+        // `func_ov000_0215858c`'s blocks run dazzle before defence and agility.
         if status.dazzle_second > 0 {
             status.dazzle_second -= 1;
             let draw = self.rng.next_max(100) as f32 / 100.0;
-            if wear_off_chance(status.dazzle_second) > draw {
+            if wear_off_chance(DAZZLE_WEAR_OFF_CHANCE, status.dazzle_second) > draw {
                 status.dazzle_count = 0;
                 status.dazzle_second = 0;
             }
@@ -1119,7 +1138,7 @@ impl Battle {
             if *second > 0 {
                 *second -= 1;
                 let draw = self.rng.next_max(100) as f32 / 100.0;
-                if wear_off_chance(*second) > draw {
+                if wear_off_chance(WEAR_OFF_CHANCE, *second) > draw {
                     *level = 0;
                     *count = 0;
                     *second = 0;
@@ -1130,7 +1149,7 @@ impl Battle {
     }
 
     /// `func_ov000_021599f4`: a pass off every count the holder holds; at 0 the second count
-    /// starts at four. [hypothesis] the four of `0x02182efc` for defence, agility and dazzle.
+    /// starts at four, a literal of that function (`mov r1, #4`) for defence, agility and dazzle.
     fn decrement_status(&mut self, who: Who) {
         let status = self.status_mut(who);
         for (count, second) in [

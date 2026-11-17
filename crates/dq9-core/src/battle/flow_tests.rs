@@ -218,6 +218,162 @@ fn flight_follows_the_original_order_of_tests() {
     }
 }
 
+/// Species 38, 39 and 40 refuse flight before the surprise round and before any draw
+/// (`func_ov000_0215f7a8`: `species - 0x26 < 3` over the battle's groups).
+#[test]
+fn flight_is_refused_against_species_38_to_40() {
+    let with_species = |number: u16| {
+        let mut monster = slime(0, 50, 1);
+        monster.number = number;
+        battle(vec![monster], vec![hero(1000, 10)], Surprise::Party)
+    };
+    for number in [38u16, 39, 40] {
+        let mut b = with_species(number);
+        let mut world = Random::new(42);
+        let report = b.round(&[Command::Flee], &mut world).unwrap();
+        assert_eq!(
+            report.events[0],
+            Event::Flee {
+                success: false,
+                percent: None
+            },
+            "species {number}"
+        );
+        assert_eq!(b.result(), None, "species {number}");
+        assert_eq!(world, Random::new(42), "species {number}: no draw");
+    }
+    // The neighbours of the range keep the surprise round's free flight.
+    for number in [37u16, 41] {
+        let mut b = with_species(number);
+        let mut world = Random::new(42);
+        let report = b.round(&[Command::Flee], &mut world).unwrap();
+        assert_eq!(
+            report.events[0],
+            Event::Flee {
+                success: true,
+                percent: None
+            },
+            "species {number}"
+        );
+    }
+}
+
+/// A generator whose next `NextRandomMax(100)` is exactly `draw`.
+fn generator_drawing(draw: i32) -> Random {
+    (0u64..)
+        .map(Random::new)
+        .find(|r| {
+            let mut r = r.clone();
+            r.next_max(100) == draw
+        })
+        .expect("a seed for every draw")
+}
+
+/// One wear-off tick on a party member holding `status`, drawing `draw` from the battle's
+/// generator.
+fn tick_wear_off(status: Status, draw: i32) -> Status {
+    let mut b = battle(vec![slime(0, 50, 30)], vec![hero(100, 10)], Surprise::None);
+    b.party_status[0] = status;
+    b.rng = generator_drawing(draw);
+    b.tick_status(Who::Party(0));
+    *b.status(Who::Party(0))
+}
+
+/// The wear-off table is keyed by the **decremented** second count: defence and agility clear on
+/// 62.5 %, 75 %, 87.5 % and 100 % (`0x02182ad4`, pointer `0x02158d68`), dazzle on its own 37.5 %,
+/// 62.5 %, 87.5 % and 100 % (`0x02182bd4`, pointer `0x02158d6c`).
+#[test]
+fn wear_off_rolls_by_the_decremented_count_and_dazzle_has_its_own_table() {
+    let with_defence = |second: u8| Status {
+        defence_level: 1,
+        defence_count: 6,
+        defence_second: second,
+        ..Status::default()
+    };
+    let with_agility = |second: u8| Status {
+        agility_level: 1,
+        agility_count: 6,
+        agility_second: second,
+        ..Status::default()
+    };
+    let with_dazzle = |second: u8| Status {
+        dazzle_count: 4,
+        dazzle_second: second,
+        ..Status::default()
+    };
+
+    // Defence and agility: each roll clears below 63, 75, 88 and always on the last.
+    for role in 0..2 {
+        let holding = |second: u8| {
+            if role == 0 {
+                with_defence(second)
+            } else {
+                with_agility(second)
+            }
+        };
+        let level = |status: &Status| {
+            if role == 0 {
+                status.defence_level
+            } else {
+                status.agility_level
+            }
+        };
+        let second_of = |status: &Status| {
+            if role == 0 {
+                status.defence_second
+            } else {
+                status.agility_second
+            }
+        };
+        let count_of = |status: &Status| {
+            if role == 0 {
+                status.defence_count
+            } else {
+                status.agility_count
+            }
+        };
+
+        let cleared = tick_wear_off(holding(4), 62);
+        assert_eq!(level(&cleared), 0, "roll one, 62.5 %");
+        assert_eq!(
+            (second_of(&cleared), count_of(&cleared)),
+            (0, 0),
+            "the clear pass"
+        );
+        let held = tick_wear_off(holding(4), 63);
+        assert_eq!((level(&held), second_of(&held)), (1, 3));
+        assert_eq!(level(&tick_wear_off(holding(3), 74)), 0, "roll two, 75 %");
+        let held = tick_wear_off(holding(3), 75);
+        assert_eq!((level(&held), second_of(&held)), (1, 2));
+        assert_eq!(
+            level(&tick_wear_off(holding(2), 87)),
+            0,
+            "roll three, 87.5 %"
+        );
+        let held = tick_wear_off(holding(2), 88);
+        assert_eq!((level(&held), second_of(&held)), (1, 1));
+        // The fourth roll reads index 0, 1.0: any draw clears.
+        let cleared = tick_wear_off(holding(1), 99);
+        assert_eq!((level(&cleared), second_of(&cleared)), (0, 0));
+    }
+
+    // Dazzle reads its own table: 37.5 %, 62.5 %, 87.5 %, 100 %.
+    let cleared = tick_wear_off(with_dazzle(4), 37);
+    assert_eq!((cleared.dazzle_count, cleared.dazzle_second), (0, 0));
+    let held = tick_wear_off(with_dazzle(4), 38);
+    assert_eq!((held.dazzle_count, held.dazzle_second), (4, 3));
+    assert_eq!(tick_wear_off(with_dazzle(3), 62).dazzle_count, 0);
+    let held = tick_wear_off(with_dazzle(3), 63);
+    assert_eq!((held.dazzle_count, held.dazzle_second), (4, 2));
+    assert_eq!(tick_wear_off(with_dazzle(2), 87).dazzle_count, 0);
+    let held = tick_wear_off(with_dazzle(2), 88);
+    assert_eq!((held.dazzle_count, held.dazzle_second), (4, 1));
+    let cleared = tick_wear_off(with_dazzle(1), 99);
+    assert_eq!((cleared.dazzle_count, cleared.dazzle_second), (0, 0));
+    // Dazzle's clear leaves a level alone.
+    assert_eq!(tick_wear_off(with_dazzle(4), 37).defence_level, 0);
+}
+
 /// A class 1 action goes before a faster monster's class 0 one; a rolled-back round leaves the
 /// battle as it was.
 #[test]

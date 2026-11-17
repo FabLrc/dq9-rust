@@ -363,20 +363,20 @@ nested calls: the direct calls were searched and none draws; `func_ov000_0215704
 `ov_026::021dd3dc`)
 
 In order: the setup is a set battle → refused for good (`BattleError::FleeForbidden`, before any draw);
-a monster of species 38, 39 or 40 in the battle → refused, no draw (`func_ov000_0215ed34`'s list
-tested against `0x26..0x28`, read on the EU ROM: `build/evidence/j4-encyclopedia-audit/ghidra-flight.txt`,
-`7db44aa86f32`; the page names them cannibox, mimic and Pandora's box — **[hypothesis]**);
-the first round with surprise 1 → away, no draw; no monster standing → away; the party's mean
-attack + defence at least three times the monsters' mean (integer means over the standing) → away,
-no draw; otherwise `max over the fleeing members of (int)(deftness × 0.05f) + 10`, held up to
+a monster of species 38, 39 or 40 in the battle → refused with no draw (`func_ov000_0215ed34`
+lists the battle's groups, up to three, reading the species word at `+0x81b4` stride `0x18` from
+the group count in bits 6–7 of `[battle + 0x81b1]`; the routine returns "no" on `species − 0x26 < 3`
+before the surprise round is even considered — the page names them cannibox, mimic and Pandora's
+box (**[hypothesis]** for the mapping), and the same range never surprises in `encounter.rs`;
+disassembly in `build/evidence/j4-audit-fixes/rom-flight-species.txt`, `0f7ad1d25b5b`); the first
+round with surprise 1 → away, no draw; no monster standing → away; the party's mean attack +
+defence at least three times the monsters' mean (integer means over the standing) → away, no draw;
+otherwise `max over the fleeing members of (int)(deftness × 0.05f) + 10`, held up to
 `[25, 50, 75, 100, 65535][attempt]` (`0x02182c04`; the attempt counter `[battle + 0x8e1c]` goes up
 on every such call), and `NextRandomMax(100) < percentage` on the **world's** generator.
 Success ends the battle (`Fled`, no round). **[hypothesis]**: a failed flight costs the fleeing
 members their turn and the round goes on (the flight state `ov_026::021d8ba0` state 0xb shows the
-failure; what follows was not read). The species test above settles the list
-`func_ov000_0215ed34` checks: its ids are the monsters' species, not members (the same three the
-encounter code never lets surprise the party, `encounter.rs`'s `NO_SURPRISE`); our engine does not
-implement it (`encyclopedia-audit.md`, B22).
+failure; what follows was not read). Test: `flight_is_refused_against_species_38_to_40`.
 
 ### End (`end.rs`)
 
@@ -549,12 +549,25 @@ scaling accuracy (a stat-scaled or drawn value) stays `Unsupported::AccuracyScal
 ### Statuses' run-down
 
 `func_ov000_021599f4` takes one off every count held on each of its holder's passes; at 0 the
-second count starts at 4 (`data_ov000_02182efc`, 4 for defence, agility and dazzle). The wear-off
-`func_ov000_0215858c` runs just before it on the same pass: after the tick's mandatory
-`NextRandomMax(100)`, each status whose second count is running takes one off it, draws
-`NextRandomMax(100)` and is cleared where the chance by the count (`0x02182ad4`: 1.0, 0.875,
-0.75, 0.625, by the remaining count from 1 to 4) is above the draw. A defence level therefore
-holds six of its holder's passes; the model's counts and second counts are in `Status`.
+second count starts at four, a literal of that function (`mov r1, #4`) for defence, agility and
+dazzle. The wear-off `func_ov000_0215858c` runs just before it on the same pass: after the tick's
+mandatory `NextRandomMax(100)`, each status whose second count is running takes one off it, draws
+`NextRandomMax(100)` and is cleared where the chance by the **decremented** count is above the
+draw. Two tables, each four floats, reached through a pointer and indexed 0 to 3 (the first of
+the four rolls reads index 3, the last index 0):
+
+| statuses | pointer | table | rolls |
+|---|---|---|---|
+| defence, agility | `0x02158d68` | `0x02182ad4` | 62.5 %, 75 %, 87.5 %, 100 % |
+| dazzle | `0x02158d6c` | `0x02182bd4` | 37.5 %, 62.5 %, 87.5 %, 100 % |
+
+Both tables read on the European ROM (`build/evidence/j4-audit-fixes/rom-wear-off-tables.txt`,
+`cdc2df1cee2d`): the pointer array sits in overlay 000's image, the floats in its data, and the
+disassembly's `ldr r2, [pc, #…]` operands name the two pointers. Dazzle's values are the page's
+38/63/88/100 once rounded, so the two sources agree. A defence level therefore holds six of its
+holder's passes; the model's counts and second counts are in `Status` (`WEAR_OFF_CHANCE` and
+`DAZZLE_WEAR_OFF_CHANCE`); the regression test is
+`wear_off_rolls_by_the_decremented_count_and_dazzle_has_its_own_table`.
 
 **Correction, 2026-11-17** (EU decompilation of `0x0215858c`,
 `build/evidence/j4-encyclopedia-audit/ghidra-status-tick.txt`, `8078738699e2`): the routine reads
@@ -596,11 +609,9 @@ are read (`encyclopedia-audit.md`, B16–B17).
   round begins (the wiki's reading of the command), but the command code was not read.
 - **[hypothesis]** a call for backup's new HP is drawn from the world's generator by
   `func_02089630`; the call into it was not read, only the handler's `func_0x02161380`.
-- **[hypothesis]** the wear-off second count starts at 4 for defence, agility and dazzle
-  (`data_ov000_02182efc`'s 4), and the chance table `0x02182ad4` is indexed by the count that
-  remains, from 1 (1.0) to 4 (0.625). The 2026-11-17 reading corrects both halves: the arrays are
-  two (`0x02158d68`, `0x02158d6c`) and the index is taken after the decrement — see "Statuses'
-  run-down", "Correction".
+- **[hypothesis]** the wear-off second count starts at 4 for defence, agility and dazzle; the
+  value is a literal of `func_ov000_021599f4` (`mov r1, #4`) and the fields it writes were not
+  traced further.
 - **[hypothesis]** a scaling accuracy's critical does not land outright: `RollAccuracy` returns 1
   before the multiplier when the target's resistance is above 0 and the cast was a critical
   (`0x02156a90`'s neighbourhood), which the model does not carry (a Dazzle critical would land
