@@ -478,13 +478,13 @@ Progress:
 - [x] Browser: continuous session from a new game to 2750 (`j4-web-pilot`): the pilot and route
       mode run in the wasm build (`?newgame=1&pilot=1&fight=1&route=2750&seed=7`); an Edge session
       ended `stopped: event 2750 ended` after 3057.2 s of game time with 972 checkpoints
-      byte-identical to the native run. Shown battles (`battles=show`) stop earlier: cause open
-      (`j4-show-battles`).
+      byte-identical to the native run. The shown-battle stop was the route pilot (`j4-show-battles`,
+      fixed); a browser rerun of `battles=show` remains.
 
-Next waves: wire the original experience share into the application (`j4-xp-wire`), the priest's
-wipe-out scene, the spawn block for every member, the shown-battle route (`j4-show-battles`);
-then grudge targeting, enrage and the item spend rule (`re/encyclopedia-audit.md`), worn-equipment
-use, docs consistency.
+Done in wave 3: the original experience share is wired, the priest's wipe-out line, the spawn block
+for every member, the shown-battle route. Next: a hand-played session and a hosted-page run,
+grudge targeting, enrage and the item spend rule (`re/encyclopedia-audit.md`), worn-equipment use,
+more original references, docs consistency.
 
 **v0.2** criterion: a new game played by hand reaches the end of 2750 natively and in the
 browser, with every battle fought; a headless run with a fixed seed reaches it in a real test;

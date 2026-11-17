@@ -32,7 +32,11 @@ Parity 2/2 with the party fields in the checkpoint. Fixed 60 Hz loop; hero, fiel
 | `j4-ch2-gaps` / `2930280` | Natives 560, 573, 417/421 (window shake), cast modes of absent members; chapter 2 report 47 → 49/50 | 5/5 |
 | `j4-audit-fixes` / `ed0974b` | Wear-off chances by the decremented count (dazzle's own array), flight refused against species 38–40 | 5/5 |
 | `j4-web-pilot` / `a861eaf` | Pilot and route mode in wasm, `speed=`/`render=`/`battles=`, Edge session to 2750 | 5/5 |
-| `j4-xp-share` / `ca074aa` | `Party::award_with`: the original share (counter, second factor, ×1.05 shoes); **not yet called by the app** | 5/5 |
+| `j4-xp-share` / `ca074aa` | `Party::award_with`: the original share (counter, second factor, ×1.05 shoes) | 5/5 |
+| `j4-spawn-block` / `e775c65` | Spawn block tests every party slot (`0x02073e0c`); the app passes the leader only (no follower field characters) | 5/5 |
+| `j4-wipeout-priest` / `615b24c` | `chur_messet.bin` voices; the priest's line 1082 after a wipe-out (silent at story major 1) | 5/5 |
+| `j4-xp-wire` / `3f8422e` | Battles award through `award_with` with the pass counter and the shoes bonus; route byte-identical before/after | 5/5 |
+| `j4-show-battles` / `2e580a1` | Route pilot's heal trip resumes the story (the `battles=show` stop was the pilot, not the game); shown route reaches 2750 natively at 4166.5 s | 5/5 |
 
 The route's acceptance run on `main` (`ef56959`): `build/evidence/j4-route-accept/accept-2750.out`
 (`9f979a299fc4`), 972 checkpoints; trajectory and the Hexagoon's five attempts in
@@ -44,18 +48,18 @@ and the win branch (event 15 → 2550 → 2555 → 2.5.1 → … → 2750) are p
 - **Parity and battle effects**: the party's HP/MP/XP/gold are compared, but the original's own RNG
   drew another battle-26 monster set (HP 16/20 vs 13, XP 7 vs 2, gold 13 vs 4); three `accepted`
   entries pin the runtime's exact value. A seed-7 fight stands in for that draw, it does not prove it.
-- **Experience share**: the original formula is modelled in `dq9-core` but the application still
-  awards through the neutral path (`j4-xp-wire`); the counter's round semantics are **[hypothesis]**.
-- **Audit leftovers** (`re/encyclopedia-audit.md`): spawn block for every party member (solo in
-  chapter 2), grudge targeting, enrage (whether the Hexagoon enrages is **[unknown]**), item spend rule.
+- **Experience share**: wired. The counter is one increment per command pass of each present slot, so it cancels for a party present from the start; the hold bit `live+0xA8` bit 0 is **[unknown]** and mid-battle joins are not modelled.
+- **Audit leftovers** (`re/encyclopedia-audit.md`): grudge targeting, enrage (whether the Hexagoon enrages is **[unknown]**), item spend rule.
 - **Containers**: runtime `LootableContainer` objects, nothing drawn or hidden; cupboards have no
   position; a mimic opens nothing; locked chests refuse with no flag.
 - **Route mode** is a test driver, not a game feature; `D01M02`'s west stair being a dead end is
   **[hypothesis]**. Patch persistence: pending placement states (`+0x41b`) are still not modelled.
-- **Shown battles in the browser** (`battles=show`) stop at 2489 s: the pilot left `D01M05` without
-  talking to NPC 203; cause **[unknown]** (`j4-show-battles`).
-- **Wipe-out**: the priest's line, the save-carried revival map, trigger action 180 and `ME_009` are
-  unmodelled (`j4-wipeout-priest`). 2535+22510 stays partial by construction.
+- **Shown battles**: the `battles=show` stop was the route pilot (a heal trip left no resume point, so
+  NPC 203 was never talked to); fixed. Shown native run reaches 2750 at 4166.5 s with 971 checkpoints;
+  shown runs are not tick-comparable with instant ones (draw divergence from checkpoint 715,
+  **[hypothesis]**). No browser rerun of `battles=show` yet.
+- **Wipe-out**: the priest line is modelled (no gold line exists in the ROM); the save-carried revival
+  map, trigger action 180 and `ME_009` are unmodelled. 2535+22510 stays partial by construction.
 
 ## Browser and publication
 
@@ -67,8 +71,9 @@ Evidence (local, `build/evidence/j4-web-pilot/`): console log `a566bf824b31`, ch
 
 ## Active work and next steps
 
-In flight (wave 3, base `ca074aa`): `j4-xp-wire` (award through the original share), `j4-wipeout-priest`,
-`j4-spawn-block`, `j4-show-battles` (Sonnet). Then: grudge targeting and enrage, worn-equipment use,
-remaining wipe-out details, a hosted-page run of the session, docs consistency.
-Dev environment: `dev`/`test` profiles keep line tables only (the integrate target measures 3.2 GB against 4.7 GB before).
-Evidence stays local under `build/evidence/<batch>/`, never committed.
+Nothing is unmerged. Next: (1) a hand-played session (never done: only the pilot has played the route)
+and a hosted-page run of the browser session, shown battles included; (2) grudge targeting, enrage
+(is the Hexagoon enraged: **[unknown]**), the item spend rule; (3) worn-equipment use, the remaining
+wipe-out details; (4) more original references beyond 1.1.2 (only two exist, both in the prologue);
+(5) docs consistency. Dev environment: `dev`/`test` profiles keep line tables only (integrate target
+3.2 GB against 4.7 GB before). Evidence stays local under `build/evidence/<batch>/`, never committed.
