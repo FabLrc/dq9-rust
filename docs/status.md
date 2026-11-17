@@ -70,5 +70,5 @@ Evidence (local, `build/evidence/j4-web-pilot/`): console log `a566bf824b31`, ch
 In flight (wave 3, base `ca074aa`): `j4-xp-wire` (award through the original share), `j4-wipeout-priest`,
 `j4-spawn-block`, `j4-show-battles` (Sonnet). Then: grudge targeting and enrage, worn-equipment use,
 remaining wipe-out details, a hosted-page run of the session, docs consistency.
-Dev environment: `dev`/`test` profiles keep line tables only (per-worktree target ~2–3 GB instead of ~5 GB).
+Dev environment: `dev`/`test` profiles keep line tables only (the integrate target measures 3.2 GB against 4.7 GB before).
 Evidence stays local under `build/evidence/<batch>/`, never committed.
