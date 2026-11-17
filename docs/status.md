@@ -3,17 +3,14 @@
 Rewritten by the coordinator at integration; no history log.
 Plan: [`roadmap.md`](roadmap.md); rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 10, 2026
+## Status as of November 17, 2026
 
-**v0.1 functional natively; v0.2's native criterion is met, the browser one is not.** A new game
-played by the pilot with the real battle engine reaches **event 2750** on main: Hexagoon lost at
-Lv 4–7, won at Lv 8, story **2.6.5**, `stopped: event 2750 ended` after 3057 s of game time
-(`accept-2750`, pid 11008, exit 0). Opening, Observatory, Angel Falls, the village tasks, the
-Mountain Pass, the Hexagon and chapter 2's scenes play in order; fields and chapter 2 events are
-47/50 in the report of the earlier batch.
-Driver: 972 checkpoints on that run; parity 2/2 (references now play battle 26 with
-`--fight --seed 7`, but their checkpoint fields do not observe the party's HP/XP/gold).
-Fixed 60 Hz loop; hero, field and model pose at 30 Hz.
+**v0.1 functional natively; v0.2's native criterion is met and its browser criterion now has a
+continuous session.** A new game played by the pilot with the real battle engine reaches **event
+2750** (Hexagoon lost at Lv 4–7, won at Lv 8, story **2.6.5**, 3057 s of game time, 972 checkpoints).
+The same run in the wasm build, in Edge, ends `stopped: event 2750 ended` after 3057.2 s of game
+time with checkpoints **byte-identical** to the native ones (`j4-web-pilot`, instant battles).
+Parity 2/2 with the party fields in the checkpoint. Fixed 60 Hz loop; hero, field and model pose at 30 Hz.
 
 ## Integrated on main (all passed `verify.ps1 -RequireRom`)
 
@@ -29,6 +26,13 @@ Fixed 60 Hz loop; hero, field and model pose at 30 Hz.
 | `j4-field-containers` / `b454ad4` | Field containers from `treasure.nsarc`: one-shot red chests, refills, locks, tables; positions are world units (residuals ≤ 0.005) | 5/5 |
 | `j4-gate-load-guard` / `ef56959` | The gate initialiser runs on room 7101 only (constant `0xbd1b`), so M01/F01 keep their placements | 5/5 |
 | `j4-battle-skills` / `0207b7c` | `skilltable.bin` reader, learned panels (`+0x11A`), Abilities row through `Command::Act` | 5/5 |
+| `j4-abilities-capture` / `97fd1e2` | `--battle` takes `--save`; Abilities list and a cast captured (Gigaslash, MP 552 → 537) | 5/5 |
+| `j4-encyclopedia-audit` / `236ea6a` | 67-row audit of the Encyclopedia against the engine, six divergences decompiled (`re/encyclopedia-audit.md`) | 5/5 |
+| `j4-parity-party` / `daa9553` | Party HP/MP/XP/level and gold in the checkpoints, original side read from RAM; fought ≠ stand-in on 611/615 lines | 5/5, parity 2/2 |
+| `j4-ch2-gaps` / `2930280` | Natives 560, 573, 417/421 (window shake), cast modes of absent members; chapter 2 report 47 → 49/50 | 5/5 |
+| `j4-audit-fixes` / `ed0974b` | Wear-off chances by the decremented count (dazzle's own array), flight refused against species 38–40 | 5/5 |
+| `j4-web-pilot` / `a861eaf` | Pilot and route mode in wasm, `speed=`/`render=`/`battles=`, Edge session to 2750 | 5/5 |
+| `j4-xp-share` / `ca074aa` | `Party::award_with`: the original share (counter, second factor, ×1.05 shoes); **not yet called by the app** | 5/5 |
 
 The route's acceptance run on `main` (`ef56959`): `build/evidence/j4-route-accept/accept-2750.out`
 (`9f979a299fc4`), 972 checkpoints; trajectory and the Hexagoon's five attempts in
@@ -37,36 +41,34 @@ and the win branch (event 15 → 2550 → 2555 → 2.5.1 → … → 2750) are p
 
 ## Limits recorded, not hidden
 
-- **Parity and battle effects**: the references replay the engine's battle 26, but the compared
-  fields are the story, flags, quests and hero; the fought and stand-in runs give byte-identical
-  checkpoints (`re/tools.md`). Widening the checkpoint is the open step.
-- **Abilities**: the menu, MP cost and effects are proven by a ROM-backed menu test; one native
-  window capture of a cast is missing because `--battle` refuses `--save`, so a skilled party
-  cannot be combined with a scripted battle, and no roamer contact was reachable
-  (`build/evidence/j4-battle-skills/`).
-- **Containers**: no `.bmdj` placement sits at a treasure position — the containers are runtime
-  `LootableContainer` objects created by the loader (`0x0207baa0`), so nothing is drawn or hidden;
-  the flag alone refuses a second open. Cupboards have no position; a mimic opens nothing and its
-  battle request is unread; locked chests refuse with no flag.
+- **Parity and battle effects**: the party's HP/MP/XP/gold are compared, but the original's own RNG
+  drew another battle-26 monster set (HP 16/20 vs 13, XP 7 vs 2, gold 13 vs 4); three `accepted`
+  entries pin the runtime's exact value. A seed-7 fight stands in for that draw, it does not prove it.
+- **Experience share**: the original formula is modelled in `dq9-core` but the application still
+  awards through the neutral path (`j4-xp-wire`); the counter's round semantics are **[hypothesis]**.
+- **Audit leftovers** (`re/encyclopedia-audit.md`): spawn block for every party member (solo in
+  chapter 2), grudge targeting, enrage (whether the Hexagoon enrages is **[unknown]**), item spend rule.
+- **Containers**: runtime `LootableContainer` objects, nothing drawn or hidden; cupboards have no
+  position; a mimic opens nothing; locked chests refuse with no flag.
 - **Route mode** is a test driver, not a game feature; `D01M02`'s west stair being a dead end is
-  **[hypothesis]**. `re/stb.md` § "Chapter 2 route" records the pass itself.
-- Patch persistence: pending placement states (`+0x41b`) are still not modelled; this gate pair is
-  restored from flag `0x347` on load.
+  **[hypothesis]**. Patch persistence: pending placement states (`+0x41b`) are still not modelled.
+- **Shown battles in the browser** (`battles=show`) stop at 2489 s: the pilot left `D01M05` without
+  talking to NPC 203; cause **[unknown]** (`j4-show-battles`).
+- **Wipe-out**: the priest's line, the save-carried revival map, trigger action 180 and `ME_009` are
+  unmodelled (`j4-wipeout-priest`). 2535+22510 stays partial by construction.
 
 ## Browser and publication
 
-Pages `42812911849` (`6ecf718`): Hexagon contact → Esc cancel → flight → loss → church 1106.
-Graphics `1e0326d`: CI `42831807723`, Pages `42831807515`. Field services published as `deb317f`
-(CI `42854310912`, Pages `42854311711`), with the deployed bundle checked (field menu, battle 26
-won, empty stage). Fullheal `1934b83` (CI `42847350996`), guest slot `5a9d78b` (CI `42861073884`),
-gate polarity `4e54496` → docs `5d06467`.
-**No continuous browser session to 2750 exists**: the standalone fights and contacts above do not
-certify the route.
+Pages deploys on each push to `main` (`a861eaf`: Pages `44111729781` success). The Edge session above
+ran on the local release bundle, not on the hosted page. Earlier hosted checks: field services
+`deb317f`, graphics `1e0326d`, standalone battle 26 victory.
+Evidence (local, `build/evidence/j4-web-pilot/`): console log `a566bf824b31`, checkpoints equal to
+`j4-route-accept/accept-2750-checkpoints.jsonl` (`a0d6200bb7b8`).
 
 ## Active work and next steps
 
-Nothing is unmerged. Next: (1) the continuous browser session to 2750 with the same evidential bar
-as the native run; (2) widen the parity checkpoint to the party's HP/XP/gold so a played battle
-differs from the stand-in; (3) the abilities window capture above; (4) the remaining chapter 2
-scene gaps and the wipe-out details (priest line, revival by save, trigger 180).
+In flight (wave 3, base `ca074aa`): `j4-xp-wire` (award through the original share), `j4-wipeout-priest`,
+`j4-spawn-block`, `j4-show-battles` (Sonnet). Then: grudge targeting and enrage, worn-equipment use,
+remaining wipe-out details, a hosted-page run of the session, docs consistency.
+Dev environment: `dev`/`test` profiles keep line tables only (per-worktree target ~2–3 GB instead of ~5 GB).
 Evidence stays local under `build/evidence/<batch>/`, never committed.

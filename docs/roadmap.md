@@ -429,9 +429,10 @@ Progress:
       restore (`j4-party-state`, `re/party.md`).
 - [x] Battle rules kernel: generators and the resolution of one action, identical to
       BattleEmulator on 306 vectors (`j4-battle-kernel`, `re/battle.md`).
-- [ ] Chapter 2 cutscenes: `--events-report 2.1-1` 47 complete, 3 partial (`v2-ch2-cutscenes`).
-      Open in range: native 417 (2700+22593), placements (0, 28)/(0, 30) of 2535+22510 that no
-      map of area 7100 holds.
+- [x] Chapter 2 cutscenes: `--events-report 2.1-1` 49 complete, 1 partial (`j4-ch2-gaps`): the
+      only partial row, 2535+22510, asks for placements (0, 28)/(0, 30) that no area-7100 map holds
+      and which the original also leaves empty (`02163dec` returns 0). Natives 560, 573, 417/421
+      (message-window shake) and the cast modes of absent members are executed.
 - [x] Battle text: `strbtl`, `actmsg`, `str_bres`, `str_btl`, `str_tm` and name inflection
       in five languages (`j4-battle-text`, `re/battle-text.md`).
 - [x] Battle flow and rules: headless engine (`j4-battle-flow`), party fighters and award
@@ -448,8 +449,10 @@ Progress:
       a cast is missing, the ROM menu test is the proof). Remaining: using worn equipment,
       wipe-out details (priest line, revival by save, trigger 180), continuous manual play.
       The references now launch the runtime with `--fight --seed 7` (`j4-parity-battles`), but
-      the compared checkpoint fields do not include the party's HP/XP/gold, so the fought and
-      stand-in runs are byte-identical: widening the checkpoint is the remaining parity step.
+      the checkpoints now carry each member's level, HP/MP, experience and the gold
+      (`j4-parity-party`): the fought and stand-in runs differ on 611 of 615 lines, and three
+      `accepted` entries pin the runtime's value where the original's own RNG drew another
+      battle-26 monster set.
 - [ ] Battle scene: stage, grid, side camera, 547 transition done (`j4-battle-scene`). Remaining:
       action-script shots, swirl, encounter transition, companions.
 - [ ] Roaming monsters: rules in `dq9_core::encounter` (`j4-roaming`), checked against melonDS F02
@@ -472,11 +475,16 @@ Progress:
 - [x] Chapter 2 route: the pilot's route mode plays a new game to **event 2750** with the real
       engine, Hexagoon lost at Lv 4–7 and won at Lv 8 (`j4-chapter2-route`, `--route 2750`;
       acceptance on `main ef56959`: 3057 s of game time, story 2.6.5, 972 checkpoints).
-- [ ] Browser: continuous session from a new game to 2750.
+- [x] Browser: continuous session from a new game to 2750 (`j4-web-pilot`): the pilot and route
+      mode run in the wasm build (`?newgame=1&pilot=1&fight=1&route=2750&seed=7`); an Edge session
+      ended `stopped: event 2750 ended` after 3057.2 s of game time with 972 checkpoints
+      byte-identical to the native run. Shown battles (`battles=show`) stop earlier: cause open
+      (`j4-show-battles`).
 
-Next waves: (1) the continuous browser session to 2750; (2) widening the parity checkpoint to
-the party's HP/XP/gold, the abilities window capture, wipe-out details; (3) remaining chapter 2
-scene gaps, worn-equipment use, docs consistency.
+Next waves: wire the original experience share into the application (`j4-xp-wire`), the priest's
+wipe-out scene, the spawn block for every member, the shown-battle route (`j4-show-battles`);
+then grudge targeting, enrage and the item spend rule (`re/encyclopedia-audit.md`), worn-equipment
+use, docs consistency.
 
 **v0.2** criterion: a new game played by hand reaches the end of 2750 natively and in the
 browser, with every battle fought; a headless run with a fixed seed reaches it in a real test;
