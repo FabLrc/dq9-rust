@@ -549,3 +549,47 @@ fn the_counter_adds_one_per_round_for_every_member_the_battle_holds() {
     b.round(&[attack(0)], &mut Random::new(1)).unwrap_err();
     assert_eq!(b.passes(), [0; PARTY_MAX]);
 }
+
+/// `func_ov000_02154f30`: 2 for a front-line member, 1 for a back-line one, and on a monster
+/// whose record `+0x10` bit 26 is set, +2 for the slot in `+0x32` and +1 for the one in
+/// `+0x34` — the two `func_0208978c` kept. The same slot in both takes both.
+#[test]
+fn a_remembering_monster_weighs_its_last_two_attackers() {
+    let mut b = battle(
+        vec![slime(0, 500, 5)],
+        vec![hero(100, 10), hero(100, 10)],
+        Surprise::None,
+    );
+    b.monsters[0].remembers = true;
+    assert_eq!(b.target_weights(0, &[0, 1]), [2, 2], "no attacker yet");
+    b.last_attackers[0] = [Some(1), Some(0)];
+    assert_eq!(b.target_weights(0, &[0, 1]), [3, 4], "+1 then +2");
+    b.last_attackers[0] = [Some(1), Some(1)];
+    assert_eq!(b.target_weights(0, &[0, 1]), [2, 5], "both slots +3");
+    b.party[1].back_line = true;
+    assert_eq!(b.target_weights(0, &[0, 1]), [2, 4], "back line 1 + 3");
+    b.monsters[0].remembers = false;
+    assert_eq!(b.target_weights(0, &[0, 1]), [2, 1], "bit 26 clear");
+}
+
+/// A party of two against a remembering monster plays (it was refused with
+/// `Unsupported::TargetMemory`), and each blow shifts the monster's memory: most recent first,
+/// the one before second.
+#[test]
+fn a_party_of_two_plays_against_a_remembering_monster() {
+    let mut b = battle(
+        vec![slime(0, 500, 1)],
+        vec![hero(100, 100), hero(100, 10)],
+        Surprise::None,
+    );
+    b.monsters[0].remembers = true;
+    assert_eq!(b.last_attackers[0], [None, None]);
+    b.round(&[attack(0), attack(0)], &mut Random::new(7))
+        .unwrap();
+    assert_eq!(
+        b.last_attackers[0],
+        [Some(1), Some(0)],
+        "the slower member struck last, the faster one before"
+    );
+    assert_eq!(b.target_weights(0, &[0, 1]), [3, 4]);
+}

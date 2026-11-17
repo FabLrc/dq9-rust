@@ -304,7 +304,7 @@ impl Battle {
         }
         let mut targets = Vec::new();
         for _ in 0..picks {
-            let Some(picked) = self.weighted_pick(j, &candidates)? else {
+            let Some(picked) = self.weighted_pick(j, &candidates) else {
                 return Ok(None);
             };
             targets.push(Who::Party(picked));
@@ -333,7 +333,7 @@ impl Battle {
                     let Who::Monster(j) = caster else {
                         return Err(Unsupported::PartyReach(skill.reach));
                     };
-                    self.weighted_pick(j, &party)?
+                    self.weighted_pick(j, &party)
                         .map(Who::Party)
                         .into_iter()
                         .collect()
@@ -367,37 +367,47 @@ impl Battle {
         Ok(targets)
     }
 
-    /// `func_ov000_02154f30`: a monster's weighted pick among `candidates` (the standing party):
-    /// 2 for the front line and 1 for the back line, `NextRandomMax(total) + 1` walked down the
-    /// weights, a second draw `NextRandomMax(count)` should the walk end unspent.
-    ///
-    /// A monster that remembers its attackers adds 2 and 1 to the last two who struck it; what
-    /// writes those is not read, so that case is refused against several candidates.
-    fn weighted_pick(
-        &mut self,
-        j: usize,
-        candidates: &[usize],
-    ) -> Result<Option<usize>, Unsupported> {
+    /// `func_ov000_02154f30`: a monster's weighted pick among `candidates` (the standing party),
+    /// `NextRandomMax(total) + 1` walked down [`Battle::target_weights`], a second draw
+    /// `NextRandomMax(count)` should the walk end unspent.
+    fn weighted_pick(&mut self, j: usize, candidates: &[usize]) -> Option<usize> {
         if candidates.is_empty() {
-            return Ok(None);
+            return None;
         }
-        if self.monsters[j].remembers && candidates.len() > 1 {
-            return Err(Unsupported::TargetMemory);
-        }
-        let weights: Vec<i32> = candidates
-            .iter()
-            .map(|&i| if self.party[i].back_line { 1 } else { 2 })
-            .collect();
+        let weights = self.target_weights(j, candidates);
         let total: i32 = weights.iter().sum();
         let mut roll = self.rng.next_max(total) + 1;
         for (&candidate, &weight) in candidates.iter().zip(&weights) {
             if roll <= weight {
-                return Ok(Some(candidate));
+                return Some(candidate);
             }
             roll -= weight;
         }
         let k = self.rng.next_max(candidates.len() as i32) as usize;
-        Ok(Some(candidates[k]))
+        Some(candidates[k])
+    }
+
+    /// The weights `func_ov000_02154f30` walks: 2 for a front-line member and 1 for a back-line
+    /// one (`+0x3c` bit 30), and, on a monster whose record `+0x10` bit 26 is set, +2 for the
+    /// slot in the record's `+0x32` and +1 for the one in `+0x34` (the last two that struck it,
+    /// `func_0208978c`). A member held in both slots takes both additions.
+    pub(super) fn target_weights(&self, j: usize, candidates: &[usize]) -> Vec<i32> {
+        let memory = self.last_attackers[j];
+        candidates
+            .iter()
+            .map(|&i| {
+                let mut weight = if self.party[i].back_line { 1 } else { 2 };
+                if self.monsters[j].remembers {
+                    if memory[0] == Some(i) {
+                        weight += 2;
+                    }
+                    if memory[1] == Some(i) {
+                        weight += 1;
+                    }
+                }
+                weight
+            })
+            .collect()
     }
 
     /// `func_ov000_0215fbe0`: **two draws every time** (`NextRandomBetween(3, 4)` and

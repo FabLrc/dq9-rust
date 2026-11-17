@@ -318,6 +318,11 @@ pub struct Battle {
     /// The monsters that left through action `0xE1` (`func_ov000_021554f4`'s reason 2): gone, and
     /// worth no experience.
     pub(super) fled: Vec<bool>,
+    /// The last two party slots that struck each monster, most recent first: the record's
+    /// `+0x32` and `+0x34`, shifted by `func_0208978c` (EU `0x0208979c`) from
+    /// `func_ov024_021eb5d0`'s target pass, and read by `Battle::target_weights`. `None` stands
+    /// for the original's `0xFFFF` (`ResetBattleStatus`), which no party slot equals.
+    pub(super) last_attackers: Vec<[Option<usize>; 2]>,
     pub(super) skills: BTreeMap<u16, Skill>,
     pub(super) set_battle: bool,
     pub(super) surprise: Surprise,
@@ -368,6 +373,7 @@ impl Battle {
             party_status: vec![Status::default(); party.len()],
             monster_status: vec![Status::default(); n],
             fled: vec![false; n],
+            last_attackers: vec![[None; 2]; n],
             party,
             monsters: setup.monsters,
             skills: setup.skills,
@@ -993,6 +999,14 @@ impl Battle {
             {
                 self.register_kill(j);
             }
+            // `func_0208978c` (EU `0x0208979c`), called for every target of a party member's
+            // action in `func_ov024_021eb5d0`'s pass: the previous attacker becomes the second,
+            // the new one the first. It is written even on a miss.
+            if let (Who::Party(slot), Who::Monster(j)) = (who, victim) {
+                let memory = &mut self.last_attackers[j];
+                memory[1] = memory[0];
+                memory[0] = Some(slot);
+            }
             // `func_ov000_0215cd80`: a miss, a dodge, a block or a blow of less than 1 resets
             // the combo counter.
             if !o.landed || o.dodged || o.blocked || o.amount < 1 {
@@ -1130,6 +1144,7 @@ impl Battle {
         self.monsters.push(monster);
         self.monster_status.push(Status::default());
         self.fled.push(false);
+        self.last_attackers.push([None; 2]);
         self.way_counts.push(0);
         self.extras_called.push(false);
         report.events.push(Event::Summoned {

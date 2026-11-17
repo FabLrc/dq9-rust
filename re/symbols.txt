@@ -918,12 +918,17 @@ ov_017::021c1e6c Guest_LoadTask        # loads attnpc.gp2 and data/chara_sub/s%0
 
 # --- Battle kernel and flow (docs/re/battle.md); names from the decompilation or the wiki ---
 0x02032380 RandBelow                   # (n): (int)(n * (rand() - 1) / RAND_MAX), C library generator
+0x020488bc MarkEnraged                 # combatant +0x17F = 1, +0x180 = 0 (func_020488ac)
 0x02074748 GetTensionMultiplier        # 1.0 1.5 2.5 4.0 6.0 party / 1.0 1.3 2.0 3.0 4.5 monster
 0x02074848 CalculateCriticalDamage     # attack power x between(0.95, 1.05) (action 1) or damage x between(1.5, 2.0)
 0x02074908 CalculateMonsterCritRate    # literal zero
 0x02074958 GetMultiTargetFalloff       # 1.0 0.8 0.6 0.4 0.2
 0x0208539c HasExperienceBonus        # (live member): a worn item's itembtlprm flags carry bit 16 (func_0208538c)
+0x02088de8 CanEnrage                   # valid combatant whose record +0x18 bit 12 is clear (func_02088dd8)
+0x02088e14 IsEnrageCandidate           # record +0x14 bits 0, 3, 4, 5 and 19 all clear (func_02088e04)
+0x02088e58 SetEnraged                  # record +0x7E = length, +0x18 bit 12 set (func_02088e48)
 0x02089640 InitMonsterBattleStatus     # HP draw from the world generator, skipped for a set battle
+0x0208979c RememberAttacker            # record +0x32 into +0x34, the party slot into +0x32 (USA 0x0208978C)
 0x0208a04c IsWayUsable                 # a monster way's usability test
 0x0208a380 ChooseWayByWeights          # weighted pick among the usable ways
 0x0208a92c ChooseMonsterWay            # rule by battle record +0x10 bits 5-7
@@ -932,7 +937,9 @@ ov_000::02153c24 RechooseGroup            # a group with none standing -> a draw
 ov_000::021540fc SettlePartyTargets        # by side and reach; then RollHitCount
 ov_000::0215440c SettleMonsterTargets      # alive stored targets, else PickDefaultTargets; then RollHitCount
 ov_000::02154a04 PickDefaultTargets        # by side and reach; weighted pick for reach 2/5; then RollHitCount
-ov_000::02154f30 WeightedPartyPick         # front line 2, back line 1; NextRandomMax(total) + 1
+ov_000::02154f30 WeightedPartyPick         # front 2, back 1; +2/+1 for record +0x32/+0x34 when +0x10 bit 26
+ov_000::02155154 HasEnrageLock             # record +0x18 bit 12: +0x2E is the only target
+ov_000::0215516c HalvesTargetWeight        # record +0x14 bit 27 (the page's invisibility)
 ov_000::02155184 RegisterDefeatedMonster   # experience and gold sums, kind list
 ov_000::02156118 GetBlockRate
 ov_000::02156270 GetEvasionRate
@@ -952,6 +959,7 @@ ov_023::021edf54 BattleVictory
 ov_023::021f454c RollDrops                 # once per monster kind, C library generator
 ov_024::021da55c DispatchDamageHandler     # 67 member pointers indexed by action +0x18 bits 18-26
 ov_024::021e6a90 CalculateFinalDamage
+ov_024::021eb08c TryEnrage                 # +0x24 kind/chance pairs, +0x28/+0x29 length; locks +0x2E
 ov_024::021eb5d0 ResolveAction
 ov_024::021f418c TargetHandlerFlee         # targeting handler 112
 ov_024::021f66cc DispatchTargetHandler     # action +0x0c (AI mode 1) / +0x0e (mode 2)

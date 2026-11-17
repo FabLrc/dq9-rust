@@ -388,8 +388,6 @@ pub enum Unsupported {
     Defend,
     /// A reach the party's targeting does not cover.
     PartyReach(u8),
-    /// A monster that remembers who struck it, against several targets.
-    TargetMemory,
     /// A chaining action against several targets (one combo counter per target).
     ComboMultiTarget,
     /// A party action that goes before the others (record `+0x10` bit 19 with a weapon that
@@ -426,7 +424,6 @@ impl fmt::Display for Unsupported {
             Self::ExtraActions(n) => write!(f, "a monster acting {n} extra times is not modelled"),
             Self::Defend => write!(f, "Defend (the guard level) is not modelled"),
             Self::PartyReach(r) => write!(f, "party reach {r} is not modelled"),
-            Self::TargetMemory => write!(f, "a monster's memory of its attackers is not modelled"),
             Self::ComboMultiTarget => write!(f, "a combo against several targets is not modelled"),
             Self::TurnOrder => write!(f, "an action that acts first is not modelled"),
         }

@@ -32,8 +32,10 @@ the companion tactics and the family bonus are **not implemented** (refused or a
 diverges silently. Two rules **differ**: the buff wear-off chances — `ov_000::0215858c` reads two
 different chance arrays, one for dazzle (`0x02158d6c`) and one for defence and agility
 (`0x02158d68`, four bytes earlier), while our `wear_off_chance` is one array keyed one index late
-(below, "Statuses' run-down") — and the grudge weights, refused instead of modelled. Flight has one
-rule we lack: species 38–40 forbid it (below, "Flight").
+(below, "Statuses' run-down") — and, until this batch, the grudge weights (**now modelled**, below,
+"Monster AI"). Flight has one
+rule we lack: species 38–40 forbid it (below, "Flight"). Enrage is read but not modelled, and no
+chapter-2 fight carries a trigger (below, "Enrage").
 
 **Addresses.** EU first, USA in brackets where the ARM9 module shifts them (`AGENTS.md`: USA
 `0x0200F3B8..0x0200FB20` is +`0x8`, `0x0200FB20..0x020EEBD0` is +`0x10`); overlays are identical.
@@ -354,10 +356,67 @@ nested calls: the direct calls were searched and none draws; `func_ov000_0215704
   when the mean attack + defence of the whole party, the fallen included, summed in a `short`, is at
   least three times the monster's own: `func_ov024_021f418c`). Any other handler is
   `Unsupported::TargetHandler`.
-- **Weighted pick** (`func_ov000_02154f30`, read): weight 2 per front-line standing member, 1 per
+- **Weighted pick** (`func_ov000_02154f30`, read; `build/evidence/j4-grudge-enrage/ghidra-weighted-pick.txt`,
+  `398f84e9a78c`): weight 2 per front-line standing member, 1 per
   back-line one; `NextRandomMax(total) + 1` walked down; a second draw `NextRandomMax(count)` only
-  if the walk ends unspent. A monster with the "remembers" bit adds 2 and 1 for the last two who
-  struck it: what writes those is not read, so it is refused against several candidates.
+  if the walk ends unspent. A monster whose record `+0x10` bit 26 is set adds **+2** for the party
+  slot held at the record's `+0x32` and **+1** for the one at `+0x34`; a member held in both slots
+  takes both. The memory is written by `func_0208978c` (EU `0x0208979c`, read: `+0x32` into
+  `+0x34`, the new slot into `+0x32`; `ghidra-remember-attacker.txt`, `9bbfed1ba6e5`), called once
+  per target from the resolution pass of
+  `func_ov024_021eb5d0` (call at EU `0x021ed0d4`; `ghidra-remember-xrefs.txt`, `496bb2a7aefb`) for
+  every party member's action that
+  resolves on a monster — a miss included, the write sitting outside the handler's success test.
+  `Battle::last_attackers` and `Battle::target_weights` model it; the memory starts at
+  **`0xFFFF`** — no attacker — because `ResetBattleStatus` sets the four halfwords at `+0x28`,
+  `+0x2A`, `+0x2C` and `+0x2E` and the two at `+0x32`/`+0x34` to `0xFFFF`
+  (`build/evidence/j4-grudge-enrage/ghidra-reset-status.txt`, `43fc396acbc6`), which no party slot
+  can equal. Two further rules
+  of the same reader are read but **not modelled**: a candidate whose record `+0x14` bit 27 is set
+  halves its weight (`func_ov000_0215516c`; the page reads that bit as invisibility, B25, and the
+  model has no invisibility status, so the bit is never set), and a monster
+  whose record `+0x18` bit 12 is set returns the slot at `+0x2e` outright (`func_ov000_02155154`:
+  the enrage/Knight Watch lock, below). Neither bit is set anywhere in this model, so no divergence
+  is hidden — a small party already picks by the weights above. The pilot's route to event 2750
+  (seed 7, a solo hero) is **byte-identical** before and after the model: 972 checkpoints and the
+  whole journal (`build/evidence/j4-grudge-enrage/before-2750-checkpoints.jsonl` and
+  `after-2750-checkpoints.jsonl`, `8ce4af30e497`; `before-2750.out` and `after-2750.out`,
+  `b97be937ab35`; the baseline binary was built from `b11a38f` in a throwaway checkout).
+
+### Enrage (`ov_024::021eb08c`, read; not modelled)
+
+**The record's fields.** `mon_btldata` `+0x24` is a word of **two trigger pairs**: kind A in bits
+0–6 with its chance in 100 in bits 7–13, kind B in bits 14–20 with its chance in bits 21–27; bit
+28 (byte `+0x27` bit 4) is a boss flag no instruction reads. `+0x28` and `+0x29` are the least and
+most passes the state holds, drawn by `NextRandomBetween`. Both facts are read in
+`ov_024::021eb08c` (`build/evidence/j4-grudge-enrage/ghidra-enrage.txt`, `f0b3cf311ca8`) and its
+callees (`0x02088de8`, `0x02088e14`, `0x02088e58`): the function gets the target combatant, requires a
+party slot as the provoking member (0–3), draws `NextRandomMax(100)` **before** any test, then
+takes the pair whose kind equals the code asked; a draw below the chance fires. Firing draws the
+length, stores it at the record's `+0x7e`, sets the record's `+0x18` bit 12, marks the combatant
+(`+0x17f`), and writes the provoking slot at the record's **`+0x2e`** — the lock
+`func_ov000_02155154` reads, which makes the weighted pick return that slot outright.
+
+**The codes asked** (read at the call sites): `3` a party blow that took the monster's HP from at
+least a half to below it, `4` the same across a quarter (`func_ov024_021da9e0`;
+`ghidra-damage-ov24.txt`, `f0e8eb53e2e1`); `0x11` Whistle
+(`func_ov024_021e0b48`), `0x12` Eyes on Me (`func_ov024_021e04e0`); `0x13` a party heal and `0x14`
+a Zing (`func_ov024_021eb5d0`, the action's `+0x1C` bits 19–31 at 5 and `0xc`; which is which is
+the wiki's reading, **[hypothesis]**); `0x18` a flag of the action record (`+0x0A` bit 0,
+**[unknown]** what sets it). Every call iterates the **opposing side** (`func_0x0215eb1c`), so a
+heal draws once per standing monster before each one's trigger is tested.
+
+**Scope on the ROM** (`tests/battle_rom.rs`,
+`the_grudge_bit_and_the_enrage_triggers_count_on_the_rom`; run
+`build/evidence/j4-grudge-enrage/rom-counts.txt`, `4d05d28eb3e4`): 341 of the 438 records carry at
+least one pair with a kind
+and a non-zero chance (the page's 287 is not reproduced by the record's own word); the kinds
+present are 3, 4, 0x11, 0x12, 0x13, 0x14 and 0x18. **The Hexagoon (set battle 2, monster 300) is
+not one of them**: its word is `0x1000_0000`, both kinds and both chances zero, so no chapter-2
+fight enrages and the target override is not modelled (the lock and `+0x18` bit 12 stay unread in
+the engine). A heal or a Zing in a fight against an armed monster would make the original draw
+`NextRandomMax(100)` per monster where the kernel draws nothing; none is modelled — the note's
+open point on the draws after the wake roll stands.
 
 ### Flight (`Battle::try_flee`; `func_ov000_0215f7a8`, read; the command overlay is
 `ov_026::021dd3dc`)
@@ -605,7 +664,9 @@ are read (`encyclopedia-audit.md`, B16–B17).
   that these are the oracle's two is not checked (the oracle models no targeting). The kernel still
   starts after them; `Battle` draws them.
 - **[unknown]** what follows the wake roll in the original: the monster's provocation draws
-  (`func_ov024_021eb08c`), `func_ov000_0215b5a0`'s hit rise, the tail of `ResolveAction`
+  (`func_ov024_021eb08c`: `NextRandomMax(100)` per opposing combatant when the action's `+0x1C`
+  bits 19–31 is 5 or `0xc`, or its `+0x0A` bit 0 is set — the kinds our actions carry there are
+  unread), `func_ov000_0215b5a0`'s hit rise, the tail of `ResolveAction`
   (`0x021ed48c`–`0x021ed564` tension spend). `ActionOutcome::generator_state` is exact up to the
   wake roll of the last target, not beyond; the oracle's `special charge` and `rage` draws are the
   oracle's modelling of those and are not compared.

@@ -792,3 +792,72 @@ fn chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve() {
     }
     let _ = Unsupported::Defend;
 }
+
+/// The scope of the grudge rule and of enrage, counted on the ROM's 438 records: `+0x10` bit 26
+/// (the grudge memory, `func_ov000_02154f30`) and the two trigger pairs of `+0x24`
+/// (`func_ov024_021eb08c`: kind bits 0–6 with chance 7–13, kind 14–20 with chance 21–27).
+/// The page's "263 of 438 carry the bit" is thereby a fact; its enrage kinds 3/4 (a party blow
+/// below a half or a quarter) appear on no record, only the provocation kinds 0x11 and 0x12.
+#[test]
+fn the_grudge_bit_and_the_enrage_triggers_count_on_the_rom() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let table = BattleData::parse(data.monsters).unwrap();
+    let total = table.monsters.len();
+    let grudge = table
+        .monsters
+        .iter()
+        .filter(|m| m.word_10 >> 26 & 1 != 0)
+        .count();
+    let kinds = |m: &dq9_formats::battle::monster::BattleMonster<'_>| {
+        (
+            (m.enrage & 0x7f) as u8,
+            ((m.enrage & 0x1f_ffff) >> 14) as u8,
+        )
+    };
+    let mut histogram: BTreeMap<(u8, u8), usize> = BTreeMap::new();
+    for m in &table.monsters {
+        let (k1, k2) = kinds(m);
+        if k1 != 0 || k2 != 0 {
+            *histogram.entry((k1, k2)).or_default() += 1;
+        }
+    }
+    println!("total {total}, grudge {grudge}, kinds {histogram:?}");
+    let armed = table
+        .monsters
+        .iter()
+        .filter(|m| {
+            let k1 = m.enrage & 0x7f;
+            let c1 = (m.enrage & 0x3fff) >> 7;
+            let k2 = (m.enrage & 0x1f_ffff) >> 14;
+            let c2 = (m.enrage & 0xfff_ffff) >> 21;
+            (k1 != 0 && c1 != 0) || (k2 != 0 && c2 != 0)
+        })
+        .count();
+    let present: BTreeSet<u8> = table
+        .monsters
+        .iter()
+        .flat_map(|m| [kinds(m).0, kinds(m).1])
+        .filter(|&k| k != 0)
+        .collect();
+    println!("armed {armed}, kinds {present:?}");
+    assert_eq!(total, 438);
+    assert_eq!(grudge, 263, "the page's count holds on the European ROM");
+    assert_eq!(
+        armed, 341,
+        "the page's 287 is not reproduced by the record's own trigger pairs"
+    );
+    assert_eq!(
+        present,
+        BTreeSet::from([3, 4, 0x11, 0x12, 19, 20, 0x18]),
+        "a blow below a half/a quarter, Whistle, Eyes on Me, a heal, a Zing, and 0x18"
+    );
+    let hexagoon = table.find(300).unwrap();
+    assert_eq!(hexagoon.enrage, 0x1000_0000);
+    assert_eq!(
+        kinds(hexagoon),
+        (0, 0),
+        "the Hexagoon carries no trigger kind: a chapter-2 fight never enrages"
+    );
+}
