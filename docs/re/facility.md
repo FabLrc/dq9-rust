@@ -249,10 +249,10 @@ The prices, by the member's level in the vocation they stand in L
 
 **Effects.** Resurrection fills HP and clears every status bit but the curse
 (`func_02048150`), MP untouched. Purification clears the poisoned bit (its line 1041 says
-poison; **[hypothesis]** that this is its whole effect). Benediction clears the cursed bit;
-the game also takes every worn item whose slot word has bit 18 into the bag (INFERRED cursed),
-which **no reader here holds**: the unequipping is **not modelled** and which items carry the
-bit is **[unknown]**. The status word is `[member+0x130]+0`: bit 0 dead, 1 poisoned, 2 cursed;
+poison; **[hypothesis]** that this is its whole effect). Benediction clears the cursed bit and
+takes every worn item whose record's `+0x08` word has bit 18 into the bag — the exact rule,
+the ten European items and the absence of a line are in "Benediction's unequipping" below.
+The status word is `[member+0x130]+0`: bit 0 dead, 1 poisoned, 2 cursed;
 death is the member's HP being 0, and what sets the other two is **not established**. The
 caller keeps the two bits beside the party (`facility::church::MemberStatus`).
 
@@ -424,13 +424,17 @@ below 99, else an empty slot) before mutating; a failed swap restores the chosen
 99 stack plus the held copy keeps all 100 copies. Removing the only copy of the chosen item
 frees its slot and lets the old piece in. Duplicates and the other slots keep their order. A field use runs the item's action record through
 `dq9_core::battle::resolve_action` on the target (the range table, the healing cap, no MP
-cost for a herb), and the source is spent only when that action executed: one copy from the
-bag stack, or the chosen held slot when `+0x08` bit 19 says used up, followed by the battle's
-hole compaction (`func_0208386c`). In battle an item that changed nothing is kept (`2da4e51`, ResolveAction's
-applied counter); the field handler's rule was not read, so the field menu still spends it
-(**[unknown]**). Only field
-actions of kind 2 (heal) aimed at the party are offered; other tools are refused with a
-message.
+cost for a herb), and the source is spent only when that action **changed something**: one
+copy from the bag stack, or the chosen held slot when the item record's `+0x08` bit 19
+("used up", `Item_IsConsumed` = `func_020ddb20`, EU `0x020ddb30`) is set and the field menu's
+consumer runs, followed by the hole compaction (`func_0208386c`, EU `0x0208387c`). The rule is
+the same as the battle's applied counter, read on the field path: `func_ov002_021536ec` runs
+the action's handlers and returns whether one changed something, and only a non-zero result
+reaches `func_ov002_0215a7b4`, which spends the copy (bag or held slot); the item menu itself
+is `func_ov002_02157634` (overlay 2). A herb on a member at full HP is therefore **kept**, and
+a revive on a living member or an antidote with nothing to cure likewise. Only field actions of
+kind 2 (heal) aimed at the party are offered; other tools are refused with a message. The
+field menu's own "nothing happened" line was not read; the copy is kept silently.
 
 **Generator of a field action.** `App::service_button` passes `&mut self.world.random` into
 `Services::press`, and `Services::apply` hands that same `Random` to
@@ -464,7 +468,27 @@ and texture references, and verifies a failed replacement is transactional; the 
 journal, talk counter, a field flag, the world generator, the event list and the hero pose do
 not change. It fails on the old `load_map` refresh (`setgear-before.log`/`setgear-after.log`,
 `b043a8eb6bf4`, `5f51d1db3cb5`). The weapon and shield are not parts of `HeroLook` and do not
-change the model; vocation restrictions are **not modelled**.
+change the model.
+
+**Who may wear it** — `Equip_RefusalMask` = `func_020dd4c4` (EU `0x020dd4d4`), read on the
+European ROM. It returns a bitmask of reasons, zero meaning yes: `0x001` a weapon or shield
+whose skill tree the character has not got, `0x002` an armour **whose vocation bit is clear**,
+`0x008` a category above 7, `0x010` the record's word 0 bits 30–31 above `live[0x186 +
+vocation]`, `0x020` no such character, `0x080` sex, `0x100` word 0 bits 29–30 nonzero and the
+member not the protagonist, `0x200` no entry. The vocation test is `(1 << (vocation − 1)) & mask & 0xfff`,
+applied only to categories 2 to 7, and a vocation of 0 (the Guardian) wears anything. The mask
+is **word 1 of the item's stats entry** (the 32-byte entry the record's `+0x00` indexes, at
+`+0x04`); measured over the 1,178 European records: all 313 weapons and shields have bits 0–11
+clear, all 52 accessories `0xfff`, holy mail (13200) 0x100 with bit 27 (male) and holy femail
+(13603) the same bit with bit 28 (female). The app reads it with the item's record (category
+`+0x08` low nibble, mask from the stats entry) and refuses a confirmed unwearable piece with
+`str_eq` line **10004**, "Members of this character's current vocation can't be equipped with
+this item."; nothing leaves the bag. Not modelled: the skill-tree rule for weapons and shields
+(the Omnivocational panels and the vocation rows at `0x020ee748`, which no save here holds),
+the `0x010` rule (word 0 bits 30–31 against `live[0x186 + vocation]`; what it compares is
+**not established**), sex, and the hero-only bit — the app equips the leader only, who is
+the hero. The cursed bits and their lines (11004, 11005) belong to the equipment screen and
+are not shown here; the worn-cursed pieces are what Benediction takes off (below).
 
 **Attributes.** The rows show each member's level, HP/MP and the numbers
 `Character::fighter` computes from the level table and worn items (attack, defence, agility,
@@ -507,6 +531,39 @@ and its price (1061), then execute `church::cure` with the caller's `MemberStatu
 (dead = HP 0) and charge the party; a NotNeeded refusal also names the member. Confession
 shows the core's "not available in this build" and nothing is saved (v0.3).
 
+**Benediction's unequipping** — `Church_CureFlow` = `func_ov003_0215a740` (overlay 3), state 5,
+read on the ROM. After `func_02048418(member, 4)` clears the cursed bit it walks the eleven
+in-RAM worn entries (`member+0x150+0x194+0x20 i`). Places 2, 3 and 4 are skipped: the slot
+table at `0x0217f39c` is `00 01 ff ff ff 04 05 06 07 08 09`, so they index no save slot. Every
+remaining entry whose word at `+0x08` has **bit 18** set — tested as `(word & 0x7ffff) >> 18`
+— goes into the bag with one copy (`Bag_Add` = `func_0207c378`, EU `0x0207c388`, count 1 and
+its category) and its place is cleared (`func_02052d7c`, EU `0x02052d8c`, item id and `-1`).
+The eight kept places are exactly the app's eight equipment slots. **Measured over the 1,178
+European records: ten pieces carry the bit** — 12184 skull helm, 12794 Hades' helm, 13307
+nightmare gown, 18031 terrible tattoo, 18032 skull ring, 18038 reckless necklace, 20311 demon
+whip, 20312 archdemon whip, 20913 oh-no bow, 21393 ruinous shield; all armour, accessories, a
+whip and a bow, no tool. **No line announces the removal**: the branch's own words are the
+prayer 1051 before it and 1070 after; the cursed-item lines of `str_eq` (11004 "…is cursed, and
+cannot be unequipped", 11005 "Oh no! … is cursed!") belong to the equipment screen. The app
+passes the record's bit to `church::cure_with`; a bag with no room leaves the piece worn (the
+original does not test the add, and losing it would not be observable).
+
+**The coffin line** — `str_ch` message **1100**, "Praise be! To see that you would trouble to
+bring a fallen companion all the way to our church! … we will have your companion back to
+life…". All eight church files carry it; `str_ch3`, the Observatory, is the developers'
+placeholder `THIS IS A BUG / THIS LINE HAS BEEN CUT`, and `str_ch4` (Dourbridge)/`str_ch5`
+(Batsureg) say it in their voices — `str_ch4` names the price: "this resurrection's on the
+house". The quick line is `1080 + mode` (`Church_QuickLine` =
+`func_ov003_0215af9c`, state 10), so the coffin greeting is **mode 20**; the greeting reaches
+state 10 only for mode 1 or 2, the builder (`func_ov003_02158bb8`) resets the mode to 0, and the
+only setter found (`Church_SetMode` = `func_ov003_02159174`) is called by the wipe-out task
+`ov_017::021ba998` with its own mode (2 at Angel Falls → 1082). **No code sets 20**: the coffin
+greeting is unreachable in the retail flow. State 10 only shows the line and then ends the
+visit (state 11); it performs **no resurrection and charges no price**, so the text's promise
+is a design stub. The church's paid Resurrection (1030/1031, ⌊(L² + 20) / 20⌋ × 10) remains
+the only way the modelled facilities raise the dead; the coffin line is a constant
+(`facility::church::COFFIN_LINE`) with no screen of its own.
+
 **Wipe-out.** `App::wipe_out` (battle end, `app/fight.rs`) heals, halves the purse and loads
 the revival map; `App::wipe_out_arrival` (`app/flow.rs`) then reads `chur_messet.bin` through
 `facility::church::VoiceTable`, and a voice other than 3 opens `Services::open_priest`: the
@@ -521,8 +578,7 @@ does not use. The field action of an item is the record's first action number, r
 because the battle's second one is the one `battle_action` uses; the field and battle records
 of the medicinal herb both name action 255. Which `<Target0>`/`<val_n>` a line wants is
 substituted for the service lines (member name, living, price); other name tags stay
-`[tagN]`. Item use at full HP spends the copy **[hypothesis]**. The church's coffin line
-(1100), Benediction's unequipping and the inn's guest lines are not modelled. The native
+`[tagN]`. The inn's guest lines are not modelled. The native
 smoke drives real windows; the browser capture is the coordinator's.
 
 ## Open questions
@@ -538,7 +594,9 @@ smoke drives real windows; the browser capture is the coordinator's.
 - Which kind is a chest, a pot or a barrel: only `0x30` = cupboard is read, `0x10` pot and
   `0x20` barrel are INFERRED.
 - What `unknown_2` counts outside the village; whether a rate touches what a shop gives;
-  whether the shop offers a partial purchase; which items carry the cursed slot bit.
+  whether the shop offers a partial purchase.
+- The field menu's own no-effect line (the copy is kept silently) and whether the church
+  would show anything for a coffin if mode 20 were ever set.
 - The Quester's Rest's own flow (v0.3), and the inn's guest lines (no session here).
 
 - Field-menu and facility screens (`build/evidence/j4-field-services/`, native windows on
@@ -576,6 +634,19 @@ smoke drives real windows; the browser capture is the coordinator's.
   the rebase onto the GPU-fixed main, the field menu was captured again
   (`field-menu-rebased.png`, `76f62ffeec95`); the paid and revival runs above are from the
   services commit they prove, before that rebase.
+- The field menu rules (`build/evidence/j4-field-menu-rules/`, `manifest.json`):
+  `ghidra-field-item-use.txt` (`511193376ff9`) — the item menu `func_ov002_02157634`, the
+  action applier `func_ov002_021536ec` and the consumer `func_ov002_0215a7b4`;
+  `ghidra-item-rules.txt` (`c07e96712a9d`) — `Item_IsConsumed`, `Item_ConsumeHeld` and
+  `Equip_RefusalMask`; `ghidra-benediction.txt` (`b4b35b097d41`) — `Church_CureFlow`;
+  `ghidra-coffin.txt` (`183bdad7ffbc`) — the quick line, the mode setter, the builder and the
+  wipe-out caller; `slot-table.txt` (`0eda93d59e6a`) — the worn-place table at `0x0217f39c`
+  and the church's line words; `item-rules.txt` (`469352ec8756`) — the ten cursed records with
+  their names, the mask checks over the 1,178 records and line 1100 of the eight church files,
+  printed by `item-rules-probe.py` (`16494e492f46`); and the route pair
+  `route-before-checkpoints.jsonl`/`route-after-checkpoints.jsonl` (`8ce4af30e497`, 972
+  checkpoints, byte-identical; `route-before.out` and `route-after.out` are byte-identical
+  too, `b97be937ab35`).
 
 ## Trigger action 180 — a set battle's own revival map
 
@@ -630,8 +701,15 @@ holds it in `App::revival_map` and `start_new_game` sets 1106; there is no save 
 
 ## Symbols
 
-Names to add to `re/symbols.txt` (not applied by this batch; an address must be a function
-start in `re/functions.txt`):
+Names added to `re/symbols.txt` by this batch (each is a function start in
+`re/functions.txt`): `Equip_RefusalMask` `0x020dd4d4`, `Item_IsConsumed` `0x020ddb30`,
+`Item_ConsumeHeldBattle` `0x020ddb48`, `Item_ConsumeHeld` `0x020ddccc`, `Bag_Add`
+`0x0207c388`, `HeldItem_ClearSlot` `0x0208387c`, `Equip_ClearWorn` `0x02052d8c`,
+`Field_ApplyAction` `ov_002::021536ec`, `FieldMenu_UseItem` `ov_002::02157634`,
+`FieldMenu_ConsumeItem` `ov_002::0215a7b4`, `Church_SetMode` `ov_003::02159174`,
+`Church_CureFlow` `ov_003::0215a740`, `Church_QuickLine` `ov_003::0215af9c`.
+
+Still proposed:
 
 | address | name | source |
 |---|---|---|
@@ -641,7 +719,6 @@ start in `re/functions.txt`):
 | `0x02032370` | already `RandBelow` (`0x02032380`) | `re/symbols.txt`; the draw the tables use |
 | `0x0215c924` (overlay 3) | `Inn_Function` **[proposed]** | wiki *Inns-and-Churches*, `func_ov003_0215c924` |
 | `0x02158e94` (overlay 3) | `Church_Function` **[proposed]** | wiki *Inns-and-Churches*, `func_ov003_02158e94` |
-| `0x0215af9c` (overlay 3) | `Church_ModeLine` **[proposed]** | read: state 10 shows `1080 + mode`, state 11 ends |
 | `0x021ba998` (overlay 17) | `WipeOut_PriestTask` **[proposed]** | read: builds overlay 3's church, sets mode and voice, steps it |
 | `0x0215d0c4` | `QUESTERS_REST_PRICE` **[proposed, data]** | wiki *The Quester's Rest*: the flat 3 |
 | `0x020a0a18` | already `Bag_Remove` | `re/symbols.txt`; `Bag::remove` |

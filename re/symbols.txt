@@ -987,3 +987,18 @@ ov_017::021b848c Battle_PrepareParty   # stage from the ground record under the 
 0x02021500 MapScreen_Load                  # dispatches the five map-screen loads on +0x9c1
 0x02022d88 MapScreen_BeginLoad             # (obj, mode): fades the sub screen, restarts the load
 ov_017::021b1ca8 Field_SetDisplaySwap      # POWCNT1 bit 15: 1 on field entry (ov_017::021b17ec), 0 on exit
+
+# --- Items, equipment and the church (docs/re/item.md, docs/re/facility.md) ---
+0x02052d8c Equip_ClearWorn          # (member, save slot 0-9, -1): clears a worn place
+0x0207c388 Bag_Add                  # first stack of the item else the first empty slot, held to 99
+0x0208387c HeldItem_ClearSlot       # slot -> 0xffff, then every later slot shifts one rank down
+0x020dd4d4 Equip_RefusalMask        # 0 = may wear: 0x001 tree, 0x002 vocation, 0x008 category, 0x010 level, 0x020 member, 0x080 sex, 0x100 hero only, 0x200 item
+0x020ddb30 Item_IsConsumed          # record +0x08 bit 19 ("used up")
+0x020ddb48 Item_ConsumeHeldBattle   # ResolveAction's held-item helper: clears the slot when the action applied
+0x020ddccc Item_ConsumeHeld         # the field menu's: (actor 0-3, held slot 0-7, owner), same used-up bit
+ov_002::021536ec Field_ApplyAction  # runs an item action's handlers; returns whether any changed something
+ov_002::02157634 FieldMenu_UseItem  # the field menu's item use: the record's +0x14 field action, applied then spent on a change
+ov_002::0215a7b4 FieldMenu_ConsumeItem # spends the used copy: the bag (actor 4) or a held slot (0-3)
+ov_003::02159174 Church_SetMode     # +0x587 = mode; the wipe-out task ov_017::021ba998 is its only found caller
+ov_003::0215a740 Church_CureFlow    # member list, price, prayer, then the cure (Resurrection, Purification, Benediction)
+ov_003::0215af9c Church_QuickLine   # state 10: str_ch line 1080 + mode, then ends the visit

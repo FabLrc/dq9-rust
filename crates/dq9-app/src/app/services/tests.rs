@@ -1103,3 +1103,149 @@ fn the_wipe_out_priest_says_line_1082_of_the_voices_file() {
     // Voice 3 says nothing: the caller shows no window.
     assert!(services.open_priest(rom, 3).is_err());
 }
+
+/// The field menu spends an item only when its action changed something, the rule the battle
+/// reads at `ResolveAction`'s applied counter and the field menu at `func_ov002_021536ec`'s
+/// result (`func_ov002_0215a7b4`). A herb on a member at full HP stays in the bag; a wounded
+/// member spends one copy.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_herb_at_full_hp_is_kept_and_a_heal_spends_one() {
+    let Some(rom) = testrom::load() else {
+        eprintln!("skipping: DQ9_ROM missing");
+        return;
+    };
+    let data = crate::battle::data::Data::load(rom).expect("ROM tables");
+    let mut party = party();
+    let mut leader = dq9_core::party::Character::hero();
+    leader.max_hp = 40;
+    leader.hp = 40;
+    leader.max_mp = 9;
+    leader.mp = 9;
+    party.members[0] = leader;
+    assert!(party.bag.add(22000), "a medicinal herb");
+    let mut services = Services {
+        data: Some(Box::new(data)),
+        screen: Screen::Items,
+        ..Services::default()
+    };
+    services.apply_levels(&mut party);
+    let mut rng = Random::new(1);
+    let mut clock = DayClock::new(0.0, true);
+
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    assert_eq!(
+        services.screen,
+        Screen::Targets,
+        "the herb asks for a member"
+    );
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    assert_eq!(services.screen, Screen::Items);
+    assert_eq!(party.members[0].hp, 40, "nothing to heal");
+    assert_eq!(party.bag.count(22000), 1, "the herb is kept");
+
+    party.members[0].hp = 10;
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    assert!(party.members[0].hp > 10, "the herb healed");
+    assert_eq!(party.bag.count(22000), 0, "the healing herb is spent");
+}
+
+/// The equipment screen refuses an armour whose vocation mask clears the leader's vocation and
+/// says `str_eq` 10004; the all-vocation clothes go on as before (`func_020dd4c4`).
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_equipment_screen_refuses_an_armour_the_vocation_cannot_wear() {
+    let Some(rom) = testrom::load() else {
+        eprintln!("skipping: DQ9_ROM missing");
+        return;
+    };
+    let data = crate::battle::data::Data::load(rom).expect("ROM tables");
+    let rules = item_rules(rom).expect("the item rules");
+    let messages = equipment_messages(rom).expect("str_eq");
+    // 13001 "tussler's top" is the Martial Artist's alone (bit 3); 13005 "plain clothes" has
+    // the all-vocation mask. The leader is a Minstrel (6, bit 5).
+    assert_eq!(rules[&13001].vocations, 0x8);
+    assert_eq!(rules[&13005].vocations, 0xfff);
+    let mut party = party();
+    party.members[0].vocation = 6;
+    party.members[0].equipment.torso = None;
+    assert!(party.bag.add(13005));
+    assert!(party.bag.add(13001));
+    let mut services = Services {
+        data: Some(Box::new(data)),
+        rules: Some(rules),
+        equipment_messages: Some(messages),
+        screen: Screen::EquipChoice(dq9_formats::save::EquipSlot::Torso),
+        ..Services::default()
+    };
+    let mut rng = Random::new(1);
+    let mut clock = DayClock::new(0.0, true);
+    services.cursor = 1;
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    assert_eq!(services.screen, Screen::Notice, "the refusal is visible");
+    let text = String::from_utf8_lossy(
+        services
+            .notice
+            .as_ref()
+            .map(|notice| notice.text.as_slice())
+            .unwrap_or_default(),
+    )
+    .into_owned();
+    assert!(text.contains("vocation"), "{text}");
+    assert_eq!(party.members[0].equipment.torso, None, "nothing was worn");
+    assert_eq!(party.bag.count(13001), 1);
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    assert_eq!(services.screen, Screen::Equip, "back to the slots");
+
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    services.cursor = 0;
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    assert_eq!(party.members[0].equipment.torso, Some(13005));
+    assert_eq!(party.bag.count(13005), 0);
+}
+
+/// Benediction takes the cursed worn pieces off into the bag through the church screen; the
+/// uncursed clothes stay worn and the cure's price is charged (`func_ov003_0215a740`, state 5).
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn benediction_takes_the_cursed_worn_piece_off_through_the_church() {
+    let Some(rom) = testrom::load() else {
+        eprintln!("skipping: DQ9_ROM missing");
+        return;
+    };
+    let mut party = party();
+    let mut leader = dq9_core::party::Character::hero();
+    leader.vocation = 6;
+    leader.levels[6] = 12;
+    leader.equipment.head = Some(12184); // the skull helm, cursed
+    leader.equipment.torso = Some(13005);
+    party.members[0] = leader;
+    party.gold = 1000;
+    let mut services = Services::default();
+    let mut clock = DayClock::new(0.0, true);
+    let mut rng = Random::new(1);
+    services
+        .open(ServiceTag::Church(1), rom, &mut party, &clock)
+        .expect("str_ch0");
+    services.statuses[0].cursed = true;
+    // Confession, Divination, Resurrection, Purification, Benediction, Nothing.
+    for _ in 0..4 {
+        services.press(Button::Down, &mut party, &mut rng, &mut clock);
+    }
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    assert_eq!(services.screen, Screen::ChurchMembers);
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    assert_eq!(services.screen, Screen::ChurchConfirm);
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+
+    assert_eq!(party.gold, 640, "30 × level 12");
+    assert!(!services.statuses[0].cursed);
+    assert_eq!(party.members[0].equipment.head, None, "the helm came off");
+    assert_eq!(party.bag.count(12184), 1, "and went into the bag");
+    assert_eq!(
+        party.members[0].equipment.torso,
+        Some(13005),
+        "the plain clothes stay worn"
+    );
+}

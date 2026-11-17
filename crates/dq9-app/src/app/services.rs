@@ -16,8 +16,12 @@
 //! Using an item or a spell runs the game's action on a party member with
 //! `dq9_core::battle::resolve_action`: the same range table, the same MP cost and the same
 //! healing cap as a battle. An item is taken from the source the player chose (a bag stack or
-//! the held slot) only when the action executed; the battle additionally keeps an item whose
-//! effect changed nothing (`battle::item::effect_applied`), the field handler's rule is unread.
+//! the held slot) only when the action executed **and changed something**
+//! (`battle::item::effect_applied`): the battle's `ResolveAction` gates its held-item helper on
+//! its applied counter, and the field menu does the same — its action applier
+//! `func_ov002_021536ec` returns whether a handler reported a change, and only that result lets
+//! `func_ov002_0215a7b4` spend the copy (bag or held slot; the held slot also needs the
+//! record's `+0x08` bit 19, `func_020ddb20`). A herb on a full-HP member is therefore kept.
 
 pub(crate) mod containers;
 mod transfer;
@@ -25,6 +29,7 @@ mod transfer;
 use std::collections::BTreeMap;
 
 use anyhow::{Context as _, Result};
+use dq9_core::battle::item::effect_applied;
 use dq9_core::battle::{Random, Reach, resolve_action};
 use dq9_core::facility::church::{self, ChurchError, MemberStatus, Service};
 use dq9_core::facility::inn::{self, Choice as InnChoice};
@@ -32,7 +37,7 @@ use dq9_core::facility::shop;
 use dq9_core::party::{HELD_ITEMS, Party};
 use dq9_core::state::DayClock;
 use dq9_core::talk::Names;
-use dq9_formats::battle::text::Language;
+use dq9_formats::battle::text::{Language, MessageTable};
 use dq9_formats::facility::inn_church::{Church, Inn, church_line, inn_line};
 use dq9_formats::facility::shop::{ItemPrices, ShopTable};
 use dq9_formats::save::EquipSlot;
@@ -165,6 +170,32 @@ struct PriestState {
     text: Vec<u8>,
 }
 
+/// What the equipment screen and the church read from an item's record (`itemdt_*`).
+///
+/// The record's `+0x08` word holds the category in its low nibble and the cursed bit at 18
+/// (read: Benediction's loop tests `(word & 0x7ffff) >> 18`, `func_ov003_0215a740`; ten
+/// European records carry it — 12184, 12794, 13307, 18031, 18032, 18038, 20311, 20312, 20913,
+/// 21393). The vocation mask is **word 1 of the record's stats entry** (`+0x04` of the 32-byte
+/// entry the record's `+0x00` indexes), the word `func_020dd4c4` (EU `0x020dd4d4`) reads at
+/// `record + 4`: bits 0–11, bit `v − 1` for vocation `v`, tested for the worn armour kinds
+/// (categories 2 to 7) only. Measured on the European tables: all 313 weapons and shields have
+/// bits 0–11 clear, all 52 accessories `0xfff`, holy mail bit 27 (male) with 0x100 (Paladin)
+/// and holy femail bit 28 (female) with the same bit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ItemRule {
+    /// `+0x08` bits 0–3: 0 weapon, 1 shield, 2 armour, 3 legwear, 4 head, 5 arms, 6 feet,
+    /// 7 accessory, 8 tools.
+    category: u8,
+    /// `+0x08` bit 18: the cursed bit Benediction takes off.
+    cursed: bool,
+    /// The stats entry's `+0x04` bits 0–11: who may wear it.
+    vocations: u16,
+}
+
+/// `str_eq` 10004: "Members of this character's current vocation can't be equipped with this
+/// item." — the refusal line of `func_020dd4c4`'s `0x002` bit.
+const EQUIP_VOCATION_REFUSED: u16 = 10004;
+
 /// The field menu, the facility screen and their state. One instance lives in
 /// [`App`](crate::app::App); a map change or a replaced session closes it.
 #[derive(Debug, Default)]
@@ -172,6 +203,10 @@ pub struct Services {
     data: Option<Box<Data>>,
     prices: Option<ItemPrices>,
     shops: Option<ShopTable>,
+    /// The item records' category, cursed bit and vocation mask, by item id.
+    rules: Option<BTreeMap<u16, ItemRule>>,
+    /// The equipment screen's words (`data/bin/menu/str_eq.gp2`), by message number.
+    equipment_messages: Option<BTreeMap<u16, Vec<u8>>>,
     screen: Screen,
     cursor: usize,
     /// The bag item waiting for its held slot.
@@ -241,6 +276,39 @@ impl Services {
         Ok(())
     }
 
+    /// Loads the item records' category, cursed bit and vocation mask, and the equipment
+    /// screen's words, once. The field menu needs both; the church needs the cursed bit.
+    fn ensure_rules(&mut self, rom: &[u8]) -> Result<()> {
+        if self.rules.is_none() {
+            self.rules = Some(item_rules(rom)?);
+        }
+        if self.equipment_messages.is_none() {
+            self.equipment_messages = Some(equipment_messages(rom)?);
+        }
+        Ok(())
+    }
+
+    /// Whether the leader may wear `item`, from the item record's vocation mask
+    /// (`func_020dd4c4`, EU `0x020dd4d4`): the worn armour categories 2 to 7 refuse when bit
+    /// `vocation − 1` is clear, and the Guardian (0) wears anything. Weapons and shields
+    /// (categories 0 and 1) go by the vocation skill trees, which this build does not hold;
+    /// the level, sex and hero-only bits are not modelled either.
+    fn may_wear(&self, item: u16, party: &Party) -> bool {
+        let Some(rule) = self.rules.as_ref().and_then(|rules| rules.get(&item)) else {
+            return true;
+        };
+        let Some(member) = party.members.first() else {
+            return false;
+        };
+        if !(2..=7).contains(&rule.category) || member.vocation == 0 {
+            return true;
+        }
+        let Some(bit) = 1u16.checked_shl(u32::from(member.vocation) - 1) else {
+            return true;
+        };
+        rule.vocations & bit != 0
+    }
+
     fn item_name(&self, item: u16) -> Vec<u8> {
         let Some(data) = &self.data else {
             return format!("#{item}").into_bytes();
@@ -273,6 +341,7 @@ impl Services {
     /// Opens the field menu (`I`). The ROM tables load once and are kept for later screens.
     pub fn open_menu(&mut self, rom: &[u8], party: &mut Party) -> Result<()> {
         self.ensure_data(rom)?;
+        self.ensure_rules(rom)?;
         self.apply_levels(party);
         self.screen = Screen::Menu;
         self.cursor = 0;
@@ -352,6 +421,7 @@ impl Services {
     }
 
     fn open_church(&mut self, number: u16, rom: &[u8], party: &mut Party) -> Result<()> {
+        self.ensure_rules(rom)?;
         let member = Church::member(number, Language::English)
             .with_context(|| format!("<CHURCH={number}> names no str_ch file"))?;
         let archive = Church::archive(number).context("church archive")?;
@@ -633,6 +703,25 @@ impl Services {
                     }
                     Button::Confirm => {
                         let item = choices.get(self.cursor).and_then(|choice| *choice);
+                        if let Some(item) = item
+                            && !self.may_wear(item, party)
+                        {
+                            status(&format!(
+                                "equip {slot:?}: item {item} refused for vocation {}",
+                                party.members.first().map_or(0, |member| member.vocation)
+                            ));
+                            self.show_line(
+                                EQUIP_VOCATION_REFUSED,
+                                Vec::new(),
+                                NoticeNext::Return,
+                                Screen::Equip,
+                            );
+                            self.cursor = SLOTS
+                                .iter()
+                                .position(|(candidate, _)| *candidate == slot)
+                                .unwrap_or(0);
+                            return Effect::None;
+                        }
                         if equip(party, slot, item) {
                             status(&format!(
                                 "equip {slot:?}: {:?} (bag {} copies)",
@@ -1000,7 +1089,20 @@ impl Services {
                         self.screen = Screen::Church;
                         self.cursor = 0;
                         if yes && let Some((service, index, _)) = cure {
-                            match church::cure(service, party, &mut self.statuses, index) {
+                            let rules = self.rules.as_ref();
+                            let is_cursed = |item: u16| {
+                                rules.is_some_and(|rules| {
+                                    rules.get(&item).is_some_and(|rule| rule.cursed)
+                                })
+                            };
+                            let applied = church::cure_with(
+                                service,
+                                party,
+                                &mut self.statuses,
+                                index,
+                                is_cursed,
+                            );
+                            match applied {
                                 Ok(cure) => {
                                     status(&format!(
                                         "church {service:?} on member {index}: {cure:?}, gold {}, HP {}",
@@ -1117,6 +1219,11 @@ impl Services {
                 self.church
                     .as_ref()
                     .and_then(|church| church.messages.get(&line).cloned())
+            })
+            .or_else(|| {
+                self.equipment_messages
+                    .as_ref()
+                    .and_then(|messages| messages.get(&line).cloned())
             })
             .unwrap_or_default();
         self.notice = Some(Notice {
@@ -1295,24 +1402,31 @@ impl Services {
                 for (&index, hit) in indices.iter().zip(&outcome.targets) {
                     party.members[index].set_hp(hit.hp_after.max(0) as u16);
                 }
-                // The item is spent once, after the action executed, from the chosen source.
+                // The field menu spends the copy only when the action changed something:
+                // `func_ov002_021536ec`'s handlers report a change and only that result reaches
+                // `func_ov002_0215a7b4`, which takes the bag copy or clears the held slot. A
+                // herb on a member at full HP is kept, as in battle (`func_020ddb48`).
+                let applied = effect_applied(&outcome.targets);
                 match source {
                     Source::Bag(item) => {
-                        party.bag.remove(item, 1);
+                        if applied {
+                            party.bag.remove(item, 1);
+                        }
                         status(&format!(
-                            "field item {item} on members {:?}: HP {:?} -> {:?}, bag {} left",
+                            "field item {item} on members {:?}: HP {:?} -> {:?}, bag {} left, {}",
                             indices,
                             before,
                             indices
                                 .iter()
                                 .map(|&index| party.members[index].hp)
                                 .collect::<Vec<_>>(),
-                            party.bag.count(item)
+                            party.bag.count(item),
+                            if applied { "spent" } else { "kept" }
                         ));
                     }
                     Source::Held(slot) => {
                         let used_up = data.item_meta.get(&item).is_some_and(|meta| meta.used_up);
-                        if used_up {
+                        if applied && used_up {
                             consume_held(party, slot);
                         }
                         status(&format!(
@@ -1323,7 +1437,7 @@ impl Services {
                                 .iter()
                                 .map(|&index| party.members[index].hp)
                                 .collect::<Vec<_>>(),
-                            if used_up { "spent" } else { "kept" }
+                            if applied && used_up { "spent" } else { "kept" }
                         ));
                     }
                 }
@@ -2114,6 +2228,74 @@ fn item_prices(rom: &[u8]) -> Result<ItemPrices> {
             .with_context(|| format!("parsing {path}/{member}"))?;
     }
     Ok(prices)
+}
+
+/// The item records' category, cursed bit and vocation mask, over every category table
+/// (`itemdt_<category>_<language>.nat`).
+fn item_rules(rom: &[u8]) -> Result<BTreeMap<u16, ItemRule>> {
+    let mut rules = BTreeMap::new();
+    for category in ["a", "b", "d", "h", "l", "s", "u", "w", "t"] {
+        let path = format!("data/prm/itemdt_{category}.gp2");
+        let member = format!("itemdt_{category}_{}.nat", Language::English.suffix());
+        let bytes = archive_member(rom, &path, &member)?;
+        add_item_rules(&bytes, &mut rules).with_context(|| format!("parsing {path}/{member}"))?;
+    }
+    Ok(rules)
+}
+
+/// One category member: a `u16` count, then 32-byte records (the stats index at `+0x00`, the
+/// category/cursed word at `+0x08`, the id as `s16` at `+0x18`), then one 32-byte stats entry
+/// per record (`0xffffffff` on the tools, which have none).
+fn add_item_rules(data: &[u8], rules: &mut BTreeMap<u16, ItemRule>) -> Result<()> {
+    let head = data
+        .get(0..2)
+        .context("a category table shorter than its count")?;
+    let count = usize::from(u16::from_le_bytes([head[0], head[1]]));
+    let records_end = 12 + count * 32;
+    anyhow::ensure!(
+        data.len() >= records_end,
+        "a category table shorter than its {count} records"
+    );
+    for index in 0..count {
+        let at = 12 + index * 32;
+        let record = &data[at..at + 32];
+        let id = i16::from_le_bytes([record[0x18], record[0x19]]);
+        if id <= 0 {
+            continue;
+        }
+        let word = |bytes: &[u8], offset: usize| {
+            u32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ])
+        };
+        let (category, stats) = (word(record, 0x08), word(record, 0x00) as usize);
+        let vocations = stats
+            .checked_mul(32)
+            .and_then(|offset| records_end.checked_add(offset))
+            .and_then(|at| at.checked_add(8).and_then(|end| data.get(at..end)))
+            .map_or(0, |entry| (word(entry, 4) & 0xfff) as u16);
+        rules.entry(id as u16).or_insert(ItemRule {
+            category: (category & 0xf) as u8,
+            cursed: (category >> 18) & 1 == 1,
+            vocations,
+        });
+    }
+    Ok(())
+}
+
+/// The equipment screen's words: `data/bin/menu/str_eq.gp2`, member `str_eq_<language>.nat`.
+fn equipment_messages(rom: &[u8]) -> Result<BTreeMap<u16, Vec<u8>>> {
+    const ARCHIVE: &str = "data/bin/menu/str_eq.gp2";
+    let member = format!("str_eq_{}.nat", Language::English.suffix());
+    let bytes = archive_member(rom, ARCHIVE, &member)?;
+    let table =
+        MessageTable::parse(&bytes).with_context(|| format!("parsing {ARCHIVE}/{member}"))?;
+    Ok(copy_messages(table.numbers(), |number| {
+        table.message(number)
+    }))
 }
 
 /// One member of a `.gp2` archive, decompressed and owned.

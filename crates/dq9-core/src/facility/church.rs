@@ -18,12 +18,36 @@
 //! A member who needs nothing hears the service's own line plus two and pays nothing. The
 //! rest of the flow is the caller's: the price (1061), a Yes or No, refused 1062, too poor
 //! 1063, the prayer (the cure's line plus one) and 1070 back to the menu.
+//!
+//! **Benediction's unequipping** (`func_ov003_0215a740`, EU overlay 3 state 5): after
+//! clearing the cursed bit it walks the eleven in-RAM worn entries (`member+0x150+0x194+0x20
+//! i`), skips places 2, 3 and 4 (the slot table at `0x0217f39c` maps them to `0xff`), and for
+//! every remaining entry whose word at `+0x08` has **bit 18** set — `(word & 0x7ffff) >> 18`,
+//! read on the European tables as 10 items: 12184, 12794, 13307, 18031, 18032, 18038, 20311,
+//! 20312, 20913, 21393, all armour or accessories, none a tool — it adds one copy to the bag
+//! (`func_0207c378`, EU `0x0207c388`) and clears the place (`func_02052d7c`,
+//! EU `0x02052d8c`) with its item id and `-1`. The eight remaining places are exactly the
+//! eight slots [`Character::equipment`] holds. **No line announces it**: the branch shows
+//! nothing of its own, only the prayer 1051 before and 1070 after; the cursed-item lines of
+//! `str_eq` (11004 "…is cursed, and cannot be unequipped", 11005 "Oh no! … is cursed!") belong
+//! to the equipment screen, not to the church. The original does not test the bag add; here a
+//! bag with no room leaves the piece worn rather than losing it.
+//!
+//! **The coffin greeting** is `str_ch` line 1100, "…bring a fallen companion all the way to our
+//! church…". The church's quick line is `1080 + mode` (`func_ov003_0215af9c`, state 10), so
+//! the coffin is mode **20**; the flow only enters state 10 from the greeting when the mode is
+//! 1 or 2, the builder resets the mode to 0 (`func_ov003_02158bb8`) and the only setter
+//! (`func_ov003_02159174`) is called by the wipe-out task `ov_017::021ba998` with its own mode.
+//! No code sets 20, so the line cannot be reached in the retail flow; state 10 ends the visit
+//! and performs no resurrection, and the text names no price. The church's paid Resurrection
+//! stays the only way the facilities raise the dead.
 
 pub use dq9_formats::facility::inn_church::Service;
 use dq9_formats::facility::inn_church::church_line;
 use dq9_formats::level::LevelTables;
+use dq9_formats::save::EquipSlot;
 
-use crate::party::{Character, Party};
+use crate::party::{BAG_STACK, Character, Party};
 
 /// What the priest asks for a Purification (`0x0215a8e0`–`0x0215a99c`; the same for every
 /// member).
@@ -98,6 +122,22 @@ pub fn cure_line(service: Service) -> Option<u16> {
         Service::Benediction => Some(church_line::BENEDICTION),
         Service::Confession | Service::Divination | Service::Nothing => None,
     }
+}
+
+/// The base of the church's quick line: state 10 shows `1080 + mode`
+/// (`func_ov003_0215af9c`).
+pub const MODE_LINE: u16 = 1080;
+
+/// The mode whose quick line is the coffin greeting: 1080 + 20 = 1100.
+pub const COFFIN_MODE: u8 = 20;
+
+/// `str_ch` line 1100, the coffin greeting. **Unreachable in the retail flow**: nothing sets
+/// [`COFFIN_MODE`], and the greeting only enters state 10 for mode 1 or 2.
+pub const COFFIN_LINE: u16 = MODE_LINE + COFFIN_MODE as u16;
+
+/// The line state 10 says for `mode`: `1080 + mode`, the wipe-out's 1081/1082 included.
+pub fn mode_line(mode: u8) -> u16 {
+    MODE_LINE + u16::from(mode)
 }
 
 /// The divination's vocation name: `str_ch` message 30 + the vocation's number (1 Warrior …
@@ -207,15 +247,31 @@ impl std::error::Error for ChurchError {}
 ///
 /// The effects are the game's (`func_02048150` for the resurrection, `func_ov003_02158e94`):
 /// Resurrection fills HP and clears every status bit but the curse — MP is as it was; the
-/// poisoned bit goes. Purification clears the poisoned bit. **Benediction clears the cursed
-/// bit only**: the game also takes every worn item whose slot word has bit 18 set into the
-/// bag, and no reader here holds that bit, so the unequipping is **not modelled**
-/// (**[unknown]** which items).
+/// poisoned bit goes. Purification clears the poisoned bit. Benediction clears the cursed bit
+/// and, through [`cure_with`], takes the cursed worn items off.
 pub fn cure(
     service: Service,
     party: &mut Party,
     statuses: &mut [MemberStatus],
     index: usize,
+) -> Result<Cure, ChurchError> {
+    cure_with(service, party, statuses, index, |_| false)
+}
+
+/// [`cure`] with the item table's cursed bit, which the caller reads from the ROM.
+///
+/// Benediction's unequipping is the game's (`func_ov003_0215a740`, state 5): every worn item
+/// whose record has bit 18 of its `+0x08` word set goes into the bag, one copy each, and its
+/// slot is cleared. The eight slots [`Character::equipment`] holds are exactly the eight worn
+/// places the original's slot table keeps (`0x0217f39c` clears places 2, 3 and 4). A bag with
+/// no room for a piece leaves it worn — the original does not test the add, and losing the
+/// item would not be observable here.
+pub fn cure_with(
+    service: Service,
+    party: &mut Party,
+    statuses: &mut [MemberStatus],
+    index: usize,
+    is_cursed: impl Fn(u16) -> bool,
 ) -> Result<Cure, ChurchError> {
     let member = party.members.get(index).ok_or(ChurchError::NoMember)?;
     let status = *statuses.get(index).ok_or(ChurchError::NoStatus)?;
@@ -240,7 +296,38 @@ pub fn cure(
             return Err(ChurchError::NotACure(service));
         }
     }
+    if matches!(service, Service::Benediction) {
+        unequip_cursed(party, index, &is_cursed);
+    }
     Ok(Cure::Done { price })
+}
+
+/// Benediction's unequipping: the cursed worn pieces go into the bag, in slot order.
+fn unequip_cursed(party: &mut Party, index: usize, is_cursed: &impl Fn(u16) -> bool) {
+    for slot in EquipSlot::ALL {
+        let Some(item) = party.members[index].equipment.get(slot) else {
+            continue;
+        };
+        if !is_cursed(item) || !bag_has_room(party, item) {
+            continue;
+        }
+        let _ = party.bag.add(item);
+        party.members[index].equipment.set(slot, None);
+    }
+}
+
+/// Whether the bag can take one more copy of `item` without losing it (`func_0207c378`'s
+/// first stack else the first empty slot; a stack holds 99).
+fn bag_has_room(party: &Party, item: u16) -> bool {
+    match party
+        .bag
+        .slots()
+        .iter()
+        .find(|stack| stack.item == Some(item))
+    {
+        Some(stack) => stack.quantity < BAG_STACK,
+        None => party.bag.slots().iter().any(|stack| stack.item.is_none()),
+    }
 }
 
 /// The line the priest says when the party wakes after a wipe-out: overlay 3's church in
@@ -388,6 +475,7 @@ pub fn offer(service: Service) -> Offer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::party::{BAG_CAPACITY, Bag};
 
     fn member(level: u8, hp: u16, max_hp: u16) -> Character {
         let mut member = Character::hero();
@@ -526,6 +614,93 @@ mod tests {
             Cure::Done { price: 460 }.notice(Service::Resurrection),
             None
         );
+    }
+
+    #[test]
+    fn benediction_takes_the_cursed_worn_pieces_into_the_bag() {
+        const CURSED: [u16; 3] = [13307, 20913, 12184];
+        let mut state = party(vec![member(12, 20, 40)]);
+        state.members[0].equipment.torso = Some(CURSED[0]);
+        state.members[0].equipment.weapon = Some(CURSED[1]);
+        state.members[0].equipment.head = Some(CURSED[2]);
+        state.members[0].equipment.shield = Some(21291);
+        state.bag = Bag::empty(BAG_CAPACITY);
+        let mut statuses = [MemberStatus {
+            poisoned: false,
+            cursed: true,
+        }];
+        let cure = cure_with(Service::Benediction, &mut state, &mut statuses, 0, |item| {
+            CURSED.contains(&item)
+        });
+        assert_eq!(cure, Ok(Cure::Done { price: 360 }));
+        assert_eq!(state.gold, 640);
+        assert_eq!(statuses[0], MemberStatus::default(), "the curse is gone");
+        for item in CURSED {
+            assert_eq!(state.bag.count(item), 1, "item {item} is in the bag");
+        }
+        let worn = &state.members[0].equipment;
+        assert_eq!(
+            (worn.torso, worn.weapon, worn.head),
+            (None, None, None),
+            "the cursed pieces left their slots"
+        );
+        assert_eq!(worn.shield, Some(21291), "the shield is not cursed");
+    }
+
+    #[test]
+    fn a_full_bag_leaves_a_cursed_piece_worn() {
+        let mut state = party(vec![member(12, 20, 40)]);
+        state.members[0].equipment.torso = Some(13307);
+        state.bag = Bag::empty(1);
+        assert!(state.bag.add(22000));
+        let mut statuses = [MemberStatus {
+            poisoned: false,
+            cursed: true,
+        }];
+        assert_eq!(
+            cure_with(
+                Service::Benediction,
+                &mut state,
+                &mut statuses,
+                0,
+                |item| item == 13307,
+            ),
+            Ok(Cure::Done { price: 360 })
+        );
+        assert_eq!(
+            state.members[0].equipment.torso,
+            Some(13307),
+            "the piece stays worn rather than being lost"
+        );
+        assert_eq!(state.bag.count(22000), 1);
+        assert!(!statuses[0].cursed, "the cure itself is done");
+    }
+
+    #[test]
+    fn the_quick_line_is_1080_plus_the_mode_and_the_coffin_is_1100() {
+        assert_eq!(mode_line(0), 1080);
+        assert_eq!(mode_line(1), 1081);
+        assert_eq!(mode_line(2), WIPE_OUT_LINE);
+        assert_eq!(COFFIN_MODE, 20);
+        assert_eq!(COFFIN_LINE, 1100);
+        assert_eq!(mode_line(COFFIN_MODE), COFFIN_LINE);
+        // The coffin line is no service's line and no service's refused/notice line.
+        for service in [
+            Service::Confession,
+            Service::Divination,
+            Service::Resurrection,
+            Service::Purification,
+            Service::Benediction,
+            Service::Nothing,
+        ] {
+            for line in [
+                cure_line(service),
+                cure_line(service).map(|line| line + 1),
+                cure_line(service).map(|line| line + 2),
+            ] {
+                assert_ne!(line, Some(COFFIN_LINE));
+            }
+        }
     }
 
     #[test]

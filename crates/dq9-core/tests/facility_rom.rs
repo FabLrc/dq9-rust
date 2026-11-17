@@ -207,6 +207,34 @@ fn the_church_services_and_the_resurrection_price_table() {
     );
 }
 
+/// `str_ch` line 1100, the coffin greeting: all eight church files carry it, the Observatory's
+/// copy is the developers' `THIS IS A BUG` placeholder, and the line is `1080 + mode` with the
+/// coffin mode 20 — which no service's lines reach.
+#[test]
+fn every_church_file_carries_the_coffin_line_and_no_service_shows_it() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    assert_eq!(church::mode_line(church::COFFIN_MODE), church::COFFIN_LINE);
+    for file in 1..=8u16 {
+        let archive = Church::archive(file).unwrap();
+        let member_name = format!("str_ch{}_en.nat", file - 1);
+        let data = member(&rom, &archive, &member_name);
+        let table = Church::parse(&data).unwrap();
+        let text = table
+            .message(church::COFFIN_LINE)
+            .unwrap_or_else(|| panic!("{archive}/{member_name} has no line 1100"));
+        if file == 4 {
+            assert!(
+                String::from_utf8_lossy(text).contains("THIS IS A BUG"),
+                "the Observatory's copy is the cut-line placeholder"
+            );
+        }
+        for service in Service::ALL {
+            assert_ne!(church::cure_line(service), Some(church::COFFIN_LINE));
+        }
+    }
+}
+
 /// Angel Falls (`M01M03` to `M01M10`) holds twelve containers, all drawing from the random
 /// tables; the Mountain Pass and the Hexagon hold seven. A blue chest's seeded draw lands on
 /// one of its rank's rows.
