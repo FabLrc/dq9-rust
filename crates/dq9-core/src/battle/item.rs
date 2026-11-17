@@ -32,3 +32,18 @@ pub fn effect_applied<'a>(targets: impl IntoIterator<Item = &'a TargetOutcome>) 
         .into_iter()
         .any(|target| target.hp_after != target.hp_before || target.mp_damage > 0)
 }
+
+/// Whether the battle's item consumer clears a **held slot** for an item record of this
+/// category (the record's `+0x08` low nibble).
+///
+/// [`effect_applied`] is only the first gate: `func_020ddb38` (EU `0x020ddb48`) also requires
+/// the record's `+0x08` bit 19 (used up, `func_020ddb20`, EU `0x020ddb30`), then dispatches on
+/// the category. Tools (8–10) clear the chosen held slot through `func_0208386c` (EU
+/// `0x0208387c`). Equipment (0–7) leaves the held list alone: a worn item resolves its action
+/// from the Items menu but is never taken out of the character's equipment. The prayer ring
+/// (18023), the one equipment record with the used-up bit, is the exception to "never": the
+/// consumer clears accessory slot 10 after a 25 % draw (`func_02083738`, case 7), which is not
+/// a held slot and is outside this predicate (`docs/re/battle.md`, "Using a worn item").
+pub fn clears_held_slot(category: u8) -> bool {
+    matches!(category, 8..=10)
+}

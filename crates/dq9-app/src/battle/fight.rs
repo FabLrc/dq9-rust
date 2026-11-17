@@ -12,9 +12,12 @@ use std::collections::VecDeque;
 use anyhow::{Context as _, Result};
 use dq9_core::battle::{
     Battle, BattleError, BattleResult, BattleSetup, CRand, Command, Event, PartyMember, Random,
-    Skill, Surprise, Target, Who, item::effect_applied, validate,
+    Skill, Surprise, Target, Who,
+    item::{clears_held_slot, effect_applied},
+    validate,
 };
 use dq9_core::party::{LevelUp, Party, Share};
+use dq9_formats::save::EquipSlot;
 
 use super::Fighter;
 use super::data::Data;
@@ -150,10 +153,12 @@ enum Pending {
     Item(usize),
 }
 
-/// The held slot an item command was built from, kept until the engine reports the use.
+/// The item an item command was built from, kept until the engine reports the use.
 #[derive(Debug, Clone, Copy)]
 struct Reservation {
-    slot: usize,
+    /// The held slot the command was built from; `None` for a worn item, which the consumer
+    /// never clears (`func_020ddb38` clears category 8–10 slots only).
+    slot: Option<usize>,
     id: u16,
     action: u16,
 }
@@ -225,8 +230,9 @@ pub struct Fight {
     menu: Menu,
     member: usize,
     chosen: Vec<Option<Command>>,
-    /// The held slot each member's item command was built from, released when the command is
-    /// changed and spent only by the engine's [`Event::ItemUsed`].
+    /// The item each member's item command was built from (its held slot, or a worn item),
+    /// released when the command is changed and spent only by the engine's
+    /// [`Event::ItemUsed`].
     reserved: Vec<Option<Reservation>>,
     /// HP and MP the status window shows now, and their maxima.
     shown: Vec<(i32, i32)>,
@@ -793,11 +799,14 @@ impl Fight {
         validate(&actor, action, std::slice::from_ref(&target)).is_ok()
     }
 
-    /// The held items of the member whose menu opens that do something in battle: every
-    /// non-empty slot of [`Character::held_items`](dq9_core::party::Character::held_items)
-    /// whose item record names a battle action. The row keeps its slot so that the item used
-    /// is the one chosen, duplicates included (the original's item command carries the held
-    /// slot, `func_020ddb38`; the record's second action is what it resolves).
+    /// The items of the member whose menu opens that do something in battle: every non-empty
+    /// held slot first, then the worn equipment whose record names a battle action, as the
+    /// original's builder does (it preserves the held tools and appends the eight worn
+    /// entries, `func_ov000_02171c04`). Each row keeps its held slot (`None` for worn) so that
+    /// the item used is the one chosen, duplicates included; the record's second action
+    /// (`+0x16`) is what both resolve (`func_ov000_02171ffc`), and the consumer
+    /// (`func_020ddb38`) clears a held slot only for a tool, so a worn item is never taken
+    /// from the character (`docs/re/battle.md`, "Using a worn item").
     fn refresh_items(&mut self) {
         self.item_rows.clear();
         let Ok(tables) = self.data.tables() else {
@@ -811,8 +820,17 @@ impl Fight {
             return;
         };
         let held = character.held_items;
-        for (slot, id) in held.iter().enumerate() {
-            let Some(id) = *id else { continue };
+        // The eight worn entries in the save's order, copied out before the rows are pushed.
+        let worn: [Option<u16>; 8] =
+            core::array::from_fn(|i| character.equipment.get(EquipSlot::ALL[i]));
+        for id in held
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(slot, id)| (Some(slot), id))
+            .chain(worn.into_iter().map(|id| (None, id)))
+        {
+            let (slot, Some(id)) = id else { continue };
             let Some(skill) = self
                 .data
                 .battle_action(id)
@@ -957,6 +975,12 @@ impl Fight {
                         self.reserved[*i] = Some(reservation);
                         continue;
                     }
+                    // A worn item resolves its action but is never taken: the consumer clears
+                    // a held slot only for a tool's record (category 8–10), so the equipment
+                    // list is left as it was (`battle::item::clears_held_slot`).
+                    let Some(slot) = reservation.slot else {
+                        continue;
+                    };
                     let changed = applied[..applied_count]
                         .iter()
                         .any(|&(member, used, changed)| member == *i && used == *action && changed);
@@ -965,10 +989,10 @@ impl Fight {
                             .data
                             .item_meta
                             .get(&reservation.id)
-                            .is_some_and(|meta| meta.used_up)
+                            .is_some_and(|meta| meta.used_up && clears_held_slot(meta.category))
                         && spent_count < spent.len()
                     {
-                        spent[spent_count] = (*i, reservation.slot);
+                        spent[spent_count] = (*i, slot);
                         spent_count += 1;
                     }
                 }
@@ -1285,11 +1309,13 @@ pub fn lines_plain(lines: &[Vec<u8>]) -> String {
     plain(&lines.join(&b'\n'))
 }
 
-/// A held item of the acting member that does something in battle, as the Items menu lists it.
+/// An item of the acting member that does something in battle, as the Items menu lists it:
+/// a held tool or a worn equipment record.
 #[derive(Debug, Clone)]
 struct ItemRow {
-    /// The held slot the item occupies; the command must spend this one, not the id.
-    slot: usize,
+    /// The held slot the item occupies, `None` for a worn item; the command must spend that
+    /// slot, not the id, and a worn item is never spent.
+    slot: Option<usize>,
     id: u16,
     /// Name as the font draws it.
     label: Vec<u8>,

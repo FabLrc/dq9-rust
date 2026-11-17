@@ -62,13 +62,16 @@ impl ActionLines {
     }
 }
 
-/// The item record field the battle consumes by: the "used up" bit (`+0x08` bit 19), the bit
+/// The item record fields the battle consumes by: the "used up" bit (`+0x08` bit 19), the bit
 /// the AI scores an item with (`func_ov024_021f7478`) and the battle's item consumer tests
-/// (`func_020ddb38`, EU `0x020ddb48`, called by `ResolveAction`). The same record word's low
-/// nibble is the category measured in `docs/re/item.md` (0–7 equipment, 8–9 tools).
+/// (`func_020ddb38`, EU `0x020ddb48`, called by `ResolveAction`), and the record's category
+/// (the same word's low nibble: 0–7 equipment, 8–9 tools; the consumer clears a held slot for
+/// 8–10 only, `dq9_core::battle::item::clears_held_slot`). The category is the value
+/// `docs/re/item.md` measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemMeta {
     pub used_up: bool,
+    pub category: u8,
 }
 
 /// The owned ROM members.
@@ -93,8 +96,8 @@ pub struct Data {
     pub lines: BTreeMap<u16, ActionLines>,
     /// An item's field and battle actions (252 for none), by item id.
     pub item_actions: BTreeMap<u16, [u16; 2]>,
-    /// The item record's "used up" flag, by item id (the word's low nibble is its category,
-    /// read by the equipment rules, not stored here).
+    /// The item record's "used up" flag and category, by item id (the consumer's two tests,
+    /// `battle::item`).
     pub item_meta: BTreeMap<u16, ItemMeta>,
     /// Which vocation learns which spell at which level.
     pub spells: SpellTable,
@@ -365,6 +368,7 @@ fn read_item_records(
         out.entry(id).or_insert([field, battle]);
         meta.entry(id).or_insert(ItemMeta {
             used_up: (word >> 19) & 1 == 1,
+            category: (word & 0xf) as u8,
         });
     }
 }

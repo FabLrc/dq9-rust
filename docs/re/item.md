@@ -33,11 +33,29 @@ A record:
 | `+0x00` | `u32` | **stats-table index** (`0..count−1`, each used once; `0xffffffff` on the tools, which have no stats table) |
 | `+0x08` | `u32` | category (low nibble = equipment class) |
 | `+0x0c` | `u32` | bits 12–22: **compendium index**; low nibble: sort position |
+| `+0x14` | `u16` | **field action** number (`252` = none; INFERRED, the wiki's *Items*, "The two actions") |
+| `+0x16` | `u16` | **battle action** number (`252` = none); what the battle's Items menu resolves, for a held tool and for a worn item |
 | `+0x18` | `s16` | **item id** (`func_020de56c`, `0x020de57c`) |
 
 The compendium index is the one read by `func_0207cc18` (`0x0207cc28`):
 `(record[0xc] & 0x7fffff) >> 0xc`. It is 0 for items with no compendium entry
 (some of the tools): the game then sets no flag.
+
+### The two action numbers
+
+The battle's item confirmation reads `+0x16` (`func_ov000_02171ffc`; the same number for a held
+tool and for a worn record), and the cursor's confirm (`func_ov000_02171e60`) looks it up in the
+battle's action table (`func_020797dc` / `func_02079e2c`): a number the table lacks refuses the
+row. 252 is the "no action" value (`NO_ACTION` in the application). Measured over all 1,178
+records of the nine English members, 1,103 carry 252 in `+0x16`; the 75 others name one — 39
+equipment (27 weapons, 11 shields and the prayer ring 18023) and 36 tools. Examples: medicinal
+herb 22000 → 255 (kind 2 heal), cautery sword 20010 → 369 (kind 1 blow), sage's stone 22035 →
+416. Whether the original registers the empty action 252 in that table is **[unknown]**, so
+using a no-action worn record may still reach the target list and spend the turn for nothing
+(**[hypothesis]**, `battle.md`). The 75 are listed in
+`build/evidence/j4-battle-worn-items/item-actions.txt` (`3162cbffaa58`). The worn half of the
+battle list, the consumer that never removes it and the prayer ring's 25 % break are in
+[`battle.md`](battle.md), "Using a worn item".
 
 ### The stats table
 

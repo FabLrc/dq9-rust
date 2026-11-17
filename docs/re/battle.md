@@ -581,18 +581,19 @@ turn record and no draw, since the stance is taken up as the round begins; the c
 not read.
 
 `Command::Item` resolves an item's action like any action and emits `Event::ItemUsed { who,
-action }`. The item comes from the acting member's **held items**, not the party bag: the
-battle's item command carries the held slot, and `ResolveAction` (`ov_024::021eb5d0`, EU
+action }`. The item comes from the list the Items menu built — the acting member's **held
+items**, then their worn equipment (below) — never the party bag: the battle's item command
+carries the list index, and `ResolveAction` (`ov_024::021eb5d0`, EU
 `0x021ed724..0x021ed7e4`) maps the actor's command entry (`battle + 0x3760`, through
-`ov_000::02160130`/`ov_000::02160f08`) to its held slot and calls the "use a held item" helper
-`func_020ddb38` (EU `0x020ddb48`), which clears that slot through `func_0208386c` (EU
-`0x0208387c`). The battle command UI builds its item list from the member's item entries
+`ov_000::02160130`/`ov_000::02160f08`) to that index and calls the "use an item" helper
+`func_020ddb38` (EU `0x020ddb48`), which clears a held slot for a tool through `func_0208386c`
+(EU `0x0208387c`). The battle command UI builds its item list from the member's item entries
 (`func_ov000_0217ae90` case 4 → `func_ov000_02171c04`), never from the bag. A public rule
 states the same for the series: items in the bag cannot be used during battle (DQ Wiki,
 *Bag*, <https://dragonquest-wiki.com/Bag>: "Items in the bag cannot be used during
-battle"). `dq9-app` therefore lists `Character::held_items`, keeps the row's slot (duplicates
-included), and spends exactly that slot when the engine reports `ItemUsed` **and** the use
-changed something (below).
+battle"). `dq9-app` therefore lists `Character::held_items` then the worn records, keeps the
+held row's slot (duplicates included), and spends exactly that slot when the engine reports
+`ItemUsed` **and** the use changed something (below); a worn row spends nothing.
 
 **Which uses spend the item.** Two tests, in this order.
 
@@ -628,15 +629,63 @@ Evidence: `build/evidence/j4-item-spend/ghidra-consumer.txt` (`d9721f00c2de`),
 tests `crates/dq9-core/tests/battle_item.rs` and the app's held-herb tests. The field notes
 that used to call `func_ov017_021d0164` the battle consumer were wrong: that is an event-script
 native (ov_017 native table entry at `0x021d823c`) that clears a held item from a script, not
-the battle path. The app models only held items, not the worn-gear half of the original's item
-list (equipment UI is out of scope).
+the battle path.
+
+#### Using a worn item
+
+The Items list is not held tools only. `func_ov000_0217ae90`'s Items row (case 4) calls
+`func_ov000_02171c04`: it counts the list's leading tool entries (`menu+0x3f0`, records whose
+category nibble is above 7 up to the first that is not), clears the rest, and appends every
+worn equipment record of the acting member. The eight live equipment slots are read in the order
+of the 8-byte table the two list helpers point at (`ov_000::02183380`, `08 09 07 00 05 01 06
+0a`); for each, a non-null record with a positive id and a category below 8 is appended through
+`func_ov000_02171b68`. So the Items menu is **the held tools first, then the worn entries**, and
+`func_ov000_02171d90` (confirm, by item id) searches the worn slots first and returns that record;
+only when the id is not worn does it fall through to the held/bag lookup. The action is then the
+record's `+0x16` battle action, exactly as for a held tool (`func_ov000_02171ffc` after the
+`+0x1c == 4` test). The Items cursor's confirm (`func_ov000_02171e60`) looks that number up in the
+battle's action table (`func_020797dc` then `func_02079e2c`) and refuses the row when the lookup
+returns 0 (it moves to state `0xe` with message 5). 1,103 of the 1,178 records carry **252** in
+`+0x16`, the app's `NO_ACTION` (every worn piece of the new-game set included): a use that does
+nothing. Whether the original's table (the object at `0x02108e10`, constructed by
+`__sinit_020e60f8`) registers the empty action 252 is **[unknown]**; if it does, the target-mode
+helper (`func_ov000_02171210`: its `+0x08` bits 8–9 are 2 and `+0x14`'s high nibble 1) sends the
+row to the monster target list and resolves a kind-0 action, i.e. a turn spent for nothing
+(**[hypothesis]**). The app lists only a worn row whose action the kernel models, as it already
+lists only a held item that names one; the no-op rows are omitted. The drawing distinguishes the
+two halves only by a layout tag, `<W=3>` for an equipment row and `<W=8>` for a tool
+(`func_ov000_0217979c`, `func_02041acc`) and an empty prefix (`str_btl` 19, `<E>`); the names are
+not decorated.
+
+The consumer never takes a worn entry. `func_020ddb38` (EU `0x020ddb48`) first tests the
+record's used-up bit (`func_020ddb20`, EU `0x020ddb30`, `+0x08` bit 19) and then clears a held
+slot only for a category 8–10 record (`func_0208386c`, EU `0x0208387c`, slots 0–7). Equipment
+(0–7) falls through with no removal, so a worn item used from Items stays equipped. Its
+`param_2` is the **list index** (`ResolveAction` reads it at `ov_024::021ed7d8`), which is the
+held slot for a tool only because the tools lead the list. The one exception is the prayer ring
+(18023, EU constant at `0x020ddcc8`), the only equipment record with the used-up bit: the
+equipment branch draws `NextRandomMax(100)` and, below 25, clears live equipment slot 10 (the
+accessory, `func_02083738` case 7) — a break with a 25 % chance, not a held-slot removal. Its
+action 397 is kind 26, which the resolver refuses, so the app never reaches that draw.
+`dq9_core::battle::item::clears_held_slot` is the category test; the app lists the held rows
+first, then a worn record whose action the kernel models, and spends a held slot only.
+
+Measured on the EU tables over all 1,178 records: 75 carry a battle action — 39 equipment
+(27 weapons, 11 shields and the prayer ring) and 36 tools; the other 1,103 carry 252. The
+cautery sword (20010) is action 369, a kind-1 blow; the celestial costume (13007) carries 252.
+Evidence: `build/evidence/j4-battle-worn-items/item-actions.txt` (`3162cbffaa58`); the
+decompilations `menu-builder.txt` (`a7b2629fa4df`), `menu-append.txt` (`cf67d88ffdb0`),
+`menu-helpers.txt` (`09522571937d`), `item-select.txt` (`0fee1cd4ce5b`),
+`item-list-view.txt` (`9f4166bc5450`), `consumer-held.txt` (`7ea2a57f3355`) and
+`consumer-helpers2.txt` (`eaf1a2f59d9b`); `route-before-*`/`route-after-*` checkpoints are
+byte-identical (`8ce4af30e497`); permanent tests
+`crates/dq9-core/tests/battle_item_rom.rs` and the app's two worn-item tests.
 
 A member who falls before its turn produces no `ItemUsed`: the reservation is dropped at the
 next command phase and the held slot stays. Cancelling or reselecting a command releases the
-reservation likewise. **[unknown]** the exact routine that fills the original's item menu
-with the held tools (the list builder preserves tool entries but its writer was not found);
-the consumer and the slot identity are read, the population path is not. The bag is never
-read or changed by the app's battle item path.
+reservation likewise. The population path is now read (`func_ov000_02171c04`, above); the bag is
+never read or changed by the app's battle item path. **[unknown]** why the confirmation singles
+out action 522 (Electro Light), which no item record carries.
 
 ### Accuracy with statuses
 

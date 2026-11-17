@@ -667,6 +667,81 @@ fn a_reusable_held_item_is_never_spent() {
     assert_eq!(fight.party().bag.count(22035), 0);
 }
 
+/// A worn item whose record names a battle action is offered in Items after the held tools,
+/// resolves that action through `Command::Item` and is kept: the consumer clears a held slot
+/// only for a tool's record (`func_020ddb38`), never the equipment. The cautery sword (20010)
+/// carries action 369, a kind-1 blow; the celestial costume (13007) carries none (252) and has
+/// no row.
+#[test]
+fn a_usable_worn_item_is_offered_used_and_kept() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    let mut party = level_one_party(&data);
+    party.members[0].equipment.weapon = Some(20010);
+    party.members[0].equipment.torso = Some(13007);
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 17);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    for _ in 0..4 {
+        fight.step(down, &mut world);
+    }
+    fight.step(confirm(), &mut world);
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(menu.rows.len(), 1, "only the sword names a battle action");
+    assert_eq!(menu.rows[0].0.as_slice(), "cautery sword".as_bytes());
+    assert!(menu.rows[0].1, "action 369 is modelled by the kernel");
+    // Reach 3 is a single chosen target: the command settles and the round resolves.
+    fight.step(confirm(), &mut world);
+    assert!(
+        fight.last_events().iter().any(|event| matches!(
+            event,
+            Event::ItemUsed {
+                who: Who::Party(0),
+                action: 369
+            }
+        )),
+        "the worn sword did not report its use"
+    );
+    assert_eq!(
+        fight.party().members[0].equipment.weapon,
+        Some(20010),
+        "a worn item is never spent"
+    );
+    assert_eq!(fight.party().members[0].equipment.torso, Some(13007));
+    assert_eq!(fight.party().members[0].held_items, [None; 8]);
+}
+
+/// A worn record without a battle action (the record's `+0x16` is 252) has no row: the
+/// original appends every worn entry, but confirming one whose action the battle's table lacks
+/// refuses it (`func_ov000_02171ffc`), so the app lists only the rows it can use, as it already
+/// does for held items. The new-game equipment (copper sword, celestial costume, stockings,
+/// shoes) all carry 252.
+#[test]
+fn a_worn_item_without_a_battle_action_is_not_listed() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    let mut party = level_one_party(&data);
+    party.members[0].held_items[0] = Some(22000);
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 18);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    for _ in 0..4 {
+        fight.step(down, &mut world);
+    }
+    fight.step(confirm(), &mut world);
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(menu.rows.len(), 1, "the worn records name no battle action");
+    assert_eq!(menu.rows[0].0.as_slice(), "medicinal herb".as_bytes());
+}
+
 /// Battle 26's monsters hold the Flee way: a monster that flees says so and leaves with no
 /// reward (`docs/re/battle.md`, "Flee `0xE1`"). Seed 7: the slime and the cruelcumber that
 /// have not fallen leave, the battle is won and pays only for the slime that was beaten.
