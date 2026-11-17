@@ -687,8 +687,8 @@ powershell -ExecutionPolicy Bypass -File scripts/parity.ps1
   engine first: a spell or an item whose action `validate` refuses is greyed.
 - Not played: abilities, Examine, Misc., the guard's effect on who monsters pick, party
   members beyond the hero on the scene, the full action-script camera/effects interpreter
-  (the opening's wide shot stays), fanfares and battle sound effects. Using worn equipment
-  from Items is not offered. Lunge interpolation/return timing and the window grouping
+  (the opening's wide shot stays), fanfares and battle sound effects. Worn equipment with a use
+  effect is offered in Items and never spent (`0b5ceda`). Lunge interpolation/return timing and the window grouping
   remain [hypothesis]; playing the ROM motions does not certify the full presentation.
 - Held-item evidence (`j4-battle-held-items`): offscreen rasterization of the real UI quads,
   ROM atlas and font, not a native-window or browser interaction:

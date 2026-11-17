@@ -44,6 +44,7 @@ Parity 2/2 with the party fields in the checkpoint. Fixed 60 Hz loop; hero, fiel
 | `j4-battle-worn-items` / `0b5ceda` | Worn equipment with a use effect is offered in the battle Items menu, never spent | 5/5, route byte-identical |
 | `j4-screens-original` / `5ecb58e` | Opt-in `--screens original` (Web `?screens=`/"Field" select); default `port`, `M01` pixel-identical | 5/5 |
 | `j4-field-menu-rules` / `fcd135a` | Field items spent only on a change, vocation-masked equipment refused, Benediction unequips cursed pieces, church coffin line read | 5/5, route byte-identical |
+| `j4-enhanced-mode` / `8189bf9` | `wide` → **`enhanced`**, now the default layout; ten effects individually switchable (`--fx`/`--no-fx`, Web checkboxes, `?fx=`/`?nofx=`); experimental `enhanced-reactive`; HUD shows the whole party; `--layout stacked` pixel-identical | 5/5 |
 
 The route's acceptance run on `main` (`ef56959`): `build/evidence/j4-route-accept/accept-2750.out`
 (`9f979a299fc4`), 972 checkpoints; trajectory and the Hexagoon's five attempts in
@@ -78,9 +79,7 @@ Evidence (local, `build/evidence/j4-web-pilot/`): console log `a566bf824b31`, ch
 
 ## Active work and next steps
 
-In flight: `j4-enhanced-mode` (user request: `wide` becomes `enhanced` and the default layout, every graphics
-option switchable, experimental `enhanced-reactive`, basic HUD with the whole party). Pending decision after
-the user's hand test: make `--screens original` the default. Then: the map screen and party strips on the
+Nothing is unmerged. Pending decision after the user's hand test: make `--screens original` the default. Then: the map screen and party strips on the
 top screen (`re/bottom-screen.md` steps 2-3), more original references beyond 1.1.2 (only two, both in the
 prologue), the save-carried revival map, trigger action 180, `ME_009`, docs consistency. Dev environment:
 `dev`/`test` profiles keep line tables only (integrate target 3.2 GB against 4.7 GB before).
