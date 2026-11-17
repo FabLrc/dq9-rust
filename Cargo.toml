@@ -50,3 +50,8 @@ opt-level = 3
 [profile.test]
 # Real-ROM tests walk ~270k strings and 53k archive members; unoptimized they take minutes.
 opt-level = 2
+debug = "line-tables-only"
+
+[profile.dev]
+# Line tables are enough for backtraces; full DWARF made each per-worktree target ~5 GB.
+debug = "line-tables-only"
