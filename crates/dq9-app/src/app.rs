@@ -24,7 +24,9 @@ use dq9_core::state::{DayClock, GameState, TimeOfDay};
 use dq9_core::trigger::{Raw, Request, State};
 use dq9_core::{CollisionWorld, Hero, Input};
 use dq9_formats::hero::HeroLook;
-use dq9_render::{AnimatedScene, Camera, CameraInput, CameraMode, Gait, Panel, Renderer};
+use dq9_render::{
+    AnimatedScene, Camera, CameraInput, CameraMode, EnhancedOptions, Gait, Panel, Renderer,
+};
 use glam::{Vec2, Vec3};
 use web_time::Instant;
 use winit::application::ApplicationHandler;
@@ -170,6 +172,9 @@ pub enum UserEvent {
     /// Layout picked in the page.
     #[cfg(target_arch = "wasm32")]
     Layout(Layout),
+    /// Enhanced effects picked in the page's checkboxes (also set from `?fx=`/`?nofx=`).
+    #[cfg(target_arch = "wasm32")]
+    Fx(EnhancedOptions),
     /// Field screen assignment picked in the page (`--screens`).
     #[cfg(target_arch = "wasm32")]
     Screens(ScreenMode),
@@ -385,6 +390,10 @@ pub struct App {
     /// The lighting script of the loaded map (`None` without one).
     lighting_info: Option<dq9_formats::lighting::LightingInfo>,
     camera: Camera,
+    /// The enhanced presentation's switches (`--fx`/`--no-fx`, the page's checkboxes): every
+    /// effect of the 16:9 and reactive layouts, all on by default. Not in [`Options`] because
+    /// the headless drivers never draw a frame.
+    fx: EnhancedOptions,
     /// The game's camera turn (`L`/`R`) and the yaw it is measured from: the one the map was
     /// entered with.
     field_camera: FieldCamera,
@@ -489,6 +498,7 @@ impl App {
             environment: dq9_render::Environment::default(),
             lighting_info: None,
             camera: Camera::default(),
+            fx: EnhancedOptions::ALL,
             field_camera: FieldCamera::default(),
             camera_home: 0.0,
             clock_ms: 0.0,
@@ -1011,12 +1021,34 @@ impl App {
             &gpu.queue,
             gpu.config.format,
             scene,
-            self.options.layout == Layout::Wide,
+            self.enhanced(),
         ));
         if let Some(renderer) = &mut self.renderer {
+            renderer.set_reactive(self.options.layout.is_reactive());
             renderer.environment = environment;
             renderer.environment.cover =
                 (self.battle_cover > 0.0).then_some([0.0, 0.0, 0.0, self.battle_cover]);
+        }
+    }
+
+    /// The enhanced presentation's switches, when the layout shows its single field.
+    fn enhanced(&self) -> Option<EnhancedOptions> {
+        self.options.layout.fills_window().then_some(self.fx)
+    }
+
+    /// Switches effects of the enhanced presentation (`--fx`/`--no-fx`, the page's
+    /// checkboxes). Only mipmaps need new textures: the other effects are read by the post
+    /// pass or the frame every time it is drawn.
+    pub fn set_fx(&mut self, fx: EnhancedOptions) {
+        let mipmaps = fx.trilinear != self.fx.trilinear;
+        self.fx = fx;
+        if mipmaps {
+            self.upload();
+            return;
+        }
+        let enhanced = self.enhanced();
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_enhanced(enhanced);
         }
     }
 
@@ -1051,16 +1083,19 @@ impl App {
         self.load(&id, true, None, None);
     }
 
-    /// Changes the presentation; entering or leaving `wide` rebuilds the renderer because the
-    /// cinematic mode changes texture filtering and adds the post pass.
+    /// Changes the presentation; entering or leaving the enhanced layouts rebuilds the
+    /// renderer because the enhanced mode changes texture filtering and adds the post pass.
     fn set_layout(&mut self, layout: Layout) {
         if layout == self.options.layout {
             return;
         }
-        let rebuild = layout.is_wide() != self.options.layout.is_wide();
+        let rebuild = layout.fills_window() != self.options.layout.fills_window();
         self.options.layout = layout;
         if rebuild {
             self.upload();
+        }
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_reactive(layout.is_reactive());
         }
     }
 
@@ -1986,35 +2021,42 @@ impl App {
         if let Some(overlay) = screens.overlay_for(mode, swapped) {
             panel.draw(&mut encoder, &view, overlay);
         }
-        if messages {
-            if self.options.layout.is_wide() {
-                if let Some((entry, label)) = &self.current {
-                    let info = HudInfo {
-                        title: label,
-                        code: &entry.code,
-                        time: time_label(self.day.phase()),
-                        party: Some(&self.party),
-                    };
-                    self.talk.draw_hud(
-                        &gpu.device,
-                        &gpu.queue,
-                        gpu.config.format,
-                        &mut encoder,
-                        &view,
-                        field,
-                        &info,
-                    );
-                }
-            } else {
-                self.talk.draw(
+        if messages && self.options.layout.fills_window() {
+            if let Some((entry, label)) = &self.current {
+                let info = HudInfo {
+                    title: label,
+                    code: &entry.code,
+                    time: time_label(self.day.phase()),
+                    party: Some(&self.party),
+                    glass: self.fx.glass,
+                };
+                // The 16:9 layout keeps its 960 × 540 canvas; the reactive one lays the
+                // interface out over the whole window, at the window's own aspect.
+                let canvas = if self.options.layout.is_reactive() {
+                    crate::hud::Canvas::for_window(field.width, field.height)
+                } else {
+                    crate::hud::Canvas::ENHANCED
+                };
+                self.talk.draw_hud(
                     &gpu.device,
                     &gpu.queue,
                     gpu.config.format,
                     &mut encoder,
                     &view,
                     field,
+                    canvas,
+                    &info,
                 );
             }
+        } else if messages {
+            self.talk.draw(
+                &gpu.device,
+                &gpu.queue,
+                gpu.config.format,
+                &mut encoder,
+                &view,
+                field,
+            );
         }
         if messages
             && self.services.is_open()
@@ -2468,6 +2510,8 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Time(time) => self.set_time(lighting::phase(time)),
             #[cfg(target_arch = "wasm32")]
             UserEvent::Layout(layout) => self.set_layout(layout),
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::Fx(fx) => self.set_fx(fx),
             #[cfg(target_arch = "wasm32")]
             UserEvent::Screens(screens) => self.set_screens(screens),
             #[cfg(target_arch = "wasm32")]

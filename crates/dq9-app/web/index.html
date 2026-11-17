@@ -12,6 +12,8 @@
     .intro summary { cursor: pointer; }
     .intro p { margin: 6px 0; max-width: 85ch; }
     #status { opacity: 0.8; overflow-wrap: anywhere; }
+    #fx { display: flex; gap: 10px; flex-wrap: wrap; flex-basis: 100%; font-size: 12px; }
+    #fx label { display: inline-flex; gap: 3px; align-items: center; }
     #status[data-kind="error"] { color: #ff8a80; opacity: 1; }
     #session { flex-basis: 100%; font-family: monospace; color: #9ccc65; overflow-wrap: anywhere; }
     main { flex: 1; min-height: 0; position: relative; }
@@ -42,11 +44,15 @@
         camera/effects and companions are incomplete.
         Recent browser with WebGPU or WebGL 2 required; computer and keyboard recommended.
         No ROM is provided.</p>
-      <p><strong>Graphics tech demo:</strong> pick "wide 16:9" (or open
-        <code>?layout=wide</code>) for a single widescreen field with the cinematic renderer:
-        mipmapped textures, bloom, screen-space contact shadows, filmic tonemapping, colour
-        grading, vignette and a 16:9 interface. "stacked", "side" and "top" keep the faithful
-        DS presentation.</p>
+      <p><strong>Graphics:</strong> "Enhanced" is the default layout (also
+        <code>?layout=enhanced</code>): a single widescreen field with mipmapped textures,
+        bloom, screen-space contact shadows, filmic tonemapping, colour grading, a vignette,
+        dithering, the single-pixel edge accent and a 16:9 interface showing the whole party.
+        Every effect has its own checkbox above (or <code>?fx=</code> / <code>?nofx=</code>,
+        e.g. <code>?nofx=bloom,vignette</code>); with every effect off the field keeps the
+        DS look. "Enhanced (reactive, experimental)" (<code>?layout=enhanced-reactive</code>)
+        fills any window, portrait to ultra-wide, without bars. "stacked", "side" and "top"
+        keep the faithful DS presentation.</p>
       <p><strong>Field screens:</strong> the original draws the field's 3D view and its
         message window on the bottom (touch) screen and its map screen on the top one; this
         port draws them on the top screen by default. "3D at the bottom" (or
@@ -61,9 +67,24 @@
       <option value="2">day</option><option value="3">evening</option>
     </select></label>
     <label>Screens: <select id="layout" disabled>
-      <option value="stacked">stacked</option><option value="side">side by side</option>
-      <option value="top">top only</option><option value="wide">wide 16:9</option>
+      <option value="enhanced">Enhanced</option>
+      <option value="enhanced-reactive">Enhanced (reactive, experimental)</option>
+      <option value="stacked">stacked</option>
+      <option value="side">side by side</option>
+      <option value="top">top only</option>
     </select></label>
+    <div id="fx" class="fx" role="group" aria-label="Effects">
+      <label><input type="checkbox" data-fx="trilinear" checked disabled> mipmaps</label>
+      <label><input type="checkbox" data-fx="fxaa" checked disabled> FXAA</label>
+      <label><input type="checkbox" data-fx="contact-shadows" checked disabled> contact shadows</label>
+      <label><input type="checkbox" data-fx="bloom" checked disabled> bloom</label>
+      <label><input type="checkbox" data-fx="tonemapping" checked disabled> tonemapping</label>
+      <label><input type="checkbox" data-fx="grading" checked disabled> grading</label>
+      <label><input type="checkbox" data-fx="vignette" checked disabled> vignette</label>
+      <label><input type="checkbox" data-fx="dithering" checked disabled> dithering</label>
+      <label><input type="checkbox" data-fx="edge-accent" checked disabled> edge accent</label>
+      <label><input type="checkbox" data-fx="glass" checked disabled> glass panels</label>
+    </div>
     <label>Field: <select id="screens" disabled>
       <option value="port">3D on top (port)</option>
       <option value="original">3D at the bottom (original)</option>

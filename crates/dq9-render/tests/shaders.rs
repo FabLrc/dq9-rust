@@ -25,3 +25,19 @@ fn every_shader_parses_and_validates() {
             .unwrap_or_else(|e| panic!("{name}.wgsl: {e:?}"));
     }
 }
+
+/// The post pass switches its effects by bits of `post.features.x`: the shader's constants and
+/// the Rust mask (`EnhancedOptions::post_mask`) are two representations of the same contract,
+/// so a bit moved on one side must fail here.
+#[test]
+fn the_post_shader_reads_the_option_mask_bits() {
+    let source = include_str!("../src/post.wgsl");
+    for (name, bit) in dq9_render::PostBits::WGSL_NAMES {
+        let declaration = format!("const {name}: u32 = {}u;", bit.0);
+        assert!(
+            source.contains(&declaration),
+            "post.wgsl does not declare `{declaration}`"
+        );
+    }
+    assert!(source.contains("post.features.x"), "the mask uniform");
+}

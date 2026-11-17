@@ -11,6 +11,7 @@
 
 pub mod animation;
 pub mod camera;
+pub mod enhanced;
 mod gpu;
 mod hero;
 pub mod lighting;
@@ -23,6 +24,7 @@ pub mod ui;
 
 pub use animation::AnimatedScene;
 pub use camera::{Camera, CameraInput, CameraMode};
+pub use enhanced::{EnhancedOptions, PostBits};
 pub use hero::{Gait, RUN_SPEED};
 pub use lighting::Environment;
 pub use panel::Panel;

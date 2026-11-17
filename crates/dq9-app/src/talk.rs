@@ -783,8 +783,8 @@ impl Talk {
         ui.draw(device, queue, encoder, target, region, &quads);
     }
 
-    /// Draws the wide 16:9 interface: the HUD ([`crate::hud`]) and the message window scaled
-    /// into the virtual 960×540 canvas.
+    /// Draws the enhanced interface: the HUD ([`crate::hud`]) and the message window laid out
+    /// in `canvas` (960×540 for the 16:9 layout, the window's aspect for the reactive one).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_hud(
         &mut self,
@@ -794,6 +794,7 @@ impl Talk {
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         region: Viewport,
+        canvas: crate::hud::Canvas,
         info: &crate::hud::HudInfo<'_>,
     ) {
         let quads = {
@@ -808,17 +809,12 @@ impl Talk {
                     return;
                 }
             };
-            crate::hud::frame(
-                &assets.atlas,
-                &font,
-                info,
-                &dialogue,
-                if self.frameless || self.centered_caption {
-                    crate::hud::DialogueLayout::CENTER
-                } else {
-                    crate::hud::DialogueLayout::BOTTOM
-                },
-            )
+            let layout = if self.frameless || self.centered_caption {
+                crate::hud::DialogueLayout::center(canvas)
+            } else {
+                crate::hud::DialogueLayout::bottom(canvas)
+            };
+            crate::hud::frame(&assets.atlas, &font, info, &dialogue, layout, canvas)
         };
         if self.gpu.as_ref().is_none_or(|(f, _)| *f != format) {
             let Some(assets) = &self.assets else {
@@ -829,14 +825,13 @@ impl Talk {
         let Some((_, ui)) = &mut self.gpu else {
             return;
         };
-        let (width, height) = crate::hud::CANVAS;
         ui.draw_in(
             device,
             queue,
             encoder,
             target,
             region,
-            (width as f32, height as f32),
+            (canvas.width as f32, canvas.height as f32),
             &quads,
         );
     }

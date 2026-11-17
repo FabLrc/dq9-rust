@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 use dq9_core::state::DayClock;
 use dq9_core::{Hero, Input};
-use dq9_render::{Camera, Environment, Gait, Panel, Renderer};
+use dq9_render::{Camera, EnhancedOptions, Environment, Gait, Panel, Renderer};
 use glam::Vec3;
 use winit::event_loop::EventLoop;
 
@@ -60,10 +60,19 @@ struct Cli {
     /// No music (and no sound device is opened); `M` in the window unmutes.
     #[arg(long)]
     mute: bool,
-    /// Which screens are shown: `stacked` (default), `side`, `top` or `wide` (one 16:9 field
-    /// with the cinematic renderer and HUD, `screens.rs`).
-    #[arg(long, default_value = "stacked", value_parser = Layout::parse)]
+    /// Which screens are shown: `enhanced` (default, one 16:9 field with the enhanced
+    /// renderer and HUD), `enhanced-reactive` (the same field filling the window, any aspect,
+    /// experimental), `stacked`, `side` or `top` (`screens.rs`).
+    #[arg(long, default_value = "enhanced", value_parser = Layout::parse)]
     layout: Layout,
+    /// Effects of the enhanced layouts to switch on, comma-separated: `trilinear`, `fxaa`,
+    /// `contact-shadows`, `bloom`, `tonemapping`, `grading`, `vignette`, `dithering`,
+    /// `edge-accent`, `glass`, or `all` / `none`. All are on by default.
+    #[arg(long, value_name = "LIST")]
+    fx: Option<String>,
+    /// Effects of the enhanced layouts to switch off, same names as `--fx` (applied after it).
+    #[arg(long, value_name = "LIST")]
+    no_fx: Option<String>,
     /// Where the field's 3D view and its message window are drawn: `port` (default, top screen,
     /// the port's own assignment) or `original` (bottom screen, as the field runs with
     /// `POWCNT1` bit 15 set, `docs/re/bottom-screen.md`); the other screen keeps the
@@ -237,6 +246,18 @@ impl Cli {
             Some(event) => Ok(Some(event)),
             None => bail!("no opening scene at story stage {major}.{minor}"),
         }
+    }
+
+    /// The enhanced presentation's switches: `--fx` then `--no-fx` (the off list wins).
+    fn enhanced(&self) -> Result<EnhancedOptions> {
+        let mut fx = EnhancedOptions::ALL;
+        if let Some(list) = &self.fx {
+            fx.apply_list(list, true).map_err(anyhow::Error::msg)?;
+        }
+        if let Some(list) = &self.no_fx {
+            fx.apply_list(list, false).map_err(anyhow::Error::msg)?;
+        }
+        Ok(fx)
     }
 
     /// The battle the options ask for: a set battle (`--battle N`), or a stage and its
@@ -495,6 +516,7 @@ pub fn main() -> Result<()> {
         None => App::new_headless(options, Some(rom)),
     };
     app.set_screens(cli.screens);
+    app.set_fx(cli.enhanced()?);
     if let Some(path) = &cli.replay {
         let frames = read_inputs(path)?;
         for (bits, confirm) in &frames {
@@ -612,7 +634,7 @@ fn prepare(cli: &Cli, rom: &[u8], save: Option<&[u8]>) -> Result<Prepared> {
     }
     let mut talk = Talk::default();
     talk.set_identity(start.identity);
-    if cli.layout.is_wide() || cli.input.is_some() {
+    if cli.layout.fills_window() || cli.input.is_some() {
         talk.set_rom(rom);
     }
     if let Some(input) = &cli.input {
@@ -772,9 +794,17 @@ fn write_png(
         event_environment,
         ..
     } = prepared;
-    let wide = cli.layout.is_wide();
+    let enhanced = cli.layout.fills_window();
+    let fx = cli.enhanced()?;
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let mut renderer = Renderer::new_with(device, queue, format, &loaded.runtime.scene, wide);
+    let mut renderer = Renderer::new_with(
+        device,
+        queue,
+        format,
+        &loaded.runtime.scene,
+        enhanced.then_some(fx),
+    );
+    renderer.set_reactive(cli.layout.is_reactive());
     renderer.environment = event_environment
         .take()
         .unwrap_or_else(|| lighting::environment(loaded.lighting.as_ref(), *clock));
@@ -790,14 +820,20 @@ fn write_png(
         code: &loaded.entry.code,
         time: crate::hud::time_label(clock.phase()),
         party: Some(party),
+        glass: fx.glass,
+    };
+    let canvas = if cli.layout.is_reactive() {
+        crate::hud::Canvas::for_window(field.width, field.height)
+    } else {
+        crate::hud::Canvas::ENHANCED
     };
     let rgba = renderer
         .render_to_rgba_with(device, queue, (w, h), field, camera, |encoder, view| {
             if let Some(overlay) = shown.overlay_for(cli.screens, *swapped) {
                 panel.draw(encoder, view, overlay);
             }
-            if wide {
-                talk.draw_hud(device, queue, format, encoder, view, field, &info);
+            if enhanced {
+                talk.draw_hud(device, queue, format, encoder, view, field, canvas, &info);
             } else {
                 talk.draw(device, queue, format, encoder, view, field);
             }
@@ -968,8 +1004,12 @@ fn battle_screenshot(
         &queue,
         format,
         &scene.runtime().scene,
-        cli.layout.is_wide(),
+        cli.layout
+            .fills_window()
+            .then(|| cli.enhanced())
+            .transpose()?,
     );
+    renderer.set_reactive(cli.layout.is_reactive());
     renderer.environment = scene.environment.clone();
     if let Some(fog) = cli.fog {
         renderer.environment.fog = Some(fog);
@@ -998,6 +1038,11 @@ fn battle_screenshot(
         )
         .context("reading the frame back")?;
     save_png(out, cli.size, &rgba)?;
+    let fovy = if cli.layout.is_reactive() {
+        camera.reactive_fovy(field.width as f32 / field.height.max(1) as f32)
+    } else {
+        camera.fovy
+    };
     println!(
         "camera: eye {:.2},{:.2},{:.2} target {:.2},{:.2},{:.2} half-angle {:.1}°",
         camera.eye().x,
@@ -1006,7 +1051,7 @@ fn battle_screenshot(
         camera.target.x,
         camera.target.y,
         camera.target.z,
-        camera.fovy.to_degrees() * 0.5
+        fovy.to_degrees() * 0.5
     );
     println!("wrote {}", out.display());
     Ok(())

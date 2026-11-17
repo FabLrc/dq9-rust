@@ -10,6 +10,7 @@ use winit::window::WindowAttributes;
 
 use crate::app::{App, Options, SessionSpec, UserEvent};
 use crate::screens::{Layout, ScreenMode};
+use dq9_render::EnhancedOptions;
 
 fn document() -> Option<web_sys::Document> {
     web_sys::window()?.document()
@@ -92,7 +93,7 @@ pub fn status(message: &str) {
             match notice {
                 Notice::Rom => set_disabled("newgame", true),
                 Notice::Gpu | Notice::Window => {
-                    for id in ["rom", "save", "time", "layout", "screens", "newgame"] {
+                    for id in ["rom", "save", "time", "layout", "screens", "fx", "newgame"] {
                         set_disabled(id, true);
                     }
                 }
@@ -155,8 +156,11 @@ pub fn canvas_size() -> Option<(u32, u32)> {
 }
 
 /// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
-/// `layout` (`stacked`, `side`, `top` or `wide`), `screens` (`port` or `original`: where the
-/// field and its message window are drawn), `mute`, `battle` (an `eventbattle.bin` index),
+/// `layout` (`enhanced`, `enhanced-reactive`, `stacked`, `side` or `top`), `fx`/`nofx`
+/// (comma-separated effects to switch on/off: `trilinear`, `fxaa`, `contact-shadows`,
+/// `bloom`, `tonemapping`, `grading`, `vignette`, `dithering`, `edge-accent`, `glass`, or
+/// `all`/`none`), `screens` (`port` or `original`: where
+/// the field and its message window are drawn), `mute`, `battle` (an `eventbattle.bin` index),
 /// `battle-stage` and `monsters` (`1x3`), `seed` (the battle generators' seed) from the page's
 /// query string. The pilot session adds `pilot` (the autopilot plays the new game), `route`
 /// (an event number: the route mode of `--route`, which implies `pilot` and `fight`), `fight`
@@ -164,7 +168,8 @@ pub fn canvas_size() -> Option<(u32, u32)> {
 /// animation frame; real time without it), `budget` (milliseconds of steps per frame, 40 by
 /// default), `render=0` (no frame is drawn) and `battles=show` (battles are presented instead
 /// of settled in the step that starts them).
-fn options() -> (Options, Option<SessionSpec>, ScreenMode) {
+fn options() -> (Options, Option<SessionSpec>, ScreenMode, EnhancedOptions) {
+    let mut fx = EnhancedOptions::ALL;
     let mut options = Options {
         map: None,
         save: None,
@@ -196,6 +201,7 @@ fn options() -> (Options, Option<SessionSpec>, ScreenMode) {
     };
     let mut pilot = false;
     let mut screens = ScreenMode::default();
+    let (mut fx_on, mut fx_off) = (String::new(), String::new());
     let search = web_sys::window()
         .and_then(|w| w.location().search().ok())
         .unwrap_or_default();
@@ -207,6 +213,8 @@ fn options() -> (Options, Option<SessionSpec>, ScreenMode) {
             "clock" => options.clock = value.parse().ok(),
             "mute" => options.mute = value != "0",
             "layout" => options.layout = Layout::parse(value).unwrap_or(options.layout),
+            "fx" => fx_on = value.to_owned(),
+            "nofx" => fx_off = value.to_owned(),
             "screens" => screens = ScreenMode::parse(value).unwrap_or(screens),
             "chapter" => {
                 if let Ok(n) = value.parse() {
@@ -266,9 +274,16 @@ fn options() -> (Options, Option<SessionSpec>, ScreenMode) {
             _ => {}
         }
     }
+    // Same order as `--fx` then `--no-fx`: the off list wins whatever the query order.
+    if let Err(e) = fx.apply_list(&fx_on, true) {
+        error(&format!("fx=: {e}"));
+    }
+    if let Err(e) = fx.apply_list(&fx_off, false) {
+        error(&format!("nofx=: {e}"));
+    }
     // The route mode needs the engine to play the battles, like `--route` needs `--fight`.
     options.play.fight |= session.route.is_some();
-    (options, pilot.then_some(session), screens)
+    (options, pilot.then_some(session), screens, fx)
 }
 
 /// `number[xcount]` comma-separated of the page's `monsters` parameter.
@@ -439,6 +454,60 @@ fn watch_layout_select(proxy: EventLoopProxy<UserEvent>, initial: Layout) {
     on_change.forget();
 }
 
+/// Sends the effects picked in the page's `#fx` checkboxes: every `input[data-fx]` of the
+/// container is one switch, and `?fx=`/`?nofx=` set their initial state.
+fn watch_fx_checkboxes(proxy: EventLoopProxy<UserEvent>, initial: EnhancedOptions) {
+    let Some(container) = document().and_then(|d| d.get_element_by_id("fx")) else {
+        error("The page has no <fieldset id=fx> control.");
+        return;
+    };
+    // The initial state of each switch from the query string (all on by default).
+    if let Ok(list) = container.query_selector_all("input[data-fx]") {
+        for i in 0..list.length() {
+            let Some(input) = list
+                .get(i)
+                .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+            else {
+                continue;
+            };
+            if let Some(name) = input.get_attribute("data-fx")
+                && let Some(on) = initial.is_on(&name)
+            {
+                input.set_checked(on);
+            }
+        }
+    }
+    let target = container.clone();
+    let on_change = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+        let mut fx = EnhancedOptions::NONE;
+        if let Ok(list) = target.query_selector_all("input[data-fx]") {
+            for i in 0..list.length() {
+                let Some(input) = list
+                    .get(i)
+                    .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+                else {
+                    continue;
+                };
+                let Some(name) = input.get_attribute("data-fx") else {
+                    continue;
+                };
+                if input.checked() {
+                    let _ = fx.set(&name, true);
+                }
+            }
+        }
+        let _ = proxy.send_event(UserEvent::Fx(fx));
+        focus_canvas();
+    });
+    if container
+        .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+        .is_err()
+    {
+        error("Cannot watch the effect checkboxes.");
+    }
+    on_change.forget();
+}
+
 /// Sends the field screen assignment picked in the page's `<select id=screens>` (also set from
 /// `?screens=`).
 fn watch_screens_select(proxy: EventLoopProxy<UserEvent>, initial: ScreenMode) {
@@ -520,9 +589,10 @@ pub fn main() {
     watch_rom_input(proxy.clone());
     watch_save_input(proxy.clone());
     watch_new_game_button(proxy.clone());
-    let (options, session, screens) = options();
+    let (options, session, screens, fx) = options();
     watch_time_select(proxy.clone(), options.time.unwrap_or(0));
     watch_layout_select(proxy.clone(), options.layout);
+    watch_fx_checkboxes(proxy.clone(), fx);
     watch_screens_select(proxy.clone(), screens);
     release_keys_on_blur();
     announce(
@@ -531,6 +601,7 @@ pub fn main() {
     );
     let mut app = App::new(proxy, options, None);
     app.set_screens(screens);
+    app.set_fx(fx);
     if let Some(spec) = session {
         app.set_session(spec);
     }

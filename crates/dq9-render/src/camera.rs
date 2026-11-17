@@ -14,6 +14,9 @@ pub const DS_NEAR: f32 = 1.0;
 pub const DS_FAR: f32 = 400.0;
 /// Aspect ratio of one DS screen.
 pub const DS_ASPECT: f32 = 256.0 / 192.0;
+/// 16:9, the aspect the enhanced presentation is composed for and the one the reactive
+/// presentation holds its horizontal half-angle at.
+pub const WIDE_ASPECT: f32 = 16.0 / 9.0;
 
 /// How movement input moves the camera.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +154,28 @@ impl Camera {
         self.projection(aspect) * self.view()
     }
 
+    /// The vertical field of view of the reactive presentation at `aspect`: the game's own 30°
+    /// (15° half-angle) at 16:9 and wider, so an ultra-wide window widens the horizontal view;
+    /// below 16:9 the horizontal half-angle is held at its 16:9 value and the vertical view
+    /// widens instead (`tan(v/2) = tan(15°) × 16/9 / aspect`), so a portrait window adds field
+    /// above and below rather than cropping the sides.
+    pub fn reactive_fovy(&self, aspect: f32) -> f32 {
+        let aspect = aspect.max(1e-3);
+        if aspect >= WIDE_ASPECT {
+            return self.fovy;
+        }
+        let half = (self.fovy * 0.5).tan() * WIDE_ASPECT / aspect;
+        2.0 * half.atan()
+    }
+
+    /// [`Camera::view_proj`] with the enhanced-reactive presentation's field of view
+    /// ([`Camera::reactive_fovy`]).
+    pub fn reactive_view_proj(&self, aspect: f32) -> Mat4 {
+        let fovy = self.reactive_fovy(aspect);
+        glam::camera::rh::proj::directx::perspective(fovy, aspect, self.near, self.far)
+            * self.view()
+    }
+
     /// Advances one fixed step of `dt` seconds.
     pub fn step(&mut self, input: &CameraInput, dt: f32) {
         let limit = std::f32::consts::FRAC_PI_2 - 0.01;
@@ -235,5 +260,34 @@ mod tests {
         assert_eq!(letterbox(256, 192, DS_ASPECT), (0, 0, 256, 192));
         assert_eq!(letterbox(1000, 192, DS_ASPECT), (372, 0, 256, 192));
         assert_eq!(letterbox(256, 1000, DS_ASPECT), (0, 404, 256, 192));
+    }
+
+    #[test]
+    fn the_reactive_field_keeps_15_degrees_until_16_9_and_holds_the_horizontal_one_after() {
+        let camera = Camera::default();
+        // 16:9 and wider: the game's own vertical half-angle, the horizontal one widens.
+        for aspect in [WIDE_ASPECT, 21.0 / 9.0, 32.0 / 9.0] {
+            let fovy = camera.reactive_fovy(aspect);
+            assert!(
+                (fovy - DS_FOVY).abs() < 1e-6,
+                "aspect {aspect}: vertical half-angle {}°",
+                fovy.to_degrees() * 0.5
+            );
+        }
+        // Narrower than 16:9: the horizontal half-angle is the 16:9 one.
+        let wide = (DS_FOVY * 0.5).tan() * WIDE_ASPECT;
+        for aspect in [4.0 / 3.0, 1.0, 0.5, 0.2] {
+            let fovy = camera.reactive_fovy(aspect);
+            let horizontal = (fovy * 0.5).tan() * aspect;
+            assert!(
+                (horizontal - wide).abs() < 1e-5,
+                "aspect {aspect}: horizontal tan {horizontal} against {wide}"
+            );
+            assert!(fovy > DS_FOVY);
+        }
+        // The projection keeps the same clip-space convention as the DS one at 16:9.
+        let a = camera.view_proj(WIDE_ASPECT);
+        let b = camera.reactive_view_proj(WIDE_ASPECT);
+        assert!(a.abs_diff_eq(b, 1e-6));
     }
 }

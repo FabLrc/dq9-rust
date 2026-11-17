@@ -1,6 +1,9 @@
-//! Cinematic post-processing (wide 16:9 presentation): FXAA-lite, screen-space contact shadows,
+//! Cinematic post-processing (enhanced presentation): FXAA-lite, screen-space contact shadows,
 //! threshold bloom, filmic tonemapping, colour grading, vignette and dithering, in one fullscreen
-//! pass over the field rendered by [`crate::renderer::Renderer`].
+//! pass over the field rendered by [`crate::renderer::Renderer`]. Each effect is switched by a
+//! bit of [`crate::EnhancedOptions::post_mask`]; the scene texture may be smaller than the
+//! viewport (the reactive layout caps the render target), so the pass stretches it and scales
+//! its texel size and depth lookups.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -11,12 +14,14 @@ use crate::gpu::{fullscreen_pipeline, uniform_entry};
 struct PostUniform {
     /// x, y: scene size; z, w: their inverses.
     size: [f32; 4],
-    /// x, y: the scene's origin in the target; z, w: unused.
+    /// x, y: the viewport's origin in the target; z, w: its size.
     origin: [f32; 4],
     /// x: exposure, y: bloom, z: tonemap mix, w: vignette.
     params: [f32; 4],
     /// x: saturation, y: contrast, z: shadow tint, w: highlight warmth.
     grade: [f32; 4],
+    /// x: the post effects to apply ([`crate::PostBits`]); y, z, w: reserved.
+    features: [u32; 4],
 }
 
 /// GPU resources of the post pass.
@@ -104,6 +109,7 @@ impl Post {
         depth: &wgpu::TextureView,
         (width, height): (u32, u32),
         viewport: crate::Viewport,
+        mask: u32,
     ) {
         queue.write_buffer(
             &self.uniform,
@@ -115,9 +121,15 @@ impl Post {
                     1.0 / width.max(1) as f32,
                     1.0 / height.max(1) as f32,
                 ],
-                origin: [viewport.x as f32, viewport.y as f32, 0.0, 0.0],
+                origin: [
+                    viewport.x as f32,
+                    viewport.y as f32,
+                    viewport.width.max(1) as f32,
+                    viewport.height.max(1) as f32,
+                ],
                 params: [1.06, 0.38, 0.72, 0.30],
                 grade: [1.10, 1.04, 0.10, 0.08],
+                features: [mask, 0, 0, 0],
             }),
         );
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {

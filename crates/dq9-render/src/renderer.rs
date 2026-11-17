@@ -15,6 +15,7 @@ use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
+use crate::enhanced::EnhancedOptions;
 use crate::gpu::{fullscreen_pipeline, load_pass, uniform_entry};
 use crate::lighting::{EnvUniform, Environment, gradient};
 use crate::post::Post;
@@ -44,6 +45,24 @@ impl Viewport {
             height,
         }
     }
+}
+
+/// Largest side of the offscreen scene target. A high-DPI window can exceed an adapter's
+/// texture limit; the capped scene is stretched over the viewport by the post pass.
+pub const MAX_SCENE: u32 = 4096;
+
+/// The offscreen scene size of `viewport`: its own size, scaled down on the longest side to
+/// [`MAX_SCENE`] (the aspect is kept).
+pub fn scene_size(viewport: Viewport) -> (u32, u32) {
+    let long = viewport.width.max(viewport.height).max(1);
+    if long <= MAX_SCENE {
+        return (viewport.width.max(1), viewport.height.max(1));
+    }
+    let scale = MAX_SCENE as f32 / long as f32;
+    (
+        ((viewport.width as f32 * scale).round() as u32).max(1),
+        ((viewport.height as f32 * scale).round() as u32).max(1),
+    )
 }
 
 #[repr(C)]
@@ -131,9 +150,11 @@ struct SceneTarget {
 /// GPU resources of one scene.
 pub struct Renderer {
     color_format: wgpu::TextureFormat,
-    /// Linear/mipmapped textures and the post pass (wide 16:9 presentation); nearest filtering
-    /// and direct drawing otherwise.
-    cinematic: bool,
+    /// The enhanced presentation's switches: linear/mipmapped textures and the post pass when
+    /// `Some`; nearest filtering and direct drawing when `None` (the DS look).
+    enhanced: Option<EnhancedOptions>,
+    /// The enhanced-reactive layout: the camera's field of view follows the window's aspect.
+    reactive: bool,
     post: Post,
     scene_target: Option<SceneTarget>,
     shader: wgpu::ShaderModule,
@@ -497,17 +518,18 @@ impl Renderer {
         color_format: wgpu::TextureFormat,
         scene: &Scene,
     ) -> Self {
-        Self::new_with(device, queue, color_format, scene, false)
+        Self::new_with(device, queue, color_format, scene, None)
     }
 
-    /// Same as [`Renderer::new`]; `cinematic` adds mipmapped linear textures and the wide 16:9
-    /// post pass ([`Post`]).
+    /// Same as [`Renderer::new`]; `enhanced` adds the presentation's textures and post pass:
+    /// mipmapped linear samples with `trilinear`, and the post effects [`Post`] the options
+    /// switch on. `None` keeps the DS look.
     pub fn new_with(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         color_format: wgpu::TextureFormat,
         scene: &Scene,
-        cinematic: bool,
+        enhanced: Option<EnhancedOptions>,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dq9 map shader"),
@@ -593,7 +615,8 @@ impl Renderer {
         let (cover_buffer, cover_group, cover_pipeline) = cover_pipeline(device, color_format);
         let mut renderer = Self {
             color_format,
-            cinematic,
+            enhanced,
+            reactive: false,
             post: Post::new(device, color_format),
             scene_target: None,
             shader,
@@ -609,7 +632,7 @@ impl Renderer {
             textures: scene
                 .textures
                 .iter()
-                .map(|t| upload_texture(device, queue, t, cinematic))
+                .map(|t| upload_texture(device, queue, t, enhanced.is_some_and(|o| o.trilinear)))
                 .collect(),
             translucent_textures: scene.textures.iter().map(|t| t.translucent).collect(),
             white,
@@ -699,8 +722,26 @@ impl Renderer {
         renderer
     }
 
+    /// Changes the presentation's switches in place: the post mask is read every frame, and
+    /// whether the field is composed offscreen (some post effect) or drawn directly is decided
+    /// here. Mipmaps are uploaded with the renderer: `trilinear` needs a new [`Renderer`].
+    pub fn set_enhanced(&mut self, enhanced: Option<EnhancedOptions>) {
+        self.enhanced = enhanced;
+    }
+
+    /// The reactive presentation: the camera's field of view follows the window's aspect
+    /// ([`Camera::reactive_view_proj`]).
+    pub fn set_reactive(&mut self, reactive: bool) {
+        self.reactive = reactive;
+    }
+
+    /// Whether the field is composed by the post pass.
+    fn composed(&self) -> bool {
+        self.enhanced.is_some_and(|o| o.post_effects())
+    }
+
     fn sampler(&mut self, device: &wgpu::Device, wrap: [Wrap; 2]) -> wgpu::Sampler {
-        let linear = self.cinematic;
+        let linear = self.enhanced.is_some_and(|o| o.trilinear);
         self.samplers
             .entry((wrap, linear))
             .or_insert_with(|| {
@@ -1036,7 +1077,8 @@ impl Renderer {
         self.targets.as_ref().expect("targets were just created")
     }
 
-    /// The offscreen colour target of the cinematic pass, sized to the window.
+    /// The offscreen colour target of the enhanced pass, sized to the render resolution (the
+    /// viewport, capped to [`MAX_SCENE`]).
     fn scene_view(&mut self, device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
         if self
             .scene_target
@@ -1044,7 +1086,7 @@ impl Renderer {
             .is_none_or(|t| t.size != (width, height))
         {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("cinematic scene"),
+                label: Some("enhanced scene"),
                 size: wgpu::Extent3d {
                     width,
                     height,
@@ -1071,8 +1113,9 @@ impl Renderer {
     }
 
     /// Records the frame into `encoder`: clears `target` (of `width` × `height` pixels) and
-    /// draws the scene in `viewport` seen by `camera`. In cinematic mode a full-target viewport
-    /// is drawn into an offscreen texture and composed by [`Post`].
+    /// draws the scene in `viewport` seen by `camera`. In the enhanced presentation a full
+    /// viewport is drawn into an offscreen texture (at most [`MAX_SCENE`] on its longest side)
+    /// and composed by [`Post`]; with every post effect off the field is drawn directly.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -1083,7 +1126,11 @@ impl Renderer {
         camera: &Camera,
     ) {
         let aspect = viewport.width as f32 / viewport.height.max(1) as f32;
-        let view_proj = camera.view_proj(aspect);
+        let view_proj = if self.reactive {
+            camera.reactive_view_proj(aspect)
+        } else {
+            camera.view_proj(aspect)
+        };
         queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -1104,10 +1151,10 @@ impl Renderer {
             }),
         );
         // The post pass composes a scene rendered at the viewport's size into that viewport;
-        // a DS screen keeps drawing directly.
-        let cinematic = self.cinematic;
-        let (scene_width, scene_height) = if cinematic {
-            (viewport.width, viewport.height)
+        // a DS screen, or the enhanced one with every post effect off, keeps drawing directly.
+        let composed = self.composed();
+        let (scene_width, scene_height) = if composed {
+            scene_size(viewport)
         } else {
             (width, height)
         };
@@ -1115,9 +1162,9 @@ impl Renderer {
             let t = self.targets(device, scene_width, scene_height);
             (t.depth.clone(), t.id.clone(), t.depth_sampled.clone())
         };
-        let scene = cinematic.then(|| self.scene_view(device, scene_width, scene_height));
+        let scene = composed.then(|| self.scene_view(device, scene_width, scene_height));
         let drawn = scene.as_ref().unwrap_or(target);
-        let draw_viewport = if cinematic {
+        let draw_viewport = if composed {
             Viewport::full(scene_width, scene_height)
         } else {
             viewport
@@ -1227,9 +1274,10 @@ impl Renderer {
         }
         drop(pass);
         if let Some(color) = self.environment.edge {
-            // Edge marking of the 3D engine, one DS pixel wide; at the window's resolution the
-            // wide presentation keeps a single physical pixel so it stays an accent.
-            let step = if cinematic {
+            // Edge marking of the 3D engine, one DS pixel wide; the enhanced presentation's
+            // edge accent keeps a single physical pixel instead (and the DS width when the
+            // accent is off).
+            let step = if self.enhanced.is_some_and(|o| o.edge_accent) {
                 1.0
             } else {
                 self.edge_pixels.map_or(
@@ -1310,6 +1358,7 @@ impl Renderer {
                 &depth_sampled,
                 (scene_width, scene_height),
                 viewport,
+                self.enhanced.map_or(0, |o| o.post_mask()),
             );
         }
     }
@@ -1409,5 +1458,23 @@ impl Renderer {
         drop(data);
         buffer.unmap();
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_scene_target_is_capped_on_its_longest_side() {
+        assert_eq!(scene_size(Viewport::full(1920, 1080)), (1920, 1080));
+        let (w, h) = scene_size(Viewport::full(7680, 2160));
+        assert_eq!(w, MAX_SCENE);
+        assert!((h as f32 / w as f32 - 2160.0 / 7680.0).abs() < 0.001);
+        let (w, h) = scene_size(Viewport::full(1000, 8000));
+        assert_eq!(h, MAX_SCENE);
+        assert!((w as f32 / h as f32 - 0.125).abs() < 0.001);
+        // A tiny viewport is never zero: textures and depth targets need one pixel.
+        assert_eq!(scene_size(Viewport::full(0, 0)), (1, 1));
     }
 }
