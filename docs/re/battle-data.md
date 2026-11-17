@@ -229,8 +229,8 @@ rows, the unmodelled rows greyed — Dragon Slash first — and Gigaslash enable
 defeated.", damage 392, MP 552 → 537), with each run's log beside it. A four-member party
 plays the round only on the stage battle: `--battle 26 --save` stops on a limit of the
 engine, not of this wiring — a monster that remembers its attacker against several standing
-members is unmodelled (`Unsupported::TargetMemory`, `ai.rs`), which a lone hero never
-reaches.
+members was unmodelled when this was written (`Unsupported::TargetMemory`); the grudge
+weights are modelled since `4e0a0ed` (`docs/re/battle.md`).
 
 ## Equipment battle parameters — `itembtlprm.nat`
 

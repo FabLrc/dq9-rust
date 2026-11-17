@@ -118,7 +118,7 @@ outside the route.
 | S6 | The rusty sword, Hela's hammer and the oh-no bow miss one time in four. | none cited | absent | **not implemented** | none |
 | S7 | Some armour restores a flat 25 HP at the end of every turn, and does not stack. | none cited | absent (no end-of-turn effect) | **not implemented** | none |
 | S8 | Some armour returns a fifth of a blow half the time, reflects spells one time in four, or is cursed (a lost turn one time in four). | none cited | absent | **not implemented** | none |
-| S9 | A healing item is spent only if it did something (HP or MP restored, an ailment cured, an ally revived); attacking items are always spent; weapons used as items are never spent. | none cited | `crates/dq9-app/src/battle/fight.rs:935` spends any item whose record sets `+0x08` bit 19, whether or not it changed anything | **differs**: a medicinal herb used on an ally at full HP is kept in the original and spent by the app. The rule's address is not given (**[hypothesis]**, from the page only); it needs the item action's handler read (`ov_017::021d0164` neighbourhood) before a fix | none |
+| S9 | A healing item is spent only if it did something (HP or MP restored, an ailment cured, an ally revived); attacking items are always spent; weapons used as items are never spent. | none cited | `crates/dq9-app/src/battle/fight.rs:935` spends any item whose record sets `+0x08` bit 19, whether or not it changed anything | **differs, fixed in `2da4e51`** (rule read at ResolveAction `0x021ed724`..`0x021ed7e4`, no longer a hypothesis): a medicinal herb used on an ally at full HP is kept in the original and was spent by the app. The rule's address is not given (**[hypothesis]**, from the page only); it needs the item action's handler read (`ov_017::021d0164` neighbourhood) before a fix | none |
 | S10 | The prayer ring breaks one time in four each use. | none cited | absent | **n/a chapter 2** (the ring is not reachable) | none |
 | S11 | A book in a pocket grants an aptitude (an ability, a critical bonus, a tension retention, the Thief's Theory loot pass…). | none cited | absent; `party.rs:515` leaves `crit_book_bonus` at 0 | **not implemented** (v0.2 has no book) | none |
 | S12 | Items that inflict a status roll `0–99 < 90 × multiplier` (25 % for the sandstorm spear), never against metal. | none cited | absent (no item status path) | **not implemented** | none |
@@ -186,7 +186,7 @@ Each item names the work, the evidence and its confidence.
    (`func_0208538c` gate then `uRam021f4434`). Evidence: `ghidra-xp-share.txt`,
    `ghidra-xp-helpers.txt`. The chapter-2 pilot's XP totals were never compared with the original,
    so a real-ROM test should assert the share of a two-member party first. **Update 2026-11-17 (`j4-xp-wire`): refuted** — the counter counts command passes of every present slot, not turns alive; it is uniform for a party present from the start and cancels in the share.
-5. **Item spend rule** (`crates/dq9-app/src/battle/fight.rs:935`). Keep a healing item that healed
+5. **Item spend rule — done (`2da4e51`)** (`crates/dq9-app/src/battle/fight.rs:935`). Keep a healing item that healed
    nothing. The page gives no address: read the item action's handler before deciding, then
    assert with the app's battle test (a herb on an ally at full HP). **[hypothesis]** from the
    page alone until then.

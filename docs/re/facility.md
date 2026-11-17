@@ -426,8 +426,9 @@ frees its slot and lets the old piece in. Duplicates and the other slots keep th
 `dq9_core::battle::resolve_action` on the target (the range table, the healing cap, no MP
 cost for a herb), and the source is spent only when that action executed: one copy from the
 bag stack, or the chosen held slot when `+0x08` bit 19 says used up, followed by the battle's
-hole compaction (`func_0208386c`). A use that changes no HP still spends the item, as the
-battle's execution rule does; **[hypothesis]** the field handler behaves the same. Only field
+hole compaction (`func_0208386c`). In battle an item that changed nothing is kept (`2da4e51`, ResolveAction's
+applied counter); the field handler's rule was not read, so the field menu still spends it
+(**[unknown]**). Only field
 actions of kind 2 (heal) aimed at the party are offered; other tools are refused with a
 message.
 

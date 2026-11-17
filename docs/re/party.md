@@ -156,8 +156,9 @@ A party slot carries **eight** held item ids (`Save` `7578 + 18 i`, 8 × u16; RA
 (`Character::held_items`, `docs/re/party.md`'s `from_record`). They are the items the member
 carries into battle: the battle item command operates a held slot, not the bag (see
 [`battle.md`](battle.md) § "Defend, guard level and items"; the consumer is
-`func_ov017_021d0164`, which clears the slot behind a command descriptor with
-`func_0208386c`, EU `0x0208387c`). Consumption is the original's single compaction pass: the
+`func_020ddb48`, which clears the slot with `func_0208386c`, EU `0x0208387c`, only when
+ResolveAction's applied counter is at least 1; `func_ov017_021d0164` is an event-script native,
+not the consumer, see `battle.md`). Consumption is the original's single compaction pass: the
 chosen slot becomes `0xffff`, then each hole shifts one rank down, so duplicates of the same
 id keep their order and only the chosen copy goes. The field item use (`func_020ddb38`,
 EU `0x020ddb34`) reaches the same slots by index for categories 8–10.

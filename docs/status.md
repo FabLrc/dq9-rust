@@ -37,6 +37,9 @@ Parity 2/2 with the party fields in the checkpoint. Fixed 60 Hz loop; hero, fiel
 | `j4-wipeout-priest` / `615b24c` | `chur_messet.bin` voices; the priest's line 1082 after a wipe-out (silent at story major 1) | 5/5 |
 | `j4-xp-wire` / `3f8422e` | Battles award through `award_with` with the pass counter and the shoes bonus; route byte-identical before/after | 5/5 |
 | `j4-show-battles` / `2e580a1` | Route pilot's heal trip resumes the story (the `battles=show` stop was the pilot, not the game); shown route reaches 2750 natively at 4166.5 s | 5/5 |
+| `j4-web-show` / `ead8d8b` | Hosted-page runs (`-Url`): shown route reaches 2750 at 4166.5 s with 971 checkpoints of the native shown state; instant run at 3035.5 s | 5/5 |
+| `j4-grudge-enrage` / `4e0a0ed` | Grudge weights (+2/+1, 263/438 species), `TargetMemory` refusal removed; no chapter-2 fight enrages (Hexagoon kinds 0/0) | 5/5, route byte-identical |
+| `j4-item-spend` / `2da4e51` | An item whose effect changed nothing is kept (ResolveAction applied counter, `0x021ed724`); field handler rule unread | 5/5, route byte-identical |
 
 The route's acceptance run on `main` (`ef56959`): `build/evidence/j4-route-accept/accept-2750.out`
 (`9f979a299fc4`), 972 checkpoints; trajectory and the Hexagoon's five attempts in
@@ -57,7 +60,7 @@ and the win branch (event 15 → 2550 → 2555 → 2.5.1 → … → 2750) are p
 - **Shown battles**: the `battles=show` stop was the route pilot (a heal trip left no resume point, so
   NPC 203 was never talked to); fixed. Shown native run reaches 2750 at 4166.5 s with 971 checkpoints;
   shown runs are not tick-comparable with instant ones (draw divergence from checkpoint 715,
-  **[hypothesis]**). No browser rerun of `battles=show` yet.
+  **[hypothesis]**). The hosted page ran the shown route to 2750 (`j4-web-show`); its ±2-step tick offsets against the native run are unmodelled.
 - **Wipe-out**: the priest line is modelled (no gold line exists in the ROM); the save-carried revival
   map, trigger action 180 and `ME_009` are unmodelled. 2535+22510 stays partial by construction.
 
@@ -71,9 +74,8 @@ Evidence (local, `build/evidence/j4-web-pilot/`): console log `a566bf824b31`, ch
 
 ## Active work and next steps
 
-Nothing is unmerged. Next: (1) a hand-played session (never done: only the pilot has played the route)
-and a hosted-page run of the browser session, shown battles included; (2) grudge targeting, enrage
-(is the Hexagoon enraged: **[unknown]**), the item spend rule; (3) worn-equipment use, the remaining
-wipe-out details; (4) more original references beyond 1.1.2 (only two exist, both in the prologue);
-(5) docs consistency. Dev environment: `dev`/`test` profiles keep line tables only (integrate target
-3.2 GB against 4.7 GB before). Evidence stays local under `build/evidence/<batch>/`, never committed.
+Nothing is unmerged. Next: (1) a **hand-played** session (never done: only the pilot has played the route);
+(2) more original references beyond 1.1.2 (only two exist, both in the prologue); (3) worn-equipment use,
+the save-carried revival map, trigger action 180, `ME_009`; (4) docs consistency. Dev environment:
+`dev`/`test` profiles keep line tables only (integrate target 3.2 GB against 4.7 GB before).
+Evidence stays local under `build/evidence/<batch>/`, never committed.

@@ -16,7 +16,8 @@
 //! Using an item or a spell runs the game's action on a party member with
 //! `dq9_core::battle::resolve_action`: the same range table, the same MP cost and the same
 //! healing cap as a battle. An item is taken from the source the player chose (a bag stack or
-//! the held slot) only when the action executed, as the battle's `ItemUsed` rule does.
+//! the held slot) only when the action executed; the battle additionally keeps an item whose
+//! effect changed nothing (`battle::item::effect_applied`), the field handler's rule is unread.
 
 pub(crate) mod containers;
 mod transfer;
