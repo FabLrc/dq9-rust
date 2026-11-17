@@ -991,9 +991,12 @@ Settling versus showing. A default session settles a battle inside the step that
 the native headless run does, so the browser's timeline is the native one tick for tick and the
 checkpoints can be compared. `battles=show` plays the battles on screen: they take fixed steps
 (transition 35, fight, leave 45), so the game's clock, the parity of its 30 Hz field step and
-the pilot's key presses no longer line up with the native run; it is a visual session, not a
-comparable one. In both modes the route reads a roamer's fight when it is settled (`route_observe`
-is skipped while a battle is shown).
+the pilot's key presses no longer line up with the native run: its checkpoints are compared by
+state (story, flags, maps, events), never by tick (below). In both modes the route reads a
+roamer's fight when it is settled (`route_observe` is skipped while a battle is shown).
+A headless `App` can present its battles too: a session decides on its own
+(`App::battles_instant`), so `set_session` with `show_battles: true` on `App::new_headless`
+runs the Web's shown route natively, which is how the `battles=show` stop below was reproduced.
 
 **Run on `FabLrc/j4-web-pilot`** (Edge 157, wasm release bundle, European ROM chosen through the
 page's file input, `newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1&speed=60`, rendered, one
@@ -1013,21 +1016,59 @@ line in `result.json`); in this default mode a battle is settled in the step tha
 is never on screen.
 
 `battles=show` (`run-show/`, same query plus `battles=show`, 1753 s of wall time) played the
-battles on screen but is not a certified session: it stopped at 2489.2 s with `free control on
-map 1107 (story 2.4.5)`, Lv 4, before any attempt on the Hexagoon. The stop is only the end of a
-chain: at 2313 s, stronger after two wipe-outs in `D01M04`, the pilot entered `D01M05` (7105) and
-walked back out 0.45 s later (`report.txt`, lines 1080-1100) without talking to NPC 203, whose
-talk starts events 2535 and 22510 and the Hexagoon in the native run (`accept-2750.out`, 2095-2122 s);
-the run then circled the Angel Falls rooms, found nothing left to try at 1107 and stopped
-(`Stop::Control`). Ruled out: the time of day (a fresh load of 7105 at story 2.4.5 offers NPC 203
-as a partner in all four phases, probed with `Talk::partners`). Still **[unknown]** and
-unfalsified: why the pilot's book had nothing to do at 7105 (a `talked`/`talks` entry, a digest
-that differs after the shown fights, or an NPC state); the shown battles shift the clock and the
-route's draws away from the native run, so no checkpoint comparison localises it. A next
-attempt needs the pilot's debug lines (`DQ9_PILOT_DEBUG` prints through `eprintln!`, a
-no-op in wasm) turned on for the Web. No in-session capture of a battle scene or of the
-Hexagoon's windows exists: the milestone shots of that run are the field. The hosted page does
-not include any of this until Pages deploys this branch.
+battles on screen but stopped at 2489.2 s with `free control on map 1107 (story 2.4.5)`, Lv 4,
+before any attempt on the Hexagoon. The pilot had entered `D01M05` (7105) at 2174 s and 2313 s
+and walked back out 0.45 s later without talking to NPC 203, whose talk starts events 2535 and
+22510 and the Hexagoon in the native run; it then circled the Angel Falls rooms, found nothing
+left to try at 1107 and stopped (`Stop::Control`).
+
+**Cause (`j4-show-battles`).** Reproduced natively with the same options (the headless session
+above, on `ca074aa`): 817 checkpoints like the Web's, the last on map 1107, the same stop. The
+shown and the instant runs have the same state sequence (maps, events, story, flags) for 715
+checkpoints; they differ in the step counts (the first checkpoint, event 21507's end, is 110
+steps later: the transition; the battle settles 1,386 steps after it) and, from checkpoint 715,
+in a roamer fight: the instant pilot is wiped out in `D01M04` at about 1980 s, the shown one is
+not and reaches 7105 (3 levels, hurt). A `DQ9_PILOT_DEBUG` line per `pursue` (not kept) showed
+at that arrival `blocked false resume None`, no offer line, and `route_pursue` returning true
+(`native-show2.err`, `369d27b8d2b3`): only `route_heal` can do that with no bar and no resume
+room. The walk goes to the shop (herbs; no inn from 2.1 to 2.6): `route_visit` →
+`route_travel` → `walk_back` → `start_exit`, which books `left` and `tried_exits` for every room
+it leaves **at the story's digest**, with no memory of where the story was; the route mode
+keeps that memory only after a fall (`Route::resume`, `route_observe`). After the herb (log: `talks
+to the keeper of the Shop (NPC 19) ... HP [(3, 34)]`) the pilot walks the Angel Falls rooms
+until `Stop::Control` and never goes back to `D01` (**[inference]** from the books: `bot.graph`
+holds only the rooms of the current family, and `1100 → 20001` is already in `left` at this
+digest, so `next_foreign_hop` finds nothing; the fix below removes the symptom, which is the
+falsification that counts). The instant run never meets it: its party was whole on arrival at
+7105, and its heals started with `resume` already set by a fall. Nothing in the game's state,
+the battle engine or the presentation barriers was wrong; the defect is the pilot's.
+
+**Fix.** `route_visit` sets `Route::resume` to the room the trip started from when it is not a
+field and no resume room is set (`route.rs`); `route_resume` then walks the pilot back after the
+herb and forgets that room's books, as it does after a fall. Regression tests:
+`a_heal_trip_from_the_story_room_resumes_there_after_the_herb` (hurt party at 7105: the trip
+sets the resume room, and at 7105 healed the pilot walks to NPC 203; it fails without the fix)
+and `a_shown_battle_leaves_the_game_in_the_state_an_instant_one_does` (battle 26 shown and
+settled leave the same party, story, flags and map).
+
+**Result** (native, same ROM, `--new-game --fight --seed 7`, `build/evidence/j4-show-battles/`):
+the instant run's 972 checkpoints are byte-identical before and after the fix (`135ddaa29dd9`:
+the fix changes nothing where `resume` was already set, so the acceptance timeline stands: story
+2.6.5, 182,129 steps). The shown run (`fixed2-show-checkpoints.jsonl`, `a7e4fa191432`) now plays
+the Hexagoon (NPC 203 talked to four times against five, the set battle lost at Lv 5, 6 and 7,
+won at Lv 8) and `stopped: event 2750 ended (route reached)` after 4,166.5 s of game time
+(249,990 steps); its 971 checkpoints hold the same 21 story progress steps in the same order as
+the instant run's 972, and the same events in the same order but for one fewer attempt at event
+22510 (the pilot was stronger when it came: three lost attempts against four). A shown session
+is therefore **not tick-comparable** with the instant one: the pilot's draws and the roamers'
+fights differ from the first roamer contact on (**[hypothesis]**: the 110 steps of the first
+transition move the field's 30 Hz parity and the roamer timers; unfalsified, since the world's
+generators are shared by the battles and the roamers and the checkpoints do not carry them),
+but it plays the same story. The Web's `battles=show` session has not been rerun in a browser:
+the fix is in the shared `App::auto_step` path, the native run above is the evidence.
+No in-session capture of a battle scene or of the Hexagoon's windows exists: the milestone shots
+of the earlier run are the field. The hosted page does not include any of this until Pages
+deploys this branch.
 
 ## Development loop
 

@@ -729,7 +729,21 @@ impl App {
         keeper: u16,
     ) -> bool {
         if room != target_room {
-            return self.route_travel(bot, room, digest, from, target_room);
+            let started = self.route_travel(bot, room, digest, from, target_room);
+            // The story was being told here: a trip to the keeper must come back to this room,
+            // as a fall does (`route_observe`). Without it the pilot's books mark the way to
+            // this part of the story as taken, and nothing leads back once the party is
+            // healed (`battles=show` run of `j4-web-pilot`: the Hexagon's NPC 203 never talked
+            // to). A field is not where the story is told.
+            let in_field = self.route_is_field(room);
+            if started
+                && !in_field
+                && let Some(route) = bot.mode.as_mut()
+                && route.resume.is_none()
+            {
+                route.resume = Some(room);
+            }
+            return started;
         }
         // The keeper's partners (one a talk zone, one the NPC alone): the game's talk trigger
         // gives the real context, so any spot where the partner search picks him will do.

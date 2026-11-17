@@ -553,6 +553,41 @@ fn a_trip_that_finds_no_way_on_books_the_entrance_and_goes_back_out() {
     }
 }
 
+/// A hurt party that walks from the Hexagon's B1-B (7105, where NPC 203 starts the Hexagoon)
+/// to the shop must come back: the trip is booked as the story's resume room, as a fall is.
+/// Otherwise the pilot's books (`left`, `tried_exits`) mark the way into the dungeon as taken at
+/// this point of the story and nothing leads back once the herb is used: the `battles=show` run
+/// of `j4-web-pilot` stopped with free control on `1107` without NPC 203 having been talked to,
+/// because its party was hurt on arrival at 7105 (the shown fights had shifted the roamers'
+/// draws), where the instant run's was whole.
+#[test]
+fn a_heal_trip_from_the_story_room_resumes_there_after_the_herb() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let mut app = App::new_headless(options("7105", (2, 4, 5)), Some(rom.to_vec()));
+    app.run_steps(1);
+    app.party.members[0].max_hp = 34;
+    app.party.members[0].hp = 10;
+    app.party.gold = 60;
+    let mut bot = route_bot(&[(7105, &[7104]), (7104, &[7105, 1103]), (1103, &[7104])]);
+    assert!(app.pursue(&mut bot), "the hurt party walks to the shop");
+    assert_eq!(
+        bot.mode.as_ref().unwrap().resume_room(),
+        Some(7105),
+        "the story goes on at 7105 once the party is healed"
+    );
+    // Back at 7105 healed: the wait ends, the room's books are forgotten and the talk is offered.
+    app.party.members[0].hp = 34;
+    bot.goal = None;
+    assert!(app.pursue(&mut bot));
+    assert_eq!(bot.mode.as_ref().unwrap().resume_room(), None);
+    match bot.goal {
+        Some(Goal::Talk { target, .. }) => assert_eq!(target.npc, 203),
+        other => panic!("a walk to NPC 203 was expected: {other:?}"),
+    }
+}
+
 /// Options of a route run from a new game (`--new-game --fight --seed 7 --route 2750`).
 fn route_options() -> crate::app::Options {
     let mut options = options("M01", (1, 1, 1));
@@ -602,4 +637,43 @@ fn a_session_plays_the_same_run_as_the_native_route_loop() {
     );
     assert_eq!(native.checkpoints_jsonl(), web.checkpoints_jsonl());
     assert_eq!(native.party().members[0].hp, web.party().members[0].hp);
+}
+
+/// A shown battle changes the clock, not the game: the headless session that presents its
+/// battles (`battles=show`: transition, scene, windows) reaches the scripted battle 26 with the
+/// state the instant session has after it (party HP, experience and gold, story, flags, map),
+/// whatever the step it ends at. Only the step counts differ, 110 more for the transition and the
+/// rounds of the fight.
+#[test]
+fn a_shown_battle_leaves_the_game_in_the_state_an_instant_one_does() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let run = |show_battles: bool| {
+        let mut app = App::new_headless(route_options(), None);
+        app.set_session(session::SessionSpec {
+            route: Some(2750),
+            speed: Some(500),
+            budget_ms: 60_000,
+            render: false,
+            show_battles,
+        });
+        app.set_rom(rom.to_vec());
+        while app.tick < 12_000 {
+            app.session_frame();
+        }
+        // The checkpoint of the settled battle, from `"map"` on: the clock fields come before.
+        let line = app
+            .checkpoints
+            .iter()
+            .find(|line| line.contains("\"kind\":\"battle\""))
+            .expect("battle 26 is inside the compared steps");
+        let (_, state) = line
+            .split_once("\"map\":")
+            .expect("the state follows the clock");
+        state.to_owned()
+    };
+    let instant = run(false);
+    let shown = run(true);
+    assert_eq!(instant, shown);
 }

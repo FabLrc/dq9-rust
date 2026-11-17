@@ -140,9 +140,13 @@ impl App {
     }
 
     /// Whether battles are settled in the step that starts them: a headless run, and a session
-    /// that does not show them.
+    /// that does not show them. A session decides on its own (`battles=show`), so a headless
+    /// app can present its battles the way the browser does.
     pub(in crate::app) fn battles_instant(&self) -> bool {
-        self.proxy.is_none() || self.session.as_ref().is_some_and(|s| !s.shows_battles())
+        match &self.session {
+            Some(session) => !session.shows_battles(),
+            None => self.proxy.is_none(),
+        }
     }
 
     /// One animation frame of the session: `speed` fixed steps (or the real time's), then the
