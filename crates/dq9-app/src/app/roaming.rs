@@ -675,6 +675,10 @@ impl App {
             angle,
             radius: dq9_core::movement::RADIUS,
             moving,
+            // The other members are not field characters in this model: only the leader is
+            // placed and simulated, so only it can block a spawn (`docs/re/encounter.md`,
+            // "Spawn", step 7). The field guest is not a party slot either.
+            party: [None; 3],
             strength,
             deftness,
             time_of_day: self.state.time_of_day as u8,

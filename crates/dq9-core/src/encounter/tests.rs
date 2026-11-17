@@ -288,6 +288,54 @@ fn a_fresh_arrival_spawns_only_after_the_first_step() {
     assert_eq!(r.position, [0, 0, 10 << 12]);
 }
 
+/// The first roamer a spawn tick of a map entered a second ago gives, the leader standing at
+/// the origin and facing the far node (10.0 away), with an optional second member.
+fn spawn_with_follower(follower: Option<[i32; 3]>) -> Option<(u16, [i32; 3])> {
+    let world = empty_world();
+    let mut roamers = Roamers::new(
+        1,
+        one_zone(),
+        Some(two_nodes()),
+        CRand::new(1),
+        Random::new(1),
+    );
+    let mut input = StepInput::at([0; 3], 0);
+    for _ in 0..40 {
+        roamers.step(&input, &world, &NoList);
+    }
+    input.moving = true;
+    input.party = [follower, None, None];
+    for _ in 0..5 {
+        roamers.step(&input, &world, &NoList);
+    }
+    roamers
+        .roamers()
+        .next()
+        .map(|(_, r)| (r.number, r.position))
+}
+
+/// `func_02073dfc` (`0x02073e0c`) tests the spawn point against every party slot: a second
+/// member within 3.5 blocks a spawn the leader alone allows (10.0 from the point).
+#[test]
+fn any_party_member_blocks_the_spawn_point() {
+    let point = [0, 0, 10 << 12];
+    // The leader alone: the far node spawns, as before.
+    assert_eq!(spawn_with_follower(None), Some((3, point)));
+    // The second member 1.0 from the point: refused, though the leader is 10.0 away.
+    assert_eq!(spawn_with_follower(Some([0, 0, 9 << 12])), None);
+    // The original's strict `< 0x3800`: 3.5 exactly is outside the block.
+    assert_eq!(
+        spawn_with_follower(Some([0, 0, point[2] - 0x3800])),
+        Some((3, point))
+    );
+    assert_eq!(spawn_with_follower(Some([0, 0, point[2] - 0x37ff])), None);
+    // A member elsewhere on the map does not block it.
+    assert_eq!(
+        spawn_with_follower(Some([10 << 12, 0, 0])),
+        Some((3, point))
+    );
+}
+
 /// A fleeing roamer leaves its state when its ten-unit run is done (within 1.5 of the point),
 /// not after a fixed time: at twice the speed it takes half the updates. The field runs showed
 /// 6→1 from 0 ms up to 1452 ms and beyond (`docs/re/encounter.md`, (c)).

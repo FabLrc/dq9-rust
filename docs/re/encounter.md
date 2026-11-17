@@ -27,10 +27,11 @@ and **[hypothesis]** here until re-checked on our ROM (`external-resources.md`).
 Audited 2026-11-17 in [`encyclopedia-audit.md`](encyclopedia-audit.md). The spawn loop, the 5- and
 10-unit distances, the no-roll stop spots, the twelve-object cap, the species on table A, the
 company on table B, the pre-emptive strike on table A (with the +10 of a turned back and the
-2 % + deftness/20) and the 25-unit vanish all **agree**. Three verdicts differ: the 3.5-unit block
-is tested against **every party member and the spawn point** (`0x02073e0c`, read:
-`build/evidence/j4-encyclopedia-audit/ghidra-spawn-point-test.txt`, `d95f141a2a59`), where the
-model keeps the leader alone; the company's order is shuffled **on land too** (the coin and the six
+2 % + deftness/20) and the 25-unit vanish all **agree**. Three verdicts differed from the page;
+the party block is now modelled. The 3.5-unit block is tested against **every party member and
+the spawn point** (`0x02073e0c`, read: `build/evidence/j4-encyclopedia-audit/ghidra-spawn-point-test.txt`,
+`d95f141a2a59`), which `StepInput::party` now does (step 7; a party of one is unchanged); the
+company's order is shuffled **on land too** (the coin and the six
 permutations of `0x020e8e3c` are drawn inside `0x0209afe4`,
 `build/evidence/j4-encyclopedia-audit/ghidra-company.txt`, `2e7ef7fd4150`), so the page's "the group
 touched stays first" is wrong and this model right; and the battle's memory of species is **not
@@ -121,11 +122,23 @@ runs long**, both measured in the field runs):
    (10.0) away, the position is brought **onto the segment node–leader's node, inside the circle of radius
    10 around the leader**: `d` = distance of the leader to the segment (`func_02031468`), fail if `d > 0x9fff`;
    half-chord `√(1 − (d/10)²) × 10`; if above 5.0 the point is `closest + dir × min(|node − closest|, chord)`.
-7. Reject when the point is within `0x3800` (3.5) of the leader, or a visible roamer lies in
-   `±(0x3000, 0x5000, 0x3000)` of it, or the node's flag byte has bit 1. `func_02073dfc`
-   (`0x02073e0c`) tests **every** party member against the point, and only a member whose own
-   field id equals the point's (`encyclopedia-audit.md`, R4); the model keeps the leader alone
-   (`crates/dq9-core/src/encounter.rs`, the `0x3800` test).
+7. Reject when the point is within `0x3800` (3.5) of **any party member**, or a visible roamer
+   lies in `±(0x3000, 0x5000, 0x3000)` of it, or the node's flag byte has bit 1. The member test
+   is `func_02073dfc` (`0x02073e0c`, called from the tick `0x020733e8`;
+   `build/evidence/j4-encyclopedia-audit/ghidra-spawn-point-test.txt`, `d95f141a2a59`, with the
+   caller and the placement in `build/evidence/j4-spawn-block/ghidra-spawn-tick.txt`
+   `553f98e577ea` and `ghidra-party-place.txt` `8dbaa33c96ed`): it
+   loops over the four party slots (`GetPartyMemberByIndex(0..=3)`, which returns object `0..3`
+   only when it exists and carries flag `0x800`), skips a missing object, and compares the
+   point's map with the member's. `param_1` is the map slot: `*param_1` is its map id (`+0`),
+   `param_1 + 0xc` its graph (`+0x18`) and `param_1 + 4` its timer; a member's map is its
+   `Object3D::GetField06`, i.e. the map `Object_Place` (`0x020399c0`) placed it on. A member
+   whose `+0x15c` is not `-1` uses that map instead, and — for the leader, or a member with flag
+   `0x1000` — its `+0x160` vector as the position (`+0x44` otherwise); the writer of that pair
+   is **[unknown]**. The field guest is **not** one of the slots: it is character `0xce`,
+   outside `0..3`, and `Party_Place` (`ov_017::0219c598`) places it at the party's own point
+   anyway. Model: `StepInput::party` holds the other members placed on the map (leader
+   excluded) and every one is tested at `SPAWN_BLOCK_REACH`; a party of one is the old test.
 8. **Zone** by (a) with the node's mask, **wait check** `(7 − n) × 1000 ≤ timer`, then the **monster**
    by weight. At most one attempt per update for a party of one (a second pass excludes the leader and fails).
 9. Spawn (`ov_017::021a2128`): the object at the point (height from `Zone3D_GroundHeight`), facing
@@ -244,12 +257,15 @@ touched, and the list read at `+0xf78` of the battle context is not filled by an
   after 67 s), so there is no rule against standing still. What the data shows is **the first step
   after a map is entered**: on a fresh `F02` arrival nothing spawned for 40 s of standing, and the
   first spawn came 2 frames after the first position change, although the slot's timer was already
-  past 40 s. Cause **[unknown]** (`func_02073dfc` tests the spawn point against each party member's
-  position or its `+0x160` vector; the `(byte)param_1[0xd] > 4` clause is unmodelled). The model
-  waits for the party's first step (`Roamers::stepped`) and has no other standing rule.
+  past 40 s. Cause **[unknown]**: the party block (`func_02073dfc`) does not vary with the
+  standing time, and the `(byte)param_1[0xd] > 4` clause is a decompiler artifact, not a rule —
+  `param_1[0xd]` is the low byte of the upper half of the graph pointer (`param_1 + 0xc` is the
+  graph at `+0x18`), i.e. bits 16–23 of an ARM9 RAM address, `2`, so the clause never refuses.
+  The model waits for the party's first step (`Roamers::stepped`) and has no other standing
+  rule. The spawn tick also runs per party member (the tick's own `GetPartyMemberByIndex` loop
+  with the roamer count around each), a multiplayer shape single player reduces to the leader.
 - Roamer movement after the state is entered is `Character_Update` with the roamer's constants; whether a roamer slows when turning like
-  the hero, the wall test of `0x020322c0`, and the alpha steps of a fade are **[hypothesis]**. The `(byte)param_1[0xd] > 4` clause of the spawn,
-  the story-flag range of `0x02073d54`, A-button contacts (`+0xbe == 2` objects), multiplayer, solid monsters (`+0x17d & 6`) are not modelled.
+  the hero, the wall test of `0x020322c0`, and the alpha steps of a fade are **[hypothesis]**. The story-flag range of `0x02073d54`, A-button contacts (`+0xbe == 2` objects), multiplayer, solid monsters (`+0x17d & 6`) are not modelled.
 - `func_02028638` (the nearest node used when a roamer stops running) is approximated by the nearest node.
 
 ## Symbols
@@ -391,5 +407,7 @@ movement, notice decision, contact, surprise roll, company and stage are `dq9_co
   renderer. The per-frame path allocates nothing for the twelve slots.
 - **Headless.** A run without a window does not roam (its recorded traces keep replaying); the
   window and the Web always do. The native behaviour tests switch it on explicitly.
-- **Not modelled** (unchanged from the core): the story-flag range of `0x02073d54`, the
-  `(byte)param_1[0xd] > 4` clause, A-button contacts, multiplayer and solid monsters.
+- **Not modelled** (unchanged from the core): the story-flag range of `0x02073d54`, A-button
+  contacts, multiplayer and solid monsters. The party block passes the leader alone: only it is
+  a field character in this model, so the other members have no position to hand over
+  (`StepInput::party` is `[None; 3]`).

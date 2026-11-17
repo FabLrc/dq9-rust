@@ -33,6 +33,9 @@ pub const FALLBACK_STAGE: u16 = 30116;
 const NO_SURPRISE: std::ops::RangeInclusive<u16> = 0x26..=0x28;
 /// The map's spawn timer ticks in milliseconds; a spawn waits at least a second.
 const SPAWN_PERIOD_MS: i32 = 1000;
+/// A spawn point within this distance of a party member is refused (`0x3800` = 3.5,
+/// `func_02073dfc`).
+const SPAWN_BLOCK_REACH: i32 = 0x3800;
 
 /// Who moves first (`[battle + 0xe49]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +97,12 @@ pub struct StepInput {
     pub radius: i32,
     /// The leader is walking (a roamer that reached it waits while it stands).
     pub moving: bool,
+    /// The other party members placed on this map (`GetPartyMemberByIndex(1..=3)`), in slot
+    /// order: `None` for a slot the party does not fill. A spawn is refused within
+    /// [`SPAWN_BLOCK_REACH`] of any of them (`func_02073dfc`, `0x02073e0c`). The four tested
+    /// slots are characters 0–3 of the object table, so the field guest (character `0xce`)
+    /// is not one (`docs/re/encounter.md`, "Spawn", step 7).
+    pub party: [Option<Fx3>; 3],
     /// The leader's attack plus defence, what a monster weighs against its own.
     pub strength: u32,
     /// The highest deftness among the party who can act (the surprise roll).
@@ -108,13 +117,14 @@ pub struct StepInput {
 }
 
 impl StepInput {
-    /// The leader at `position` facing `angle`, standing, in daylight, 30 Hz.
+    /// The leader at `position` facing `angle`, standing, in daylight, 30 Hz, alone.
     pub fn at(position: Fx3, angle: i32) -> Self {
         Self {
             position,
             angle,
             radius: crate::movement::RADIUS,
             moving: false,
+            party: [None; 3],
             strength: 0,
             deftness: 0,
             time_of_day: 2,
@@ -324,7 +334,13 @@ impl Roamers {
         };
         let chosen = plan.chosen;
         let mut position = plan.position;
-        if fx::distance(hero, position) < 0x3800 {
+        // `func_02073dfc`: every party slot, not the leader alone, and each only on the map
+        // it was placed on — the caller hands over the members placed on this map, so the
+        // original's field test (`*param_1 == member's field`) holds for all of them.
+        if std::iter::once(hero)
+            .chain(input.party.iter().flatten().copied())
+            .any(|member| fx::distance(member, position) < SPAWN_BLOCK_REACH)
+        {
             return;
         }
         if self.any_in_box(
