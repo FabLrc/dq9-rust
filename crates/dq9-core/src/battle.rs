@@ -27,6 +27,7 @@
 pub mod ai;
 pub mod damage;
 pub mod end;
+pub mod item;
 pub mod model;
 pub mod monster;
 pub mod random;

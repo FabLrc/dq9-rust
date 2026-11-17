@@ -1410,3 +1410,41 @@ fn the_victory_awards_by_the_battles_counter_and_the_item_bonus() {
     assert_eq!(outcome.experience, 2);
     assert_eq!(outcome.party.members[0].current_experience(), 2);
 }
+
+/// A herb resolved on an ally at full HP changes nothing, so the item is kept: the original's
+/// `ResolveAction` removes the held slot only when a kind handler raised its applied counter
+/// (EU `0x021ed724..0x021ed7e4`). Seed 8 leaves the hero untouched in that round (HP 20 of
+/// 20), so the herb heals nothing.
+#[test]
+fn a_herb_at_full_hp_is_kept() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    let mut party = level_one_party(&data);
+    party.members[0].held_items[0] = Some(22000);
+    assert!(party.bag.add_copies(22000, 2));
+    let full = party.members[0].hp;
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 8);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    for _ in 0..4 {
+        fight.step(down, &mut world);
+    }
+    fight.step(confirm(), &mut world);
+    fight.step(confirm(), &mut world);
+    fight.step(confirm(), &mut world);
+    assert_eq!(
+        fight.battle().party()[0].fighter.hp,
+        i32::from(full),
+        "healed nothing"
+    );
+    assert_eq!(
+        fight.party().members[0].held_items[0],
+        Some(22000),
+        "the herb is kept when its heal did nothing"
+    );
+    assert_eq!(fight.party().bag.count(22000), 2, "the bag is untouched");
+}

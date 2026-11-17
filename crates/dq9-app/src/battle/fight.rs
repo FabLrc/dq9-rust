@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use anyhow::{Context as _, Result};
 use dq9_core::battle::{
     Battle, BattleError, BattleResult, BattleSetup, CRand, Command, Event, PartyMember, Random,
-    Skill, Surprise, Target, Who, validate,
+    Skill, Surprise, Target, Who, item::effect_applied, validate,
 };
 use dq9_core::party::{LevelUp, Party, Share};
 
@@ -797,7 +797,7 @@ impl Fight {
     /// non-empty slot of [`Character::held_items`](dq9_core::party::Character::held_items)
     /// whose item record names a battle action. The row keeps its slot so that the item used
     /// is the one chosen, duplicates included (the original's item command carries the held
-    /// slot, `ov_017::021d0164`; the record's second action is what it resolves).
+    /// slot, `func_020ddb38`; the record's second action is what it resolves).
     fn refresh_items(&mut self) {
         self.item_rows.clear();
         let Ok(tables) = self.data.tables() else {
@@ -913,10 +913,33 @@ impl Fight {
                     self.last_events = report.events.clone();
                 }
                 // An item used is spent from the held slot its command was built from, once,
-                // and only when the record says it is used up (`+0x08` bit 19). A member
-                // skipped before its turn produces no `ItemUsed` and keeps the item; the bag
-                // is never read or changed here. Each reservation is taken in place, so the
-                // round allocates nothing for it.
+                // and only when the record says it is used up (`+0x08` bit 19) *and* the use
+                // changed something: the original gates the held-slot removal on the applied
+                // counter of `ResolveAction`, which a kind handler raises only for a blow, a
+                // heal, a cure or a revive that landed (`battle::item`). A herb on an ally at
+                // full HP is therefore kept. A member skipped before its turn produces no
+                // `ItemUsed` and keeps the item; the bag is never read or changed here. Both
+                // passes are in place, so the round allocates nothing for them.
+                let mut applied = [(0usize, 0u16, false); 4];
+                let mut applied_count = 0;
+                for event in &report.events {
+                    let Event::Acted {
+                        who: Who::Party(i),
+                        action,
+                        outcomes,
+                    } = event
+                    else {
+                        continue;
+                    };
+                    if applied_count < applied.len() {
+                        applied[applied_count] = (
+                            *i,
+                            *action,
+                            effect_applied(outcomes.iter().map(|(_, outcome)| outcome)),
+                        );
+                        applied_count += 1;
+                    }
+                }
                 let mut spent = [(0usize, 0usize); 4];
                 let mut spent_count = 0;
                 for event in &report.events {
@@ -934,11 +957,15 @@ impl Fight {
                         self.reserved[*i] = Some(reservation);
                         continue;
                     }
-                    if self
-                        .data
-                        .item_meta
-                        .get(&reservation.id)
-                        .is_some_and(|meta| meta.used_up)
+                    let changed = applied[..applied_count]
+                        .iter()
+                        .any(|&(member, used, changed)| member == *i && used == *action && changed);
+                    if changed
+                        && self
+                            .data
+                            .item_meta
+                            .get(&reservation.id)
+                            .is_some_and(|meta| meta.used_up)
                         && spent_count < spent.len()
                     {
                         spent[spent_count] = (*i, reservation.slot);

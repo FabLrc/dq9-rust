@@ -63,9 +63,9 @@ impl ActionLines {
 }
 
 /// The item record field the battle consumes by: the "used up" bit (`+0x08` bit 19), the bit
-/// the AI scores an item with (`func_ov024_021f7478`) and the battle's item handler removes the
-/// held slot for (`ov_017::021d0164`). The same record word's low nibble is the category
-/// measured in `docs/re/item.md` (0–7 equipment, 8–9 tools).
+/// the AI scores an item with (`func_ov024_021f7478`) and the battle's item consumer tests
+/// (`func_020ddb38`, EU `0x020ddb48`, called by `ResolveAction`). The same record word's low
+/// nibble is the category measured in `docs/re/item.md` (0–7 equipment, 8–9 tools).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemMeta {
     pub used_up: bool,

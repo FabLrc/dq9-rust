@@ -582,27 +582,54 @@ not read.
 
 `Command::Item` resolves an item's action like any action and emits `Event::ItemUsed { who,
 action }`. The item comes from the acting member's **held items**, not the party bag: the
-battle's item command carries the held slot (`func_ov017_021d0164` in the item handler table
-at `0x021d823c`, which clears that member's slot through `func_0208386c`, EU `0x0208387c`),
-and the battle command UI builds its item list from the member's item entries
+battle's item command carries the held slot, and `ResolveAction` (`ov_024::021eb5d0`, EU
+`0x021ed724..0x021ed7e4`) maps the actor's command entry (`battle + 0x3760`, through
+`ov_000::02160130`/`ov_000::02160f08`) to its held slot and calls the "use a held item" helper
+`func_020ddb38` (EU `0x020ddb48`), which clears that slot through `func_0208386c` (EU
+`0x0208387c`). The battle command UI builds its item list from the member's item entries
 (`func_ov000_0217ae90` case 4 → `func_ov000_02171c04`), never from the bag. A public rule
 states the same for the series: items in the bag cannot be used during battle (DQ Wiki,
 *Bag*, <https://dragonquest-wiki.com/Bag>: "Items in the bag cannot be used during
 battle"). `dq9-app` therefore lists `Character::held_items`, keeps the row's slot (duplicates
-included), and spends exactly that slot when the engine reports `ItemUsed`.
+included), and spends exactly that slot when the engine reports `ItemUsed` **and** the use
+changed something (below).
 
-**Which uses spend the item.** The item record's `+0x08` word, bit 19, is the "used up" flag:
-the AI reads it to score an item that is consumed (`func_ov024_021f7478`, `(word & 0xfffff)
->> 0x13`), and it is set exactly on the consumable tools and on the prayer ring (18023, an
-accessory that breaks when used). Measured on the EU tables over all 1,178 records
-(`build/evidence/j4-battle-held-items/item-flags.txt`, `755490182234`): 46 of 234 tools and 1 of 52
-accessories set it; every weapon, shield, helm, armour, glove, legwear and other accessory
-leaves it clear, including the weapons and shields with a battle action (cautery sword 20010,
-brain drainer 21010) and the reusable tools (sage's stone 22035, mimic stone 22125,
-blarney stone 22126). Consumables such as the medicinal herb (22000) set it. The field item
-use (`func_020ddb38`, category 8–10) clears the chosen held slot the same way; the battle rule
-adds the flag test so a reusable item use is not spent. The app models only held items, not
-the worn-gear half of the original's item list (equipment UI is out of scope).
+**Which uses spend the item.** Two tests, in this order.
+
+1. The item record's `+0x08` word, bit 19, is the "used up" flag: the AI reads it to score an
+   item that is consumed (`func_ov024_021f7478`, `(word & 0xfffff) >> 0x13`), and the helper
+   clears the held slot only when it is set. It is set exactly on the consumable tools and on
+   the prayer ring (18023, an accessory that breaks when used). Measured on the EU tables over
+   all 1,178 records (`build/evidence/j4-battle-held-items/item-flags.txt`, `755490182234`):
+   46 of 234 tools and 1 of 52 accessories set it; every weapon, shield, helm, armour, glove,
+   legwear and other accessory leaves it clear, including the weapons and shields with a
+   battle action (cautery sword 20010, brain drainer 21010) and the reusable tools (sage's
+   stone 22035, mimic stone 22125, blarney stone 22126). Consumables such as the medicinal
+   herb (22000) set it. The field item use (`func_020ddb38`, category 8–10) clears the chosen
+   held slot the same way.
+2. The use changed something. `ResolveAction` gates the helper on its applied counter
+   (`context + 0x14`) being at least 1, and each kind handler raises that counter only on a
+   real change: kind 1 damage (`ov_024::021da9e0`) on a blow of at least 1; kind 2 heal
+   (`ov_024::021db3a4`, EU `0x021db4e4..0x021db514`) on HP actually restored, or on a rider
+   result when the restored amount is 0 (riders are not modelled); kind 7 cure
+   (`ov_024::021dbc64`) only when a status was actually cured; kind 18 revive
+   (`ov_024::021dd278`) only on a fallen target. So a herb on an ally at full HP, a revive on
+   a living ally and an antidote with nothing to cure all **keep** the item; the same herb on
+   a wounded ally spends it; a multi-target use spends it when at least one target changed.
+   `dq9_core::battle::item::effect_applied` reads the same condition from the outcome's HP and
+   MP totals. Kinds that move only a status or restore MP (4, 5, 6, 19, 26) are not visible
+   there, but the resolver refuses them; among the 47 used-up EU records, 16 carry kind 2
+   (healing) and none carries kind 1 or 57, the only other kinds the resolver applies, so the
+   predicate covers every reachable item.
+
+Evidence: `build/evidence/j4-item-spend/ghidra-consumer.txt` (`d9721f00c2de`),
+`ghidra-kind-handlers.txt` (`1733a78059a5`) and `ghidra-resolve-tail.txt` (`bc31e380cfec`);
+`route-before-*`/`route-after-*` checkpoints are byte-identical (`8ce4af30e497`); permanent
+tests `crates/dq9-core/tests/battle_item.rs` and the app's held-herb tests. The field notes
+that used to call `func_ov017_021d0164` the battle consumer were wrong: that is an event-script
+native (ov_017 native table entry at `0x021d823c`) that clears a held item from a script, not
+the battle path. The app models only held items, not the worn-gear half of the original's item
+list (equipment UI is out of scope).
 
 A member who falls before its turn produces no `ItemUsed`: the reservation is dropped at the
 next command phase and the held slot stays. Cancelling or reselecting a command releases the
