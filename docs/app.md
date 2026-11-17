@@ -886,7 +886,8 @@ A computer with a keyboard and a recent browser with WebGPU or WebGL 2 are recom
 Battles are interactive; standalone battle 26 has been played to victory in the browser
 (Verification below). Roaming monsters are visible and start fights; field-menu/facility
 screens are still missing;
-effects and battle motions are incomplete. The continuous chapter 2 route is not certified.
+effects and battle motions are incomplete. A continuous local browser session of the chapter 2
+route is recorded in § "Route mode in the browser" (it is not deployed on the hosted page yet).
 
 The ROM/save fields and the selectors stay disabled during the download and
 initialization of the engine. "New game" stays disabled until the bytes of
@@ -934,7 +935,8 @@ python -m http.server 8000 -d crates/dq9-app/web     # or any static file server
 ```
 
 Open `http://localhost:8000/` (parameters `map`, `time` (name or 0 to 3), `clock`, `layout` (`stacked`, `side`, `top` or `wide`), `chapter`, `step`,
-`substep`, `night=1`, `mute=1`, `newgame=1`), then choose the ROM and, optionally, a `.sav` save in the
+`substep`, `night=1`, `mute=1`, `newgame=1`, `seed`, and the pilot session's `pilot`, `fight`, `route`,
+`speed`, `budget`, `render`, `battles`: § "Route mode in the browser"), then choose the ROM and, optionally, a `.sav` save in the
 page. Both files are read locally in the browser, never sent or hosted;
 an explicit `map` takes precedence over the save's map. The "New game" button (or `?newgame=1`)
 launches the prologue (§ "New game"); it stays disabled until the ROM is read and
@@ -942,6 +944,87 @@ the keyboard returns to the canvas afterwards. The page reports errors in red an
 rejected file.
 WebGPU when the browser offers it, otherwise WebGL 2. `crates/dq9-app/web/pkg/` is generated
 (ignored by git).
+
+### Route mode in the browser (`pilot=1`)
+
+The pilot and the route mode run in the page: the same `App::auto_step` the native
+`--headless --auto` loop calls (`app/auto.rs`), driven one animation frame at a time by
+`app/auto/session.rs`. The step stays the 60 Hz fixed step; nothing reads the wall clock for
+the game, so a session is deterministic from the ROM, the seed and the options.
+
+| Parameter | Effect |
+|---|---|
+| `newgame=1` | the new game starts when the ROM is read (else click "New game") |
+| `pilot=1` | the autopilot plays the new game (`--pilot`); implied by `route` |
+| `route=2750` | route mode (`--route 2750`): roaming on, grind, inn and herbs; stops when the event ends; implies `fight` |
+| `fight=1` | the engine plays the battles that a native headless run settles (`--fight`); without it they are the J4 stand-in |
+| `seed=7` | the world's generators (`--seed`) |
+| `speed=N` | `N` fixed steps per animation frame; real time (60 steps/s) without it |
+| `budget=40` | wall milliseconds after which a frame stops running steps (default 40; checked every 32 steps): it bounds a frame, never changes what the run does |
+| `render=0` | no frame is drawn; the logic and the checkpoints run unchanged |
+| `battles=show` | presents battles (transition, scene, windows; the confirm key is held, the policy of `Fight::play_out`) instead of settling them in the step that starts them, which is the native headless behaviour and the default of a session |
+| `mute=1` | no sound device |
+
+What the page offers: `#session` shows `session: <game seconds> (<steps>), map, story, level,
+HP, gold, fights` every 10 s of game time, the console carries the engine's status lines,
+and the run ends on `stopped: event 2750 ended (route reached) after … s of game time`
+in both. `window.dq9_session` holds `line`, `tick`, `seconds`, `wall`, `event`, `attempts` (the
+set battles with the level they were fought at), `checkpoints` (the JSONL lines of the native
+`--checkpoints`, from the same `capture_checkpoint`), `done`, `stop` and `report` (the journal
+and the final state, as `--headless --auto` prints it).
+
+```powershell
+# Builds the release bundle (as pages.yml does), serves it locally, drives Edge/Chrome over the
+# DevTools protocol (web/session-driver.mjs, Node 22+, no npm package), chooses the ROM through
+# the page's <input type=file> and records console.log, progress.log, checkpoints.jsonl,
+# report.txt, shots/*.png and result.json under -Out:
+powershell -File scripts/web-session.ps1 -Out build/evidence/j4-web-pilot/run-instant `
+    -Query 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1&speed=60'
+# The first differing checkpoint against a native run:
+node web/compare-checkpoints.mjs native-checkpoints.jsonl build/evidence/j4-web-pilot/run-instant/checkpoints.jsonl
+```
+
+Settling versus showing. A default session settles a battle inside the step that starts it, as
+the native headless run does, so the browser's timeline is the native one tick for tick and the
+checkpoints can be compared. `battles=show` plays the battles on screen: they take fixed steps
+(transition 35, fight, leave 45), so the game's clock, the parity of its 30 Hz field step and
+the pilot's key presses no longer line up with the native run; it is a visual session, not a
+comparable one. In both modes the route reads a roamer's fight when it is settled (`route_observe`
+is skipped while a battle is shown).
+
+**Run on `FabLrc/j4-web-pilot`** (Edge 157, wasm release bundle, European ROM chosen through the
+page's file input, `newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1&speed=60`, rendered, one
+continuous session, 1859 s of wall time): `stopped: event 2750 ended (route reached) after 3057.2 s
+of game time`, 183,429 fixed steps, story 2.6.5, Lv 8, 115 roamer fights won, 2 lost; the
+Hexagoon (set battle 2) lost at Lv 4, 5, 6 and 7, won at Lv 8 in 7 rounds. **The 972 checkpoints
+are byte-identical to the native acceptance run** (`cmp` on `accept-2750-checkpoints.jsonl`,
+`a0d6200bb7b8`), and the report matches `accept-2750.out` line for line up to the native-only
+"last fight" log. The wasm runtime therefore reproduces the native float and RNG sequence for
+the whole route. The page made 3,000 to 5,000 fixed steps per second in scenes and 30 to 900
+(about 100 on average) while the pilot probes a map's walkable grid. The only console error is
+the browser's `favicon.ico` 404. Evidence: `build/evidence/j4-web-pilot/run-instant/` (`console.log`
+`a566bf824b31`, `checkpoints.jsonl` `a0d6200bb7b8`, `report.txt` `f126e4558642`, `result.json`,
+13 screenshots). The screenshots are taken by the driver at the first poll (1 s of wall time)
+after the milestone, so they show the field some game seconds later (each carries its session
+line in `result.json`); in this default mode a battle is settled in the step that starts it and
+is never on screen.
+
+`battles=show` (`run-show/`, same query plus `battles=show`, 1753 s of wall time) played the
+battles on screen but is not a certified session: it stopped at 2489.2 s with `free control on
+map 1107 (story 2.4.5)`, Lv 4, before any attempt on the Hexagoon. The stop is only the end of a
+chain: at 2313 s, stronger after two wipe-outs in `D01M04`, the pilot entered `D01M05` (7105) and
+walked back out 0.45 s later (`report.txt`, lines 1080-1100) without talking to NPC 203, whose
+talk starts events 2535 and 22510 and the Hexagoon in the native run (`accept-2750.out`, 2095-2122 s);
+the run then circled the Angel Falls rooms, found nothing left to try at 1107 and stopped
+(`Stop::Control`). Ruled out: the time of day (a fresh load of 7105 at story 2.4.5 offers NPC 203
+as a partner in all four phases, probed with `Talk::partners`). Still **[unknown]** and
+unfalsified: why the pilot's book had nothing to do at 7105 (a `talked`/`talks` entry, a digest
+that differs after the shown fights, or an NPC state); the shown battles shift the clock and the
+route's draws away from the native run, so no checkpoint comparison localises it. A next
+attempt needs the pilot's debug lines (`DQ9_PILOT_DEBUG` prints through `eprintln!`, a
+no-op in wasm) turned on for the Web. No in-session capture of a battle scene or of the
+Hexagoon's windows exists: the milestone shots of that run are the field. The hosted page does
+not include any of this until Pages deploys this branch.
 
 ## Development loop
 

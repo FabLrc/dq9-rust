@@ -34,6 +34,10 @@ use crate::talk::{Button, Partner};
 mod approach;
 mod nav;
 mod route;
+mod session;
+pub(crate) use self::session::Session;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use self::session::SessionSpec;
 #[cfg(test)]
 mod tests;
 
@@ -73,6 +77,7 @@ const APPROACH_STARTS: usize = 6;
 
 /// Why [`App::play_auto`] stopped.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub enum Stop {
     /// No event runs or waits and the autopilot, if any, has nothing left to try: the player
     /// has control on this map.
@@ -407,6 +412,7 @@ impl App {
     /// Runs the game logic for at most `max_steps` fixed steps; stops at the first moment the
     /// player would get control after a scene (`Stop::Control`), or, with `pilot`, when the
     /// autopilot finds nothing that moves the story or cannot walk to it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn play_auto(&mut self, max_steps: u64, pilot: bool) -> Stop {
         self.play_loop(&mut Pilot::default(), max_steps, pilot)
     }
@@ -415,6 +421,7 @@ impl App {
     /// resting at the inn and fighting for levels after a defeat, until `event` ends
     /// (`Stop::Reached`) or `max_steps` run out. The closing lines of the journal give the
     /// levels, gold and fights the run took.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn play_route(&mut self, max_steps: u64, event: u16) -> Stop {
         self.set_roaming_enabled(true);
         let seed = self.options.play.seed.unwrap_or(0);
@@ -427,6 +434,7 @@ impl App {
         stop
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn play_loop(&mut self, bot: &mut Pilot, max_steps: u64, pilot: bool) -> Stop {
         // A loaded map is an already started game: a run from a save/map start (`--auto`
         // without a prologue) must still pilot or report control. `NotStarted` is for a run
@@ -434,7 +442,33 @@ impl App {
         let mut started = self.current.is_some();
         self.checkpoints.clear();
         for _ in 0..max_steps {
-            let recorded = self.journal.steps.len();
+            if let Some(stop) = self.auto_step(bot, pilot, &mut started) {
+                return stop;
+            }
+        }
+        if started {
+            Stop::Limit
+        } else {
+            Stop::NotStarted
+        }
+    }
+
+    /// One fixed step of an automatic run: the action key, the pilot's frame, the game's step,
+    /// the checkpoints and the route's bookkeeping. `Some` ends the run. The native
+    /// `--headless --auto` loop and the Web session (`auto/session.rs`) both call it, so they
+    /// run the same logic.
+    fn auto_step(&mut self, bot: &mut Pilot, pilot: bool, started: &mut bool) -> Option<Stop> {
+        let recorded = self.journal.steps.len();
+        // A fight shown on the window or the Web (`battles=show`) takes many fixed steps: the
+        // pilot waits for its end and plays it with the confirm key held, the policy that
+        // `Fight::play_out` has (attack the first standing monster). A headless run settles
+        // its battles inside the step that starts them, so this never holds there.
+        let battling = self.battle_is_active();
+        if battling {
+            if self.fight.is_some() {
+                self.battle_pad.confirm = true;
+            }
+        } else {
             let busy = self.events.is_active() || self.events.pending_start().is_some();
             if (busy || self.talk.is_active()) && self.tick.is_multiple_of(PRESS_EVERY) {
                 self.talk.press(Button::Confirm);
@@ -447,71 +481,69 @@ impl App {
                     // The goal could not be walked; it is booked as tried, so choose
                     // another. The run only stops when the pilot has nothing left to try.
                     if !self.pursue(bot) {
-                        return Stop::Stuck { map, why };
+                        return Some(Stop::Stuck { map, why });
                     }
                 }
             }
-            self.run_steps(1);
-            self.capture_journal(recorded);
-            if bot.mode.is_some() {
-                self.route_observe(bot, recorded);
-                if let Some(event) = bot.mode.as_ref().filter(|m| m.reached).map(|m| m.until) {
-                    return Stop::Reached { event };
-                }
-                if bot.mode.as_ref().is_some_and(route::Route::capped) {
-                    let map = self.current.as_ref().map_or(0, |(e, _)| e.id);
-                    let why = "route: the grind is capped without the party getting there".into();
-                    return Stop::Stuck { map, why };
-                }
-                if self.services.is_open() {
-                    self.route_service(bot);
-                }
+        }
+        self.run_steps(1);
+        self.capture_journal(recorded);
+        // The route reads a roamer's fight when it is settled: inside the step that made the
+        // contact headless, at the end of the shown battle otherwise.
+        if bot.mode.is_some() && !self.battle_is_active() {
+            self.route_observe(bot, recorded);
+            if let Some(event) = bot.mode.as_ref().filter(|m| m.reached).map(|m| m.until) {
+                return Some(Stop::Reached { event });
             }
-            // The cast task of action 0x8d holds the field like an event: no control yet. A
-            // facility screen of the route mode holds it as well.
-            let busy = self.events.is_active()
-                || self.events.pending_start().is_some()
-                || self.cast_reload
-                || self.battle_is_active()
-                || (bot.mode.is_some() && self.services.is_open());
-            started |= busy;
-            if started && !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
+            if bot.mode.as_ref().is_some_and(route::Route::capped) {
                 let map = self.current.as_ref().map_or(0, |(e, _)| e.id);
-                let track = &self.state.tracks[self.state.track];
-                let story = (track.chapter, track.step, track.substep);
-                let last = self.journal.steps.iter().rev().find_map(|(_, s)| match s {
-                    Step::Control { map, story } => Some((*map, *story)),
-                    _ => None,
-                });
-                // The pilot crosses rooms: one line per story point while it works, and one
-                // for the place where it stops.
-                if last.is_none_or(|(_, s)| s != story) {
-                    self.journal.record(self.tick, Step::Control { map, story });
-                    self.capture_checkpoint("control");
-                }
-                if pilot {
-                    if bot.goal.is_some() {
-                        continue;
-                    }
-                    if bot.wait > 0 {
-                        bot.wait -= 1;
-                        continue;
-                    }
-                    if self.pursue(bot) {
-                        continue;
-                    }
-                }
-                if last.is_some_and(|(m, s)| s == story && m != map) {
-                    self.journal.record(self.tick, Step::Control { map, story });
-                }
-                return Stop::Control { map };
+                let why = "route: the grind is capped without the party getting there".into();
+                return Some(Stop::Stuck { map, why });
+            }
+            if self.services.is_open() {
+                self.route_service(bot);
             }
         }
-        if started {
-            Stop::Limit
-        } else {
-            Stop::NotStarted
+        // The cast task of action 0x8d holds the field like an event: no control yet. A
+        // facility screen of the route mode holds it as well.
+        let busy = self.events.is_active()
+            || self.events.pending_start().is_some()
+            || self.cast_reload
+            || self.battle_is_active()
+            || (bot.mode.is_some() && self.services.is_open());
+        *started |= busy;
+        if *started && !busy && !self.talk.is_active() && !self.talk.confirm_pending() {
+            let map = self.current.as_ref().map_or(0, |(e, _)| e.id);
+            let track = &self.state.tracks[self.state.track];
+            let story = (track.chapter, track.step, track.substep);
+            let last = self.journal.steps.iter().rev().find_map(|(_, s)| match s {
+                Step::Control { map, story } => Some((*map, *story)),
+                _ => None,
+            });
+            // The pilot crosses rooms: one line per story point while it works, and one
+            // for the place where it stops.
+            if last.is_none_or(|(_, s)| s != story) {
+                self.journal.record(self.tick, Step::Control { map, story });
+                self.capture_checkpoint("control");
+            }
+            if pilot {
+                if bot.goal.is_some() {
+                    return None;
+                }
+                if bot.wait > 0 {
+                    bot.wait -= 1;
+                    return None;
+                }
+                if self.pursue(bot) {
+                    return None;
+                }
+            }
+            if last.is_some_and(|(m, s)| s == story && m != map) {
+                self.journal.record(self.tick, Step::Control { map, story });
+            }
+            return Some(Stop::Control { map });
         }
+        None
     }
 
     /// Captures a checkpoint for every journal step recorded since `from`, with the state at
@@ -1745,7 +1777,10 @@ impl App {
         if let Some(hero) = &self.hero {
             out.push_str(&format!("hero at {:?}\n", hero.position()));
         }
+        #[cfg(not(target_arch = "wasm32"))]
         out.push_str(&self.party_report());
+        #[cfg(target_arch = "wasm32")]
+        out.push_str(&self.party_lines());
         out
     }
 }

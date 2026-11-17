@@ -882,7 +882,6 @@ impl Talk {
 
 /// Where the hero stands to talk to an NPC with a given context (`Target`): what an autopilot
 /// needs to have the conversation without walking there.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Partner {
     pub npc: u16,
@@ -891,7 +890,6 @@ pub struct Partner {
     pub yaw: f32,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Talk {
     /// The partner `Talk_NearestNpc` would pick at `position`/`yaw`, as [`Talk::begin`] does:
     /// what an autopilot needs to know before pressing the action key.

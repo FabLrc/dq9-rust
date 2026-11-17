@@ -141,6 +141,8 @@ impl App {
             scenario.chapter, scenario.step, scenario.substep
         ));
         self.events.queue(opening);
+        // The page's pilot session (`?pilot=1`) takes the new game from its first scene.
+        self.start_session();
     }
 
     /// Action 0x78: a scripted battle. The scene is shown through the transition (native

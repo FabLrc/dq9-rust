@@ -2,6 +2,7 @@
 //! traces (`--trace-inputs`) and the windowless `--headless-steps` run. The Web build never
 //! compiles this module.
 
+#[cfg(not(target_arch = "wasm32"))]
 use dq9_core::field;
 use dq9_core::scenario::Step;
 use glam::Vec3;
@@ -32,6 +33,7 @@ impl App {
     }
 
     /// Places the hero at `(x, z)` on the current map (`--start`), on the collision's ground.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn place_hero(&mut self, x: f32, z: f32) -> anyhow::Result<()> {
         let code = self
             .current
@@ -234,6 +236,7 @@ impl App {
 
     /// What the sound mixed during the steps so far, with its sample rate, when the
     /// application records it (`Options::record_sound`).
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn take_recording(&mut self) -> Option<(u32, Vec<f32>)> {
         self.audio
             .take_recording()

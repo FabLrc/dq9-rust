@@ -13,6 +13,7 @@
     .intro p { margin: 6px 0; max-width: 85ch; }
     #status { opacity: 0.8; overflow-wrap: anywhere; }
     #status[data-kind="error"] { color: #ff8a80; opacity: 1; }
+    #session { flex-basis: 100%; font-family: monospace; color: #9ccc65; overflow-wrap: anywhere; }
     main { flex: 1; min-height: 0; position: relative; }
     canvas#dq9 { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; outline: none; }
   </style>
@@ -59,6 +60,7 @@
     </select></label>
     <button id="newgame" type="button" disabled>New game</button>
     <span id="status" role="status" aria-live="polite" data-kind="info">loading the engine…</span>
+    <span id="session" hidden></span>
   </header>
   <main><canvas id="dq9" tabindex="0"></canvas></main>
   <script type="module">

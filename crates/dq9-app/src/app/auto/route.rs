@@ -216,6 +216,19 @@ impl Route {
         self.fights.won + self.fights.lost + self.fights.fled >= GRIND_CAP
     }
 
+    /// The counters of the fights so far, for the Web session's progress line.
+    pub(super) fn fights_line(&self) -> String {
+        format!(
+            "{} won, {} lost, {} fled, {} stays at the inn",
+            self.fights.won, self.fights.lost, self.fights.fled, self.rests
+        )
+    }
+
+    /// The set battles fought so far with the level they were fought at.
+    pub(super) fn attempts(&self) -> &[String] {
+        &self.attempts
+    }
+
     fn poor_at(&mut self, kind: Facility) -> &mut Option<u32> {
         match kind {
             Facility::Inn => &mut self.inn_poor_at,

@@ -552,3 +552,54 @@ fn a_trip_that_finds_no_way_on_books_the_entrance_and_goes_back_out() {
         other => panic!("a walk back to 7101 was expected: {other:?}"),
     }
 }
+
+/// Options of a route run from a new game (`--new-game --fight --seed 7 --route 2750`).
+fn route_options() -> crate::app::Options {
+    let mut options = options("M01", (1, 1, 1));
+    options.map = None;
+    options.new_game = true;
+    options.play = crate::app::BattlePlay {
+        fight: true,
+        seed: Some(7),
+    };
+    options
+}
+
+/// The Web session steps the same logic as the native loop: with the frame's `speed` in fixed
+/// steps, the checkpoints of a route run match those of `play_route` for the same number of
+/// steps, scripted battle 26 (played by the engine at 123 s) included. The browser's only
+/// difference is who calls the step.
+#[test]
+fn a_session_plays_the_same_run_as_the_native_route_loop() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    const STEPS: u64 = 8_000;
+    let mut native = App::new_headless(route_options(), Some(rom.to_vec()));
+    native.play_route(STEPS, 2750);
+
+    let mut web = App::new_headless(route_options(), None);
+    web.set_session(session::SessionSpec {
+        route: Some(2750),
+        speed: Some(500),
+        budget_ms: 60_000,
+        render: false,
+        show_battles: false,
+    });
+    web.set_rom(rom.to_vec());
+    assert!(web.session_running(), "the new game starts the session");
+    while web.tick < STEPS {
+        web.session_frame();
+    }
+    assert_eq!(web.tick, STEPS, "whole frames of 500 fixed steps");
+    assert!(
+        native
+            .checkpoints
+            .iter()
+            .any(|line| line.contains("\"kind\":\"battle\"")),
+        "battle 26 is inside the compared steps: {:?}",
+        native.checkpoints.last()
+    );
+    assert_eq!(native.checkpoints_jsonl(), web.checkpoints_jsonl());
+    assert_eq!(native.party().members[0].hp, web.party().members[0].hp);
+}

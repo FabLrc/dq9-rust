@@ -8,7 +8,7 @@ use winit::event_loop::{EventLoop, EventLoopProxy};
 use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
 use winit::window::WindowAttributes;
 
-use crate::app::{App, Options, UserEvent};
+use crate::app::{App, Options, SessionSpec, UserEvent};
 use crate::screens::Layout;
 
 fn document() -> Option<web_sys::Document> {
@@ -121,6 +121,18 @@ pub fn error(message: &str) {
     set_status(message, "error");
 }
 
+/// The pilot session's progress line: its own `#session` element when the page has one (the
+/// engine's status lines keep replacing `#status`), else `#status`.
+pub fn session_line(text: &str) {
+    match document().and_then(|d| d.get_element_by_id("session")) {
+        Some(el) => {
+            el.set_text_content(Some(text));
+            let _ = el.remove_attribute("hidden");
+        }
+        None => set_status(text, "info"),
+    }
+}
+
 /// Draws into the page's `#dq9` canvas (a new one is appended when absent).
 pub fn window_attributes(attributes: WindowAttributes) -> WindowAttributes {
     let canvas = canvas();
@@ -145,8 +157,13 @@ pub fn canvas_size() -> Option<(u32, u32)> {
 /// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
 /// `layout` (`stacked`, `side`, `top` or `wide`), `mute`, `battle` (an `eventbattle.bin` index),
 /// `battle-stage` and `monsters` (`1x3`), `seed` (the battle generators' seed) from the page's
-/// query string.
-fn options() -> Options {
+/// query string. The pilot session adds `pilot` (the autopilot plays the new game), `route`
+/// (an event number: the route mode of `--route`, which implies `pilot` and `fight`), `fight`
+/// (the engine plays the battles the native headless run settles), `speed` (fixed steps per
+/// animation frame; real time without it), `budget` (milliseconds of steps per frame, 40 by
+/// default), `render=0` (no frame is drawn) and `battles=show` (battles are presented instead
+/// of settled in the step that starts them).
+fn options() -> (Options, Option<SessionSpec>) {
     let mut options = Options {
         map: None,
         save: None,
@@ -169,6 +186,14 @@ fn options() -> Options {
             ..dq9_formats::cast::Story::default()
         },
     };
+    let mut session = SessionSpec {
+        route: None,
+        speed: None,
+        budget_ms: 40,
+        render: true,
+        show_battles: false,
+    };
+    let mut pilot = false;
     let search = web_sys::window()
         .and_then(|w| w.location().search().ok())
         .unwrap_or_default();
@@ -200,6 +225,16 @@ fn options() -> Options {
             }
             "night" => options.story.daytime = value == "0",
             "seed" => options.play.seed = value.parse().ok(),
+            "pilot" => pilot = value != "0",
+            "fight" => options.play.fight = value != "0",
+            "route" => {
+                session.route = value.parse().ok();
+                pilot |= session.route.is_some();
+            }
+            "speed" => session.speed = value.parse().ok().filter(|&n| n > 0),
+            "budget" => session.budget_ms = value.parse().unwrap_or(session.budget_ms),
+            "render" => session.render = value != "0",
+            "battles" => session.show_battles = value == "show",
             "event" => options.event = value.parse().ok(),
             "newgame" => options.new_game = value != "0",
             "battle" => {
@@ -228,7 +263,9 @@ fn options() -> Options {
             _ => {}
         }
     }
-    options
+    // The route mode needs the engine to play the battles, like `--route` needs `--fight`.
+    options.play.fight |= session.route.is_some();
+    (options, pilot.then_some(session))
 }
 
 /// `number[xcount]` comma-separated of the page's `monsters` parameter.
@@ -453,7 +490,7 @@ pub fn main() {
     watch_rom_input(proxy.clone());
     watch_save_input(proxy.clone());
     watch_new_game_button(proxy.clone());
-    let options = options();
+    let (options, session) = options();
     watch_time_select(proxy.clone(), options.time.unwrap_or(0));
     watch_layout_select(proxy.clone(), options.layout);
     release_keys_on_blur();
@@ -461,5 +498,9 @@ pub fn main() {
         "Choose your Dragon Quest IX ROM (.nds); a .sav save is optional. \
          These files stay in this browser.",
     );
-    event_loop.spawn_app(App::new(proxy, options, None));
+    let mut app = App::new(proxy, options, None);
+    if let Some(spec) = session {
+        app.set_session(spec);
+    }
+    event_loop.spawn_app(app);
 }

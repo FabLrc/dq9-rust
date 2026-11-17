@@ -49,8 +49,9 @@ use dq9_core::party::Party;
 use self::fight::FightSummary;
 use crate::battle::fight::{Fight, Outcome as FightOutcome, Pad, World};
 
-#[cfg(not(target_arch = "wasm32"))]
 mod auto;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use self::auto::SessionSpec;
 mod fight;
 #[cfg(not(target_arch = "wasm32"))]
 pub use self::fight::BattlePlay;
@@ -59,7 +60,10 @@ pub(crate) use self::fight::regions as fight_regions;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use self::fight::run_to_phase;
 mod flow;
-#[cfg(not(target_arch = "wasm32"))]
+// The checkpoint writer of the pilot lives here: the Web session records the same JSONL the
+// native `--checkpoints` writes. The native-only drivers (`--walk`, `--replay`, the
+// headless steps) are unused in the wasm build.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod headless;
 mod roaming;
 pub(crate) mod services;
@@ -328,8 +332,9 @@ pub struct App {
     /// What the story did since the start, and the fixed step it did it at.
     journal: Journal,
     /// JSONL snapshots of the story state at the checkpoints the oracle compares.
-    #[cfg(not(target_arch = "wasm32"))]
     checkpoints: Vec<String>,
+    /// The pilot's run asked for by the Web page (`app/auto/session.rs`).
+    session: Option<auto::Session>,
     /// Pad bits and action key of every fixed step (`--trace-inputs`).
     input_trace: Vec<(u8, bool)>,
     /// Pad bits a replay frame asks for, consumed by one fixed step.
@@ -450,8 +455,8 @@ impl App {
             cast_reload: false,
             panel: None,
             journal: Journal::default(),
-            #[cfg(not(target_arch = "wasm32"))]
             checkpoints: Vec::new(),
+            session: None,
             input_trace: Vec::new(),
             replay_pad: None,
             tick: 0,
@@ -1522,6 +1527,10 @@ impl App {
     }
 
     fn update(&mut self) {
+        if self.session_running() {
+            self.session_frame();
+            return;
+        }
         let now = Instant::now();
         // Clamp long pauses (window dragged, tab hidden) instead of catching up.
         self.accumulator += now.duration_since(self.last).as_secs_f32().min(0.25);
@@ -1858,6 +1867,9 @@ impl App {
 
     fn redraw(&mut self) {
         self.update();
+        if !self.session_renders() {
+            return;
+        }
         if self.battle().is_some() {
             let camera = self.draw_battle();
             self.present_frame(&camera, false, false);
@@ -2045,7 +2057,7 @@ impl App {
     /// both screens and starts the battle track, and gives the field back after
     /// [`BATTLE_TRANSITION_HOLD`] steps when no battle follows.
     pub(crate) fn battle_transition(&mut self) {
-        if self.proxy.is_none() {
+        if self.battles_instant() {
             // Headless: no fixed step is spent on a presentation (the recorded traces replay
             // exactly, `scripts/parity.ps1`).
             status("battle transition (native 547): headless, no step spent");
@@ -2096,7 +2108,7 @@ impl App {
             resolved.monsters,
             resolved.track
         ));
-        if self.proxy.is_none() {
+        if self.battles_instant() {
             // Headless: the scene is built (and checked) but no fixed step is spent showing
             // it, so the story's timeline is exactly the one recorded traces describe. The
             // stand-in then settles it as before, or `--fight` plays it with the engine.
