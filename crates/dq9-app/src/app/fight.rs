@@ -480,11 +480,12 @@ pub(super) fn draw_ui(
 }
 
 /// Plays `fight` on `scene` with the confirm key held, from the opening until `phase` shows:
-/// `menu` (the first command menu), `swing` (a blow landed and still shown), `damage` (a
-/// damage number), `levelup` (a level line), `victory` (the experience line) or `lost` (the
-/// wipe-out line). For the captures of `--battle-capture`; `rom` and `weapon` are the caller's
-/// party's, so the scene's hero plays its own motion set and a call for backup can add its
-/// model.
+/// `menu` (the first command menu), `abilities` (the first member's Abilities list),
+/// `cast` (its first payable row's line), `spent` (the round's window where the status shows
+/// the MP it cost), `swing` (a blow landed and still shown), `damage` (a damage number),
+/// `levelup` (a level line), `victory` (the experience line) or `lost` (the wipe-out line).
+/// For the captures of `--battle-capture`; `rom` and `weapon` are the caller's party's, so the
+/// scene's hero plays its own motion set and a call for backup can add its model.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn run_to_phase(
     fight: &mut Fight,
@@ -498,10 +499,25 @@ pub(crate) fn run_to_phase(
     use crate::battle::narrate::PopupKind;
     const LIMIT: u32 = 60_000;
     anyhow::ensure!(
-        ["menu", "swing", "damage", "levelup", "victory", "lost"].contains(&phase),
-        "unknown battle phase {phase:?} (menu, swing, damage, levelup, victory, lost)"
+        [
+            "menu",
+            "abilities",
+            "cast",
+            "spent",
+            "swing",
+            "damage",
+            "levelup",
+            "victory",
+            "lost"
+        ]
+        .contains(&phase),
+        "unknown battle phase {phase:?} (menu, abilities, cast, spent, swing, damage, levelup, \
+         victory, lost)"
     );
     scene.set_hero_weapon(rom, weapon)?;
+    if matches!(phase, "abilities" | "cast" | "spent") {
+        return cast_ability(fight, scene, world, phase, rom);
+    }
     let held = Pad {
         confirm: true,
         ..Pad::default()
@@ -531,6 +547,124 @@ pub(crate) fn run_to_phase(
         );
         crate::battle::advance_fight(fight, scene, world, held, Some(rom));
         scene.step()?;
+    }
+    anyhow::bail!("the {phase} phase did not come")
+}
+
+/// One step with `pad` and the scene advanced with it (`run_to_phase`'s loop).
+#[cfg(not(target_arch = "wasm32"))]
+fn advance(
+    fight: &mut Fight,
+    scene: &mut BattleScene,
+    world: &mut World,
+    pad: Pad,
+    rom: &[u8],
+) -> anyhow::Result<()> {
+    crate::battle::advance_fight(fight, scene, world, pad, Some(rom));
+    scene.step()?;
+    Ok(())
+}
+
+/// The Abilities captures (`--battle-capture abilities`, `cast`, `spent`): the first member's
+/// list, its first row the member can pay for resolved, then the window whose status shows the
+/// MP that cost. The other members keep the confirm key's default command (Fight, Attack, the
+/// first monster) so that the round resolves. The status window takes the MP on the round's
+/// last beat only (`Fight::run_round` appends its `Cue::Mp`s there), so `spent` is a later
+/// window than the cast's own line.
+#[cfg(not(target_arch = "wasm32"))]
+fn cast_ability(
+    fight: &mut Fight,
+    scene: &mut BattleScene,
+    world: &mut World,
+    phase: &str,
+    rom: &[u8],
+) -> anyhow::Result<()> {
+    use crate::battle::fight::lines_plain;
+    const LIMIT: u32 = 60_000;
+    let held = Pad {
+        confirm: true,
+        ..Pad::default()
+    };
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    // The opening windows, up to the first command menu: Commands starts on the top one.
+    let mut at_top = false;
+    for _ in 0..LIMIT {
+        anyhow::ensure!(
+            !fight.is_done(),
+            "the fight ended before the {phase} phase; log: {:?}",
+            fight.log()
+        );
+        if fight.view().menu.is_some() {
+            at_top = true;
+            break;
+        }
+        advance(fight, scene, world, held, rom)?;
+    }
+    anyhow::ensure!(at_top, "the command menu did not come");
+    // Fight: Attack, Spells, Defend, Abilities, Items.
+    advance(fight, scene, world, held, rom)?;
+    for _ in 0..3 {
+        advance(fight, scene, world, down, rom)?;
+    }
+    advance(fight, scene, world, held, rom)?;
+    anyhow::ensure!(
+        fight.showing_abilities(),
+        "the Abilities list did not open: {:?}",
+        fight.view().menu
+    );
+    if phase == "abilities" {
+        return Ok(());
+    }
+    let rows = fight.view().menu.map(|menu| menu.rows).unwrap_or_default();
+    let Some(row) = rows.iter().position(|row| row.1) else {
+        anyhow::bail!(
+            "no ability the first member can pay for: {:?}",
+            rows.iter()
+                .map(|row| String::from_utf8_lossy(&row.0).into_owned())
+                .collect::<Vec<_>>()
+        );
+    };
+    let label = String::from_utf8_lossy(&rows[row].0).into_owned();
+    let (name, cost) = label.rsplit_once("  ").unwrap_or((label.as_str(), "0"));
+    let name = name.to_owned();
+    let cost: i32 = cost.trim().parse().unwrap_or(0);
+    let before = fight.view().members.first().map_or(0, |m| m.mp);
+    // 255 is every MP the member has.
+    let expected = if cost >= 255 {
+        0
+    } else {
+        (before - cost).max(0)
+    };
+    for _ in 0..row {
+        advance(fight, scene, world, down, rom)?;
+    }
+    advance(fight, scene, world, held, rom)?;
+    if fight.view().menu.is_some_and(|menu| menu.targets) {
+        advance(fight, scene, world, held, rom)?;
+    }
+    let mut named = false;
+    for _ in 0..LIMIT {
+        let view = fight.view();
+        let text = view.message.map(lines_plain).unwrap_or_default();
+        named |= text.contains(&name);
+        let mp = view.members.first().map_or(before, |m| m.mp);
+        let reached = if phase == "cast" {
+            named
+        } else {
+            named && mp == expected && (view.message.is_some() || view.menu.is_some())
+        };
+        if reached {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            !fight.is_done(),
+            "the fight ended before the {phase} phase; log: {:?}",
+            fight.log()
+        );
+        advance(fight, scene, world, held, rom)?;
     }
     anyhow::bail!("the {phase} phase did not come")
 }

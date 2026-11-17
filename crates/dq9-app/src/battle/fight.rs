@@ -403,6 +403,12 @@ impl Fight {
         &self.battle
     }
 
+    /// Whether the bottom screen shows the Abilities list: the `abilities`/`cast` captures of
+    /// `run_to_phase` (`--battle-capture`) tell it from the other menus by this.
+    pub fn showing_abilities(&self) -> bool {
+        matches!(self.menu, Menu::Abilities(_))
+    }
+
     /// The events of the last round the engine resolved (the tests prove a skipped actor).
     #[cfg(test)]
     pub fn last_events(&self) -> &[Event] {

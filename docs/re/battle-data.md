@@ -210,6 +210,28 @@ resolves the chosen row like any action. `str_btl` 30007 is the label ("Abilitie
 Attack, 30005 Spells, 30006 Defend, 30008 Items). The original menu's row order is not read here:
 this port places Abilities between Defend and Items, following the message numbers.
 
+**A save's abilities in a scripted battle.** `--battle N --save <file>` and
+`--battle-stage … --monsters … --save <file>` fight with the save's current slot:
+`battle_start` (`crates/dq9-app/src/native.rs`) reads it through `load::start`, with the
+battle's stage as the explicit map — the same path as `--map` + `--save` — so the levels, the
+`+0x11A` panels, MP, equipment and the hero's look and name are the save's. Without `--save`
+nothing changes (the new game's hero, no panel). `--battle-capture abilities`, `cast` and
+`spent` stop on the first member's list, on the first row it can pay for as it is used, and on
+the window whose status shows the MP that cost: the MP cues ride the round's last beat
+(`Fight::run_round` appends them there), so the cast's own line and the spent MP are two
+windows. The Web's `?battle=` query is unchanged (no save is handed to a scripted battle in
+`web.rs`).
+
+Captures on the demo save (`Adenine`, vocation 10, Lv 91, four members, stage 30116 F01,
+`--seed 7`) in `build/evidence/j4-abilities-capture/`: `abilities.png` (`c6b403d0436b`: 70
+rows, the unmodelled rows greyed — Dragon Slash first — and Gigaslash enabled), `cast.png`
+(`dfae80465143`: "Adenine uses Gigaslash.") and `spent.png` (`5e4fd1194708`: "The slime is
+defeated.", damage 392, MP 552 → 537), with each run's log beside it. A four-member party
+plays the round only on the stage battle: `--battle 26 --save` stops on a limit of the
+engine, not of this wiring — a monster that remembers its attacker against several standing
+members is unmodelled (`Unsupported::TargetMemory`, `ai.rs`), which a lone hero never
+reaches.
+
 ## Equipment battle parameters — `itembtlprm.nat`
 
 A `u32` count in its **low 20 bits** — 1,423 (`func_0209a088` masks it so) — then 44-byte

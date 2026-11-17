@@ -1260,3 +1260,92 @@ fn battle_scene(rom: &[u8], monsters: Vec<(u16, u16)>) -> BattleScene {
     )
     .unwrap()
 }
+
+/// A save whose current slot holds one character: `vocation` at `level`, `mp` maximum MP and
+/// the skill panels of `panels` learned (the `+0x11A` bit array, `Party::from_slot`). A
+/// synthetic save like `dq9_core::party`'s tests; the header says the slot exists and the
+/// checksums are sealed, so that [`dq9_formats::save::Save::current_slot`] takes it.
+fn save_with_abilities(vocation: u8, level: u8, mp: u16, panels: &[u16]) -> Vec<u8> {
+    let mut bytes = vec![0u8; dq9_formats::save::FILE_SIZE];
+    bytes[21] = 1; // slot 0's header: the slot exists
+    bytes[7577] = 1; // one party member, character record 0
+    let at = 136;
+    bytes[at + 2 + usize::from(vocation)] = level;
+    bytes[at + 80] = vocation;
+    // `+0x154`: word 2 holds the maximum HP in fields 7 and the maximum MP in fields 8.
+    let word = (30u32 << 10) | (u32::from(mp) << 20);
+    bytes[at + 0x154..at + 0x158].copy_from_slice(&word.to_le_bytes());
+    for &panel in panels {
+        let panel = usize::from(panel);
+        bytes[at + 0x11A + panel / 8] |= 1 << (panel % 8);
+    }
+    let mut save = dq9_formats::save::Save::parse(&bytes).unwrap();
+    save.slot_mut(0).unwrap().seal();
+    save.as_bytes().to_vec()
+}
+
+/// A scripted battle with `--save` fights with the save's current slot: its learned panels
+/// reach the Abilities menu, greyed rows included, and the member's MP pays for the row.
+/// Without a save the same battle offers nothing — the new game's hero has no panel.
+#[test]
+fn a_scripted_battle_with_a_save_offers_its_learned_abilities() {
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+    // Panel 0 is Dragon Slash (action 63, damage handler 1: refused by the kernel); panel 8 is
+    // Gigaslash (action 67, 15 MP, modelled).
+    let save = save_with_abilities(6, 3, 20, &[0, 8]);
+    let start = crate::native::battle_start(super::DEFAULT_STAGE, Some(&save)).unwrap();
+    let mut party = start.party;
+    assert_eq!(party.members.len(), 1, "the save's one member");
+    assert_eq!(party.members[0].level(), 3);
+    assert_eq!(party.members[0].max_mp, 20);
+    assert!(party.members[0].has_skill_panel(8));
+    party.apply_level_tables(&data.levels);
+
+    let down = Pad {
+        down: true,
+        ..Pad::default()
+    };
+    let abilities_menu = |party: &Party, seed: u64| {
+        let (mut fight, mut world) = fight(rom, party, vec![(1, 1)], false, seed);
+        press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+        fight.step(confirm(), &mut world);
+        for _ in 0..3 {
+            fight.step(down, &mut world);
+        }
+        fight.step(confirm(), &mut world);
+        (fight, world)
+    };
+    let (saved, _world) = abilities_menu(&party, 41);
+    assert!(
+        saved.showing_abilities(),
+        "Abilities opened on the save's panels"
+    );
+    let menu = saved.view().menu.unwrap();
+    assert_eq!(
+        menu.rows.len(),
+        2,
+        "one row per learned panel that names an action"
+    );
+    assert_eq!(String::from_utf8_lossy(&menu.rows[0].0), "Dragon Slash  0");
+    assert!(!menu.rows[0].1, "the kernel does not model action 63");
+    assert_eq!(String::from_utf8_lossy(&menu.rows[1].0), "Gigaslash  15");
+    assert!(menu.rows[1].1, "the save's 20 MP pay for it");
+
+    // Without a save the same scripted battle has a new game's party: no learned panel, so
+    // Abilities is greyed and its list stays empty.
+    let start = crate::native::battle_start(super::DEFAULT_STAGE, None).unwrap();
+    let mut party = start.party;
+    assert_eq!(party.members.len(), 1);
+    assert!(party.members[0].skill_panels.iter().all(|byte| *byte == 0));
+    party.apply_level_tables(&data.levels);
+    let (mut fight, mut world) = fight(rom, &party, vec![(1, 1)], false, 42);
+    press_until(&mut fight, &mut world, |f| f.view().menu.is_some());
+    fight.step(confirm(), &mut world);
+    for _ in 0..3 {
+        fight.step(down, &mut world);
+    }
+    let menu = fight.view().menu.unwrap();
+    assert_eq!(menu.rows.len(), 5, "the Fight menu");
+    assert!(!menu.rows[3].1, "Abilities greyed without a learned panel");
+}

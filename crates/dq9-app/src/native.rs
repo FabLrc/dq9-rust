@@ -129,19 +129,21 @@ struct Cli {
     new_game: bool,
     /// Shows a set battle of `data/event/eventbattle.bin` (`--battle 2`: the Hexagoon) on the
     /// record's stage with its monsters, instead of a map (`docs/app.md`, § Battle scene).
+    /// With `--save`, the party fought with is the save's current slot.
     #[arg(
         long,
         conflicts_with_all = [
-            "event", "stage", "map", "save", "walk", "events_report", "new_game", "battle_stage"
+            "event", "stage", "map", "walk", "events_report", "new_game", "battle_stage"
         ]
     )]
     battle: Option<u16>,
-    /// Shows a battle on this stage map (a map id such as `30116`, "F01 - Field").
+    /// Shows a battle on this stage map (a map id such as `30116`, "F01 - Field"). With
+    /// `--save`, the party fought with is the save's current slot.
     #[arg(
         long,
         requires = "monsters",
         conflicts_with_all = [
-            "event", "stage", "map", "save", "walk", "events_report", "new_game", "battle"
+            "event", "stage", "map", "walk", "events_report", "new_game", "battle"
         ]
     )]
     battle_stage: Option<u16>,
@@ -192,8 +194,10 @@ struct Cli {
     #[arg(long)]
     seed: Option<u64>,
     /// With `--battle` or `--battle-stage` and `--screenshot`: plays the fight until `menu`,
-    /// `damage`, `levelup`, `victory` or `lost` and captures its windows (`--seed` picks the
-    /// draws).
+    /// `abilities` (the first member's Abilities list), `cast` (that list's first payable
+    /// ability, as it is used), `spent` (the window whose status shows the MP it cost),
+    /// `swing`, `damage`, `levelup`, `victory` or `lost` and captures its windows (`--seed`
+    /// picks the draws).
     #[arg(long, value_name = "PHASE")]
     battle_capture: Option<String>,
 }
@@ -822,26 +826,31 @@ fn save_png(out: &Path, (w, h): (u32, u32), rgba: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// The party a battle is fought with, and the hero's look and name: the save's current slot
+/// when `--save` is given — its levels, learned skill panels (`+0x11A`), MP and equipment,
+/// exactly as `--map` + `--save` restores them — else a new game's. The battle's stage is the
+/// explicit map `--map` would name, so the save's own position and story are not restored:
+/// the scene places the hero itself.
+pub(crate) fn battle_start(stage: u16, save: Option<&[u8]>) -> Result<load::Start> {
+    load::start(Some(&stage.to_string()), save)
+}
+
 /// Renders one frame of a battle scene offscreen and writes it as PNG: what the window shows
 /// after the transition, without one (`--battle 2 --screenshot …`, `docs/app.md`,
 /// § "Battle scene").
 fn battle_screenshot(
     cli: &Cli,
     rom: &[u8],
+    save: Option<&[u8]>,
     request: crate::battle::Request,
     out: &Path,
 ) -> Result<()> {
     let clock = lighting::day_clock(None, cli.time, cli.clock);
     let time = clock.phase().index();
     let resolved = request.resolve(rom)?;
-    let mut scene = crate::battle::BattleScene::build(
-        rom,
-        &resolved,
-        time,
-        clock,
-        &cli.story(),
-        &dq9_formats::hero::HeroLook::new_game(),
-    )?;
+    let start = battle_start(resolved.stage, save)?;
+    let mut scene =
+        crate::battle::BattleScene::build(rom, &resolved, time, clock, &cli.story(), &start.look)?;
     println!(
         "battle{}: stage {} {} ({}), {:?} / {:?}, {} fighters, {} triangles",
         resolved
@@ -880,15 +889,16 @@ fn battle_screenshot(
     if let Some(phase) = &cli.battle_capture {
         // The fight is played on the scene with the confirm key held, up to the phase asked.
         talk.set_rom(rom);
+        talk.set_identity(start.identity);
         let data = crate::battle::data::Data::load(rom)?;
-        let mut party = dq9_core::party::Party::new_game();
+        let mut party = start.party;
         party.apply_level_tables(&data.levels);
         let mut world = crate::battle::fight::World::seeded(cli.seed.unwrap_or(7));
         let setup = crate::battle::fight::Setup {
             groups: resolved.monsters.clone(),
             set_battle: resolved.number.is_some(),
             surprise: resolved.surprise,
-            names: vec![talk.hero_name()],
+            names: member_names(&talk, &party),
         };
         let mut played = crate::battle::fight::Fight::new(data, &party, &setup, &mut world)?;
         let weapon = party
@@ -896,6 +906,36 @@ fn battle_screenshot(
             .first()
             .and_then(|member| member.equipment.weapon);
         crate::app::run_to_phase(&mut played, &mut scene, &mut world, phase, rom, weapon)?;
+        // The state the capture shows, in the run's log: the list's rows and whether each can
+        // be chosen, the window's line, and every member's status (MP after a cast's round).
+        let view = played.view();
+        if let Some(menu) = &view.menu {
+            println!("capture {phase}: menu, {} rows:", menu.rows.len());
+            for (i, row) in menu.rows.iter().enumerate() {
+                println!(
+                    "  {i}: {:?} {}",
+                    String::from_utf8_lossy(&row.0),
+                    if row.1 { "enabled" } else { "greyed" }
+                );
+            }
+        }
+        if let Some(lines) = view.message {
+            println!(
+                "capture {phase}: {:?}",
+                crate::battle::fight::lines_plain(lines)
+            );
+        }
+        for row in &view.members {
+            println!(
+                "  {} Lv {} HP {}/{} MP {}/{}",
+                String::from_utf8_lossy(&row.name),
+                row.level,
+                row.hp,
+                row.max_hp,
+                row.mp,
+                row.max_mp
+            );
+        }
         fight = Some(played);
     }
     for _ in 0..cli.frame {
@@ -963,10 +1003,37 @@ fn battle_screenshot(
     Ok(())
 }
 
+/// The party's names as the message font draws them: the protagonist's from the save (or the
+/// default), each companion's saved glyph indices (`+0x140`). The window's rule
+/// (`App::member_names`), repeated here because this module cannot reach it.
+fn member_names(talk: &Talk, party: &dq9_core::party::Party) -> Vec<Vec<u8>> {
+    party
+        .members
+        .iter()
+        .enumerate()
+        .map(|(i, member)| {
+            if i == 0 {
+                return talk.hero_name();
+            }
+            talk.with_ui(|_, font| {
+                let mut name = Vec::new();
+                for &index in member.name().iter() {
+                    match font.glyphs.get(usize::from(index)) {
+                        Some(glyph) => name.extend_from_slice(glyph.text),
+                        None => name.push(b'?'),
+                    }
+                }
+                name
+            })
+            .unwrap_or_default()
+        })
+        .collect()
+}
+
 /// Renders one frame of the map offscreen and writes it as PNG.
 fn screenshot(cli: &Cli, rom: &[u8], save: Option<&[u8]>, out: &Path) -> Result<()> {
     if let Some(request) = cli.battle_request() {
-        return battle_screenshot(cli, rom, request, out);
+        return battle_screenshot(cli, rom, save, request, out);
     }
     let mut prepared = prepare(cli, rom, save)?;
     let (device, queue) = pollster::block_on(async {
