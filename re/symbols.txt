@@ -981,3 +981,9 @@ ov_017::021970a0 Battle_SurpriseRoll
 ov_017::021a1ad0 Monster_ReleaseFar
 ov_017::021a2128 Monster_Spawn
 ov_017::021b848c Battle_PrepareParty   # stage from the ground record under the leader into the request +0x02
+
+# --- Field and battle screens (docs/re/bottom-screen.md) ---
+0x02012744 TouchInput_TestHoldInRectangle  # TouchInput hit test (USA decompilation +0x10)
+0x02021500 MapScreen_Load                  # dispatches the five map-screen loads on +0x9c1
+0x02022d88 MapScreen_BeginLoad             # (obj, mode): fades the sub screen, restarts the load
+ov_017::021b1ca8 Field_SetDisplaySwap      # POWCNT1 bit 15: 1 on field entry (ov_017::021b17ec), 0 on exit

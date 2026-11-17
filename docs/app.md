@@ -1275,10 +1275,13 @@ in the `wide` presentation:
 
 - **Top**: the 3D field, with the game's camera and projection (`0x0202df78`, vertical
   half-angle of 15°). The screen is 256×192; only the rectangle size varies with the window.
-- **Bottom**: plain background (`dq9_render::Panel`) in the field, no content: the touch
-  screen content is not identified **[unknown]**; no ROM data is displayed there. During a
-  fight it holds the party's status and the command menus (§ "Battle", layout
-  **[hypothesis]**).
+- **Bottom**: in the field the original draws its 3D view, message window and touch UI
+  ("X Menu", stylus hand) there and the map screen on the top one; during a fight the party
+  panels and command menus are at the bottom and the 3D view on top. Elements, draw
+  functions, assets and coordinates: [`re/bottom-screen.md`](re/bottom-screen.md). The port
+  draws the field on the top screen, which is the inverse of the original; the current
+  behaviour is a plain background (`dq9_render::Panel`) on the freed screen, no ROM data is
+  displayed there.
 - **Message window**: drawn on the top screen (`talk.rs`, `dialogue.md`); the battle's own is
   at the top of the screen (`battle/ui.rs`).
 
