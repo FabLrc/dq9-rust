@@ -181,11 +181,11 @@ Each item names the work, the evidence and its confidence.
    a party of one is unaffected.
 4. **Experience sharing** (`party.rs:686`). The decompiled `ov_023::021f4098` multiplies a second
    per-member float into each share and divides by the weighted sum; identify `0x02053dfc`
-   (**[hypothesis]** turns alive: it bumps a counter when a status bit is clear) and **Update 2026-11-17 (`j4-xp-wire`): refuted** — the counter counts command passes of every present slot, not turns alive; it is uniform for a party present from the start and cancels in the share.
+   (**[hypothesis]** turns alive: it bumps a counter when a status bit is clear) and
    `0x0202053c` before changing anything, and add the ×1.05 of the elevating shoes
    (`func_0208538c` gate then `uRam021f4434`). Evidence: `ghidra-xp-share.txt`,
    `ghidra-xp-helpers.txt`. The chapter-2 pilot's XP totals were never compared with the original,
-   so a real-ROM test should assert the share of a two-member party first.
+   so a real-ROM test should assert the share of a two-member party first. **Update 2026-11-17 (`j4-xp-wire`): refuted** — the counter counts command passes of every present slot, not turns alive; it is uniform for a party present from the start and cancels in the share.
 5. **Item spend rule** (`crates/dq9-app/src/battle/fight.rs:935`). Keep a healing item that healed
    nothing. The page gives no address: read the item action's handler before deciding, then
    assert with the app's battle test (a herb on an ally at full HP). **[hypothesis]** from the
