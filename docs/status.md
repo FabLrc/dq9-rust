@@ -40,6 +40,10 @@ Parity 2/2 with the party fields in the checkpoint. Fixed 60 Hz loop; hero, fiel
 | `j4-web-show` / `ead8d8b` | Hosted-page runs (`-Url`): shown route reaches 2750 at 4166.5 s with 971 checkpoints of the native shown state; instant run at 3035.5 s | 5/5 |
 | `j4-grudge-enrage` / `4e0a0ed` | Grudge weights (+2/+1, 263/438 species), `TargetMemory` refusal removed; no chapter-2 fight enrages (Hexagoon kinds 0/0) | 5/5, route byte-identical |
 | `j4-item-spend` / `2da4e51` | An item whose effect changed nothing is kept (ResolveAction applied counter, `0x021ed724`); field handler rule unread | 5/5, route byte-identical |
+| `j4-bottom-screen-re` / `2183df4` | `re/bottom-screen.md`: on the field the original runs with its screens **swapped** (3D and message window on the bottom, map screen on top); battle keeps 3D on top | 5/5 |
+| `j4-battle-worn-items` / `0b5ceda` | Worn equipment with a use effect is offered in the battle Items menu, never spent | 5/5, route byte-identical |
+| `j4-screens-original` / `5ecb58e` | Opt-in `--screens original` (Web `?screens=`/"Field" select); default `port`, `M01` pixel-identical | 5/5 |
+| `j4-field-menu-rules` / `fcd135a` | Field items spent only on a change, vocation-masked equipment refused, Benediction unequips cursed pieces, church coffin line read | 5/5, route byte-identical |
 
 The route's acceptance run on `main` (`ef56959`): `build/evidence/j4-route-accept/accept-2750.out`
 (`9f979a299fc4`), 972 checkpoints; trajectory and the Hexagoon's five attempts in
@@ -52,7 +56,7 @@ and the win branch (event 15 → 2550 → 2555 → 2.5.1 → … → 2750) are p
   drew another battle-26 monster set (HP 16/20 vs 13, XP 7 vs 2, gold 13 vs 4); three `accepted`
   entries pin the runtime's exact value. A seed-7 fight stands in for that draw, it does not prove it.
 - **Experience share**: wired. The counter is one increment per command pass of each present slot, so it cancels for a party present from the start; the hold bit `live+0xA8` bit 0 is **[unknown]** and mid-battle joins are not modelled.
-- **Audit leftovers** (`re/encyclopedia-audit.md`): enrage draws for heal/Zing actions (no chapter-2 fight enrages), the field menu's item-spend rule, metal rules and tension (later milestones).
+- **Audit leftovers** (`re/encyclopedia-audit.md`): enrage draws for heal/Zing actions (no chapter-2 fight enrages), weapon/shield skill-tree equip rule, metal rules and tension (later milestones).
 - **Containers**: runtime `LootableContainer` objects, nothing drawn or hidden; cupboards have no
   position; a mimic opens nothing; locked chests refuse with no flag.
 - **Route mode** is a test driver, not a game feature; `D01M02`'s west stair being a dead end is
@@ -74,8 +78,10 @@ Evidence (local, `build/evidence/j4-web-pilot/`): console log `a566bf824b31`, ch
 
 ## Active work and next steps
 
-Nothing is unmerged. Next: (1) a **hand-played** session (never done: only the pilot has played the route);
-(2) more original references beyond 1.1.2 (only two exist, both in the prologue); (3) worn-equipment use,
-the save-carried revival map, trigger action 180, `ME_009`; (4) docs consistency. Dev environment:
+In flight: `j4-enhanced-mode` (user request: `wide` becomes `enhanced` and the default layout, every graphics
+option switchable, experimental `enhanced-reactive`, basic HUD with the whole party). Pending decision after
+the user's hand test: make `--screens original` the default. Then: the map screen and party strips on the
+top screen (`re/bottom-screen.md` steps 2-3), more original references beyond 1.1.2 (only two, both in the
+prologue), the save-carried revival map, trigger action 180, `ME_009`, docs consistency. Dev environment:
 `dev`/`test` profiles keep line tables only (integrate target 3.2 GB against 4.7 GB before).
 Evidence stays local under `build/evidence/<batch>/`, never committed.
