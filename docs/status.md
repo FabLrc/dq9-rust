@@ -52,7 +52,7 @@ and the win branch (event 15 → 2550 → 2555 → 2.5.1 → … → 2750) are p
   drew another battle-26 monster set (HP 16/20 vs 13, XP 7 vs 2, gold 13 vs 4); three `accepted`
   entries pin the runtime's exact value. A seed-7 fight stands in for that draw, it does not prove it.
 - **Experience share**: wired. The counter is one increment per command pass of each present slot, so it cancels for a party present from the start; the hold bit `live+0xA8` bit 0 is **[unknown]** and mid-battle joins are not modelled.
-- **Audit leftovers** (`re/encyclopedia-audit.md`): grudge targeting, enrage (whether the Hexagoon enrages is **[unknown]**), item spend rule.
+- **Audit leftovers** (`re/encyclopedia-audit.md`): enrage draws for heal/Zing actions (no chapter-2 fight enrages), the field menu's item-spend rule, metal rules and tension (later milestones).
 - **Containers**: runtime `LootableContainer` objects, nothing drawn or hidden; cupboards have no
   position; a mimic opens nothing; locked chests refuse with no flag.
 - **Route mode** is a test driver, not a game feature; `D01M02`'s west stair being a dead end is
