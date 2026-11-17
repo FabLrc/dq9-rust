@@ -10,7 +10,9 @@ mod copies;
 mod memory;
 
 pub use copies::{MemberCheck, PARTY_MEMBER, PARTY_MEMBER_SIZE, SAVE_COPIES, SaveCopy};
-pub use memory::{Checkpoint, Memory, NpcBody, NpcEntry, NpcPlacement, TrackState};
+pub use memory::{
+    Checkpoint, Memory, NpcBody, NpcEntry, NpcPlacement, PartyMemberRam, PartyRam, TrackState,
+};
 
 use nds_rom::{Error, Result};
 
@@ -42,6 +44,13 @@ pub const ZONE_3D: u32 = 0x020f_b3f0;
 pub const NPC_TABLE: u32 = 0x0210_75f4;
 /// Most entries the NPC table stores.
 pub const NPC_SLOTS: u32 = 0x20;
+/// Gold on hand (`Save_UnpackMain`, `0x020a95b4`, from `Main+0x2c30`).
+pub const GOLD_ON_HAND: u32 = GAME_STATE + 0x3970;
+/// Party order: entry `i` is the id of the member object in party slot `i`
+/// (`Save_UnpackMain`), 4 bytes.
+pub const PARTY_ORDER: u32 = GAME_STATE + 0x397c;
+/// Number of party entries in use (`Save_UnpackMain`), 1 byte, at most 4.
+pub const PARTY_COUNT: u32 = GAME_STATE + 0x3980;
 
 /// Section header: 4-byte name, 32-bit length (header included), 8 more bytes.
 const SECTION_HEADER: usize = 16;
@@ -237,6 +246,81 @@ mod tests {
         cp15.extend_from_slice(&dtcm);
         section(&mut out, b"CP15", &cp15);
         out
+    }
+
+    /// Writes `bytes` at an ARM9 address of a synthetic main RAM.
+    fn put(m: &mut [u8], addr: u32, bytes: &[u8]) {
+        let o = (addr & 0x3f_ffff) as usize;
+        m[o..o + bytes.len()].copy_from_slice(bytes);
+    }
+
+    #[test]
+    fn party_reads_slot_order_levels_and_gold() {
+        let data = synthetic_with(|m| {
+            // Party slot 0 is member object 1, slot 1 member object 0.
+            put(m, PARTY_ORDER, &[1, 0, 0xff, 0xff]);
+            put(m, PARTY_COUNT, &[2]);
+            put(m, GOLD_ON_HAND, &4321u32.to_le_bytes());
+            for (k, id, vocation, level, experience, hp, mp, max_hp, max_mp) in [
+                (0u32, 0u16, 6u32, 4u16, 1234u32, 11u16, 2u16, 20u16, 6u16),
+                (1, 1, 2, 7, 77, 9, 5, 30, 8),
+            ] {
+                let at = PARTY_MEMBER + k * PARTY_MEMBER_SIZE;
+                put(m, at + MEMBER_ID, &id.to_le_bytes());
+                put(m, at + 0x950, &vocation.to_le_bytes());
+                put(m, at + 0x16c + 2 * vocation, &level.to_le_bytes());
+                put(m, at + 0x138 + 4 * vocation, &experience.to_le_bytes());
+                put(m, at + 0x1c, &hp.to_le_bytes());
+                put(m, at + 0x1e, &mp.to_le_bytes());
+                put(m, at + 0x6c, &max_hp.to_le_bytes());
+                put(m, at + 0x6e, &max_mp.to_le_bytes());
+            }
+        });
+        let party = State::parse(&data).unwrap().party().unwrap();
+        assert_eq!(party.gold, 4321);
+        assert_eq!(
+            party.members,
+            vec![
+                PartyMemberRam {
+                    level: 7,
+                    hp: 9,
+                    mp: 5,
+                    max_hp: 30,
+                    max_mp: 8,
+                    experience: 77,
+                },
+                PartyMemberRam {
+                    level: 4,
+                    hp: 11,
+                    mp: 2,
+                    max_hp: 20,
+                    max_mp: 6,
+                    experience: 1234,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn party_refuses_what_the_game_cannot_hold() {
+        let edits: [fn(&mut [u8]); 3] = [
+            |m: &mut [u8]| put(m, PARTY_COUNT, &[5]),
+            // Party slot 0 names member object 2, which no object has.
+            |m: &mut [u8]| {
+                put(m, PARTY_COUNT, &[1]);
+                put(m, PARTY_ORDER, &[2, 0, 0, 0]);
+            },
+            // Vocation 13 has no level file.
+            |m: &mut [u8]| {
+                put(m, PARTY_COUNT, &[1]);
+                put(m, PARTY_ORDER, &[0, 0, 0, 0]);
+                put(m, PARTY_MEMBER + 0x950, &13u32.to_le_bytes());
+            },
+        ];
+        for edit in edits {
+            let data = synthetic_with(edit);
+            assert!(State::parse(&data).unwrap().party().is_err());
+        }
     }
 
     #[test]

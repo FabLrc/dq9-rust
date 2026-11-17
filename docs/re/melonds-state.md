@@ -160,7 +160,8 @@ The tests (`melonds::tests`) use a synthetic state built according to this forma
 
 Goal: compare the story state computed by the reimplemented runtime with the real game
 (melonDS), at the **same points** — progress of the five tracks, their two flag sets, global
-flags, quests — plus the map and the hero position. The v0.1 criterion
+flags, quests — plus the map, the hero position and, since batch `j4-parity-party`, the
+party's level, HP/MP, experience and the gold. The v0.1 criterion
 ([`roadmap.md`](../roadmap.md), J3) is strict: same flags at the same points; it cannot be
 inferred from `--pilot` alone nor from a fabricated save.
 
@@ -172,18 +173,38 @@ current track at `+0x332`. The map comes from `Zone3D+0`/`+4`, the frame number 
 VBlank counter (`0x027ffc3c`).
 
 ```json
-{"vblank":26379,"map":4105,"area":4100,"track":0,"daytime":true,
+{"vblank":23033,"map":4105,"area":4100,"track":0,"daytime":true,
  "tracks":[{"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[1]},
            {"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[]},
            {"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[]},
            {"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[]},
            {"chapter":1,"step":1,"substep":1,"chapter_flags":[],"step_flags":[]}],
- "flags":[337,1450,...],"quests":{}}
+ "flags":[337,...],"quests":{},
+ "party":[{"level":1,"hp":16,"max_hp":20,"mp":6,"max_mp":6,"experience":7}],
+ "gold":13,"hero":{"x":0.66,"y":-0.25,"z":-3.61,"yaw":4.86}}
 ```
 
 `flags` and a track's two sets are **bit indices** (least significant bit first,
 `Flags_Test`); `quests` lists only non-zero nibbles. Without `--json`, the same thing is
 printed as text, with the position of the party objects.
+
+`party` (batch `j4-parity-party`) is the party in slot order and `gold` the money on hand,
+read from the same RAM the load writes (`save.md`, § "Party members"): the count at
+`GameState+0x3980`, the order list at `GameState+0x397c` naming each slot's member object
+(id at `+0x568`), then in that object the current vocation (`+0x950`) selecting the level
+(`+0x16c`, 13 × u16) and the experience (`+0x138`, 13 × u32), the current HP and MP
+(`+0x1c`, `+0x1e`; the status block's values) and the maxima (`+0x6c`, `+0x6e`), and the
+gold at `GameState+0x3970`. A count above four, an order entry with no member object and a
+vocation outside the thirteen are errors, not zeroed fields (`Memory::party`). The runtime
+(`dq9-app --checkpoints`) writes the same six fields per member and `gold` from the party the
+battle ended with.
+
+`scripts/compare-runs.ps1` compares them exactly, so a battle played by the engine (`--fight`)
+no longer gives the same checkpoints as the stand-in. The original's own RNG chooses battle
+26's monsters, damage and reward, so its values legitimately differ from a seed-pinned run:
+`scripts/parity.ps1` then accepts a per-member field (or the gold) by **setting the original's
+copy to the exact value the runtime must produce**, reason cited in the reference; a
+regression of that value still fails.
 
 ### Diff of two states (`dq9re state diff`)
 

@@ -27,12 +27,25 @@
 #
 # Each reference: both files must exist and match their sha256 before use; the runtime run
 # (one per distinct inputs + args, release dq9-app built once) is compared with the original
-# by compare-runs.ps1. An accepted deviation names one global flag present on one side only
-# ("original" or "runtime") with its justification: the flag is removed from that side's
-# checkpoints before the comparison, so any other difference still fails, and the flag
-# reappearing on the other side fails too. An accepted flag that is absent from its side is
-# stale and fails. Every original checkpoint must be aligned (compare-runs reports unmatched
-# originals as information only; here they fail: the reference would prove less than it says).
+# by compare-runs.ps1. The comparison covers the story (map, track, the five tracks' progress
+# and both flag sets), global flags, quests, the hero's position and, since batch
+# j4-parity-party, the party in slot order (current-vocation level and experience, current and
+# maximum HP and MP) and the gold on hand, exactly: a fought battle changes them, so a stand-in
+# replay no longer compares equal to the engine's fight.
+#
+# An accepted deviation is one of two shapes, each with its mandatory justification `reason`:
+#   { "flag": N, "only": "original" | "runtime", "reason": "..." }
+#     one global flag present on only one side; it is removed from that side's checkpoints
+#     before the comparison, and a later checkpoint where it reappears fails;
+#   { "member": I, "field": F, "value": V, "reason": "..." }   (or { "field": "gold", ... })
+#     a party field the original cannot supply at the reference point because the game's own
+#     RNG decides it (battle 26's monsters and damage). The original copy's member I field F
+#     (or the gold) is set to V, the exact value the seed-pinned engine run must produce, so
+#     the comparison stays exact and a regression in the award/level-up path (V becomes 0 or
+#     anything else) still fails. F is level, hp, max_hp, mp, max_mp or experience. An entry
+#     that changes nothing is stale and fails.
+# Every original checkpoint must be aligned (compare-runs reports unmatched originals as
+# information only; here they fail: the reference would prove less than it says).
 #
 # Output: one line per reference, `ok` or `FAILED`, followed by the differences. Exit code 0
 # when every reference passes, 1 otherwise (difference, missing file, sha256 mismatch, invalid
@@ -124,6 +137,57 @@ function Format-Arg([string] $Arg) {
     return '"' + ($Arg -replace '"', '\"') + '"'
 }
 
+# Sets the accepted party fields of every original checkpoint to the value the seed-pinned
+# engine run must produce (the reference's `accepted` party entries), so compare-runs keeps
+# an exact comparison and a runtime regression still fails. Returns how many lines each
+# entry changed; an entry that changed none is stale. The original checkpoints are data, so
+# the file is parsed, not pattern-replaced.
+function Set-PartyValues([string] $Path, $Entries) {
+    $Changed = @{}
+    foreach ($Entry in $Entries) {
+        $Key = if ($null -ne $Entry.member) { "$([int]$Entry.member)/$($Entry.field)" } else { "$($Entry.field)" }
+        $Changed[$Key] = 0
+    }
+    if (@($Entries).Count -eq 0) { return $Changed }
+    $Lines = foreach ($Line in [IO.File]::ReadAllLines($Path)) {
+        if ([string]::IsNullOrWhiteSpace($Line)) { $Line; continue }
+        try { $Object = $Line | ConvertFrom-Json } catch { throw "$Path is not JSONL: $_" }
+        $Members = @($Object.party)
+        $Touched = $false
+        foreach ($Entry in $Entries) {
+            $Value = [int]$Entry.value
+            if ($null -eq $Entry.member) {
+                if ($null -eq $Object.PSObject.Properties['gold']) {
+                    throw 'accepted gold: the original checkpoint has no gold'
+                }
+                if ([double]$Object.gold -ne [double]$Value) {
+                    $Object.gold = $Value
+                    $Changed["$($Entry.field)"]++
+                    $Touched = $true
+                }
+                continue
+            }
+            $Index = [int]$Entry.member
+            if ($Index -ge $Members.Count) {
+                throw "accepted party member ${Index}: the original checkpoint has $($Members.Count) member(s)"
+            }
+            $Member = $Members[$Index]
+            $Property = $Member.PSObject.Properties[$Entry.field]
+            if ($null -eq $Property) {
+                throw "accepted party member ${Index}: the original checkpoint has no '$($Entry.field)'"
+            }
+            if ([double]$Property.Value -ne [double]$Value) {
+                $Property.Value = $Value
+                $Changed["$Index/$($Entry.field)"]++
+                $Touched = $true
+            }
+        }
+        if ($Touched) { $Object | ConvertTo-Json -Depth 12 -Compress } else { $Line }
+    }
+    [IO.File]::WriteAllLines($Path, [string[]]@($Lines), $Utf8)
+    return $Changed
+}
+
 # --- references file ---------------------------------------------------------------------
 if (-not $References) {
     $References = Join-Path $Root 'build/evidence/parity/references.json'
@@ -203,13 +267,28 @@ foreach ($Ref in $Refs) {
         if ($null -ne $Ref.heroTolerance) { $Tolerance = [double]$Ref.heroTolerance }
 
         $FlagsBySide = @{ original = [System.Collections.Generic.List[int]]::new(); runtime = [System.Collections.Generic.List[int]]::new() }
+        $PartyAccepted = [System.Collections.Generic.List[object]]::new()
         $Accepted = @($Ref.accepted | Where-Object { $null -ne $_ })
+        $PartyFields = @('level', 'hp', 'max_hp', 'mp', 'max_mp', 'experience')
         foreach ($Entry in $Accepted) {
-            Test-Keys $Entry @('flag', 'only', 'reason') "$Name accepted"
-            if ($null -eq $Entry.flag) { throw "$Name accepted: no flag" }
-            if (@('original', 'runtime') -notcontains $Entry.only) { throw "$Name accepted $($Entry.flag): only must be 'original' or 'runtime'" }
-            if (-not "$($Entry.reason)".Trim()) { throw "$Name accepted $($Entry.flag): no reason" }
-            $FlagsBySide[$Entry.only].Add([int]$Entry.flag)
+            if ($null -ne $Entry.flag) {
+                Test-Keys $Entry @('flag', 'only', 'reason') "$Name accepted"
+                if (@('original', 'runtime') -notcontains $Entry.only) { throw "$Name accepted $($Entry.flag): only must be 'original' or 'runtime'" }
+                if (-not "$($Entry.reason)".Trim()) { throw "$Name accepted $($Entry.flag): no reason" }
+                $FlagsBySide[$Entry.only].Add([int]$Entry.flag)
+                continue
+            }
+            if ($null -ne $Entry.member) {
+                Test-Keys $Entry @('member', 'field', 'value', 'reason') "$Name accepted"
+                if ([int]$Entry.member -lt 0 -or [int]$Entry.member -gt 3) { throw "$Name accepted: member must be 0 to 3" }
+                if ($PartyFields -notcontains $Entry.field) { throw "$Name accepted: field must be one of $($PartyFields -join ', ')" }
+            } else {
+                Test-Keys $Entry @('field', 'value', 'reason') "$Name accepted"
+                if ($Entry.field -ne 'gold') { throw "$Name accepted: without a member, field must be 'gold'" }
+            }
+            if ($null -eq $Entry.value) { throw "$Name accepted $($Entry.field): no value" }
+            if (-not "$($Entry.reason)".Trim()) { throw "$Name accepted $($Entry.field): no reason" }
+            $PartyAccepted.Add($Entry)
         }
 
         $Key = (Get-Sha256 $Inputs) + ' ' + ($AppArgs -join ' ')
@@ -236,13 +315,24 @@ foreach ($Ref in $Refs) {
             runtime = Copy-WithoutFlags $Runtime $RuntimeCopy $FlagsBySide['runtime'].ToArray()
         }
         $Stale = 0
+        $PartySet = Set-PartyValues $OriginalCopy $PartyAccepted
         $AcceptedText = foreach ($Entry in $Accepted) {
-            $Count = $Removed[$Entry.only][[int]$Entry.flag]
+            if ($null -ne $Entry.flag) {
+                $Count = $Removed[$Entry.only][[int]$Entry.flag]
+                if ($Count -eq 0) {
+                    $Stale++
+                    $Details.Add("stale accepted deviation: flag $($Entry.flag) is not in any $($Entry.only) checkpoint (remove it from the reference)")
+                }
+                "flag $($Entry.flag) $($Entry.only) only ($Count checkpoint(s))"
+                continue
+            }
+            $Key = if ($null -ne $Entry.member) { "$([int]$Entry.member)/$($Entry.field)" } else { "$($Entry.field)" }
+            $Count = $PartySet[$Key]
             if ($Count -eq 0) {
                 $Stale++
-                $Details.Add("stale accepted deviation: flag $($Entry.flag) is not in any $($Entry.only) checkpoint (remove it from the reference)")
+                $Details.Add("stale accepted deviation: party $Key already equals $($Entry.value) in every original checkpoint (remove it from the reference)")
             }
-            "flag $($Entry.flag) $($Entry.only) only ($Count checkpoint(s))"
+            "party $Key -> $($Entry.value) ($Count checkpoint(s))"
         }
 
         $Output = @(& $CompareRuns -Original $OriginalCopy -Runtime $RuntimeCopy -Limit 100 -HeroTolerance $Tolerance)

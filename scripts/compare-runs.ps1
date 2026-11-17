@@ -23,6 +23,12 @@
 # point that shares its story key would compare two different moments as if they were one.
 # The only cross-kind pair kept is the original `after` (a follow-up capture at the same
 # story point) with the runtime `control`.
+#
+# `party` (per slot: current-vocation level and experience, current and maximum HP and MP) and
+# `gold` are always compared, exactly: a fought battle changes them, so the engine's fight no
+# longer matches a stand-in. A deviation the original's own RNG explains is substituted by
+# `scripts/parity.ps1` in its copy of the original (see that script's header); this script has
+# no loosening of its own.
 param(
     [Parameter(Mandatory)] [string] $Original,
     [Parameter(Mandatory)] [string] $Runtime,
@@ -150,6 +156,26 @@ foreach ($or in $originalChecks) {
     $aq = Quest-Text $or.quests
     $bq = Quest-Text $rt.quests
     if ($aq -ne $bq) { Fail "$where quests: original [$aq], runtime [$bq]" }
+    # The party: one entry per slot with the current vocation's level and experience, the
+    # current and maximum HP/MP, then the gold on hand (`dq9re state --json`,
+    # `dq9-app --checkpoints`). A played battle changes these, so a stand-in and the engine's
+    # fight no longer compare equal. Both sides must report them: an absent field is not an
+    # empty party (a reference that predates the widening must be regenerated).
+    if ($null -ne $or.party -and $null -ne $rt.party) {
+        $ap = @($or.party)
+        $bp = @($rt.party)
+        Same "$where party member count" $ap.Count $bp.Count
+        for ($i = 0; $i -lt [Math]::Min($ap.Count, $bp.Count); $i++) {
+            $a = $ap[$i]
+            $b = $bp[$i]
+            foreach ($field in 'level', 'hp', 'max_hp', 'mp', 'max_mp', 'experience') {
+                Same "$where party member $i ${field}" $a.$field $b.$field
+            }
+        }
+        Same "$where gold" $or.gold $rt.gold
+    } elseif ($null -ne $or.party -or $null -ne $rt.party) {
+        Fail "$where party: only one checkpoint reports it"
+    }
     if ($HeroTolerance -gt 0) {
         if ($null -eq $or.hero -or $null -eq $rt.hero) {
             Fail "$where hero: only one checkpoint reports it"

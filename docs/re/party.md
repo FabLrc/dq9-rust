@@ -96,6 +96,59 @@ at the current vocation and level. It also fills a new-game hero's maxima and cu
 (the character has none yet); a restored character keeps the record's maxima, which include
 seeds and equipment exactly as the load writes them.
 
+## The party in a checkpoint (`dq9re state --json`)
+
+Batch `j4-parity-party` widened the parity checkpoint to the party and the gold
+([`melonds-state.md`](melonds-state.md), § "Checkpoint"): the reader
+(`dq9_formats::melonds::Memory::party`, `PartyRam`, `PartyMemberRam`) uses the offsets below,
+no new guess. The count and the order list are the save's copies (`Save_UnpackMain`,
+`0x020a95b4`); the per-member fields are those `PartyMember_LoadRecord` (`0x02082d7c`) writes
+and the game updates.
+
+| Field | Address | Source |
+|---|---|---|
+| party count | `GameState+0x3980` (u8, ≤ 4) | save `7577`, copied by `Save_UnpackMain` |
+| party order | `GameState+0x397c`, `count` bytes | save `7573`, same copy |
+| slot → member object | `+0x568` = order byte (u16) | `Save_UnpackMain`'s search of the four objects |
+| current vocation | `+0x950` (u32) | `PartyMember_LoadRecord` |
+| level | `+0x16c + 2 × vocation` (u16) | same |
+| experience | `+0x138 + 4 × vocation` (u32) | same |
+| current HP / MP | `+0x1c`, `+0x1e` (u16) | `func_020830cc`'s stat block (§ "HP and MP on load") |
+| maximum HP / MP | `+0x6c`, `+0x6e` (u16) | same |
+| gold on hand | `GameState+0x3970` (u32) | save `11448` |
+
+A count above four, an order entry with no member object and a vocation outside the thirteen
+are errors (`Memory::party`), never zero-filled fields; the tests build a synthetic state with
+two members in reversed slot order and check the refusals
+(`melonds::tests::party_reads_slot_order_levels_and_gold`,
+`party_refuses_what_the_game_cannot_hold`).
+
+Measured on the original references (the same image each checkpoint was validated against):
+
+| Checkpoint | Party | Gold |
+|---|---|---|
+| `build/oracle-host/ram_male.bin`, 1.1.1, vblank 23033 | Lv 1 Minstrel, HP 16/20, MP 6/6, experience 7 | 13 |
+| `build/v01-20261107/oracle/control112-ram.bin`, 1.1.2, vblank 58393 | Lv 1, HP 20/20, MP 6/6, experience 7 | 13 |
+
+Both agree with `bat6.ml1`'s documented 7 experience and 13 gold after battle 26; the male run
+kept the HP its fight left, the female 1.1.2 image is at full HP. The party is unchanged at
+vblanks 58303–61077 in the 1.1.2 captures, so the one-frame gap between the archived
+checkpoint (58392) and its RAM image (58393) does not touch these fields. Empty member objects
+(id `0xffff`, HP 1/1) are never read: the count and the order list name the slots.
+
+**What it changes in parity.** `scripts/compare-runs.ps1` compares the six fields and the gold
+exactly. With `--fight --seed 7` battle 26's monsters are `[(290, 1), (292, 1), (290, 1)]` and
+the engine pays 2 experience and 4 gold, leaving the hero at 13/20 HP (`Lv 1`, MP 6/6); the
+stand-in writes `0/0` HP, `0/0` MP, 0 experience and 0 gold (it never applies the level
+tables), and the originals' own RNG drew another monster set (7 experience, 13 gold; 16/20 or
+20/20 HP). So the fought and stand-in runs now differ on 611 of their 615 checkpoint lines,
+and the fields the original's draw explains are accepted **per field** in the reference:
+`scripts/parity.ps1` sets the original copy's value to the exact value the seed-7 run must
+produce (`{ "member": 0, "field": "experience", "value": 2, "reason": … }`, or
+`{ "field": "gold", "value": 4, … }`), with the reason in the reference. The comparison stays
+exact: a regression to 0 fails (measured, `build/evidence/j4-parity-party/`). Level, the
+maxima and the MP match the originals without acceptance.
+
 ## Held items
 
 A party slot carries **eight** held item ids (`Save` `7578 + 18 i`, 8 × u16; RAM member
@@ -252,6 +305,21 @@ values `dq9re state --save` compares — vocation, level and experience in the c
 equipment, skill points, name glyphs, sex, held items — plus the maximum HP/MP from the
 record's stat block (Sage 91: 481/481 and 552/552), gold 38,754 and the 101 occupied bag slots
 (`demo-save-party.txt`).
+
+**Party in the widened checkpoint (`build/evidence/j4-parity-party/`):** the two regenerated
+original references carry `party`/`gold` read from `ram_male.bin` and `control112-ram.bin`;
+`regen-originals.txt` (`df726deb7ad1`) shows every previously compared field identical to the
+archived checkpoint before the fields were appended (`references.json`, `980250de6f8e`, cites
+the provenance). `party-controls.txt` (`5bbe15431f79`) gives the three sides at 1.1.1 and
+1.1.2: original 7 experience / 13 gold (HP 16/20 and 20/20), fought 2 / 4 (HP 13/20), stand-in
+all zero. `parity-fought.log` (`ccebea99e966`) is 2/2 ok with the three party accepted fields
+per reference; `parity-falsification.log` (`d67e0ecb00c5`, same references without them) fails
+on `party member 0 hp`, `party member 0 experience` and `gold` only;
+`compare-fought-vs-standin.txt` (`7093e57aa149`) and `compare-standin-vs-original.txt`
+(`3a32a9d81a5d`) are the `compare-runs.ps1` runs behind 611/615 differing lines. The stand-in's
+maxima are 0 because a headless stand-in run never applies the level tables
+(`Party::apply_level_tables` happens at the first fight): party maxima cannot be compared from
+a stand-in reference.
 
 ## Not established
 

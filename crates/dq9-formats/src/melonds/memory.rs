@@ -8,8 +8,8 @@ use super::copies::{
     member_fields,
 };
 use super::{
-    DTCM_BASE, DTCM_SIZE, GAME_STATE, MAIN_RAM_BASE, MAIN_RAM_SIZE, NPC_SLOTS, NPC_TABLE,
-    OBJECT_COUNT, QUEST_MANAGER, VBLANK_COUNT, ZONE_3D,
+    DTCM_BASE, DTCM_SIZE, GAME_STATE, GOLD_ON_HAND, MAIN_RAM_BASE, MAIN_RAM_SIZE, NPC_SLOTS,
+    NPC_TABLE, OBJECT_COUNT, PARTY_COUNT, PARTY_ORDER, QUEST_MANAGER, VBLANK_COUNT, ZONE_3D,
 };
 use crate::cast::Story;
 use crate::maplist::MapList;
@@ -102,6 +102,46 @@ impl Checkpoint {
     }
 }
 
+/// Party member fields of the member objects at [`PARTY_MEMBER`], as
+/// `PartyMember_LoadRecord` (`0x02082d7c`) writes them and the game then updates them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PartyMemberRam {
+    /// Level in the current vocation (`+0x16c`, indexed by `+0x950`).
+    pub level: u16,
+    /// Current HP and MP (`+0x1c`, `+0x1e`; the status block `GameObject+0x130` points to).
+    pub hp: u16,
+    pub mp: u16,
+    /// Maximum HP and MP (`+0x6c`, `+0x6e`).
+    pub max_hp: u16,
+    pub max_mp: u16,
+    /// Experience in the current vocation (`+0x138`, indexed by `+0x950`).
+    pub experience: u32,
+}
+
+/// The party in slot order and the gold on hand, as the game holds them after
+/// `Save_UnpackMain` (`0x020a95b4`): [`PARTY_ORDER`] names the member object of each slot,
+/// [`PARTY_COUNT`] says how many are in use, [`GOLD_ON_HAND`] the money
+/// (`docs/re/party.md`, § "The character record").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartyRam {
+    pub members: Vec<PartyMemberRam>,
+    pub gold: u32,
+}
+
+/// Member object fields [`Memory::party`] reads (`docs/re/party.md`).
+const MEMBER_HP: u32 = 0x1c;
+const MEMBER_MP: u32 = 0x1e;
+const MEMBER_MAX_HP: u32 = 0x6c;
+const MEMBER_MAX_MP: u32 = 0x6e;
+const MEMBER_EXPERIENCE: u32 = 0x138;
+const MEMBER_LEVELS: u32 = 0x16c;
+const MEMBER_VOCATION: u32 = 0x950;
+/// Vocations in the status screen's order (`level0.bin` … `level12.bin`,
+/// `crates/dq9-formats/src/level.rs`): the level and experience arrays have one entry each.
+const VOCATION_COUNT: u32 = 13;
+/// Party slots the game holds (member objects at [`PARTY_MEMBER`]).
+const PARTY_MAX: u8 = 4;
+
 /// Indices of the bits set in `bytes`.
 fn set_bits(bytes: &[u8]) -> impl Iterator<Item = i32> + '_ {
     (0..bytes.len() * 8)
@@ -188,6 +228,11 @@ impl<'a> Memory<'a> {
         Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
 
+    pub fn u16(&self, addr: u32) -> Result<u16> {
+        let b = self.read(addr, 2)?;
+        Ok(u16::from_le_bytes([b[0], b[1]]))
+    }
+
     /// The SDK's VBlank counter, the frame number to match a state with a run.
     pub fn vblank_count(&self) -> Result<u32> {
         self.u32(VBLANK_COUNT)
@@ -217,6 +262,48 @@ impl<'a> Memory<'a> {
     /// `GameState::GetProtagonist`, `0x0200fddc`).
     pub fn protagonist_index(&self) -> Result<u32> {
         self.u32(GAME_STATE + 0x3ac)
+    }
+
+    /// The party in slot order and the gold on hand: [`PARTY_COUNT`] entries of the order
+    /// list, each naming the member object whose `+0x568` id matches (`Save_UnpackMain`,
+    /// `0x020a95b4`; `docs/re/save.md`, § "Party members"). Level and experience are the
+    /// current vocation's (`+0x950`). A count above four, an order entry with no member
+    /// object or a vocation outside the thirteen is an error: the reader never invents a
+    /// member.
+    pub fn party(&self) -> Result<PartyRam> {
+        let count = self.read(PARTY_COUNT, 1)?[0];
+        if count > PARTY_MAX {
+            return Err(Error::Malformed("party count above 4"));
+        }
+        let order = self.read(PARTY_ORDER, usize::from(PARTY_MAX))?;
+        let mut members = Vec::with_capacity(usize::from(count));
+        for &id in &order[..usize::from(count)] {
+            let mut found = None;
+            for k in 0..u32::from(PARTY_MAX) {
+                let at = PARTY_MEMBER + k * PARTY_MEMBER_SIZE;
+                if self.u16(at + MEMBER_ID)? == u16::from(id) {
+                    found = Some(at);
+                    break;
+                }
+            }
+            let at = found.ok_or(Error::Malformed("party order names no member object"))?;
+            let vocation = self.u32(at + MEMBER_VOCATION)?;
+            if vocation >= VOCATION_COUNT {
+                return Err(Error::Malformed("party member vocation out of range"));
+            }
+            members.push(PartyMemberRam {
+                level: self.u16(at + MEMBER_LEVELS + 2 * vocation)?,
+                hp: self.u16(at + MEMBER_HP)?,
+                mp: self.u16(at + MEMBER_MP)?,
+                max_hp: self.u16(at + MEMBER_MAX_HP)?,
+                max_mp: self.u16(at + MEMBER_MAX_MP)?,
+                experience: self.u32(at + MEMBER_EXPERIENCE + 4 * vocation)?,
+            });
+        }
+        Ok(PartyRam {
+            members,
+            gold: self.u32(GOLD_ON_HAND)?,
+        })
     }
 
     /// World position of a game object: `Object3D::position_` (`+0x44`, three fx32 with

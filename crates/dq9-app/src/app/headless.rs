@@ -142,6 +142,23 @@ impl App {
             let _ = write!(out, "\"{quest}\":{state}");
         }
         out.push('}');
+        out.push_str(",\"party\":[");
+        for (index, member) in self.party.members.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                out,
+                "{{\"level\":{},\"hp\":{},\"max_hp\":{},\"mp\":{},\"max_mp\":{},\"experience\":{}}}",
+                member.level(),
+                member.hp,
+                member.max_hp,
+                member.mp,
+                member.max_mp,
+                member.current_experience()
+            );
+        }
+        let _ = write!(out, "],\"gold\":{}", self.party.gold);
         let event = self
             .events
             .current()

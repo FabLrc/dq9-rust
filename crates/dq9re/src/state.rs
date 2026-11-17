@@ -2,6 +2,8 @@
 //! same readers (`docs/re/melonds-state.md`). When the ROM is found and the input is a
 //! savestate, also compares resident code with it: checks the section offsets, lists
 //! overlays. With `--save`, compares the RAM with the save the game was loaded from.
+//! `--json` writes the checkpoint `scripts/compare-runs.ps1` aligns, including the party in
+//! slot order and the gold (`Memory::party`, `docs/re/party.md`).
 
 use std::fs;
 use std::path::Path;
@@ -87,6 +89,14 @@ pub fn run(
         }
         println!("global flags: {:?}", checkpoint.flags);
         println!("quests: {:?}", checkpoint.quests);
+        let party = memory.party()?;
+        for (index, m) in party.members.iter().enumerate() {
+            println!(
+                "party {index}: level {}, HP {}/{}, MP {}/{}, experience {}",
+                m.level, m.hp, m.max_hp, m.mp, m.max_mp, m.experience
+            );
+        }
+        println!("gold: {}", party.gold);
         let hero = memory.protagonist_index()?;
         for index in 0..4 {
             if let Some(at) = memory.object(index)? {
@@ -155,6 +165,21 @@ fn checkpoint_json(memory: &Memory) -> Result<String> {
         .iter()
         .map(|&(q, n)| (q.to_string(), serde_json::json!(n)))
         .collect();
+    let party = memory.party()?;
+    let members: Vec<serde_json::Value> = party
+        .members
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "level": m.level,
+                "hp": m.hp,
+                "max_hp": m.max_hp,
+                "mp": m.mp,
+                "max_mp": m.max_mp,
+                "experience": m.experience,
+            })
+        })
+        .collect();
     let value = serde_json::json!({
         "vblank": c.vblank,
         "map": c.map,
@@ -164,6 +189,8 @@ fn checkpoint_json(memory: &Memory) -> Result<String> {
         "tracks": tracks,
         "flags": c.flags,
         "quests": quests,
+        "party": members,
+        "gold": party.gold,
         "hero": hero_json(memory)?,
     });
     Ok(serde_json::to_string(&value)?)
