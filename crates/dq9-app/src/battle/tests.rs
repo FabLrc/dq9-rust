@@ -1349,3 +1349,64 @@ fn a_scripted_battle_with_a_save_offers_its_learned_abilities() {
     assert_eq!(menu.rows.len(), 5, "the Fight menu");
     assert!(!menu.rows[3].1, "Abilities greyed without a learned panel");
 }
+
+/// The victory awards through the battle's own inputs (`Party::award_with`): the counter the
+/// engine kept (`ov_026::021dacb0`) and the worn items' `itembtlprm.nat` (`func_0208539c`).
+/// Two Minstrels, levels 1 and 5, take a slime trio's 6 experience as 3 and 4 — the weights
+/// `k + level` (5 and 9 of 14) rounded up, the counter equal for both and so cancelled — and the
+/// wearer of the item whose battle-parameter flags carry bit 16 takes 5, the ×1.05 landing before
+/// the rounding. One member still takes the whole total, as the neutral award did.
+#[test]
+fn the_victory_awards_by_the_battles_counter_and_the_item_bonus() {
+    use dq9_core::party::{Character, NOVICE_VOCATION};
+
+    let Some(rom) = testrom::load() else { return };
+    let data = Data::load(rom).unwrap();
+
+    let mut party = level_one_party(&data);
+    let mut second = Character::hero();
+    second.levels[usize::from(NOVICE_VOCATION)] = 5;
+    party.members.push(second);
+    party.apply_level_tables(&data.levels);
+    assert_eq!(party.members.len(), 2);
+    let (mut played, mut world) = fight(rom, &party, vec![(1, 3)], false, 3);
+    let outcome = played.play_out(&mut world).unwrap().clone();
+    assert_eq!(outcome.result, BattleResult::Won);
+    assert_eq!(outcome.experience, 6);
+    assert_eq!(outcome.party.members[0].current_experience(), 3);
+    assert_eq!(outcome.party.members[1].current_experience(), 4);
+
+    let bonus = data
+        .params
+        .items
+        .iter()
+        .find(|param| param.experience_bonus())
+        .expect("an item whose battle parameters carry the experience bonus");
+    let mut wearing = level_one_party(&data);
+    let mut second = Character::hero();
+    second.levels[usize::from(NOVICE_VOCATION)] = 5;
+    second.equipment.accessory = Some(bonus.id as u16);
+    wearing.members.push(second);
+    wearing.apply_level_tables(&data.levels);
+    let (mut played, mut world) = fight(rom, &wearing, vec![(1, 3)], false, 3);
+    let outcome = played.play_out(&mut world).unwrap().clone();
+    assert_eq!(outcome.result, BattleResult::Won);
+    assert_eq!(
+        outcome.experience, 6,
+        "the bonus moves the share, not the total"
+    );
+    assert_eq!(outcome.party.members[0].current_experience(), 3);
+    assert_eq!(
+        outcome.party.members[1].current_experience(),
+        5,
+        "9/14 of 6 is 3.86, ×1.05 is 4.05, rounded up"
+    );
+
+    // Single member: the counter cancels against itself and the share is the whole total.
+    let alone = level_one_party(&data);
+    let (mut played, mut world) = fight(rom, &alone, vec![(1, 1)], false, 2);
+    let outcome = played.play_out(&mut world).unwrap().clone();
+    assert_eq!(outcome.result, BattleResult::Won);
+    assert_eq!(outcome.experience, 2);
+    assert_eq!(outcome.party.members[0].current_experience(), 2);
+}

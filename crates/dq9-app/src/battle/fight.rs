@@ -14,7 +14,7 @@ use dq9_core::battle::{
     Battle, BattleError, BattleResult, BattleSetup, CRand, Command, Event, PartyMember, Random,
     Skill, Surprise, Target, Who, validate,
 };
-use dq9_core::party::{LevelUp, Party};
+use dq9_core::party::{LevelUp, Party, Share};
 
 use super::Fighter;
 use super::data::Data;
@@ -1020,9 +1020,20 @@ impl Fight {
         match result {
             BattleResult::Won => match self.battle.finish(&mut world.crand) {
                 Ok(end) => {
-                    ending.level_ups =
-                        self.party
-                            .award(end.experience, end.gold, &end.drops, &self.data.levels);
+                    // The original's own inputs: the counter the battle kept
+                    // (`ov_026::021dacb0`, `Party::award_with`'s `Share::rounds`) and the worn
+                    // items' `itembtlprm.nat` for the ×1.05 bonus (`func_0208539c`).
+                    let share = Share {
+                        rounds: self.battle.passes(),
+                        equipment: Some(&self.data.params),
+                    };
+                    ending.level_ups = self.party.award_with(
+                        end.experience,
+                        end.gold,
+                        &end.drops,
+                        &self.data.levels,
+                        &share,
+                    );
                     let shared = self.standing_party().len() > 1;
                     let drops: Vec<(u16, Option<usize>)> = end
                         .drops

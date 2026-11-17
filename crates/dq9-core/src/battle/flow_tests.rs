@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
+use crate::party::PARTY_MAX;
 
 fn plain_attack(number: u16) -> Action {
     let mut a = Action::new(number, 1, Amount::Blow { multiplier: 1.0 });
@@ -514,4 +515,37 @@ fn the_drop_roll_matches_the_formula_and_the_cap_is_eight() {
         (0..8).map(|n| 200 + n).collect::<Vec<u16>>(),
         "rare first, eight kept"
     );
+}
+
+/// The battle's counter (`ov_026::021dacb0` → `PartyMember_AddBattleCounter`, `0x02053de0`):
+/// one increment per round for every member the battle holds — the call site tests the slot's
+/// presence, not its HP, so a member down at the round's start still takes it — and a round the
+/// engine refuses leaves it unchanged. Equal counts are what make the counter cancel in
+/// `func_ov023_021f4098`'s share.
+#[test]
+fn the_counter_adds_one_per_round_for_every_member_the_battle_holds() {
+    let mut b = battle(
+        vec![slime(0, 500, 5), slime(0, 500, 5)],
+        vec![hero(100, 99), hero(0, 1)],
+        Surprise::None,
+    );
+    assert_eq!(b.passes(), [0; PARTY_MAX], "nothing before the first round");
+    let mut world = Random::new(3);
+    b.round(&[attack(0), Command::Skip], &mut world).unwrap();
+    assert_eq!(b.passes(), [1, 1, 0, 0], "the fallen member counts too");
+    b.round(&[attack(0), Command::Skip], &mut world).unwrap();
+    assert_eq!(b.passes(), [2, 2, 0, 0]);
+    assert_eq!(b.passes()[0], b.round_number());
+
+    // A refused round changes nothing, its counter included.
+    let mut odd = Skill::from_action(plain_attack(1));
+    odd.number = 66;
+    odd.handlers = [55, 55];
+    let mut monster = slime(0, 500, 5);
+    monster.ways = [66; 6];
+    let mut s = setup(vec![monster], false);
+    s.skills.insert(66, odd);
+    let mut b = Battle::new(s, vec![hero(1000, 10)], Surprise::None, 5).unwrap();
+    b.round(&[attack(0)], &mut Random::new(1)).unwrap_err();
+    assert_eq!(b.passes(), [0; PARTY_MAX]);
 }

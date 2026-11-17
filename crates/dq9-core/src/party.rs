@@ -660,8 +660,11 @@ impl Party {
 
     /// Applies a won battle's experience, gold and drops, and levels the members up, with
     /// the neutral share: every member counts one round and no equipment table is given, so
-    /// the counter cancels in every share. [`Party::award_with`] takes the battle's own
-    /// counters and the worn items' battle parameters.
+    /// the counter cancels in every share and no bonus applies. The original increments the
+    /// counter once per round for **every** member the battle holds, dead or standing, so the
+    /// counter cancels in a battle of a fixed party: this is exact there, and only a member that
+    /// joins mid-battle or a worn experience-bonus item differs. [`Party::award_with`] takes the
+    /// battle's own counters ([`crate::battle::Battle::passes`]) and the item table.
     pub fn award(
         &mut self,
         experience: u32,
@@ -771,11 +774,14 @@ impl Party {
 pub struct Share<'a> {
     /// The battle's counter for each party slot, in party order: `[[member + 0x19c] + 8]`
     /// (`func_02053dfc`). The battle installs the block and clears the counter
-    /// (`func_02053da0`, `0x02053db0`), then adds one for each present member on every pass
-    /// of its loop (`func_02053dd0`, `ov_026::021dacb0`), unless bit 0 of
-    /// `[[member + 0x138] + 0x14]` holds it. Equal values cancel in every share; the game's
-    /// step per pass is the battle's, not this crate's. **[hypothesis]**: the counter counts
-    /// the rounds a member was alive for, the wiki's reading of the call site.
+    /// (`func_02053da0`, `0x02053db0`), then adds one for each member it holds on every pass of
+    /// its round (`func_02053dd0`, `ov_026::021dacb0`), unless bit 0 of
+    /// `[[member + 0x138] + 0x14]` holds it. The call site tests the slot's presence, not its
+    /// HP, so every member present from the start carries the same count and the counter
+    /// cancels in every share; it only separates a member that joins mid-battle (fewer passes)
+    /// or one the gate holds (0, hence 0 experience). [`crate::battle::Battle::passes`] gives
+    /// the battle's own. **[unknown]**: what bit 0 of `live + 0xA8` (`member + 0x138` points at
+    /// the live record's `+0x94`) means.
     pub rounds: [u32; PARTY_MAX],
     /// `itembtlprm.nat`, for the experience bonus; `None` applies none.
     pub equipment: Option<&'a BattleParams>,

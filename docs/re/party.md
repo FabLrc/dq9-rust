@@ -378,20 +378,37 @@ the value `GetExperience` reads as well (`0x021eea98`).
 | `0x02053de0` `PartyMember_AddBattleCounter` | `++[[member + 0x19c] + 8]`, unless bit 0 of `[[member + 0x138] + 0x14]` is set (then nothing) | `ov_026::021dacb0` only |
 
 `member + 0x138` points at the live record `+ 0x94` (`func_02053c4c` sets it), so the gate
-word is `live + 0xA8` bit 0. The increment's single call site (`ov_026::021dacb0`) sits in a
-loop over the same four occupied slots, once per pass of the battle overlay's state machine,
-in the block that clears `[battle + 0x7749]` and calls `0x02160fbc` with `0x4000000`,
-`0x8000000`, `0x10000000` and `0x20000000` (`0x021dab90`–`0x021dacb4`).
+word is `live + 0xA8` bit 0. The increment's single call site is `ov_026::021dacb0`, inside
+`func_ov026_021d8ba0`: after the command entry of one round completes (`[+0x54e0]`, the overlay's
+step 4 shows every present member's command is in; the battle RNG state is stored at
+`+0x6e3c`/`+0x6e40`) step 5 destroys the round's arena (`+0x774c`, `0x16000` bytes allocated at
+step 3), clears `+0x7749`, clears the flags `0x4000000`, `0x8000000`, `0x10000000` and
+`0x20000000` (`0x02160fbc`), and then walks the four slots (`0x021dac88`–`0x021dacbc`):
+`0x020a35f0([[battle + 0x2a0] + 0x34] mask, slot)` (the slot is in the battle) and `0x0200ff2c(game,
+slot)` (the actor record exists: its flag word has bit `0x100`) both non-zero →
+`0x02053de0(member)`. The round is then handed to phase `0xb` (`0x02160d80`); the battle's
+input step is where the flow resumes (`[+0xeac] = 4`). Disassembly and the decompiled bracketing
+code:
+`build/evidence/j4-xp-wire/counter-call-site.txt` (`6b0f44f66fc4`); the pilot's before/after route
+(`route-before.*`, `route-after.*`: journal and checkpoints byte-identical, `9767eea3a0fb` and
+`135ddaa29dd9`) is in the same directory.
 
-**So the counter is per member and per battle.** All members present at the same passes get
-the same count, and equal counts cancel exactly in the division: the single-member pilot's 7
-experience stays 7, at any count above 0. `Party::award` therefore takes the neutral
-`Share` (one for every slot), which is identical to any equal count above 0;
-`Party::award_with` takes the battle's own counts. `dq9-app` still calls `award`: its battle
-does not track the counter, and modelling it there is another batch's. Counters all 0 are
-**not** neutral — the sum becomes 1 and every share is 0 × the level weight, i.e. 0.
-**[hypothesis]**: the counter counts the rounds a member was alive for (the wiki's reading
-of the call site). **[unknown]**: what bit 0 of `live + 0xA8` is.
+**The counter is one increment per command pass, for every member the battle holds.** The loop
+tests the slot's presence in the battle's mask and the actor record, never its HP, so a member
+who fell at the start of the round still takes the increment; every member present from the
+start therefore carries the **same** count, and the counter cancels exactly in the division of
+`0x021f4098`. It separates members in two cases only: a member that joins the battle late
+(fewer passes) and one whose `live + 0xA8` bit 0 holds it (0 increments; its weight is 0 and it
+takes 0 experience). The wiki's reading of the call site as "turns spent alive" is refuted by
+the missing HP test. **[unknown]**: what bit 0 of `live + 0xA8` is.
+
+`Party::award` therefore takes the neutral `Share` (one for every slot), which is identical to
+the battle's own count for a party that was present from the start: the single-member pilot's 7
+experience stays 7, at any count above 0. `Party::award_with` takes the battle's own counts.
+`dq9-core`'s battle engine tracks them (`Battle::passes`, one increment per round for every slot
+the battle holds, `0x02053de0`) and `dq9-app` awards through `award_with` with them and with
+`itembtlprm.nat`, so the shoes bonus below reaches the game. Counters all 0 are **not** neutral
+— the sum becomes 1 and every share is 0 × the level weight, i.e. 0.
 
 **The × 1.05 experience bonus** (`0x0208539c`, `HasExperienceBonus`): it walks the eight
 equipment slots of the live member and answers 1 when any worn item's `itembtlprm.nat`
@@ -407,6 +424,14 @@ Tests: `crates/dq9-core/src/party.rs` (`one_member_takes_the_whole_total_whateve
 `crates/dq9-core/tests/party_rom.rs`
 (`two_member_share_on_the_real_level_tables_takes_the_bonus_flag`, a synthetic two-Minstrel
 party on the cartridge's level tables and `itembtlprm.nat`).
+The engine's counter and the application's award:
+`crates/dq9-core/src/battle/flow_tests.rs`
+(`the_counter_adds_one_per_round_for_every_member_the_battle_holds`: one increment per round for
+every slot the battle holds, a fallen member included, and a refused round changes nothing) and
+`crates/dq9-app/src/battle/tests.rs`
+(`the_victory_awards_by_the_battles_counter_and_the_item_bonus`: two Minstrels at levels 1 and 5
+through `Fight` on the cartridge's tables take a slime trio's 6 experience as 3 and 4, the
+shoes-wearer takes 5, and a single member takes the whole total).
 
 Parity: the seed-7 reference replayed on this branch matches `first-control-1.1.1-male`'s
 aligned checkpoint exactly, and `control-1.1.2` differs only on flag 4135,

@@ -389,7 +389,21 @@ land, `func_02032380(oneIn) == 0` = `(int)(oneIn × ((rand() − 1) / 32767.0)) 
 draws nothing), at most eight kept; the C library's `rand` is the caller's `CRand` (nothing in the
 battle seeds it). Not modelled: the four extra passes of the item-finding trait (`0xa4`), the
 grotto and treasure-map branch, the group flags that force a drop. Sharing the experience is
-`func_ov023_021f4098` (`Party::award`'s).
+`func_ov023_021f4098` (`Party::award_with`'s), weighed by the member's level and by the battle's
+counter.
+
+**The battle's counter** (`PartyMember_AddBattleCounter`, `0x02053de0`; its only call site is
+`ov_026::021dacb0`): one increment per command pass, for every slot of the battle's mask whose
+actor exists — dead or standing, the call site tests no HP — unless bit 0 of the member's
+`live + 0xA8` holds it. [`Battle::passes`] keeps it the same way (one increment per round for
+every slot the battle holds), so a party present from the start has equal counts and the counter
+cancels in the share; it separates only a late joiner and a held member (0 experience). The
+facts, the disassembly and the open **[unknown]** (what bit 0 is) are in `docs/re/party.md`
+§ "Sharing the experience".
+
+**The application's award** (`crates/dq9-app/src/battle/fight.rs`, `closing`): `Fight` passes
+`Party::award_with` the battle's counter and `itembtlprm.nat`, so the ×1.05 shoes bonus
+(`func_0208539c`) reaches the game; a single member still takes the whole total.
 
 ### Chapter 2 coverage (`tests/battle_rom.rs`, `chapter_two_coverage_…`)
 

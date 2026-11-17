@@ -36,6 +36,7 @@ use super::model::{Fighter, Side, Unsupported};
 use super::random::Random;
 use super::resolve::{TargetOutcome, resolve_action};
 use super::setup::{BattleSetup, MAX_GROUPS, Monster, SetupError, Skill};
+use crate::party::PARTY_MAX;
 
 /// A combatant: a party slot or a monster's index in [`Battle::monsters`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,6 +330,9 @@ pub struct Battle {
     pub(super) kills: Vec<Kind>,
     pub(super) experience: u32,
     pub(super) gold: u32,
+    /// The battle's counter per party slot (`PartyMember_AddBattleCounter`, `0x02053de0`): the
+    /// second factor of the experience share (`0x02053e0c`, read by `ov_023::021f4098`).
+    pub(super) passes: [u32; PARTY_MAX],
     pub(super) result: Option<BattleResult>,
 }
 
@@ -378,6 +382,7 @@ impl Battle {
             kills: Vec::new(),
             experience: 0,
             gold: 0,
+            passes: [0; PARTY_MAX],
             result: None,
         })
     }
@@ -395,6 +400,21 @@ impl Battle {
     /// The number of rounds played.
     pub fn round_number(&self) -> u32 {
         self.round
+    }
+
+    /// The battle's counter for each party slot, in party order
+    /// (`PartyMember_GetBattleCounter`, `0x02053e0c`): the second factor
+    /// `func_ov023_021f4098` weighs each member's experience share by
+    /// ([`Share::rounds`](crate::party::Share::rounds)).
+    ///
+    /// The original adds one to it for **every** member the battle holds
+    /// (`PartyMember_AddBattleCounter`, `0x02053de0`, whose only call site is
+    /// `ov_026::021dacb0`, the block that closes the command entry of one round), so every member
+    /// present from the start carries the same count, the dead included, and the counter cancels
+    /// in the share. Only a member that joins the battle late, or whose `live + 0xA8` bit 0 holds
+    /// the counter, carries fewer; neither is modelled here, so the count is the rounds played.
+    pub fn passes(&self) -> [u32; PARTY_MAX] {
+        self.passes
     }
 
     /// How the battle ended, `None` while it goes on.
@@ -538,6 +558,15 @@ impl Battle {
             round: self.round,
             events: Vec::new(),
         };
+
+        // The battle's counter (`PartyMember_AddBattleCounter`, `0x02053de0`): the block at
+        // `ov_026::021dacb0` that closes the command entry of one round gives every member the
+        // battle holds one increment, dead or standing (the call site tests the slot's presence
+        // in the battle's mask, not its HP). A round the party gets away from still closes a
+        // command entry, so it counts here too.
+        for counter in self.passes.iter_mut().take(self.party.len()) {
+            *counter += 1;
+        }
 
         // 1. Flight, at the command phase.
         let fleeing: Vec<usize> = commands
