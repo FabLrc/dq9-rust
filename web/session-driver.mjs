@@ -8,6 +8,12 @@
 //
 //   node web/session-driver.mjs --site build/web-session/site --rom path.nds \
 //        --out build/evidence/j4-web-pilot/run1 --query "newgame=1&pilot=1&route=2750&seed=7&mute=1"
+//   node web/session-driver.mjs --url https://fablrc.github.io/dq9-rust/ --rom path.nds \
+//        --out build/evidence/j4-web-show/hosted --query "newgame=1&pilot=1&battles=show"
+//
+// `--url` drives an already served page (the hosted Pages deployment) instead of `--site`: no
+// local server is started, `--query` becomes that page's query string, and the ROM is still
+// chosen through the page's <input type=file>.
 //
 // Writes into --out: console.log (every console line, with the wall time), progress.log,
 // checkpoints.jsonl (the native --checkpoints format), report.txt (the journal and the final
@@ -31,10 +37,14 @@ const need = (key) => {
   if (!args[key]) throw new Error(`missing --${key}`);
   return args[key];
 };
-const site = path.resolve(need("site"));
 const rom = path.resolve(need("rom"));
 const out = path.resolve(need("out"));
 const query = args.query ?? "newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1";
+// Either the caller's page (--url, the hosted deployment) or a bundle served from --site.
+const site = args.site ? path.resolve(args.site) : null;
+const hosted = args.url ? new URL(args.url) : null;
+if (!site && !hosted) throw new Error("missing --site or --url");
+if (hosted) hosted.search = query;
 const port = Number(args.port ?? 8765);
 const debugPort = Number(args["debug-port"] ?? 9333);
 const maxWall = Number(args["max-wall"] ?? 4 * 3600) * 1000;
@@ -58,19 +68,22 @@ const say = (text) => {
   progressLog.write(`[${wall()}] ${text}\n`);
 };
 
-// ---- static server (the bundle only) ----
-const types = { ".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm" };
-const server = http.createServer((req, res) => {
-  const name = decodeURIComponent(new URL(req.url, "http://x").pathname);
-  const file = path.join(site, name === "/" ? "index.html" : name);
-  if (!file.startsWith(site) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
-    res.writeHead(404).end();
-    return;
-  }
-  res.writeHead(200, { "content-type": types[path.extname(file)] ?? "application/octet-stream" });
-  fs.createReadStream(file).pipe(res);
-});
-await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
+// ---- static server (the bundle only; none with --url) ----
+let server = null;
+if (site) {
+  const types = { ".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm" };
+  server = http.createServer((req, res) => {
+    const name = decodeURIComponent(new URL(req.url, "http://x").pathname);
+    const file = path.join(site, name === "/" ? "index.html" : name);
+    if (!file.startsWith(site) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+      res.writeHead(404).end();
+      return;
+    }
+    res.writeHead(200, { "content-type": types[path.extname(file)] ?? "application/octet-stream" });
+    fs.createReadStream(file).pipe(res);
+  });
+  await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
+}
 
 // ---- browser ----
 // The browser profile is scratch: outside the evidence folder, one per DevTools port.
@@ -203,13 +216,24 @@ const once = (key, name, delay = 0) => {
   shoot(name, delay);
 };
 let lostShots = 0;
+let hexagoonScenes = 0;
 const showBattles = /(^|&)battles=show(&|$)/.test(query);
 consoleHooks.push((_type, text) => {
   if (/^roamers: contact with monster/.test(text)) once("roamer", "roaming-contact");
   if (/^encounter: /.test(text)) once("roamer-fought", "roaming-fight-settled");
   // The scene is only on screen with battles=show; otherwise it is built and left at once.
-  if (showBattles && /^battle \S+ on stage .*fighters/.test(text)) once("scene", "battle-scene", 1500);
-  if (showBattles && /^battle 2 on stage/.test(text)) once("hexagoon-scene", "hexagoon-scene", 2500);
+  // The first shown fight: its entrance, then the windows of the fight itself.
+  if (showBattles && /^battle \S+ on stage .*fighters/.test(text)) {
+    once("scene", "battle-scene");
+    once("scene-windows", "battle-scene-windows", 2000);
+  }
+  // The Hexagoon (set battle 2): entrance, windows, and one shot per lost attempt at its end.
+  if (showBattles && /^battle 2 on stage/.test(text)) {
+    const attempt = ++hexagoonScenes;
+    shoot(`hexagoon-scene-${attempt}`);
+    shoot(`hexagoon-windows-${attempt}`, 2000);
+    shoot(`hexagoon-windows-${attempt}-later`, 6000);
+  }
   if (/^battle 2: Lost/.test(text)) shoot(`hexagoon-lost-${++lostShots}`);
   if (/^battle 2: Won/.test(text)) once("hexagoon-won", "hexagoon-won");
 });
@@ -227,7 +251,7 @@ const milestone = (line) => {
 };
 
 // ---- the page and the ROM ----
-const url = `http://127.0.0.1:${port}/?${query}`;
+const url = hosted ? hosted.toString() : `http://127.0.0.1:${port}/?${query}`;
 say(`open ${url}`);
 await cdp("Page.navigate", { url });
 for (let i = 0; i < 600; i++) {
@@ -343,5 +367,5 @@ say(`result: ${JSON.stringify({ ok: summary.ok, why: summary.why, consoleErrors 
 await new Promise((resolve) => consoleLog.end(resolve));
 await new Promise((resolve) => checkpointFile.end(resolve));
 stopBrowser();
-server.close();
+server?.close();
 process.exit(summary.ok ? 0 : 1);

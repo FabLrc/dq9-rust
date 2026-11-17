@@ -10,6 +10,11 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out build/evidence/j4-web-pilot/run1
 #   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out ... `
 #       -Query 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1&speed=60&render=0'
+#   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out build/evidence/j4-web-show/hosted `
+#       -Url https://fablrc.github.io/dq9-rust/ -Query 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1&battles=show'
+#
+# `-Url` drives an already deployed page (the hosted GitHub Pages site) instead of the local
+# bundle: nothing is built and no server is started, `-Query` becomes that page's query string.
 #
 # `-Rom` defaults to DQ9_ROM, then the single *.nds of rom/. `-SkipBuild` reuses the bundle in
 # build/web-session/site. The wasm-bindgen CLI must match Cargo.lock (tools/wasm-bindgen, see
@@ -17,6 +22,7 @@
 param(
     [Parameter(Mandatory = $true)] [string] $Out,
     [string] $Query = 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1',
+    [string] $Url = '',
     [string] $Rom = '',
     [int] $Port = 8765,
     [int] $DebugPort = 9333,
@@ -40,7 +46,7 @@ if (-not $Rom -or -not (Test-Path -LiteralPath $Rom)) {
 }
 
 $Site = Join-Path $Repo 'build/web-session/site'
-if (-not $SkipBuild) {
+if (-not $Url -and -not $SkipBuild) {
     $env:RUSTFLAGS = '-D warnings'
     & cargo build --locked -p dq9-app --release --target wasm32-unknown-unknown
     if ($LASTEXITCODE -ne 0) { throw 'wasm build failed' }
@@ -60,10 +66,11 @@ if (-not $SkipBuild) {
 
 $nodeArgs = @(
     (Join-Path $Repo 'web/session-driver.mjs'),
-    '--site', $Site, '--rom', $Rom, '--out', $Out, '--query', $Query,
+    '--rom', $Rom, '--out', $Out, '--query', $Query,
     '--port', $Port, '--debug-port', $DebugPort,
     '--max-wall', $MaxWallSeconds, '--stall', $StallSeconds
 )
+if ($Url) { $nodeArgs += @('--url', $Url) } else { $nodeArgs += @('--site', $Site) }
 if ($Browser) { $nodeArgs += @('--browser', $Browser) }
 if ($BrowserArgs) { $nodeArgs += "--browser-args=$BrowserArgs" }
 & node @nodeArgs

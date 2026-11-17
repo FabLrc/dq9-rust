@@ -889,8 +889,9 @@ A computer with a keyboard and a recent browser with WebGPU or WebGL 2 are recom
 Battles are interactive; standalone battle 26 has been played to victory in the browser
 (Verification below). Roaming monsters are visible and start fights; field-menu/facility
 screens are still missing;
-effects and battle motions are incomplete. A continuous local browser session of the chapter 2
-route is recorded in § "Route mode in the browser" (it is not deployed on the hosted page yet).
+effects and battle motions are incomplete. The route mode and the pilot also run on the
+hosted page (deployment `2e580a1`): a `battles=show` session there played the chapter 2 route
+to event 2750 (§ "Route mode in the browser").
 
 The ROM/save fields and the selectors stay disabled during the download and
 initialization of the engine. "New game" stays disabled until the bytes of
@@ -985,6 +986,11 @@ powershell -File scripts/web-session.ps1 -Out build/evidence/j4-web-pilot/run-in
     -Query 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1&speed=60'
 # The first differing checkpoint against a native run:
 node web/compare-checkpoints.mjs native-checkpoints.jsonl build/evidence/j4-web-pilot/run-instant/checkpoints.jsonl
+# The same session on a page served elsewhere (here the hosted Pages deployment): nothing is
+# built or served locally, -Query becomes that page's query string.
+powershell -File scripts/web-session.ps1 -Out build/evidence/j4-web-show/hosted-show `
+    -Url https://fablrc.github.io/dq9-rust/ `
+    -Query 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1&speed=60&battles=show'
 ```
 
 Settling versus showing. A default session settles a battle inside the step that starts it, as
@@ -1064,11 +1070,45 @@ is therefore **not tick-comparable** with the instant one: the pilot's draws and
 fights differ from the first roamer contact on (**[hypothesis]**: the 110 steps of the first
 transition move the field's 30 Hz parity and the roamer timers; unfalsified, since the world's
 generators are shared by the battles and the roamers and the checkpoints do not carry them),
-but it plays the same story. The Web's `battles=show` session has not been rerun in a browser:
-the fix is in the shared `App::auto_step` path, the native run above is the evidence.
-No in-session capture of a battle scene or of the Hexagoon's windows exists: the milestone shots
-of the earlier run are the field. The hosted page does not include any of this until Pages
-deploys this branch.
+but it plays the same story.
+
+**Hosted page (`j4-web-show`, November 17, 2026).** The same route was run once, with
+`battles=show`, on the page GitHub Pages publishes (`scripts/web-session.ps1 -Url`,
+`https://fablrc.github.io/dq9-rust/`): deployment `44132801037` of `2e580a1` (main's HEAD
+`b11a38f` at the time is a documentation commit, which redeploys nothing), Edge
+157.0.4341.60, the European ROM chosen through the page's file input, rendered, one
+continuous session, 1026 s of wall time. It ended `stopped: event 2750 ended (route reached)
+after 4166.5 s of game time`, 249,989 fixed steps, story 2.6.5, Lv 8, 116 roamer fights won
+and 2 lost; the Hexagoon was lost at Lv 5, 6 and 7 (6, 4 and 5 rounds) and won at Lv 8 in 7
+rounds (175 experience, 100 gold, HP 8/53 left), the same attempts as the native shown run. Its
+971 checkpoints carry the same **state** as the native shown reference
+(`build/evidence/j4-show-battles/fixed2-show-checkpoints.jsonl`, `a7e4fa191432`) at every one
+of them: the same 21 story progress steps in the same order, the same events in the same
+order, the same five set battles at the same levels, the same final flags, map, level and
+gold. 915 lines are byte-identical; the other 56 are the `map` checkpoints of the walk that
+follows each lost attempt (#776–841) and differ in `tick`/`vblank`/`seconds` alone, by +2
+fixed steps, the next `event_start` realigning the clock: the shown battles' presentation
+shifts the field by two steps locally, not the state. The driver captured a shown fight with
+its message and HP/MP windows (`shots/02-battle-scene.png`, battle 26) and the Hexagoon with
+its windows (`shots/09-hexagoon-scene-1.png`); the screenshots of the later attempts caught
+the field, a frame before the scene was presented. The only console error is the browser's
+`favicon.ico` 404. Evidence: `build/evidence/j4-web-show/hosted-show/` (`console.log`
+`8d4c8d40b2bf`, `checkpoints.jsonl` `1e7f03b18fb6`, `report.txt` `f68b76e6377f`, 26
+screenshots), the deployment and the served bundle in `build/evidence/j4-web-show/deploy.txt`
+(`pkg/dq9-app_bg.wasm` `8962228cc9aa`).
+
+The same page, same session, was then run in the default instant mode (1083 s of wall time):
+`stopped: event 2750 ended (route reached) after 3035.5 s of game time`, 182,129 fixed steps,
+story 2.6.5, Lv 8 (HP 36/53, MP 17/19, gold 648), 115 roamer fights won and 2 lost; the
+Hexagoon lost at Lv 4, 5, 6 and 7 and won at Lv 8 — the native instant run's stop line and
+story (`fixed-instant-checkpoints.jsonl`, `135ddaa29dd9`). Its 972 checkpoints carry the same
+state as that run at every one of them: 904 are byte-identical and the 68 others are the `map`
+checkpoints of the walks that follow a battle (#697–744, #777–796), where `tick`/`vblank`/
+`seconds` differ by two fixed steps in either direction (0.03 s) and the next `event_start`
+realigns the clock; the cause is **[unknown]**, the state those checkpoints carry does not
+differ. Evidence: `build/evidence/j4-web-show/hosted-instant/` (`console.log` `6e2b7e6c6a7a`,
+`checkpoints.jsonl` `8ce4af30e497`, `report.txt` `bfc5f168dfd3`, 13 screenshots); the only
+console error is again the `favicon.ico` 404.
 
 ## Development loop
 
