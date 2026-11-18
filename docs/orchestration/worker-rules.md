@@ -16,22 +16,25 @@ $Main = '<path to your main checkout>'
 if (-not (Test-Path tools)) { New-Item -ItemType Junction -Path tools -Target "$Main\tools" | Out-Null }
 # Only if Ghidra is needed: private copy (Ghidra locks a project per query).
 if (-not (Test-Path re\ghidra\dq9.gpr)) { robocopy "$Main\re\ghidra" re\ghidra /E /NFL /NDL /NJH /NJS | Out-Null }
-# One Cargo target per worktree (docs/app.md, "Development loop").
-$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target-<batch>"
+# Your slot's target, as printed in the dispatch prompt (docs/orchestration/prompt-dispatch.md).
+$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target-slot<N>"
 # rom/ is tracked (it holds rom/README.md), so it cannot be a junction: point at the ROM.
 $env:DQ9_ROM = (Resolve-Path "$Main\rom\*.nds").Path
 ```
 
 `rom/` exists in every worktree as a tracked directory, so the former `rom` junction can never
 be created: `DQ9_ROM` gives the main checkout's ROM to `verify.ps1 -RequireRom` and to the
-tests. A Cargo target shared between worktrees is **not** safe: during the r1 wave, with one
+tests.
+
+A Cargo target shared between worktrees is **not** safe: during the r1 wave, with one
 `CARGO_TARGET_DIR` for all of them, Cargo took the `nds-rom` rlib built from another
 worktree's sources as fresh and the `dq9-formats` doctests failed against it
 (`module bytes is private`) although the branch was correct; the same mechanism can produce a
-false pass. A cold target builds in ~96 s, so no cache is used. Each per-batch target costs ~5 GB:
-the 13 targets of the r1 wave filled the disk and a verify failed with `os error 112` (no
-space). `integrate.ps1 -Cleanup` deletes `%LOCALAPPDATA%\dq9-target-<batch>` after removing
-the worktree; a worker never deletes another target (nor `dq9-target-integrate`).
+false pass. The target is therefore **the slot in your prompt**, and only that one: five
+long-lived targets (`%LOCALAPPDATA%\dq9-target-slot1..5`) are reused by successive workers,
+and `dispatch.ps1` cleans the workspace members of the slot's previous batch before handing it
+over (the third-party cache, the expensive part, stays). A worker never deletes nor wipes its
+target and never touches another one (`dq9-target-integrate` belongs to `integrate.ps1`).
 
 Never delete through the `tools` junction: it points to the user's only copy. The worktree's
 `build/` is your workspace.

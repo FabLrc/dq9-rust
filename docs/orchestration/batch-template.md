@@ -2,33 +2,40 @@
 
 Copy this file to `build/batches/<batch>.md` (local, ignored by git) and fill in every field.
 The spec lives in the main checkout, not in the worker's worktree: the worker reads it
-read-only by absolute path (`<main-checkout>\build\batches\<batch>.md`,
-see `prompt-dispatch.md`). Together with `docs/orchestration/worker-rules.md`, the spec is the
-worker's only input. The
-```owns block is read by `scripts/integrate.ps1`: any changed file outside these globs blocks
-integration.
+read-only by absolute path (`<main-checkout>\build\batches\<batch>.md`, see
+`prompt-dispatch.md`). Together with `docs/orchestration/worker-rules.md`, the spec is the
+worker's only input. `scripts/dispatch.ps1` launches it and `scripts/queue.ps1` shows what is
+ready.
 
 ---
 
-## Batch
+## Header (machine-readable: `dispatch.ps1`, `queue.ps1` and `integrate.ps1` read these lines)
 
-`<milestone>-<batch>` — branch `FabLrc/<milestone>-<batch>` (e.g. `j3-sound-effects`).
+```text
+Model: <id>
+Depends: <a>,<b>
+Commit: <domain>: <summary>
+```
 
-## Model
+- `Model:` required, one exact id of the table below; `dispatch.ps1` refuses anything else.
+- `Depends:` optional, comma-separated batch names. A dependency counts as integrated when its
+  `Commit:` subject is in `git log main`, or when its branch `FabLrc/<dep>` is an ancestor of
+  main; until then the batch is `waiting` and may not be dispatched.
+- `Commit:` optional, one line `domain: summary`: the message `integrate.ps1` commits with
+  (`-Message` overrides it) and what `Depends:` looks for in `git log main`.
 
-One exact id among:
+The base SHA is not in the spec: the prompt carries `git rev-parse --short main` at launch, and
+`integrate.ps1` requires the branch to contain `main` anyway.
 
-- `opencode-go/deepseek-v4.1-flash` (default: mechanical work, docs, scripts, tests against a contract);
-- `anthropic/claude-sonnet-5-5` (RE, challenger, design, risky code);
-- `anthropic/claude-opus-5-5` (last resort after a documented Sonnet failure; justification
-  in `docs/status.md`).
+## Models
+
+| Model | Id | Use |
+|---|---|---|
+| DeepSeek V4.1 Flash | `opencode-go/deepseek-v4.1-flash` | default: docs, mechanical scripts, data collection, tests against a contract |
+| Sonnet 5.5 | `anthropic/claude-sonnet-5-5` | RE, challenger, design, non-trivial debugging, scripts touching user files |
+| Opus 5.5 | `anthropic/claude-opus-5-5` | last resort after a documented Sonnet failure, justified in `docs/status.md` |
 
 Reason for the choice: `<one sentence>`.
-
-## Base SHA
-
-`<sha of main at launch>` — the worker starts from this commit; `integrate.ps1` requires the
-branch to contain `main` (otherwise rebase).
 
 ## Goal
 
@@ -48,8 +55,10 @@ To read before starting (in addition to `AGENTS.md` and `docs/status.md`):
 
 ## Scope
 
-Globs relative to the root, `/` as separator; `**` = any path, `*` = anything
-but `/`, `?` = one character; blank lines and `#` ignored.
+Globs relative to the root, `/` as separator; `**` = any path, `*` = anything but `/`,
+`?` = one character; blank lines and `#` ignored. The ```owns block is read by
+`scripts/integrate.ps1` (any changed file outside the globs blocks integration) and by
+`dispatch.ps1`/`queue.ps1` for the overlap between concurrent batches.
 
 ```owns
 # example
