@@ -63,13 +63,14 @@ Computed by `cargo dq9re coverage` from the `port:` markers in the code (definit
 
 <img width="1467" height="801" alt="image" src="https://github.com/user-attachments/assets/55868b8e-93d1-4090-8143-bef37e079afb" />
 
-### Graphics tech demo: wide 16:9
+### Enhanced 16:9 presentation (default layout)
 
-The DS-faithful presentation above stays the default. The same engine also has a single-screen
-widescreen presentation for showing what the renderer can do beyond the DS look:
+The enhanced single-screen presentation is the default. The DS look is still one option
+(`--layout stacked`, `side` or `top`, or `R` in the window). The engine also shows what the
+renderer can do beyond the DS look:
 
-**[Open the wide 16:9 demo](https://fablrc.github.io/dq9-rust/?layout=wide&newgame=1)** — select
-your European ROM, then "New game" (or open `?layout=wide` on the demo).
+**[Open the enhanced 16:9 demo](https://fablrc.github.io/dq9-rust/?layout=enhanced&newgame=1)** — select
+your European ROM, then "New game" (or open `?layout=enhanced` on the demo).
 
 What it changes, all from the ROM data the rest of the demo already reads:
 
@@ -78,7 +79,7 @@ What it changes, all from the ROM data the rest of the demo already reads:
 - mipmapped, linearly filtered textures instead of the DS's nearest filtering;
 - a cinematic post pass: FXAA, screen-space contact shadows, threshold bloom, filmic
   tonemapping, colour grading, vignette and dithering;
-- a 16:9 interface: location, time of day, the leader's HP/MP and purse, and the game's message
+- a 16:9 interface: location, time of day, the whole party's HP/MP and the purse, and the game's message
   window in a bottom-left glass panel;
 - the battle windows keep their 4:3 shape in the corners.
 
@@ -87,31 +88,36 @@ Native and local-browser rendering were exercised; forced WebGL 2 fallback is no
 certified. Native equivalent:
 
 ```sh
-cargo run -p dq9-app --release -- --map M01 --layout wide \
-    --size 1920x1080 --screenshot build/scratch/app/wide.png
+cargo run -p dq9-app --release -- --map M01 --layout enhanced \
+    --size 1920x1080 --screenshot build/scratch/app/enhanced.png
 ```
 
-Switch between the DS layouts and the wide one in the window with `R`, or in the page's
-"Screens" select. Details: [`docs/app.md`](docs/app.md#wide-169-cinematic-presentation).
+Each effect can be switched off (`--fx`/`--no-fx`, Web `?fx=`/`?nofx=` or the page's
+checkboxes); `--no-fx all` gives the DS look inside the 16:9 frame. `enhanced-reactive` is an
+experimental layout that fills any window shape. Switch presentation in the window with `R` or in
+the page's layout select (`--screens original` / `?screens=original` is a separate option for
+the field's screen assignment). Details: [`docs/app.md`](docs/app.md#enhanced-169).
 
 ## Status
 
-**v0.1 works natively and is partly certified in the browser; v0.2 (chapter 2 up to the
-landslide cleared, every battle fought) is in progress**; details, limits and next steps in
+**v0.1 works natively and is partly certified in the browser; v0.2's native criterion is met**
+(chapter 2 up to the landslide cleared, every battle fought) and its browser criterion has a
+continuous session (`j4-web-pilot`, `j4-web-show`); a hand-played run is still to be recorded.
+Details, limits and next steps in
 [`docs/status.md`](docs/status.md).
 `cargo run -p dq9-app --release -- --new-game` runs the opening, chains the prologue, the
 Observatory and the return to Angel Falls, then the village scenes. `--map M01`, or a save
 passed with `--save`, opens Angel Falls directly.
 What works:
 
-- both DS screens (stacked, side by side, or top screen only) and a single 16:9 cinematic
-  presentation;
+- both DS screens (stacked, side by side, or top screen only) and a single 16:9 enhanced
+  presentation (the default);
 - textured maps, lighting, fog and time of day;
 - animated NPCs and an animated hero;
 - movement ported in fixed-point, with collisions and the L/R camera;
 - doors, houses and scripted warps, conversations in the game's message window;
 - scripted cutscenes: `.stb` interpreter, characters, camera, fades, effects, night; the
-  chapter 2 scenes play (`--events-report 2.1-1`: 47 of 50 complete);
+  chapter 2 scenes play (`--events-report 2.1-1`: 49 of 50 complete, the rest being 2535 + 22510);
 - village tasks 1.2: ring, widow, stable, exit lock, return 1.4.1;
 - music, sound effects and jingles;
 - starting from a DS save (`--save`); the game state restores the party, bag and gold;
@@ -141,12 +147,11 @@ Still missing:
 
 - headless runs still count scripted battles as won unless `--fight` is given, and roaming
   is disabled there to preserve the parity traces;
-- vocation restrictions on equipment; the church's coffin line and Benediction's unequipping;
-  full battle action-script camera/effects and companions on the battle scene; one native
-  capture of an ability being cast (the ROM menu test is the proof);
-- end-to-end browser certification (standalone battle 26 has been played to victory, but not
-  the continuous route) and comparison with the original over the whole route
-  (see [`docs/status.md`](docs/status.md)).
+- full battle action-script camera/effects and companions on the battle scene; the map screen
+  and party strips of the original's top screen;
+- comparison with the original over the whole route (the continuous route itself runs in the
+  browser, in Edge and on the hosted page, to event 2750; the ±2-step tick offsets of the hosted
+  run are unmodelled; see [`docs/status.md`](docs/status.md)).
 
 Status, limits and evidence: [`docs/status.md`](docs/status.md); plan and milestones:
 [`docs/roadmap.md`](docs/roadmap.md); running and commands: [`docs/app.md`](docs/app.md).
