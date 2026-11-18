@@ -1,3 +1,9 @@
 [alias]
 # `cargo dq9re info`, `cargo dq9re extract`, ...
 dq9re = "run --quiet --release -p dq9re --"
+
+[target.x86_64-pc-windows-gnu]
+# MinGW's `ld` was the dominant cost of every relink; the toolchain ships LLD
+# (docs/build-speed.md). Scoped to the triple: Linux CI and the wasm build never read it.
+# `rust-lld` is resolved by rustc from the toolchain, so no machine-specific path is needed.
+linker = "rust-lld"

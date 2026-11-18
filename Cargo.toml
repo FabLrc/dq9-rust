@@ -50,7 +50,10 @@ opt-level = 3
 [profile.test]
 # Real-ROM tests walk ~270k strings and 53k archive members; unoptimized they take minutes.
 opt-level = 2
-debug = "line-tables-only"
+# Test binaries are built and thrown away: the DWARF of `dq9-core` and `dq9-app` was 28 % of
+# the Windows edit→test loop (docs/build-speed.md). Panics still print their file:line; set
+# CARGO_PROFILE_TEST_DEBUG=line-tables-only for a stack trace or a line-level debugger.
+debug = "none"
 
 [profile.dev]
 # Line tables are enough for backtraces; full DWARF made each per-worktree target ~5 GB.
