@@ -3,84 +3,58 @@
 Rewritten by the coordinator at integration; no history log.
 Plan: [`roadmap.md`](roadmap.md); rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 17, 2026
+## Status as of November 18, 2026
 
-**v0.1 functional natively; v0.2's native criterion is met and its browser criterion now has a
-continuous session.** A new game played by the pilot with the real battle engine reaches **event
-2750** (Hexagoon lost at Lv 4–7, won at Lv 8, story **2.6.5**, 3057 s of game time, 972 checkpoints).
-The same run in the wasm build, in Edge, ends `stopped: event 2750 ended` after 3057.2 s of game
-time with checkpoints **byte-identical** to the native ones (`j4-web-pilot`, instant battles).
-Parity 2/2 with the party fields in the checkpoint. Fixed 60 Hz loop; hero, field and model pose at 30 Hz.
+**v0.1 functional natively; v0.2's native and browser criteria are met by the pilot, the
+hand-played one is not.** A new game played by the pilot with the real battle engine reaches
+**event 2750** (Hexagoon lost at Lv 4–7, won at Lv 8, story **2.6.5**, **3627.8 s** of game time,
+972 checkpoints; it was 3035.5 s before `d068809` slowed dialogue to the original rate). The same
+route runs in the wasm build in Edge and on the hosted Pages page, instant and shown battles, with
+the native run's state (`j4-web-pilot`, `j4-web-show`; ±2-step tick offsets unmodelled). Parity is
+2/2 with party and gold compared (`fddd4c6`). The route is pinned by an `#[ignore]` real-ROM test
+(`verify.ps1 -Only long`, ~16 min, run by the coordinator before a milestone). A human session can
+be recorded and replayed (`--record`, `--play-record`, `j4-human-record`): **none recorded yet**.
+Fixed 60 Hz loop; hero, field and model pose at 30 Hz.
 
-## Integrated on main (all passed `verify.ps1 -RequireRom`)
+## Integrated on main (every batch passed `verify.ps1 -RequireRom`)
 
-| Batch / commit | Result | Gate |
-|---|---|---|
-| `j4-battle-motions` / `de583e0` | ROM motions/scripts, weapon sets, hit reactions, death/flight, presentation barriers | 5/5, app 102/102 |
-| `j4-battle-gpu-sync` / `4327fd8` | Live lunge/hide matrices reach the GPU; browser victory without ghost models | 5/5, 109.4 s, app 103/103 |
-| `j4-full-heal` / `5723a5d` | Original max-HP override after the ordinary draws; Omniheal MP128 still refused | 5/5, core battle-ROM 10/10 |
-| `j4-field-services` / `660d682` | Field menu, inn/shop/church screens, bounded hero rebuild, copy-loss and group-heal fixes | 5/5, 95.6 s, app 131/131 |
-| `j4-guest-slot` / `d079b97` | Condition 0x56's `0xce` slot is the field guest; M01 2.2 starts event 2230 | 5/5, 122.0 s |
-| `j4-gate-pair` / `19906dc` → `j4-gate-polarity` / `cd399c5` | Action `0xa9` opens D01M01's gate pair on its value and flag `0x347`; the first polarity was wrong and corrected | 5/5, 112.1 s |
-| `j4-chapter2-route` / `a647098` | Route mode (`--route`), story-aware exits, walkable grid; **opening → 2750 by continuous play** | 5/5 |
-| `j4-field-containers` / `b454ad4` | Field containers from `treasure.nsarc`: one-shot red chests, refills, locks, tables; positions are world units (residuals ≤ 0.005) | 5/5 |
-| `j4-gate-load-guard` / `ef56959` | The gate initialiser runs on room 7101 only (constant `0xbd1b`), so M01/F01 keep their placements | 5/5 |
-| `j4-battle-skills` / `0207b7c` | `skilltable.bin` reader, learned panels (`+0x11A`), Abilities row through `Command::Act` | 5/5 |
-| `j4-abilities-capture` / `97fd1e2` | `--battle` takes `--save`; Abilities list and a cast captured (Gigaslash, MP 552 → 537) | 5/5 |
-| `j4-encyclopedia-audit` / `236ea6a` | 67-row audit of the Encyclopedia against the engine, six divergences decompiled (`re/encyclopedia-audit.md`) | 5/5 |
-| `j4-parity-party` / `daa9553` | Party HP/MP/XP/level and gold in the checkpoints, original side read from RAM; fought ≠ stand-in on 611/615 lines | 5/5, parity 2/2 |
-| `j4-ch2-gaps` / `2930280` | Natives 560, 573, 417/421 (window shake), cast modes of absent members; chapter 2 report 47 → 49/50 | 5/5 |
-| `j4-audit-fixes` / `ed0974b` | Wear-off chances by the decremented count (dazzle's own array), flight refused against species 38–40 | 5/5 |
-| `j4-web-pilot` / `a861eaf` | Pilot and route mode in wasm, `speed=`/`render=`/`battles=`, Edge session to 2750 | 5/5 |
-| `j4-xp-share` / `ca074aa` | `Party::award_with`: the original share (counter, second factor, ×1.05 shoes) | 5/5 |
-| `j4-spawn-block` / `e775c65` | Spawn block tests every party slot (`0x02073e0c`); the app passes the leader only (no follower field characters) | 5/5 |
-| `j4-wipeout-priest` / `615b24c` | `chur_messet.bin` voices; the priest's line 1082 after a wipe-out (silent at story major 1) | 5/5 |
-| `j4-xp-wire` / `3f8422e` | Battles award through `award_with` with the pass counter and the shoes bonus; route byte-identical before/after | 5/5 |
-| `j4-show-battles` / `2e580a1` | Route pilot's heal trip resumes the story (the `battles=show` stop was the pilot, not the game); shown route reaches 2750 natively at 4166.5 s | 5/5 |
-| `j4-web-show` / `ead8d8b` | Hosted-page runs (`-Url`): shown route reaches 2750 at 4166.5 s with 971 checkpoints of the native shown state; instant run at 3035.5 s | 5/5 |
-| `j4-grudge-enrage` / `4e0a0ed` | Grudge weights (+2/+1, 263/438 species), `TargetMemory` refusal removed; no chapter-2 fight enrages (Hexagoon kinds 0/0) | 5/5, route byte-identical |
-| `j4-item-spend` / `2da4e51` | An item whose effect changed nothing is kept (ResolveAction applied counter, `0x021ed724`); field handler rule unread | 5/5, route byte-identical |
-| `j4-bottom-screen-re` / `2183df4` | `re/bottom-screen.md`: on the field the original runs with its screens **swapped** (3D and message window on the bottom, map screen on top); battle keeps 3D on top | 5/5 |
-| `j4-battle-worn-items` / `0b5ceda` | Worn equipment with a use effect is offered in the battle Items menu, never spent | 5/5, route byte-identical |
-| `j4-screens-original` / `5ecb58e` | Opt-in `--screens original` (Web `?screens=`/"Field" select); default `port`, `M01` pixel-identical | 5/5 |
-| `j4-field-menu-rules` / `fcd135a` | Field items spent only on a change, vocation-masked equipment refused, Benediction unequips cursed pieces, church coffin line read | 5/5, route byte-identical |
-| `j4-enhanced-mode` / `8189bf9` | `wide` → **`enhanced`**, now the default layout; ten effects individually switchable (`--fx`/`--no-fx`, Web checkboxes, `?fx=`/`?nofx=`); experimental `enhanced-reactive`; HUD shows the whole party; `--layout stacked` pixel-identical | 5/5 |
-
-The route's acceptance run on `main` (`ef56959`): `build/evidence/j4-route-accept/accept-2750.out`
-(`9f979a299fc4`), 972 checkpoints; trajectory and the Hexagoon's five attempts in
-`build/evidence/j4-chapter2-route/report-route.md`. Chapter-2 battle 26, the Hexagoon both ways
-and the win branch (event 15 → 2550 → 2555 → 2.5.1 → … → 2750) are played, not substituted.
+| Area | Batches (commit) |
+|---|---|
+| Route and browser | `j4-chapter2-route` a647098, `j4-web-pilot` a861eaf, `j4-show-battles` 2e580a1, `j4-web-show` ead8d8b, `j4-route-test` 80943a1, `j4-human-record` 7e2e62a, `j4-parity-regress` fddd4c6 |
+| Parity and oracle | `j4-parity-party` daa9553 (party/gold compared; fought ≠ stand-in on 611/615 lines), `j4-parity-regress` (native 560 = 1 moved event 1140's timeline; open-loop trace replaced by the pilot's) |
+| Battle rules | `j4-full-heal`, `j4-audit-fixes` ed0974b (wear-off, flight 38–40), `j4-xp-share` ca074aa + `j4-xp-wire` 3f8422e, `j4-grudge-enrage` 4e0a0ed, `j4-item-spend` 2da4e51, `j4-spawn-block` e775c65 |
+| Battle UI and scene | `j4-battle-motions`, `-gpu-sync`, `-skills`, `j4-abilities-capture` 97fd1e2, `j4-battle-worn-items` 0b5ceda, `j4-battle-transition` e973f6b (swirl read and clocked, **not wired**) |
+| Field, services, story | `j4-field-services`, `-containers`, `j4-field-menu-rules` fcd135a, `j4-wipeout-priest` 615b24c, `j4-ch2-gaps` 2930280 (49/50), `j4-guest-slot`, `j4-gate-*`, `j4-aquila-bug` 5349f43 (face decal one tick late) |
+| Presentation | `j4-enhanced-mode` 8189bf9 (`enhanced` default, ten `--fx`, `enhanced-reactive`), `j4-screens-original` 5ecb58e (opt-in), `j4-text-speed` d068809 + f516d79 (1 unit/frame, A does not skip, `--text-speed`) |
+| Research | `j4-encyclopedia-audit` 236ea6a, `j4-bottom-screen-re` 2183df4 (the original runs the field with swapped screens), `j4-vegetation-billboards` bbe8bc3 (F-map bushes are fixed quads: normal), `j4-docs-consistency` 598cef3 |
 
 ## Limits recorded, not hidden
 
-- **Parity and battle effects**: the party's HP/MP/XP/gold are compared, but the original's own RNG
-  drew another battle-26 monster set (HP 16/20 vs 13, XP 7 vs 2, gold 13 vs 4); three `accepted`
-  entries pin the runtime's exact value. A seed-7 fight stands in for that draw, it does not prove it.
-- **Experience share**: wired. The counter is one increment per command pass of each present slot, so it cancels for a party present from the start; the hold bit `live+0xA8` bit 0 is **[unknown]** and mid-battle joins are not modelled.
-- **Audit leftovers** (`re/encyclopedia-audit.md`): enrage draws for heal/Zing actions (no chapter-2 fight enrages), weapon/shield skill-tree equip rule, metal rules and tension (later milestones).
-- **Containers**: runtime `LootableContainer` objects, nothing drawn or hidden; cupboards have no
-  position; a mimic opens nothing; locked chests refuse with no flag.
-- **Route mode** is a test driver, not a game feature; `D01M02`'s west stair being a dead end is
-  **[hypothesis]**. Patch persistence: pending placement states (`+0x41b`) are still not modelled.
-- **Shown battles**: the `battles=show` stop was the route pilot (a heal trip left no resume point, so
-  NPC 203 was never talked to); fixed. Shown native run reaches 2750 at 4166.5 s with 971 checkpoints;
-  shown runs are not tick-comparable with instant ones (draw divergence from checkpoint 715,
-  **[hypothesis]**). The hosted page ran the shown route to 2750 (`j4-web-show`); its ±2-step tick offsets against the native run are unmodelled.
-- **Wipe-out**: the priest line is modelled (no gold line exists in the ROM); the save-carried revival
-  map, trigger action 180 and `ME_009` are unmodelled. 2535+22510 stays partial by construction.
+- **Parity**: the original's RNG drew another battle-26 monster set (HP 16/20 vs 13, XP 7 vs 2, gold
+  13 vs 4); three `accepted` entries pin the runtime's value. Only two original references exist,
+  both in the prologue: chapter 2 has no comparison with the original.
+- **Timing**: shown runs are not tick-comparable with instant ones (draw divergence from checkpoint
+  715, **[hypothesis]**). Any change of dialogue or transition timing re-pins the route digest.
+- **Battle**: the swirl, the intro camera arc, the 12-frame post-contact freeze and the load blacks
+  are read (`re/battle-transition.md`) but not wired into the app (`app.rs`/`load.rs`, hook in
+  `build/evidence/j4-battle-transition/app-hook.md`). Formation (`79`), action-script cameras and
+  companions on the scene are unmodelled. Enrage draws for heal/Zing actions, metal rules, tension,
+  the weapon/shield skill-tree equip rule are later milestones. The xp counter's hold bit is **[unknown]**.
+- **Screens**: `--screens original` leaves the top screen a plain placeholder (map and party strips
+  need `re/bottom-screen.md` steps 2–3). The F-map camera does not rotate in the original (F02,
+  4 states); our Q/E still rotates it; the lock (`+0x244` bit 1 in `FieldCamera_Update`) is unread.
+- **Text**: codes the port does not model cost 0 units against 1 in the original; `<AUTO=n>` and the
+  battle window's pacing are not played by `Dialogue`; no window capture of the new pacing.
+- **Cutscenes**: bone cameras 552/572 read the current-frame bone; the hero's two halos diverge on
+  odd ticks in 21507; `s019n`'s blank face in 21593/21595 is not examined; 2535+22510 stays partial.
+- **Wipe-out**: the save-carried revival map, trigger 180 and `ME_009` are unmodelled.
+- **Route mode** is a test driver; `D01M02`'s west stair being a dead end is **[hypothesis]**.
+  Containers are runtime objects (nothing drawn); pending placement states (`+0x41b`) not modelled.
 
-## Browser and publication
+## Next
 
-Pages deploys on each push to `main` (`a861eaf`: Pages `44111729781` success). The Edge session above
-ran on the local release bundle, not on the hosted page. Earlier hosted checks: field services
-`deb317f`, graphics `1e0326d`, standalone battle 26 victory.
-Evidence (local, `build/evidence/j4-web-pilot/`): console log `a566bf824b31`, checkpoints equal to
-`j4-route-accept/accept-2750-checkpoints.jsonl` (`a0d6200bb7b8`).
-
-## Active work and next steps
-
-Nothing is unmerged. Pending decision after the user's hand test: make `--screens original` the default. Then: the map screen and party strips on the
-top screen (`re/bottom-screen.md` steps 2-3), more original references beyond 1.1.2 (only two, both in the
-prologue), the save-carried revival map, trigger action 180, `ME_009`, docs consistency. Dev environment:
-`dev`/`test` profiles keep line tables only (integrate target 3.2 GB against 4.7 GB before).
-Evidence stays local under `build/evidence/<batch>/`, never committed.
+Nothing is unmerged. (1) The user's hand-played, recorded session, replayed by `--play-record`;
+(2) wire the swirl and run the shown route before/after; (3) the F-map camera lock; (4) more
+original references beyond 1.1.2 (melonDS states along the route); (5) the top screen's map and
+party strips, then make `--screens original` the default after the user's test.
+Pages deploys on each push to `main`. Evidence stays local under `build/evidence/<batch>/`.
