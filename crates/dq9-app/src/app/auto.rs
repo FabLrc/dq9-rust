@@ -90,6 +90,9 @@ pub enum Stop {
     NotStarted,
     /// Route mode: the event the run was asked to reach has ended.
     Reached { event: u16 },
+    /// The caller's own condition held ([`App::play_auto_until`]): a run asked to stop once
+    /// the journal shows one thing does not spend its budget on what the pilot does after it.
+    Done,
 }
 
 /// One thing the pilot decided to do, with the point it walks to.
@@ -434,8 +437,34 @@ impl App {
         stop
     }
 
+    /// [`App::play_auto`], stopped as soon as `done` holds after a fixed step: a caller that
+    /// waits for one thing in the journal (a map reached, an event played) does not spend the
+    /// rest of the budget on what the pilot does afterwards. The pilot's state and the run are
+    /// otherwise the ones of [`App::play_auto`]: one `Pilot` for the whole run.
+    // Only the ROM-backed tests ask for a condition: the bin targets have no caller.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn play_auto_until(
+        &mut self,
+        max_steps: u64,
+        pilot: bool,
+        done: impl Fn(&Self) -> bool,
+    ) -> Stop {
+        self.play_loop_until(&mut Pilot::default(), max_steps, pilot, &done)
+    }
+
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn play_loop(&mut self, bot: &mut Pilot, max_steps: u64, pilot: bool) -> Stop {
+        self.play_loop_until(bot, max_steps, pilot, &|_: &Self| false)
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn play_loop_until(
+        &mut self,
+        bot: &mut Pilot,
+        max_steps: u64,
+        pilot: bool,
+        done: &dyn Fn(&Self) -> bool,
+    ) -> Stop {
         // A loaded map is an already started game: a run from a save/map start (`--auto`
         // without a prologue) must still pilot or report control. `NotStarted` is for a run
         // where no map/ROM ever loaded.
@@ -444,6 +473,9 @@ impl App {
         for _ in 0..max_steps {
             if let Some(stop) = self.auto_step(bot, pilot, &mut started) {
                 return stop;
+            }
+            if done(self) {
+                return Stop::Done;
             }
         }
         if started {
@@ -1764,6 +1796,10 @@ impl App {
             Stop::NotStarted => out.push_str("stopped: no scene started\n"),
             Stop::Reached { event } => out.push_str(&format!(
                 "stopped: event {event} ended (route reached) after {:.1} s of game time\n",
+                self.tick as f64 / 60.0
+            )),
+            Stop::Done => out.push_str(&format!(
+                "stopped: the caller's condition held after {:.1} s of game time\n",
                 self.tick as f64 / 60.0
             )),
         }

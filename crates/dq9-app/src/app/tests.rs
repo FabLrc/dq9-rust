@@ -1319,16 +1319,20 @@ fn trigger_1170_hides_the_tower_gate_and_the_hero_walks_to_x01m03() {
     );
     // From the 1.1.2 pose, the pilot walks with the d-pad; it must reach X01M03 by the
     // warp, with no placement other than this test's starting pose. The journal is the
-    // proof even if it goes on to another map afterwards.
+    // proof even if it goes on to another map afterwards. The run therefore stops on that
+    // proof: the pilot reaches 4103 at tick 239 and went on for 15 345 more fixed steps
+    // before its own `Stop::Control` (tick 15 584 of the 120 000 budget, measured).
+    let crossed = |app: &App| {
+        app.journal.steps.iter().any(|(_, step)| {
+            matches!(step, Step::Map { id, .. } if *id == 4103)
+                || matches!(step, Step::MapChange { to, .. } if *to == 4103)
+        })
+    };
     stand_on(&mut app, 2.77, 18.19, 12.0);
-    app.play_auto(120_000, true);
-    let crossed = app.journal.steps.iter().any(|(_, step)| {
-        matches!(step, Step::Map { id, .. } if *id == 4103)
-            || matches!(step, Step::MapChange { to, .. } if *to == 4103)
-    });
+    let stop = app.play_auto_until(120_000, true, crossed);
     assert!(
-        crossed,
-        "the pilot must walk from X01M01 to X01M03 through warp 9: {:?}",
+        crossed(&app),
+        "the pilot must walk from X01M01 to X01M03 through warp 9 ({stop:?}): {:?}",
         app.hero.map(|h| h.position())
     );
 }

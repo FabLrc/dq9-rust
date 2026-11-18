@@ -56,7 +56,15 @@ fn the_pilot_walks_around_the_well_of_angel_falls_to_the_chapter_2_opening() {
         return;
     };
     let mut app = App::new_headless(options("M01", (2, 1, 1)), Some(rom.to_vec()));
-    app.play_auto(4_000, true);
+    // The opening checkpoint is what the test reads: the run stops on it instead of on the
+    // budget, which the pilot spent walking on afterwards (its 2110 checkpoint lands at tick
+    // 750 of the 4 000 fixed steps, measured).
+    let played = |app: &App| {
+        app.checkpoints
+            .iter()
+            .any(|line| line.contains("\"event\":2110"))
+    };
+    app.play_auto_until(4_000, true, played);
 
     let opening = app
         .checkpoints
@@ -111,7 +119,15 @@ fn the_pilot_pushes_erinns_doors_and_leaves_map_1110_by_the_stair_warp() {
     app.pilot_dir = Some(Vec3::ZERO);
     app.run_steps(1);
 
-    app.play_auto(3_000, true);
+    // The warp to M01M07 is what the test reads, with the arrival checkpoint captured in the
+    // same step: the run stops there instead of on the 3 000-step budget.
+    let left_by_warp = |app: &App| {
+        app.journal.steps.iter().any(|(_, step)| {
+            matches!(step, Step::MapChange { from: Some(1110), to: 1107, cause }
+                if cause.contains("Warp { index: 0"))
+        })
+    };
+    app.play_auto_until(3_000, true, left_by_warp);
 
     let steps = &app.journal.steps;
     let pushed = steps.iter().position(|(_, step)| {
@@ -419,8 +435,12 @@ fn after_a_defeat_the_pilot_hunts_the_field_until_a_level_up_then_the_story_goes
     app.run_steps(1);
     let mut bot = route_bot(&[]);
     bot.mode.as_mut().unwrap().lost_at(1);
-    for _ in 0..30 {
-        app.play_loop(&mut bot, 2_000, true);
+    // Chunks of 250 fixed steps: the bar is read after each one, so the hunt ends within a
+    // quarter of a second of the level-up. With the former 2 000-step chunks it stopped at
+    // tick 4 000, the bar being crossed in the eleventh 250-step chunk (tick 2 751,
+    // measured): at least 1 249 steps of fights paid for nothing.
+    for _ in 0..240 {
+        app.play_loop(&mut bot, 250, true);
         if route_lines(&app, "stronger") > 0 {
             break;
         }
