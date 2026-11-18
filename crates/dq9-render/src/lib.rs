@@ -20,6 +20,7 @@ mod pose;
 mod post;
 pub mod renderer;
 pub mod scene;
+pub mod swirl;
 pub mod ui;
 
 pub use animation::AnimatedScene;

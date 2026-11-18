@@ -285,6 +285,26 @@ impl AnimatedScene {
         true
     }
 
+    /// Poses an actor's playing motion at `frame` (`fx12` model frames) and re-evaluates it:
+    /// the clock of a motion the caller drives itself (the battle swirl's, `frame` in `fx12`
+    /// from the 1-based frame the game counts). Returns whether the actor draws a model with a
+    /// motion playing.
+    pub fn set_actor_frame(&mut self, actor: usize, frame: i32) -> Result<bool> {
+        let Some(&(_, anim)) = self.actors.get(actor).and_then(|a| a.drawn.as_ref()) else {
+            return Ok(false);
+        };
+        let state = &mut self.models[anim];
+        if state.clips.is_empty() {
+            return Ok(false);
+        }
+        for clip in &mut state.clips {
+            clip.frame = clip.range.map_or(frame, |(lo, hi)| frame.clamp(lo, hi));
+        }
+        state.vertices_dirty = true;
+        self.evaluate()?;
+        Ok(true)
+    }
+
     /// The motion an actor is playing and its frame: what the tests and the reports assert,
     /// the clips alone do not name it.
     pub fn actor_animation(&self, actor: usize) -> Option<(&str, i32)> {

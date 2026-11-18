@@ -280,9 +280,12 @@ ov_017::021d8438 g_TalkSelect       # selection state (flags, step, context, cou
 0x020f33d8 g_GameState          # the GameState singleton (GameState::GetInstance returns this literal)
 ov_017::0219814c Area_CheckLeader  # fires events 2 (enter) / 5 (leave) for map areas
 ov_017::021b6f18 BattleTask_Init    # battle task (+0x3718 of the field manager): clears the request, state 10
+ov_017::021b621c SwirlTask_Init       # task kind 0x16 at GameResources+0x3b5c: +0xfd delay 15 (0 with an object), +0xfe battle number, state +0xfc
+ov_017::021b6290 SwirlTask_Update     # states 0-4: load, start the battle track, swirl (SwirlEffect_Update), wait for the fade, restore the camera
 ov_017::021b6f9c BattleTask_End     # frees the battle allocator, resets the task; sets the "done" byte (+1)
 ov_017::021b7104 BattleTask_Setup   # copies the request filled by action 0x78 (battle number +0x28, n+0x8005 +0x24)
 ov_017::021b790c BattleTask_Update  # state machine; when the fight is over fires event 15 (won) / 16 (lost) with +0x28 in word 6
+ov_017::02195ecc FieldDraw_OrthoPass # 2D pass of the frame: ortho 64x48 box, eye (0,0,10); draws the task queue (the swirl when the front task is kind 0x16)
 ov_017::021bc77c EventTask_Update  # event task (+8 = event id from action 0x77); fires event 11 at its end
 
 # --- Event scripts (docs/re/stb.md) ---
@@ -355,6 +358,7 @@ ov_001::0215ca4c StbNat_LoadMonsterCharacter arm # native 233
 ov_001::0215ccdc StbNat_GetAnimationActive arm # native 234
 ov_001::0215cd50 StbNat_AttachCharacterToBone arm # native 235
 ov_001::0215cdf8 StbNat_DetachCharacter arm # native 236
+ov_001::0215ce4c StbNat_CreateBattleSwirl arm # native 237: loads data/effect/ev999991500.chr into an event slot (polygon id 0x3d, position (0,-10,1)), hidden; shown by native 547
 ov_001::0215cf98 StbNat_SetCharacterPalette arm # native 238: 5-5-5 colour + mode in Object3D+0x9e, then ov_017::0218fcf8 / 0218f92c
 ov_001::0215d134 StbNat_ResetCameraCommands arm # native 300
 ov_001::0215d168 StbNat_GetCameraBusy arm # native 301
@@ -761,6 +765,12 @@ ov_017::0219ca88 Field_CheckWarps      # 0x72 warps: leader inside -> Save_Warp;
 # --- Camera projection (docs/app.md) ---
 0x0202df78 Camera_Init                          # half FOV 15 deg (0xf000), near 1, far 400 (fx32)
 0x0202e9b4 Camera_SetHalfFovDegrees             # +0x58 degrees fx32; +0x5c/+0x60 sin, cos (radians = x * 0x47 / 4096)
+0x0202e884 Camera_SetRoll                      # +0x7c angle (fx32 radians, 0..2pi); +0x1ec/+0x1ee cleared
+0x02046ca8 SwirlEffect_QueueLoad              # queues data/effect/ev999991500.chr when the effect owns its object
+0x02046cd8 SwirlEffect_LoadStep               # when loaded: Object3D (polygon id 0x3d, position (0,-10,1), motion 0)
+0x02046e80 SwirlEffect_Init                   # record at task +0xc: [0] ticks, [2] roll 0.0, [3] half FoV 15.0, +0x1c fade pending
+0x02046f94 SwirlEffect_Release                # roll 0, half FoV 15 deg (0xf000), frees the allocator
+0x0204701c SwirlEffect_Update                 # roll -8 deg, half FoV -0.4333 deg, AdvanceEffects, tick sum, SetMain/SubBrightness(-16, 20) past 15, done past 35
 0x02030c78 fix32_sini                      # (angle << 16) / 0x6488, table 0x020e9460 (4096 sin/cos s16 pairs); angles are radians fx32, 2*pi = 0x6488
 0x02030f40 fix32_ReduceAngle0To2Pi         # reduce to [0, 0x6488)
 0x0202e5e8 Camera_SetOrbit                 # eye = target + RotY(yaw) * (0, dy, sqrt(dist^2 - dy^2)); +0x70 yaw, +0x74 dy, +0x78 dist

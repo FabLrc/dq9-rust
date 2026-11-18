@@ -46,6 +46,8 @@ pub mod motion;
 pub mod narrate;
 #[cfg(test)]
 mod tests;
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod transition;
 pub mod ui;
 
 /// Stage the game falls back to when the ground names none, or a map the list does not hold
@@ -506,6 +508,12 @@ impl BattleScene {
 
     pub fn runtime(&self) -> &AnimatedScene {
         &self.runtime
+    }
+
+    /// The stage's animated scene, to add the transition's swirl to (tests and captures).
+    #[cfg(test)]
+    pub(crate) fn runtime_mut(&mut self) -> &mut AnimatedScene {
+        &mut self.runtime
     }
 
     /// Uploads geometry and fighter worlds together. Hidden fighters must be included:

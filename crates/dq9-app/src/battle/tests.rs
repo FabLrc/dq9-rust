@@ -1523,3 +1523,100 @@ fn a_herb_at_full_hp_is_kept() {
     );
     assert_eq!(fight.party().bag.count(22000), 2, "the bag is untouched");
 }
+
+/// The swirl over a field camera, tick by tick, as the transition draws it: the camera rolls
+/// and zooms, the disc keeps the screen's height, both screens go black at the end. With
+/// `DQ9_EVIDENCE_DIR` set the frames at ticks 0, 9, 19, 29 and 37 are written there.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_swirl_rolls_zooms_and_blacks_out_the_field() {
+    use dq9_render::swirl::{CHR_PATH, Swirl as Disc};
+    use dq9_render::{Camera, Renderer, Viewport};
+
+    use super::transition::Swirl;
+
+    let Some(rom) = testrom::load() else { return };
+    let files = nds_rom::Rom::parse(rom).unwrap();
+    let chr = files.file_by_path(CHR_PATH).unwrap();
+    let (device, queue) = pollster::block_on(async {
+        let instance = crate::gpu::instance().await;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .expect("a GPU adapter for the swirl capture");
+        crate::gpu::device(&adapter).await.unwrap()
+    });
+    let mut scene = battle_scene(rom, vec![(1, 1)]);
+    let disc = Disc::add(scene.runtime_mut(), chr)
+        .unwrap()
+        .expect("the swirl model draws");
+    let mut renderer = Renderer::new(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &scene.runtime().scene,
+    );
+    renderer.environment = scene.environment.clone();
+    let mut camera = Camera::field(glam::Vec3::new(0.0, 0.0, 0.0), 0.0);
+    let viewport = Viewport {
+        x: 0,
+        y: 0,
+        width: 256,
+        height: 192,
+    };
+    let mut frame = |scene: &mut BattleScene, camera: &Camera, clock: &Swirl, shown: bool| {
+        let world = disc.place(scene.runtime_mut(), shown.then_some(camera));
+        disc.pose(scene.runtime_mut(), clock.model_frame()).unwrap();
+        scene.upload(&mut renderer, &device, &queue).unwrap();
+        renderer.update_instance_world(&queue, disc.instance(), world);
+        let cover = clock.cover();
+        renderer.environment.cover = (cover > 0.0).then_some([0.0, 0.0, 0.0, cover]);
+        renderer
+            .render_to_rgba_with(&device, &queue, (256, 192), viewport, camera, |_, _| {})
+            .unwrap()
+    };
+    let evidence = std::env::var_os("DQ9_EVIDENCE_DIR").map(std::path::PathBuf::from);
+    let mut clock = Swirl::new();
+    let mut visible = 0usize;
+    for tick in 0..38u32 {
+        clock.step();
+        camera.roll = clock.roll_degrees().to_radians();
+        camera.fovy = 2.0 * clock.half_fov_degrees().to_radians();
+        let with = frame(&mut scene, &camera, &clock, true);
+        if [0, 9, 19, 29, 37].contains(&tick) {
+            if tick == 19 {
+                let without = frame(&mut scene, &camera, &clock, false);
+                visible = with
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(without.as_chunks::<4>().0)
+                    .filter(|(a, b)| a != b)
+                    .count();
+            }
+            if let Some(dir) = &evidence {
+                std::fs::create_dir_all(dir).unwrap();
+                let file =
+                    std::fs::File::create(dir.join(format!("swirl-tick{tick:02}.png"))).unwrap();
+                let mut encoder = png::Encoder::new(file, 256, 192);
+                encoder.set_color(png::ColorType::Rgba);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder
+                    .write_header()
+                    .unwrap()
+                    .write_image_data(&with)
+                    .unwrap();
+            }
+        }
+        if tick == 37 {
+            assert!(
+                with.as_chunks::<4>().0.iter().all(|p| p[..3] == [0, 0, 0]),
+                "both screens are black when the swirl ends"
+            );
+        }
+    }
+    assert!(
+        visible > 5_000,
+        "the rings cover a good part of the picture at tick 19 ({visible} pixels differ)"
+    );
+}
