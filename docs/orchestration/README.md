@@ -56,44 +56,65 @@ RE → implementation → challenger → integration → final "docs consistency
    command given in that file (`--base-branch main`, `--agent omp`, `--setup skip`; the
    per-batch `CARGO_TARGET_DIR` is in the prompt).
 3. Wait for `worker_done`; read the report and the evidence.
-4. Checks, then integration from the main checkout on `main`, clean tree:
+4. Checks, then integration from the main checkout on `main`, clean tree. One run takes the
+   whole list of settled branches in integration order and runs **one**
+   `verify.ps1 -RequireRom` on the combined result:
 
    ```powershell
-   ./scripts/integrate.ps1 -Branch FabLrc/j3-sound-effects -Spec build/batches/j3-sound-effects.md
-   ./scripts/integrate.ps1 -Branch FabLrc/j3-sound-effects -Spec build/batches/j3-sound-effects.md -Apply -Message 'audio: play field sound effects'
-   ./scripts/integrate.ps1 -Branch FabLrc/j3-sound-effects -Spec build/batches/j3-sound-effects.md -Cleanup
-   orca orchestration worker-release --dispatch <dispatch id>
+   ./scripts/integrate.ps1 -Branch FabLrc/j3-a,FabLrc/j3-b -Rebase                      # dry run
+   ./scripts/integrate.ps1 -Branch FabLrc/j3-a,FabLrc/j3-b -Rebase -Apply `
+       -Message 'audio: play field sound effects','formats: read the SDAT banks' -Cleanup
+   ./scripts/integrate.ps1 -Branch FabLrc/j3-a -Cleanup                                 # cleanup only
    ```
 
-   Observed in wave v2-1 with Orca workers (`new-top-level` worktrees): `-Cleanup` removes the
-   `tools` junction, then `git worktree remove` (never forced) fails with exit 255 while the
-   worker is still open (cause **[unknown]**: the worker's open terminal or its untracked
-   `build/evidence/`). `worker-release` then removes the worktree on the Orca side. Finish by
-   hand: `git branch -D FabLrc/<batch>` and delete `%LOCALAPPDATA%\dq9-target-<batch>`.
-   Run `-Cleanup` **before** `worker-release` (the junction must be gone before Orca deletes
-   the directory) and before applying the next batch: once another batch has touched a shared
-   file (`lib.rs`), the "integrated" check fails because `main` no longer equals the branch on
-   that file.
+   `-Spec` defaults to `build/batches/<batch>.md`; `-Message` is matched to the branches by
+   position, and a spec line `Commit: domain: summary` supplies the subject when `-Message`
+   has no entry for that branch. Commas are not split in `-Message`, so under
+   `powershell -File` use the `Commit:` lines.
 
-   The checks verify: branch contains `main` (otherwise rebase), changed files within
-   ```owns (except the `README.md` progress block, always accepted), no forbidden file
-   (`rom/`, `build/`, `tools/`, `*.nds`, `*.sav`), clean worktree,
-   `verify.ps1 -RequireRom` green and worktree still clean afterwards. `-Apply` does a
-   `git merge --squash` + one `domain: summary` commit, without pushing. `-Cleanup` removes
-   the junctions without following their target, then the worktree and the branch.
+   Per branch, the cheap checks run first: branch contains `main` (otherwise rebase, or
+   `-Rebase`), changed files within ```owns (except the `README.md` progress block), no
+   forbidden file (`rom/`, `build/`, `tools/`, `*.nds`, `*.sav`), worktree clean. Then the
+   combined result is built in a **temporary integration worktree** under
+   `%LOCALAPPDATA%\dq9-integrate-wt-*` (never the main checkout or a batch worktree): each
+   branch is squash-merged there as its own commit (a conflict names the branch), and
+   `verify.ps1 -RequireRom` runs once on the combined tree. Green: `-Apply` fast-forwards
+   `main` to those commits, without pushing. Red: the prefixes of the ordered list are
+   verified by binary search, the first culprit is named, `main` stays untouched (a dry run
+   costs the same single verify as an apply, so an `-Apply` straight away is fine).
 
-   During a wave, `main` moves between batches: pass `-Rebase` to have the script run
-   `git rebase main` inside the batch worktree before the checks (a conflict aborts the
-   rebase and fails with "rebase conflict, ask the worker"; without `-Rebase` a branch that
-   does not contain `main` still fails). The verify step always uses the private target
-   `%LOCALAPPDATA%\dq9-target-integrate` and the main checkout's `*.nds` as `DQ9_ROM` when
-   the variable is empty.
+   The README progress block that `verify.ps1` rewrites is **folded into the last integration
+   commit** (never into a worker branch, never a commit of its own); any other change left by
+   verify fails the run.
+
+   `-Cleanup` (with `-Apply` or alone, branches already integrated) does, per branch:
+   `orca orchestration worker-release --dispatch <id>` when `build/batches/runs.json` has an
+   entry for the batch (`$env:DQ9_ORCA` replaces `orca`; a failed release is a warning), then
+   removes the junctions without following their target, the worktree (never forced) and the
+   branch, then the legacy `%LOCALAPPDATA%\dq9-target-<batch>`, then the `runs.json` entry.
+   The release comes first because the worker's open terminal is what made
+   `git worktree remove` fail (exit 255) in wave v2-1. `dq9-target-slot<N>` (long-lived targets
+   reused by successive workers) and `dq9-target-integrate` are never deleted. Do not clean a
+   branch up after another batch has touched the same shared file: the "integrated" check
+   compares `main` with the branch on the files it changed.
+
+   `runs.json` (ignored by git, main checkout): `{ "<batch>": { "dispatch", "slot", "model",
+   "attempt", "started", "branch" } }`, written by `dispatch.ps1`, entry removed by `-Cleanup`.
+
+   During a wave, `main` moves between batches: `-Rebase` runs `git rebase main` inside each
+   batch worktree before the checks (a conflict aborts the rebase and fails with "rebase
+   conflict, ask the worker"). The verify step always uses the private target
+   `%LOCALAPPDATA%\dq9-target-integrate` and the main checkout's `*.nds` as `DQ9_ROM` when the
+   variable is empty. A crash can leave a `dq9-integrate-wt-*` directory: remove it with
+   `git worktree remove --force <path>`.
 
    Never run `orca worktree rm` on a worktree that still has a `rom` (older worktrees) or
    `tools` junction (they lead to the only copy of the ROM): first `integrate.ps1 -Cleanup`,
    which removes the junctions without following their target. A worktree with no junction and
    no commit can be removed cleanly with `orca worktree rm --worktree path:<path> --delete-branch`.
-5. Rewrite `docs/status.md` (< 60 lines, rewritten, not appended to), commit, push.
+5. Rewrite `docs/status.md` (< 60 lines, rewritten, not appended to), commit, push. The status
+   file is rewritten **once per wave**: no `docs:` commit that only records a green CI run or
+   a deployment.
 
 ## Workflow optimisations (wave r1)
 
@@ -110,7 +131,11 @@ RE → implementation → challenger → integration → final "docs consistency
   the junction could never be created in a fresh worktree.
 - **`integrate.ps1` owns its verify environment**: it always sets
   `%LOCALAPPDATA%\dq9-target-integrate` and finds the main checkout's `*.nds` when `DQ9_ROM`
-  is empty, and `-Rebase` integrates a branch sequentially during a wave.
+  is empty; it integrates a whole wave in one run (one verify, one commit per branch, README
+  block folded into the last one) and `-Rebase` handles a moved `main`.
+- **No ceremony around a run** (k1-integrate): no manual rebase/verify per branch, no
+  regeneration of the README block before `-Apply`, no hand `worker-release`, no hand target
+  removal. The one-verify-per-run saving is the point: a verify costs 84-354 s (median ~110 s).
 - **Parity references fall back to the main checkout** (`scripts/parity.ps1`): `build/` is
   ignored by git and absent from a linked worktree, so the references file of the main
   checkout is used when `-References` is not given.
@@ -123,7 +148,7 @@ RE → implementation → challenger → integration → final "docs consistency
 | Script | Example |
 |---|---|
 | `scripts/verify.ps1 [-Fast] [-Only <step[,step]>] [-RequireRom]` | `./scripts/verify.ps1 -Only fmt,clippy` — steps `fmt`, `clippy`, `test`, `wasm`, `coverage`, plus the opt-in `long`; only source of the verification commands |
-| `scripts/integrate.ps1 -Branch <b> -Spec <batch> [-Message <subject>] [-Apply] [-Rebase] [-Cleanup]` | see cycle above |
+| `scripts/integrate.ps1 -Branch <b[,b…]> [-Spec <batch>[,…]] [-Message <subject>[,…]] [-Apply] [-Rebase] [-Cleanup]` | see cycle above; tests: `scripts/tests/integrate.tests.ps1` |
 | `scripts/evidence.ps1 -Batch <batch> [-Command <text>] [-Note <text>]` | `./scripts/evidence.ps1 -Batch j3-sound-effects -Command 'cargo run -p dq9-app -- --headless' -Note 'capture'` → `build/evidence/<batch>/manifest.json` |
 | `scripts/prune-build.ps1` | `./scripts/prune-build.ps1` — never deletes a file listed in an evidence manifest |
 | `scripts/prune-branches.ps1 [-Apply] [-Remote]` | `./scripts/prune-branches.ps1 -Remote` (list), then `-Apply`; never deletes a unique branch |
@@ -164,8 +189,7 @@ Then launch the "docs consistency" batch.
 No more bot commits on `main`: the `README.md` progress block is updated locally by `verify.ps1`
 (`coverage` step); the coverage job fails if the block is stale.
 
-Integration with a moved `main`: in the worker's worktree run `git rebase main`, then
-`./scripts/verify.ps1 -Only coverage` and commit the regenerated `README.md` block
-(`docs: regenerate the README progress block`) **before** `integrate.ps1 -Apply`, otherwise the
-script's own verify dirties the worktree. A worker's committed block conflicts on rebase: drop it
-(`git reset --hard <last code commit>`) and regenerate.
+A worker never commits the README progress block (`worker-rules.md` § 2): the integration run
+regenerates it and folds it into the last integration commit. A block already committed on a
+worker branch conflicts when two branches carry it: drop it with `git reset --hard <last code
+commit>` in that worktree.

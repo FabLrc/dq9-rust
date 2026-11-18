@@ -1,52 +1,76 @@
-# Integration gate for a worker branch: checks it, squash-merges it into main, removes its worktree.
+# Integration gate for worker branches: checks them, squash-merges them into main, removes
+# their worktrees. One run integrates one or several branches and runs ONE verify.
 #
 # Usage (from the main checkout, on `main`, clean tree):
 #   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec build/batches/<batch>.md
-#   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec <spec> -Apply -Message 'docs: summary'
-#   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec <spec> -Apply -Message '...' -Cleanup
-#   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Spec <spec> -Rebase
-#   powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch <b> -Cleanup
+#   ./scripts/integrate.ps1 -Branch a,b,c -Apply -Message 'x: first','y: second','z: third' -Cleanup
+#   ./scripts/integrate.ps1 -Branch a,b,c -Rebase          # dry run: checks + verify, main untouched
+#   ./scripts/integrate.ps1 -Branch <b> -Cleanup           # cleanup-only run, after an integration
 #
-# Checks (always run, in this order; the script stops at the first failure with a non-zero exit):
+# -Branch takes a list (`-Branch a,b,c`, also as one comma-separated string under
+# `powershell -File`); the order is the integration order. -Spec is a list matched by position
+# (default: `build/batches/<batch>.md`, <batch> = the part of the branch after the last `/`).
+# -Message is a list matched by position (commas are NOT split: from `powershell -File`, give
+# one branch, or put a line `Commit: domain: summary` in the spec, used when -Message has no
+# entry for that position).
+#
+# Checks, in this order; the script stops at the first failure with a non-zero exit:
 # - the main checkout is on `main` with a clean tree (`git status --porcelain` empty);
-# - the branch exists, has a worktree (found with `git worktree list --porcelain`) and contains
-#   `main` (otherwise: rebase needed; `-Rebase` runs `git rebase main` in that worktree first,
-#   and a conflict aborts the rebase and fails with "rebase conflict, ask the worker");
-# - every file of `git diff --name-only main...<b>` matches a glob of the spec's ```owns block
-#   (`**` any path including none, `*` anything but `/`, `?` one character). README.md outside
-#   the globs is accepted only when every changed line lies between `<!-- coverage:start -->`
-#   and `<!-- coverage:end -->` (markers included) in both versions;
-# - no forbidden file: `rom/`, `build/`, `tools/`, `*.nds`, `*.sav`;
-# - the worktree is clean, `scripts/verify.ps1 -RequireRom` passes inside it (cwd = worktree),
-#   and the worktree is still clean afterwards (otherwise the README progress block must be
-#   committed on the branch). The verify step always uses a private Cargo target
-#   (`%LOCALAPPDATA%\dq9-target-integrate`, overriding the caller: a shared target lets Cargo
-#   reuse an rlib built from another worktree's sources, observed with `nds-rom` during the r1
-#   wave) and sets `DQ9_ROM` to the single `*.nds` of the main checkout's `rom/` when the
-#   variable is empty (fails when there is not exactly one).
+# - per branch (cheap checks first): the branch exists, has a worktree (found with
+#   `git worktree list --porcelain`) and contains `main` (otherwise: rebase needed; `-Rebase`
+#   runs `git rebase main` in that worktree first, and a conflict aborts the rebase and fails
+#   with "rebase conflict, ask the worker"); every file of `git diff --name-only
+#   main...<b>` matches a glob of the spec's ```owns block (`**` any path including none, `*`
+#   anything but `/`, `?` one character; README.md outside the globs is accepted only when
+#   every changed line lies between `<!-- coverage:start -->` and `<!-- coverage:end -->`);
+#   no forbidden file (`rom/`, `build/`, `tools/`, `*.nds`, `*.sav`); the worktree is clean
+#   and at the branch head;
+# - the combined result is built in a TEMPORARY integration worktree (detached at main, under
+#   `%LOCALAPPDATA%\dq9-integrate-wt-*`, removed at the end; neither the main checkout nor a
+#   batch worktree): each branch is squash-merged there as its own commit. A conflict (with
+#   main or an earlier branch) fails and names the branch;
+# - `scripts/verify.ps1 -RequireRom` of the combined tree runs ONCE in that worktree (cwd =
+#   worktree). Red: the prefixes of the ordered list are verified by binary search and the
+#   first culprit is reported (a prefix = main + the first k branches); main stays untouched.
+#   The script runs the verify script found in the tree being verified, by a fixed relative
+#   path: there is no switch, variable or parameter that replaces or skips it. The verify
+#   step always uses a private Cargo target (`%LOCALAPPDATA%\dq9-target-integrate`,
+#   overriding the caller: a shared target lets Cargo reuse an rlib built from another
+#   worktree's sources, observed with `nds-rom` during the r1 wave) and sets `DQ9_ROM` to the
+#   single `*.nds` of the main checkout's `rom/` when the variable is empty;
+# - after a green verify the only change allowed in the integration worktree is the README
+#   progress block that `verify.ps1` regenerates: it is folded into the LAST integration
+#   commit (never into a worker branch, never a commit of its own). Any other change fails.
 # There is no option to skip a check. Without -Apply nothing is changed in main.
 #
-# -Apply: `git merge --squash <b>` then one commit with -Message (`domain: summary`, required).
-#   Nothing is pushed.
-# -Cleanup: removes the worktree and deletes the branch. Release the worker on the Orca side
-#   FIRST: the worktree must not be in use. Worktrees hold junctions (`rom`, `tools`) to the main
-#   checkout, which hold the user's only copy of the ROM. Every reparse point of the worktree
-#   (root and nested, the scan never enters one and skips `.git`/`target` contents) is removed
-#   as a link only, without following its target; the script refuses to go on if one remains,
-#   then runs `git worktree remove` (never forced) and `git branch -D`. Tracked files hidden by a
-#   removed junction (such as rom/README.md) are checked out again so the worktree stays clean.
-#   After the worktree is gone, the batch Cargo target `%LOCALAPPDATA%\dq9-target-<batch>`
-#   (the part of -Branch after the last `/`, when it matches [A-Za-z0-9._-]+) is deleted: each
-#   per-batch target costs ~5 GB, and the 13 targets of a wave filled the disk (os error 112).
-#   `dq9-target-integrate` and any other target are never touched.
-#   With -Apply the cleanup follows the commit. Without -Apply it is a cleanup-only run: -Spec
-#   is not needed, and the branch must already be integrated (ancestor of main, or main holds
-#   the same content for every file the branch changed). A branch without a worktree is only
-#   deleted.
+# -Apply: fast-forwards `main` to the verified integration commits (one squash commit per
+#   branch, messages `domain: summary`, required). Nothing is pushed.
+# -Cleanup: per branch, in this order:
+#   1. when `build/batches/runs.json` (main checkout, written by dispatch.ps1) has an entry
+#      for the batch (key = batch, or `branch` equal to the branch), runs
+#      `orca orchestration worker-release --dispatch <id>` (`$env:DQ9_ORCA` replaces `orca`)
+#      so the worker's terminal no longer holds the worktree; a failure is reported as a
+#      warning, not fatal;
+#   2. removes the worktree and deletes the branch. Worktrees hold junctions (`rom`, `tools`)
+#      to the main checkout, which hold the user's only copy of the ROM. Every reparse point
+#      of the worktree (root and nested, the scan never enters one and skips `.git`/`target`
+#      contents) is removed as a link only, without following its target; the script
+#      refuses to go on if one remains, then runs `git worktree remove` (never forced) and
+#      `git branch -D`. Tracked files hidden by a removed junction (such as rom/README.md) are
+#      checked out again so the worktree stays clean;
+#   3. deletes the legacy per-batch Cargo target `%LOCALAPPDATA%\dq9-target-<batch>` (the part
+#      of the branch after the last `/`, when it matches [A-Za-z0-9._-]+; ~5 GB each). Any
+#      `dq9-target-slot*` (long-lived targets reused by successive workers) and
+#      `dq9-target-integrate` are never touched;
+#   4. deletes the runs.json entry.
+#   With -Apply the cleanup follows the fast-forward. Without -Apply it is a cleanup-only run:
+#   -Spec is not needed, and every branch must already be integrated (ancestor of main, or
+#   main holds the same content for every file the branch changed). A branch without a
+#   worktree is only deleted.
 param(
-    [Parameter(Mandatory = $true)] [string] $Branch,
-    [string] $Spec,
-    [string] $Message,
+    [Parameter(Mandatory = $true)] [string[]] $Branch,
+    [string[]] $Spec,
+    [string[]] $Message,
     [switch] $Apply,
     [switch] $Rebase,
     [switch] $Cleanup
@@ -54,15 +78,29 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $Checks = [System.Collections.Generic.List[string]]::new()
+$script:TempWorktree = $null
+
+# `a,b` and `'a','b'` both give two items (`powershell -File` passes `a,b` as one string).
+function Split-List([string[]] $Values) {
+    @($Values | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -ne '' })
+}
+$Branches = @(Split-List $Branch)
 
 function Write-Summary {
     Write-Host ''
-    Write-Host "integrate.ps1 $Branch"
+    Write-Host "integrate.ps1 $($Branches -join ', ')"
     foreach ($Line in $Checks) { Write-Host "  $Line" }
 }
 
 function Pass([string] $Name, [string] $Detail) {
     $Line = 'ok      {0}: {1}' -f $Name, $Detail
+    $Checks.Add($Line)
+    Write-Host "==> $Line"
+}
+
+function Warn([string] $Name, [string] $Detail) {
+    $Line = 'WARNING {0}: {1}' -f $Name, $Detail
     $Checks.Add($Line)
     Write-Host "==> $Line"
 }
@@ -73,6 +111,11 @@ function Fail([string] $Name, [string] $Detail) {
     Write-Host "==> $Line"
     Write-Summary
     exit 1
+}
+
+# Check name with the batch appended when several branches are integrated.
+function Label([string] $Name, $B) {
+    if ($Branches.Count -gt 1) { "$Name [$($B.Batch)]" } else { $Name }
 }
 
 # Runs git and returns its stdout lines; a non-zero exit code is a failure of check $Name.
@@ -131,6 +174,14 @@ function Read-OwnsGlobs([string] $Path) {
     }
     if ($InBlock) { throw 'unterminated ```owns block' }
     , $Globs.ToArray()
+}
+
+# The commit subject of a spec: its first line `Commit: domain: summary`, or $null.
+function Read-SpecCommit([string] $Path) {
+    foreach ($Line in [System.IO.File]::ReadAllLines($Path)) {
+        if ($Line -match '^Commit:\s*(\S.*?)\s*$') { return $Matches[1] }
+    }
+    $null
 }
 
 # 1-based line numbers of the coverage markers in a README version, or $null.
@@ -216,9 +267,84 @@ function Test-Clean([string] $Name, [string] $Dir) {
     $true
 }
 
-function Invoke-Cleanup([string] $Worktree) {
+function Get-LocalAppData {
+    if ([string]::IsNullOrEmpty($env:LOCALAPPDATA)) { Fail 'environment' '%LOCALAPPDATA% is empty' }
+    $env:LOCALAPPDATA
+}
+
+# --- build/batches/runs.json (written by dispatch.ps1, ignored by git) -------------------------
+
+function Get-RunsPath { Join-Path $Root 'build/batches/runs.json' }
+
+# The parsed runs.json, or $null when absent or empty. An unreadable file is a failure: the
+# release of a worker must not be silently skipped.
+function Read-Runs {
+    $Path = Get-RunsPath
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    $Text = [System.IO.File]::ReadAllText($Path)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    try { $Text | ConvertFrom-Json } catch { Fail 'runs.json' "cannot parse ${Path}: $($_.Exception.Message)" }
+}
+
+# The runs.json entry of a branch: key = batch, or a `branch` field equal to the branch.
+function Find-Run($B) {
+    $Runs = Read-Runs
+    if ($null -eq $Runs) { return $null }
+    foreach ($Property in $Runs.PSObject.Properties) {
+        if ($Property.Name -eq $B.Batch -or ($Property.Value -and $Property.Value.branch -eq $B.Name)) {
+            return @{ Key = $Property.Name; Dispatch = [string] $Property.Value.dispatch }
+        }
+    }
+    $null
+}
+
+function Remove-Run([string] $Key) {
+    $Runs = Read-Runs
+    if ($null -eq $Runs) { return }
+    $Runs.PSObject.Properties.Remove($Key)
+    $Json = ConvertTo-Json -InputObject $Runs -Depth 6
+    [System.IO.File]::WriteAllText((Get-RunsPath), $Json, [System.Text.UTF8Encoding]::new($false))
+}
+
+# Runs `orca orchestration worker-release`; returns $null on success, else the error text.
+function Invoke-WorkerRelease([string] $Dispatch) {
+    $Orca = if ([string]::IsNullOrEmpty($env:DQ9_ORCA)) { 'orca' } else { $env:DQ9_ORCA }
+    $Saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $global:LASTEXITCODE = 0
+        $Out = @(& $Orca orchestration worker-release --dispatch $Dispatch 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -ne 0) { return "exit $LASTEXITCODE`: $($Out -join ' ')" }
+        foreach ($Line in $Out) { Write-Host "    $Line" }
+        return $null
+    } catch {
+        return $_.Exception.Message
+    } finally {
+        $ErrorActionPreference = $Saved
+    }
+}
+
+function Invoke-Cleanup($B) {
+    $Worktree = $B.Worktree
+
+    # The worker's terminal must be released first: it is what keeps `git worktree remove`
+    # from succeeding. Only the terminal is closed, never the worktree or its junctions.
+    $Run = Find-Run $B
+    if ($null -ne $Run) {
+        if ([string]::IsNullOrWhiteSpace($Run.Dispatch)) {
+            Warn (Label 'release' $B) "runs.json entry '$($Run.Key)' has no dispatch id: nothing released"
+        } else {
+            $Problem = Invoke-WorkerRelease $Run.Dispatch
+            if ($null -eq $Problem) {
+                Pass (Label 'release' $B) "worker-release --dispatch $($Run.Dispatch)"
+            } else {
+                Warn (Label 'release' $B) "worker-release --dispatch $($Run.Dispatch) failed ($Problem); release it by hand"
+            }
+        }
+    }
+
     if ([string]::IsNullOrEmpty($Worktree)) {
-        Pass 'worktree' 'none for this branch: only the branch is deleted'
+        Pass (Label 'worktree' $B) 'none for this branch: only the branch is deleted'
     } else {
         if ($Worktree.TrimEnd('\') -eq $Root.TrimEnd('\')) { Fail 'worktree' 'refusing to remove the main checkout' }
         if (-not (Test-Path -LiteralPath $Worktree -PathType Container)) {
@@ -255,7 +381,7 @@ function Invoke-Cleanup([string] $Worktree) {
         if ($Left.Count -gt 0) {
             Fail 'junctions' ("{0} reparse point(s) left, worktree kept: {1}" -f $Left.Count, ($Left -join ', '))
         }
-        Pass 'junctions' ("{0} link(s) removed, none left" -f $Points.Count)
+        Pass (Label 'junctions' $B) ("{0} link(s) removed, none left" -f $Points.Count)
 
         # A junction may have replaced a tracked directory (rom/ holds rom/README.md).
         $Restored = 0
@@ -267,21 +393,21 @@ function Invoke-Cleanup([string] $Worktree) {
                 $Restored++
             }
         }
-        if ($Restored -gt 0) { Pass 'restore' "$Restored tracked path(s) checked out again" }
+        if ($Restored -gt 0) { Pass (Label 'restore' $B) "$Restored tracked path(s) checked out again" }
 
         & git worktree remove $Worktree
         if ($LASTEXITCODE -ne 0) { Fail 'worktree remove' "git worktree remove $Worktree exited with $LASTEXITCODE" }
         if (Test-Path -LiteralPath $Worktree) { Fail 'worktree remove' "$Worktree still exists" }
-        Pass 'worktree remove' $Worktree
+        Pass (Label 'worktree remove' $B) $Worktree
     }
 
-    # The batch Cargo target costs ~5 GB. Only the directory named after the batch (the part of
-    # -Branch after the last `/`) is removed, never dq9-target-integrate or another target.
-    $Batch = $Branch.Substring($Branch.LastIndexOf('/') + 1)
-    $TargetDir = Join-Path $env:LOCALAPPDATA "dq9-target-$Batch"
-    $IntegrateDir = Join-Path $env:LOCALAPPDATA 'dq9-target-integrate'
-    $IsIntegrate = [System.IO.Path]::GetFullPath($TargetDir) -eq [System.IO.Path]::GetFullPath($IntegrateDir)
-    if ($Batch -match '^[A-Za-z0-9._-]+$' -and -not $IsIntegrate -and
+    # Legacy per-batch Cargo target (~5 GB). Slot targets (`dq9-target-slot<N>`, reused by
+    # successive workers) and `dq9-target-integrate` are refused whatever the batch is named.
+    $TargetName = "dq9-target-$($B.Batch)"
+    $TargetDir = Join-Path (Get-LocalAppData) $TargetName
+    if ($TargetName -like 'dq9-target-slot*' -or $TargetName -eq 'dq9-target-integrate') {
+        Pass (Label 'target' $B) "$TargetDir kept: slot and integrate targets persist between batches"
+    } elseif ($B.Batch -match '^[A-Za-z0-9._-]+$' -and
         (Test-Path -LiteralPath $TargetDir -PathType Container) -and
         -not (([System.IO.DirectoryInfo]::new($TargetDir).Attributes) -band [System.IO.FileAttributes]::ReparsePoint)) {
         $Bytes = (Get-ChildItem -LiteralPath $TargetDir -Recurse -File -Force -ErrorAction SilentlyContinue |
@@ -293,11 +419,56 @@ function Invoke-Cleanup([string] $Worktree) {
             Fail 'target' "cannot remove ${TargetDir}: $($_.Exception.Message)"
         }
         if (Test-Path -LiteralPath $TargetDir) { Fail 'target' "$TargetDir still exists" }
-        Pass 'target' ("{0} removed ({1:N1} GB freed)" -f $TargetDir, ($Bytes / 1GB))
+        Pass (Label 'target' $B) ("{0} removed ({1:N1} GB freed)" -f $TargetDir, ($Bytes / 1GB))
     }
 
-    Invoke-Git 'branch delete' @('branch', '-D', $Branch) | Out-Null
-    Pass 'branch delete' $Branch
+    Invoke-Git 'branch delete' @('branch', '-D', $B.Name) | Out-Null
+    Pass (Label 'branch delete' $B) $B.Name
+
+    if ($null -ne $Run) {
+        Remove-Run $Run.Key
+        Pass (Label 'runs.json' $B) "entry '$($Run.Key)' removed"
+    }
+}
+
+# --- temporary integration worktree ------------------------------------------------------------
+
+function Remove-TempWorktree {
+    $Path = $script:TempWorktree
+    if (-not $Path) { return }
+    $script:TempWorktree = $null
+    $Saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            if ((Get-ReparsePoints $Path).Count -gt 0) {
+                Write-Host "warning: integration worktree $Path holds a reparse point, kept"
+                return
+            }
+            & git -C $Root worktree remove --force $Path 2>&1 | Out-Null
+        }
+        & git -C $Root worktree prune 2>&1 | Out-Null
+        if (Test-Path -LiteralPath $Path) { Write-Host "warning: integration worktree $Path still exists; delete it by hand" }
+    } catch {
+        Write-Host "warning: cannot remove integration worktree ${Path}: $($_.Exception.Message)"
+    } finally {
+        $ErrorActionPreference = $Saved
+    }
+}
+
+# Runs the verify script of the tree in $Dir, exactly as the gate requires; returns its exit code.
+function Invoke-VerifyAt([string] $Dir) {
+    $VerifyScript = Join-Path $Dir 'scripts/verify.ps1'
+    if (-not (Test-Path -LiteralPath $VerifyScript)) { Fail 'verify' "$VerifyScript not found" }
+    Write-Host "==> verify: powershell -File $VerifyScript -RequireRom (in $Dir)"
+    Push-Location -LiteralPath $Dir
+    try {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $VerifyScript -RequireRom | Out-Host
+        $Code = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    $Code
 }
 
 Push-Location $Root
@@ -307,14 +478,15 @@ try {
     $CleanupOnly = $Cleanup -and -not $Apply
 
     # Arguments.
-    if ($Branch -eq 'main') { Fail 'arguments' 'cannot integrate main into itself' }
-    if (-not $CleanupOnly -and -not $Spec) { Fail 'arguments' '-Spec is required (except for a cleanup-only run)' }
-    if ($Apply) {
-        if (-not $Message) { Fail 'arguments' '-Message is required with -Apply' }
-        if ($Message -notmatch '^[a-z][a-z0-9._/-]*: \S[^\r\n]*$') {
-            Fail 'arguments' "-Message must be one line 'domain: summary' (got '$Message')"
-        }
+    if ($Branches.Count -eq 0) { Fail 'arguments' '-Branch needs at least one branch' }
+    if (@($Branches | Select-Object -Unique).Count -ne $Branches.Count) { Fail 'arguments' "duplicate branch in -Branch ($($Branches -join ', '))" }
+    if ($Branches -contains 'main') { Fail 'arguments' 'cannot integrate main into itself' }
+    $Specs = @(Split-List $Spec)
+    if ($Specs.Count -gt 0 -and $Specs.Count -ne $Branches.Count) {
+        Fail 'arguments' "-Spec has $($Specs.Count) item(s) for $($Branches.Count) branch(es): one per branch, same order"
     }
+    $Messages = @($Message | Where-Object { $null -ne $_ })
+    if ($Messages.Count -gt $Branches.Count) { Fail 'arguments' "-Message has $($Messages.Count) item(s) for $($Branches.Count) branch(es)" }
 
     # Main checkout.
     $Top = (Invoke-Git 'main checkout' @('rev-parse', '--show-toplevel'))[0]
@@ -328,92 +500,120 @@ try {
     $MainHead = (Invoke-Git 'main checkout' @('rev-parse', 'HEAD'))[0]
     Pass 'main checkout' "main at $($MainHead.Substring(0, 7)), clean"
 
-    & git rev-parse --verify --quiet "refs/heads/$Branch" | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail 'branch' "no local branch '$Branch'" }
-    $BranchHead = (Invoke-Git 'branch' @('rev-parse', "refs/heads/$Branch"))[0]
-    Pass 'branch' "$Branch at $($BranchHead.Substring(0, 7))"
-
-    $Worktree = Find-Worktree $Branch
+    # Branches.
+    $Infos = [System.Collections.Generic.List[object]]::new()
+    for ($Index = 0; $Index -lt $Branches.Count; $Index++) {
+        $Name = $Branches[$Index]
+        $B = [pscustomobject]@{
+            Name = $Name
+            Batch = $Name.Substring($Name.LastIndexOf('/') + 1)
+            Head = $null; Worktree = $null; SpecPath = $null; Files = @(); Message = $null
+        }
+        & git rev-parse --verify --quiet "refs/heads/$Name" | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail 'branch' "no local branch '$Name'" }
+        $B.Head = (Invoke-Git 'branch' @('rev-parse', "refs/heads/$Name"))[0]
+        Pass (Label 'branch' $B) "$Name at $($B.Head.Substring(0, 7))"
+        $B.Worktree = Find-Worktree $Name
+        $Infos.Add($B)
+    }
 
     if ($CleanupOnly) {
-        & git merge-base --is-ancestor "refs/heads/$Branch" main
-        if ($LASTEXITCODE -eq 0) {
-            Pass 'integrated' 'branch is an ancestor of main'
-        } else {
-            $Changed = Invoke-Git 'integrated' @('diff', '--name-only', '--no-renames', "main...refs/heads/$Branch")
-            if ($Changed.Count -eq 0) { Fail 'integrated' 'branch has no change of its own but is not in main' }
-            & git --literal-pathspecs diff --quiet main "refs/heads/$Branch" -- @Changed
-            if ($LASTEXITCODE -ne 0) {
-                Fail 'integrated' 'main differs from the branch on its changed files: integrate it first (-Apply)'
+        foreach ($B in $Infos) {
+            & git merge-base --is-ancestor "refs/heads/$($B.Name)" main
+            if ($LASTEXITCODE -eq 0) {
+                Pass (Label 'integrated' $B) 'branch is an ancestor of main'
+            } else {
+                $Changed = Invoke-Git 'integrated' @('diff', '--name-only', '--no-renames', "main...refs/heads/$($B.Name)")
+                if ($Changed.Count -eq 0) { Fail (Label 'integrated' $B) 'branch has no change of its own but is not in main' }
+                & git --literal-pathspecs diff --quiet main "refs/heads/$($B.Name)" -- @Changed
+                if ($LASTEXITCODE -ne 0) {
+                    Fail (Label 'integrated' $B) 'main differs from the branch on its changed files: integrate it first (-Apply)'
+                }
+                Pass (Label 'integrated' $B) ("main holds the branch content of its {0} changed file(s)" -f $Changed.Count)
             }
-            Pass 'integrated' ("main holds the branch content of its {0} changed file(s)" -f $Changed.Count)
         }
-        Invoke-Cleanup $Worktree
+        foreach ($B in $Infos) { Invoke-Cleanup $B }
         Write-Summary
         exit 0
     }
 
-    # Spec.
-    $SpecPath = (Resolve-Path -LiteralPath $Spec -ErrorAction SilentlyContinue)
-    if ($null -eq $SpecPath) { Fail 'spec' "spec file not found: $Spec" }
-    try { $Globs = Read-OwnsGlobs $SpecPath.ProviderPath } catch { Fail 'spec' "$Spec`: $($_.Exception.Message)" }
-    if ($Globs.Count -eq 0) { Fail 'spec' "no glob in a ``````owns block of $Spec" }
-    $Regexes = @($Globs | ForEach-Object { Convert-GlobToRegex $_ })
-    Pass 'spec' ("{0} owned glob(s) in {1}" -f $Globs.Count, $Spec)
+    # Cheap per-branch checks: spec, worktree, rebase, changes, forbidden files, ownership,
+    # clean worktree. Nothing expensive runs before all of them pass.
+    for ($Index = 0; $Index -lt $Infos.Count; $Index++) {
+        $B = $Infos[$Index]
+        $SpecArg = if ($Specs.Count -gt 0) { $Specs[$Index] } else { "build/batches/$($B.Batch).md" }
+        $SpecPath = (Resolve-Path -LiteralPath $SpecArg -ErrorAction SilentlyContinue)
+        if ($null -eq $SpecPath) { Fail (Label 'spec' $B) "spec file not found: $SpecArg" }
+        $B.SpecPath = $SpecPath.ProviderPath
+        try { $Globs = Read-OwnsGlobs $B.SpecPath } catch { Fail (Label 'spec' $B) "$SpecArg`: $($_.Exception.Message)" }
+        if ($Globs.Count -eq 0) { Fail (Label 'spec' $B) "no glob in a ``````owns block of $SpecArg" }
+        $Regexes = @($Globs | ForEach-Object { Convert-GlobToRegex $_ })
+        Pass (Label 'spec' $B) ("{0} owned glob(s) in {1}" -f $Globs.Count, $SpecArg)
 
-    if ($null -eq $Worktree) { Fail 'worktree' "no worktree has '$Branch' checked out (git worktree list)" }
-    if (-not (Test-Path -LiteralPath $Worktree)) { Fail 'worktree' "$Worktree is missing (git worktree prune?)" }
-    Pass 'worktree' $Worktree
+        $B.Message = if ($Index -lt $Messages.Count -and $Messages[$Index]) { $Messages[$Index] } else { Read-SpecCommit $B.SpecPath }
+        if ($Apply) {
+            if (-not $B.Message) { Fail (Label 'arguments' $B) '-Apply needs a -Message entry (or a `Commit:` line in the spec)' }
+            if ($B.Message -notmatch '^[a-z][a-z0-9._/-]*: \S[^\r\n]*$') {
+                Fail (Label 'arguments' $B) "commit message must be one line 'domain: summary' (got '$($B.Message)')"
+            }
+        } elseif (-not $B.Message) {
+            $B.Message = "chore: integrate $($B.Batch)"
+        }
 
-    & git merge-base --is-ancestor main "refs/heads/$Branch"
-    if ($LASTEXITCODE -ne 0) {
-        if (-not $Rebase) { Fail 'contains main' "rebase needed: $Branch does not contain main ($($MainHead.Substring(0, 7)))" }
-        Write-Host "==> rebase: git rebase main (in $Worktree)"
-        & git -C $Worktree rebase main | Out-Host
+        if ($null -eq $B.Worktree) { Fail (Label 'worktree' $B) "no worktree has '$($B.Name)' checked out (git worktree list)" }
+        if (-not (Test-Path -LiteralPath $B.Worktree)) { Fail (Label 'worktree' $B) "$($B.Worktree) is missing (git worktree prune?)" }
+        Pass (Label 'worktree' $B) $B.Worktree
+
+        & git merge-base --is-ancestor main "refs/heads/$($B.Name)"
         if ($LASTEXITCODE -ne 0) {
-            & git -C $Worktree rebase --abort | Out-Null
-            Fail 'contains main' 'rebase conflict, ask the worker'
+            if (-not $Rebase) { Fail (Label 'contains main' $B) "rebase needed: $($B.Name) does not contain main ($($MainHead.Substring(0, 7)))" }
+            Write-Host "==> rebase: git rebase main (in $($B.Worktree))"
+            & git -C $B.Worktree rebase main | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                & git -C $B.Worktree rebase --abort | Out-Null
+                Fail (Label 'contains main' $B) 'rebase conflict, ask the worker'
+            }
+            $B.Head = (Invoke-Git 'rebase' @('rev-parse', "refs/heads/$($B.Name)"))[0]
+            Pass (Label 'rebase' $B) "rebased on main, branch at $($B.Head.Substring(0, 7))"
         }
-        $BranchHead = (Invoke-Git 'rebase' @('rev-parse', "refs/heads/$Branch"))[0]
-        Pass 'rebase' "rebased on main, branch at $($BranchHead.Substring(0, 7))"
+        Pass (Label 'contains main' $B) 'yes'
+
+        $B.Files = Invoke-Git 'changes' @('diff', '--name-only', '--no-renames', "main...refs/heads/$($B.Name)")
+        if ($B.Files.Count -eq 0) { Fail (Label 'changes' $B) 'no change to integrate' }
+        Pass (Label 'changes' $B) ("{0} file(s)" -f $B.Files.Count)
+
+        $Forbidden = @($B.Files | Where-Object { $_ -match '^(rom|build|tools)/' -or $_ -match '\.(nds|sav)$' })
+        if ($Forbidden.Count -gt 0) { Fail (Label 'forbidden files' $B) ($Forbidden -join ', ') }
+        Pass (Label 'forbidden files' $B) 'none'
+
+        $Unowned = [System.Collections.Generic.List[string]]::new()
+        $ReadmeCoverage = $false
+        foreach ($File in $B.Files) {
+            $Owned = $false
+            foreach ($Regex in $Regexes) {
+                if ([regex]::IsMatch($File, $Regex)) { $Owned = $true; break }
+            }
+            if ($Owned) { continue }
+            if ($File -eq 'README.md' -and (Test-CoverageOnlyReadme $MainHead "refs/heads/$($B.Name)")) {
+                $ReadmeCoverage = $true
+                continue
+            }
+            $Unowned.Add($File)
+        }
+        if ($Unowned.Count -gt 0) { Fail (Label 'ownership' $B) ("not covered by ``````owns: {0}" -f ($Unowned -join ', ')) }
+        $Detail = 'every file matches the owns globs'
+        if ($ReadmeCoverage) { $Detail += ' (README.md: coverage block only)' }
+        Pass (Label 'ownership' $B) $Detail
+
+        if (-not (Test-Clean 'worktree clean' $B.Worktree)) { Fail (Label 'worktree clean' $B) "$($B.Worktree) has uncommitted changes" }
+        $WorktreeHead = (Invoke-Git 'worktree clean' @('-C', $B.Worktree, 'rev-parse', 'HEAD'))[0]
+        if ($WorktreeHead -ne $B.Head) { Fail (Label 'worktree clean' $B) "worktree HEAD $WorktreeHead is not the branch head" }
+        Pass (Label 'worktree clean' $B) 'before verify'
     }
-    Pass 'contains main' 'yes'
-
-    $Files = Invoke-Git 'changes' @('diff', '--name-only', '--no-renames', "main...refs/heads/$Branch")
-    if ($Files.Count -eq 0) { Fail 'changes' 'no change to integrate' }
-    Pass 'changes' ("{0} file(s)" -f $Files.Count)
-
-    $Forbidden = @($Files | Where-Object { $_ -match '^(rom|build|tools)/' -or $_ -match '\.(nds|sav)$' })
-    if ($Forbidden.Count -gt 0) { Fail 'forbidden files' ($Forbidden -join ', ') }
-    Pass 'forbidden files' 'none'
-
-    $Unowned = [System.Collections.Generic.List[string]]::new()
-    $ReadmeCoverage = $false
-    foreach ($File in $Files) {
-        $Owned = $false
-        foreach ($Regex in $Regexes) {
-            if ([regex]::IsMatch($File, $Regex)) { $Owned = $true; break }
-        }
-        if ($Owned) { continue }
-        if ($File -eq 'README.md' -and (Test-CoverageOnlyReadme $MainHead "refs/heads/$Branch")) {
-            $ReadmeCoverage = $true
-            continue
-        }
-        $Unowned.Add($File)
-    }
-    if ($Unowned.Count -gt 0) { Fail 'ownership' ("not covered by ``````owns: {0}" -f ($Unowned -join ', ')) }
-    $Detail = 'every file matches the owns globs'
-    if ($ReadmeCoverage) { $Detail += ' (README.md: coverage block only)' }
-    Pass 'ownership' $Detail
-
-    if (-not (Test-Clean 'worktree clean' $Worktree)) { Fail 'worktree clean' "$Worktree has uncommitted changes" }
-    $WorktreeHead = (Invoke-Git 'worktree clean' @('-C', $Worktree, 'rev-parse', 'HEAD'))[0]
-    if ($WorktreeHead -ne $BranchHead) { Fail 'worktree clean' "worktree HEAD $WorktreeHead is not the branch head" }
-    Pass 'worktree clean' 'before verify'
 
     # Verify environment: a private target (a shared one lets Cargo reuse an rlib built from
     # another worktree's sources) and the main checkout's ROM when DQ9_ROM is empty.
-    $env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target-integrate"
+    $env:CARGO_TARGET_DIR = Join-Path (Get-LocalAppData) 'dq9-target-integrate'
     if ([string]::IsNullOrEmpty($env:DQ9_ROM)) {
         $RomDir = Join-Path $Root 'rom'
         $Roms = @(Get-ChildItem -LiteralPath $RomDir -File -Filter '*.nds' -ErrorAction SilentlyContinue)
@@ -424,45 +624,113 @@ try {
     }
     Pass 'verify env' "CARGO_TARGET_DIR=$env:CARGO_TARGET_DIR, DQ9_ROM=$env:DQ9_ROM"
 
-    $VerifyScript = Join-Path $Worktree 'scripts/verify.ps1'
-    if (-not (Test-Path -LiteralPath $VerifyScript)) { Fail 'verify' "$VerifyScript not found" }
-    Write-Host "==> verify: powershell -File $VerifyScript -RequireRom (in $Worktree)"
-    Push-Location -LiteralPath $Worktree
-    try {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $VerifyScript -RequireRom | Out-Host
-        $VerifyCode = $LASTEXITCODE
-    } finally {
-        Pop-Location
+    # Combined result: one squash commit per branch, in a temporary worktree detached at main.
+    $Tmp = Join-Path (Get-LocalAppData) ("dq9-integrate-wt-{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'), $PID)
+    & git worktree add --quiet --detach $Tmp $MainHead | Out-Host
+    if ($LASTEXITCODE -ne 0) { Fail 'integration worktree' "git worktree add $Tmp failed" }
+    $script:TempWorktree = $Tmp
+    $TmpTop = (Invoke-Git 'integration worktree' @('-C', $Tmp, 'rev-parse', '--show-toplevel'))[0]
+    if ([System.IO.Path]::GetFullPath($TmpTop) -ne [System.IO.Path]::GetFullPath($Tmp)) {
+        Fail 'integration worktree' "$Tmp is not a worktree root (git says $TmpTop)"
     }
-    if ($VerifyCode -ne 0) { Fail 'verify' "verify.ps1 -RequireRom exited with $VerifyCode" }
-    Pass 'verify' 'verify.ps1 -RequireRom passed in the worktree'
+    Pass 'integration worktree' "$Tmp at main $($MainHead.Substring(0, 7))"
 
-    if (-not (Test-Clean 'worktree clean' $Worktree)) {
-        Fail 'worktree clean' 'verify changed the worktree (README progress block?): commit it on the branch'
+    $Prefix = [System.Collections.Generic.List[string]]::new()   # commit after k branches, k = 1..N
+    foreach ($B in $Infos) {
+        & git -C $Tmp merge --squash $B.Head | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            & git -C $Tmp reset --hard --quiet HEAD | Out-Null
+            Fail (Label 'merge' $B) "git merge --squash $($B.Head.Substring(0, 7)) conflicts with main or an earlier branch of the run"
+        }
+        & git -C $Tmp diff --cached --quiet
+        if ($LASTEXITCODE -eq 0) { Fail (Label 'merge' $B) 'adds nothing on top of main and the earlier branches' }
+        & git -C $Tmp commit --quiet -m $B.Message | Out-Host
+        if ($LASTEXITCODE -ne 0) { Fail (Label 'merge' $B) 'git commit failed in the integration worktree' }
+        $Sha = (Invoke-Git 'merge' @('-C', $Tmp, 'rev-parse', 'HEAD'))[0]
+        $Prefix.Add($Sha)
+        if ($Infos.Count -eq 1) {
+            & git diff --quiet $Sha $B.Head
+            if ($LASTEXITCODE -ne 0) { Fail 'merge' 'integration tree differs from the branch tree after the squash' }
+        }
+        Pass (Label 'merge' $B) ("squashed as {0}: {1}" -f $Sha.Substring(0, 7), $B.Message)
     }
-    Pass 'worktree clean' 'after verify'
+
+    # One verify of the combined tree.
+    $VerifyCode = Invoke-VerifyAt $Tmp
+    if ($VerifyCode -ne 0) {
+        if ($Infos.Count -eq 1) {
+            Fail 'verify' "verify.ps1 -RequireRom exited with $VerifyCode"
+        }
+        # Binary search for the first failing prefix: main + the first k branches. $Lo passed
+        # (0 = main, taken as green), $Hi failed; k is the branch count of the prefix.
+        Write-Host "==> verify failed on the combined tree ($($Infos.Count) branches): looking for the culprit"
+        $Lo = 0
+        $Hi = $Infos.Count
+        while ($Hi - $Lo -gt 1) {
+            $Mid = [int][math]::Floor(($Lo + $Hi) / 2)
+            & git -C $Tmp reset --hard --quiet | Out-Null
+            & git -C $Tmp clean -fdq | Out-Null
+            & git -C $Tmp checkout --quiet --force --detach $Prefix[$Mid - 1] | Out-Null
+            if ($LASTEXITCODE -ne 0) { Fail 'verify' "cannot check out prefix $Mid in the integration worktree" }
+            Write-Host "==> prefix of $Mid branch(es), up to $($Infos[$Mid - 1].Name)"
+            $PrefixCode = Invoke-VerifyAt $Tmp
+            if ($PrefixCode -eq 0) {
+                Pass 'verify prefix' "first $Mid branch(es) green"
+                $Lo = $Mid
+            } else {
+                Pass 'verify prefix' "first $Mid branch(es) red (exit $PrefixCode)"
+                $Hi = $Mid
+            }
+        }
+        $Culprit = $Infos[$Hi - 1]
+        Fail 'verify' ("verify.ps1 -RequireRom exited with {0} on the combined tree; culprit: {1} (prefix {2} of {3} is the first red; the {4} branch(es) before it are green together); main untouched" -f `
+            $VerifyCode, $Culprit.Name, $Hi, $Infos.Count, $Lo)
+    }
+    Pass 'verify' ("verify.ps1 -RequireRom passed once on the combined tree ({0} branch(es))" -f $Infos.Count)
+
+    # The only change verify may leave is the README coverage block: fold it into the last
+    # integration commit. Anything else is a failure.
+    $Status = Invoke-Git 'verify dirt' @('-C', $Tmp, 'status', '--porcelain')
+    if ($Status.Count -gt 0) {
+        if ($Status.Count -ne 1 -or $Status[0] -ne ' M README.md') {
+            $Status | Select-Object -First 10 | ForEach-Object { Write-Host "    $_" }
+            Fail 'verify dirt' 'verify changed files other than the README.md progress block'
+        }
+        $Before = (Invoke-Git 'verify dirt' @('-C', $Tmp, 'rev-parse', 'HEAD'))[0]
+        & git -C $Tmp add README.md
+        & git -C $Tmp commit --quiet --amend --no-edit | Out-Host
+        if ($LASTEXITCODE -ne 0) { Fail 'verify dirt' 'cannot fold the README.md block into the last integration commit' }
+        $After = (Invoke-Git 'verify dirt' @('-C', $Tmp, 'rev-parse', 'HEAD'))[0]
+        if (-not (Test-CoverageOnlyReadme $Before $After)) {
+            Fail 'verify dirt' 'verify changed README.md outside the coverage block'
+        }
+        Pass 'verify dirt' 'README.md coverage block regenerated and folded into the last integration commit'
+    }
+    $Final = (Invoke-Git 'verify dirt' @('-C', $Tmp, 'rev-parse', 'HEAD'))[0]
+    Pass 'integration' ("{0} commit(s), tip {1}" -f $Infos.Count, $Final.Substring(0, 7))
 
     if ($Apply) {
         $Head = (Invoke-Git 'apply' @('rev-parse', 'HEAD'))[0]
         if ($Head -ne $MainHead) { Fail 'apply' 'main moved during verification; run again' }
         if (-not (Test-Clean 'apply' $Root)) { Fail 'apply' 'main checkout changed during verification' }
-        $Now = (Invoke-Git 'apply' @('rev-parse', "refs/heads/$Branch"))[0]
-        if ($Now -ne $BranchHead) { Fail 'apply' 'branch moved during verification; run again' }
-        & git merge --squash $BranchHead | Out-Host
-        if ($LASTEXITCODE -ne 0) { Fail 'apply' "git merge --squash failed; restore main with 'git reset --merge'" }
-        & git commit --quiet -m $Message | Out-Host
-        if ($LASTEXITCODE -ne 0) { Fail 'apply' "git commit failed; staged squash left in main ('git reset --merge' to drop it)" }
-        & git diff --quiet HEAD $BranchHead
-        if ($LASTEXITCODE -ne 0) { Fail 'apply' 'main tree differs from the branch tree after the squash' }
-        $Commit = (Invoke-Git 'apply' @('log', '-1', '--format=%h %s'))[0]
-        Pass 'apply' "squash commit $Commit (not pushed)"
+        foreach ($B in $Infos) {
+            $Now = (Invoke-Git 'apply' @('rev-parse', "refs/heads/$($B.Name)"))[0]
+            if ($Now -ne $B.Head) { Fail (Label 'apply' $B) 'branch moved during verification; run again' }
+        }
+        & git merge --ff-only $Final | Out-Host
+        if ($LASTEXITCODE -ne 0) { Fail 'apply' "git merge --ff-only $Final failed; main unchanged" }
+        $Log = Invoke-Git 'apply' @('log', '--reverse', '--format=%h %s', "$MainHead..HEAD")
+        Pass 'apply' ("main fast-forwarded, not pushed: {0}" -f ($Log -join '; '))
     } else {
         Pass 'apply' 'dry run: main unchanged (pass -Apply -Message to commit)'
     }
 
-    if ($Cleanup) { Invoke-Cleanup $Worktree }
+    Remove-TempWorktree
+    if ($Cleanup) { foreach ($B in $Infos) { Invoke-Cleanup $B } }
     Write-Summary
+    exit 0
 } finally {
+    Remove-TempWorktree
     try { [Console]::OutputEncoding = $SavedEncoding } catch { }
     Pop-Location
 }
