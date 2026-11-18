@@ -83,6 +83,25 @@ impl App {
         self.set_roaming_enabled(false);
     }
 
+    /// A route session as the tests of the application drive it: `speed` fixed steps per
+    /// frame, battles shown or settled, nothing drawn.
+    #[cfg(test)]
+    pub(in crate::app) fn set_route_session(&mut self, event: u16, speed: u32, show: bool) {
+        self.set_session(SessionSpec {
+            route: Some(event),
+            speed: Some(speed),
+            budget_ms: 600_000,
+            render: false,
+            show_battles: show,
+        });
+    }
+
+    /// The line a finished session stopped with (`stopped: event 2750 ended ...`).
+    #[cfg(test)]
+    pub(in crate::app) fn session_stop(&self) -> Option<String> {
+        self.session.as_ref()?.run.as_ref()?.stop.clone()
+    }
+
     /// Starts the run when the page asked for one: what `play_auto` and `play_route` do before
     /// their loop, once the new game's first scene is queued.
     pub(in crate::app) fn start_session(&mut self) {
@@ -145,7 +164,7 @@ impl App {
     pub(in crate::app) fn battles_instant(&self) -> bool {
         match &self.session {
             Some(session) => !session.shows_battles(),
-            None => self.proxy.is_none(),
+            None => self.proxy.is_none() && !self.presented,
         }
     }
 

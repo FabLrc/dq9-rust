@@ -17,13 +17,17 @@
 #       "name": "control-1.1.2",                       # [A-Za-z0-9._-]+, unique
 #       "description": "...",                          # optional
 #       "inputs":   { "path": "...", "sha256": "...", "source": "..." },  # --trace-inputs JSONL
+#                   # or { ..., "kind": "record" }: a --record file of a human session (dq9rec)
 #       "original": { "path": "...", "sha256": "...", "source": "..." },  # original checkpoints
 #       "args": ["--new-game", "--mute"],              # launch options of dq9-app
 #       "heroTolerance": 0.01,                         # compare-runs -HeroTolerance (0 = off)
 #       "accepted": [ { "flag": 4135, "only": "original", "reason": "..." } ]
 #   } ] }
 # The script adds `--rom <rom> --headless --replay <inputs> --checkpoints <out>` itself; `args`
-# must not repeat them. `source` is provenance text only.
+# must not repeat them. `source` is provenance text only. With `"kind": "record"` it adds
+# `--rom <rom> --play-record <inputs> --checkpoints <out>` instead (the headless replay of a
+# human session, `docs/app.md` § "Recording a human session"): the record carries the start
+# options, so `args` must be empty or hold only options that do not change the logic.
 #
 # Each reference: both files must exist and match their sha256 before use; the runtime run
 # (one per distinct inputs + args, release dq9-app built once) is compared with the original
@@ -94,9 +98,9 @@ function Test-Keys($Object, [string[]] $Allowed, [string] $Where) {
 }
 
 # Resolves a { path, sha256, source } entry and checks the file against its digest.
-function Resolve-Checked($Entry, [string] $BaseDir, [string] $Where) {
+function Resolve-Checked($Entry, [string] $BaseDir, [string] $Where, [string[]] $Extra = @()) {
     if ($null -eq $Entry) { throw "$Where`: missing" }
-    Test-Keys $Entry @('path', 'sha256', 'source') $Where
+    Test-Keys $Entry (@('path', 'sha256', 'source') + $Extra) $Where
     if (-not $Entry.path) { throw "$Where`: no path" }
     if ("$($Entry.sha256)" -notmatch '^[0-9a-fA-F]{64}$') { throw "$Where`: sha256 must be 64 hex digits" }
     $Path = Join-Path $BaseDir $Entry.path
@@ -248,7 +252,7 @@ if (-not (Test-Path -LiteralPath $OutDir -PathType Container)) { New-Item -ItemT
 # --- references --------------------------------------------------------------------------
 $Runs = @{}       # inputs sha256 + args -> runtime checkpoint file
 $Failed = 0
-$Reserved = @('--rom', '--headless', '--replay', '--checkpoints', '--auto', '--pilot', '--trace-inputs')
+$Reserved = @('--rom', '--headless', '--replay', '--checkpoints', '--auto', '--pilot', '--trace-inputs', '--play-record', '--record')
 foreach ($Ref in $Refs) {
     $Name = $Ref.name
     $Details = [System.Collections.Generic.List[string]]::new()
@@ -256,7 +260,9 @@ foreach ($Ref in $Refs) {
     $Ok = $false
     try {
         Test-Keys $Ref @('name', 'description', 'inputs', 'original', 'args', 'heroTolerance', 'accepted') $Name
-        $Inputs = Resolve-Checked $Ref.inputs $BaseDir "$Name inputs"
+        $Inputs = Resolve-Checked $Ref.inputs $BaseDir "$Name inputs" @('kind')
+        $InputKind = if ($Ref.inputs.kind) { "$($Ref.inputs.kind)" } else { 'trace' }
+        if (@('trace', 'record') -notcontains $InputKind) { throw "$Name inputs: kind must be 'trace' or 'record'" }
         $Original = Resolve-Checked $Ref.original $BaseDir "$Name original"
         $AppArgs = @()
         if ($null -ne $Ref.args) { $AppArgs = @($Ref.args | ForEach-Object { "$_" }) }
@@ -291,13 +297,17 @@ foreach ($Ref in $Refs) {
             $PartyAccepted.Add($Entry)
         }
 
-        $Key = (Get-Sha256 $Inputs) + ' ' + ($AppArgs -join ' ')
+        $Key = (Get-Sha256 $Inputs) + ' ' + $InputKind + ' ' + ($AppArgs -join ' ')
         if (-not $Runs.ContainsKey($Key)) {
             $Index = $Runs.Count + 1
             $RunOut = Join-Path $OutDir "run$Index-checkpoints.jsonl"
             $RunLog = Join-Path $OutDir "run$Index"
             if (Test-Path -LiteralPath $RunOut) { Remove-Item -LiteralPath $RunOut }
-            $Command = @('--rom', $Rom) + $AppArgs + @('--headless', '--replay', $Inputs, '--checkpoints', $RunOut)
+            $Command = if ($InputKind -eq 'record') {
+                @('--rom', $Rom) + $AppArgs + @('--play-record', $Inputs, '--checkpoints', $RunOut)
+            } else {
+                @('--rom', $Rom) + $AppArgs + @('--headless', '--replay', $Inputs, '--checkpoints', $RunOut)
+            }
             $Process = Start-Process -FilePath $App -ArgumentList (($Command | ForEach-Object { Format-Arg $_ }) -join ' ') `
                 -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$RunLog.stdout.txt" -RedirectStandardError "$RunLog.stderr.txt"
             if ($Process.ExitCode -ne 0) { throw "dq9-app exited with $($Process.ExitCode) (see $RunLog.stderr.txt)" }

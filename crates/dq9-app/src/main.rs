@@ -14,6 +14,7 @@ mod lighting;
 mod load;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+mod record;
 #[cfg(not(target_arch = "wasm32"))]
 mod report;
 mod screens;

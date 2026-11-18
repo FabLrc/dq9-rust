@@ -13,12 +13,12 @@ use dq9_render::{Camera, EnhancedOptions, Environment, Gait, Panel, Renderer};
 use glam::Vec3;
 use winit::event_loop::EventLoop;
 
-use crate::app::headless::PAD_NAMES;
+use crate::app::headless::{PAD_NAMES, RecordStop};
 use crate::app::{App, Options, UserEvent};
 use crate::event::EventPlayer;
 use crate::hud::HudInfo;
 use crate::talk::{self, Talk};
-use crate::{gpu, lighting, load, report, walk};
+use crate::{gpu, lighting, load, record, report, walk};
 
 #[derive(Parser)]
 #[command(version, about = "Shows a Dragon Quest IX map (see docs/app.md).")]
@@ -190,7 +190,7 @@ struct Cli {
     route: Option<u16>,
     /// With `--auto`: writes the story state at every checkpoint as JSONL (the field names of
     /// `dq9re state --json`), for the melonDS comparison.
-    #[arg(long, requires = "auto")]
+    #[arg(long)]
     checkpoints: Option<PathBuf>,
     /// With `--auto`: writes the pad and action key of every fixed step as JSONL, for replay.
     #[arg(long, requires = "auto")]
@@ -215,22 +215,49 @@ struct Cli {
     /// picks the draws).
     #[arg(long, value_name = "PHASE")]
     battle_capture: Option<String>,
+    /// Records a human session of the window into this file (`dq9rec`, `docs/app.md`,
+    /// § "Recording a human session"): every input the game logic reads, by fixed step, with
+    /// the start options and a state digest every 600 steps. Start the session with
+    /// `--new-game --seed N` (a seed is picked and stored when absent); the file is written
+    /// as the window closes and every ten seconds of game time.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = [
+            "headless", "headless_steps", "screenshot", "walk", "events_report", "battle",
+            "battle_stage", "replay", "play_record", "auto", "trace_inputs", "sound_wav"
+        ]
+    )]
+    record: Option<PathBuf>,
+    /// Replays a `--record` file: headless by default (the same steps the window ran, the
+    /// digests checked, the checkpoints written with `--checkpoints`), in a window with
+    /// `--window`. The start options come from the file.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = [
+            "new_game", "map", "event", "stage", "chapter", "step", "substep", "night", "time",
+            "clock", "seed", "fight", "headless", "headless_steps", "screenshot", "walk",
+            "events_report", "battle", "battle_stage", "replay", "auto", "trace_inputs",
+            "sound_wav"
+        ]
+    )]
+    play_record: Option<PathBuf>,
+    /// With `--play-record`: watch the replay in a window instead of running it headless.
+    #[arg(long, requires = "play_record")]
+    window: bool,
+    /// With `--play-record`: stop when this event ends, and fail if it never does.
+    #[arg(long, requires = "play_record", value_name = "EVENT")]
+    expect_event: Option<u16>,
 }
 
 impl Cli {
     fn story(&self) -> dq9_formats::cast::Story {
-        let mut story = dq9_formats::cast::Story {
-            chapter: self.chapter.unwrap_or(1),
-            step: self.step.unwrap_or(1),
-            substep: self.substep.unwrap_or(1),
-            daytime: !self.night,
-            ..dq9_formats::cast::Story::default()
-        };
-        if let Some((major, minor)) = self.stage {
-            story.chapter = major as u8;
-            story.step = minor as u8;
-        }
-        story
+        crate::app::story_of(
+            [self.chapter, self.step, self.substep],
+            !self.night,
+            self.stage,
+        )
     }
 
     /// The event to start: `--event`, or the opening scene of `--stage`.
@@ -437,6 +464,9 @@ pub fn main() -> Result<()> {
     if let Some(out) = &cli.screenshot {
         return screenshot(&cli, &rom, save.as_deref(), out);
     }
+    if let Some(path) = &cli.play_record {
+        return play_record(&cli, rom, save, path);
+    }
     if let Some(script) = &cli.walk {
         let script = walk::parse_script(script)?;
         // The real application's fixed step, so a walk uses the same Hero/Field/door path as
@@ -484,6 +514,44 @@ pub fn main() -> Result<()> {
         return report::report(&rom, major, first..=last, &cli.story());
     }
     let event = cli.event_id(&rom)?;
+    // A recorded session is replayed from its seed: an explicit one, else one picked now.
+    let seed = match (&cli.record, cli.seed) {
+        (Some(_), None) => Some(fresh_seed()),
+        (_, seed) => seed,
+    };
+    let recording = cli
+        .record
+        .as_ref()
+        .map(|path| -> Result<record::Recorder> {
+            let (rom_code, rom_version, rom_crc) =
+                record::Header::rom_identity(&rom).map_err(anyhow::Error::msg)?;
+            let header = record::Header {
+                rom: rom_code,
+                rom_version,
+                rom_crc,
+                new_game: cli.new_game,
+                seed: seed.unwrap_or_default(),
+                map: cli.map.clone(),
+                save: save.as_deref().map(record::Header::save_hash),
+                time: cli.time,
+                clock: cli.clock,
+                chapter: cli.chapter,
+                step: cli.step,
+                substep: cli.substep,
+                night: cli.night,
+                stage: cli.stage,
+                event,
+                battles: "show".to_owned(),
+            };
+            // A session of 50 minutes must not be lost to a missing folder: make it now.
+            if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+                fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+            }
+            let recorder = record::Recorder::to_file(header, path.clone());
+            fs::write(path, "").with_context(|| format!("writing {}", path.display()))?;
+            Ok(recorder)
+        })
+        .transpose()?;
     let options = Options {
         record_sound: cli.sound_wav.is_some() && cli.headless_steps.is_some(),
         trace_inputs: cli.trace_inputs.is_some(),
@@ -500,7 +568,7 @@ pub fn main() -> Result<()> {
         battle: cli.battle_request(),
         play: crate::app::BattlePlay {
             fight: cli.fight,
-            seed: cli.seed,
+            seed,
         },
     };
     // Headless runs have no window, GPU task or `UserEvent`: do not make them depend on
@@ -517,6 +585,14 @@ pub fn main() -> Result<()> {
     };
     app.set_screens(cli.screens);
     app.set_fx(cli.enhanced()?);
+    if let Some(recorder) = recording {
+        eprintln!(
+            "recording to {} (seed {}); close the window to end",
+            cli.record.as_deref().unwrap_or(Path::new("")).display(),
+            seed.unwrap_or_default()
+        );
+        app.start_recording(recorder);
+    }
     if let Some(path) = &cli.replay {
         let frames = read_inputs(path)?;
         for (bits, confirm) in &frames {
@@ -572,6 +648,51 @@ pub fn main() -> Result<()> {
         event_loop.run_app(&mut app)?;
     }
     Ok(())
+}
+
+/// A seed for a recorded session that was not given one: the wall clock, stored in the record.
+fn fresh_seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(7, |d| d.as_secs())
+}
+
+/// `--play-record`: replays a human session. The options come from the file; the ROM must be
+/// the one it was played on, and so must a save it started from.
+fn play_record(cli: &Cli, rom: Vec<u8>, save: Option<Vec<u8>>, path: &Path) -> Result<()> {
+    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let record = record::Record::parse(&text)
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("reading {}", path.display()))?;
+    record
+        .header
+        .check_start(&rom, save.as_deref())
+        .map_err(anyhow::Error::msg)?;
+    // A replay's own audio never decides the logic (the record carries the jingle ends):
+    // headless runs open no device.
+    let options = Options::from_record(&record.header, save, cli.layout, cli.mute || !cli.window);
+    if cli.window {
+        let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+        let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
+        app.set_screens(cli.screens);
+        app.set_fx(cli.enhanced()?);
+        app.start_replay(record);
+        event_loop.run_app(&mut app)?;
+        return Ok(());
+    }
+    let mut app = App::new_replay(options, Some(rom));
+    app.start_replay(record);
+    let stop = app.play_record(cli.expect_event);
+    print!("{}", app.record_report(&stop));
+    if let Some(path) = &cli.checkpoints {
+        fs::write(path, app.checkpoints_jsonl())
+            .with_context(|| format!("writing {}", path.display()))?;
+    }
+    match (&stop, cli.expect_event) {
+        (RecordStop::Mismatch(why), _) => bail!("{why}"),
+        (RecordStop::End, Some(event)) => bail!("event {event} did not end in the record"),
+        _ => Ok(()),
+    }
 }
 
 /// What `--screenshot` prepared before rendering: the loaded map, the hero after the inputs,

@@ -44,6 +44,7 @@ use crate::gpu::Gpu;
 use crate::hud::{HudInfo, time_label};
 use crate::lighting;
 use crate::load::{self, MapEntry};
+use crate::record::{self, Input as Logged, Recorder, Replay};
 use crate::talk::ServiceTag;
 use crate::talk::{Button, Talk};
 use dq9_core::party::Party;
@@ -213,6 +214,64 @@ pub struct Options {
     pub battle: Option<crate::battle::Request>,
     /// How battles are played (`--fight`, `--seed`).
     pub play: fight::BattlePlay,
+}
+
+impl Options {
+    /// The options a recorded session started with (`--play-record`): the header's start
+    /// options, the seed, the window's presentation. `mute` is the replay's choice: the
+    /// record carries the sound device's effect on the logic (the jingle ends).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn from_record(
+        header: &record::Header,
+        save: Option<Vec<u8>>,
+        layout: Layout,
+        mute: bool,
+    ) -> Self {
+        Self {
+            map: header.map.clone(),
+            save,
+            time: header.time,
+            clock: header.clock,
+            layout,
+            mute,
+            record_sound: false,
+            trace_inputs: false,
+            event: header.event,
+            story: story_of(
+                [header.chapter, header.step, header.substep],
+                !header.night,
+                header.stage,
+            ),
+            story_override: [header.chapter, header.step, header.substep],
+            new_game: header.new_game,
+            battle: None,
+            play: fight::BattlePlay {
+                fight: true,
+                seed: Some(header.seed),
+            },
+        }
+    }
+}
+
+/// The story point the start options name: the chapter, step and substep (1.1.1 by default),
+/// then a `--stage MAJOR.MINOR`'s own.
+pub(crate) fn story_of(
+    point: [Option<u8>; 3],
+    daytime: bool,
+    stage: Option<(u32, u32)>,
+) -> dq9_formats::cast::Story {
+    let mut story = dq9_formats::cast::Story {
+        chapter: point[0].unwrap_or(1),
+        step: point[1].unwrap_or(1),
+        substep: point[2].unwrap_or(1),
+        daytime,
+        ..dq9_formats::cast::Story::default()
+    };
+    if let Some((major, minor)) = stage {
+        story.chapter = major as u8;
+        story.step = minor as u8;
+    }
+    story
 }
 
 /// Reads the item id → compendium index tables (`data/prm/itemdt_<category>.gp2`,
@@ -408,6 +467,18 @@ pub struct App {
     zoom: f32,
     last: Instant,
     accumulator: f32,
+    /// Fixed steps completed since the start: the stamp of a record's inputs and digests
+    /// (`record.rs`). Unlike `tick` it is never reset.
+    steps: u64,
+    /// A windowless app that presents like a window: the field's monsters roam and battles
+    /// are shown, not settled in the step that starts them (a replayed human session).
+    presented: bool,
+    /// The human session being recorded (`--record`).
+    recorder: Option<Recorder>,
+    /// The record being replayed (`--play-record`): it feeds the logic in place of the window.
+    replay: Option<Replay>,
+    /// A recorded jingle end waits for the next sound step.
+    jingle_ended: bool,
 }
 
 impl std::fmt::Debug for App {
@@ -421,7 +492,7 @@ impl std::fmt::Debug for App {
 
 impl App {
     pub fn new(proxy: EventLoopProxy<UserEvent>, options: Options, rom: Option<Vec<u8>>) -> Self {
-        Self::with_proxy(Some(proxy), options, rom)
+        Self::with_proxy(Some(proxy), false, options, rom)
     }
 
     /// The same application without an event loop proxy: no `resumed`/GPU setup, no
@@ -429,11 +500,19 @@ impl App {
     /// accepting a second `EventLoop` in the same process.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new_headless(options: Options, rom: Option<Vec<u8>>) -> Self {
-        Self::with_proxy(None, options, rom)
+        Self::with_proxy(None, false, options, rom)
+    }
+
+    /// A windowless app that plays like a window: roaming monsters and shown battles, so a
+    /// recorded human session replays on it (`--play-record`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_replay(options: Options, rom: Option<Vec<u8>>) -> Self {
+        Self::with_proxy(None, true, options, rom)
     }
 
     fn with_proxy(
         proxy: Option<EventLoopProxy<UserEvent>>,
+        presented: bool,
         options: Options,
         rom: Option<Vec<u8>>,
     ) -> Self {
@@ -442,7 +521,7 @@ impl App {
         if options.record_sound {
             audio.record();
         }
-        let roaming = self::roaming::Roaming::new(proxy.is_some());
+        let roaming = self::roaming::Roaming::new(proxy.is_some() || presented);
         let mut app = Self {
             proxy,
             options,
@@ -510,6 +589,11 @@ impl App {
             zoom: 0.0,
             last: Instant::now(),
             accumulator: 0.0,
+            steps: 0,
+            presented,
+            recorder: None,
+            replay: None,
+            jingle_ended: false,
         };
         if let Some(rom) = rom {
             app.set_rom(rom);
@@ -1105,13 +1189,26 @@ impl App {
         self.screens = screens;
     }
 
-    fn key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, pressed: bool) {
+    /// Handles a key of the window or of a replay; `true` asks the window to close.
+    fn key(&mut self, code: KeyCode, pressed: bool) -> bool {
         if !pressed {
-            self.held.remove(&code);
-            return;
+            if self.held.remove(&code) {
+                self.log_input(Logged::Key {
+                    key: code,
+                    pressed: false,
+                });
+            }
+            return false;
         }
         if !self.held.insert(code) {
-            return; // key repeat
+            return false; // key repeat
+        }
+        // From the field Escape closes the window: the end of a session, not an input.
+        if code != KeyCode::Escape || self.fight.is_some() || self.services.is_open() {
+            self.log_input(Logged::Key {
+                key: code,
+                pressed: true,
+            });
         }
         if self.fight.is_some() {
             // The fight reads the pad itself; the conversation's presses must not pile up.
@@ -1120,7 +1217,7 @@ impl App {
                 KeyCode::KeyR => self.set_layout(self.options.layout.next()),
                 _ => fight::pad_press(&mut self.battle_pad, code),
             }
-            return;
+            return false;
         }
         if self.services.is_open() {
             match code {
@@ -1140,7 +1237,7 @@ impl App {
                 KeyCode::KeyT => self.service_take(),
                 _ => {}
             }
-            return;
+            return false;
         }
         if code == KeyCode::KeyI
             && !self.talk.is_active()
@@ -1149,7 +1246,7 @@ impl App {
             && self.events.pending_start().is_none()
             && self.open_field_menu()
         {
-            return;
+            return false;
         }
         if self.talk.is_active() {
             match code {
@@ -1161,7 +1258,7 @@ impl App {
         match code {
             KeyCode::Enter | KeyCode::Space | KeyCode::KeyZ => self.talk.press(Button::Confirm),
             KeyCode::Backspace | KeyCode::KeyX => self.talk.press(Button::Cancel),
-            KeyCode::Escape => event_loop.exit(),
+            KeyCode::Escape => return true,
             KeyCode::Tab => {
                 self.camera.mode = match self.camera.mode {
                     CameraMode::Orbit => CameraMode::Fly,
@@ -1193,6 +1290,7 @@ impl App {
             KeyCode::PageUp => self.cycle_map(-1),
             _ => {}
         }
+        false
     }
 
     /// The party members' names as the font draws them, for the menu's rows.
@@ -1541,12 +1639,172 @@ impl App {
             return;
         };
         self.audio.step(rom);
-        if self.audio.take_jingle_ended() {
-            self.events.jingle_ended();
-        }
+        // The sound device decides when a jingle ends, by wall time: that end is an input of
+        // the logic. A session records it; a replay takes the recorded one, whatever its own
+        // (silent) audio says. Read before the talk sounds, as the step always did: a sound
+        // that asks for a jingle ends it in the next step.
+        let mut ended = self.audio.take_jingle_ended();
         for sound in self.talk.take_sounds() {
             self.audio.talk_sound(rom, sound);
         }
+        if self.replay.is_some() {
+            ended = std::mem::take(&mut self.jingle_ended);
+        } else if ended {
+            // The step begun by `step_begin` has already been counted.
+            self.log_input_at(self.steps - 1, Logged::JingleEnded);
+        }
+        if ended {
+            self.events.jingle_ended();
+        }
+    }
+
+    /// Records an input of the window at the step count it was handled at.
+    fn log_input(&mut self, input: Logged) {
+        self.log_input_at(self.steps, input);
+    }
+
+    fn log_input_at(&mut self, step: u64, input: Logged) {
+        if let Logged::Key { key, .. } = input
+            && record::key_name(key).is_none()
+        {
+            return; // a key the logic never reads (mute, layout, ...)
+        }
+        if let Some(recorder) = &mut self.recorder {
+            recorder.input(step, input);
+        }
+    }
+
+    /// The window lost focus: the held keys are forgotten.
+    fn focus_lost(&mut self) {
+        self.held.clear();
+        self.log_input(Logged::FocusLost);
+    }
+
+    /// A mouse drag (camera yaw, pitch) and wheel, as the window hands them to the camera.
+    fn mouse(&mut self, rotate: Vec2, zoom: f32) {
+        self.rotate += rotate;
+        self.zoom += zoom;
+        self.log_input(Logged::Mouse {
+            rotate: rotate.to_array(),
+            zoom,
+        });
+    }
+
+    /// An input of a replayed record, handled as the window handled it.
+    fn apply_input(&mut self, input: Logged) {
+        match input {
+            Logged::Key { key, pressed } => {
+                self.key(key, pressed);
+            }
+            Logged::FocusLost => self.held.clear(),
+            Logged::JingleEnded => self.jingle_ended = true,
+            Logged::Mouse { rotate, zoom } => {
+                self.rotate += Vec2::from(rotate);
+                self.zoom += zoom;
+            }
+        }
+    }
+
+    /// What a record's digest holds: where the story, the hero, the party and the generators
+    /// are. A replay that drifts is caught at the first digest that differs.
+    pub(crate) fn state_digest(&self) -> record::Digest {
+        let map = self.current.as_ref().map_or(0, |(entry, _)| entry.id);
+        let track = &self.state.tracks[self.state.track];
+        let hero = self.hero.map_or_else(
+            || "none".to_owned(),
+            |hero| {
+                let at = hero.position();
+                format!(
+                    "{:08x}:{:08x}:{:08x}:{:08x}",
+                    at.x.to_bits(),
+                    at.y.to_bits(),
+                    at.z.to_bits(),
+                    hero.yaw().to_bits()
+                )
+            },
+        );
+        let party = self
+            .party
+            .members
+            .iter()
+            .map(|m| format!("{}/{}/{}/{}", m.level(), m.hp, m.mp, m.current_experience()))
+            .collect::<Vec<_>>()
+            .join(",");
+        let rng = record::fnv64(format!("{:?}", self.world).as_bytes());
+        let pair = |name: &str, value: String| (name.to_owned(), value);
+        vec![
+            pair("map", map.to_string()),
+            pair(
+                "story",
+                format!("{}.{}.{}", track.chapter, track.step, track.substep),
+            ),
+            pair("tick", self.tick.to_string()),
+            pair("hero", hero),
+            pair(
+                "party",
+                if party.is_empty() {
+                    "none".into()
+                } else {
+                    party
+                },
+            ),
+            pair("gold", self.party.gold.to_string()),
+            pair("rng", format!("{rng:016x}")),
+        ]
+    }
+
+    /// The start of a fixed step: the replay's inputs of this step, the digest of the state
+    /// the step starts from, then the step is counted.
+    fn step_begin(&mut self) {
+        let step = self.steps;
+        self.replay_inputs(step);
+        if self.recorder.is_some() && step.is_multiple_of(record::DIGEST_EVERY) {
+            let digest = self.state_digest();
+            if let Some(recorder) = &mut self.recorder {
+                recorder.digest(step, digest);
+            }
+        }
+        self.replay_check(step);
+        self.steps += 1;
+    }
+
+    /// Hands the replayed record's inputs due at `step` to the logic, as the window would.
+    pub(crate) fn replay_inputs(&mut self, step: u64) {
+        while let Some(input) = self.replay.as_mut().and_then(|r| r.next_input(step)) {
+            self.apply_input(input);
+        }
+    }
+
+    /// Compares the state at `step` with the replayed record's digest, when one is due.
+    pub(crate) fn replay_check(&mut self, step: u64) {
+        if self.replay.as_ref().is_some_and(|r| r.digest_due(step)) {
+            let digest = self.state_digest();
+            if let Some(replay) = &mut self.replay {
+                replay.check(step, &digest);
+            }
+        }
+    }
+
+    /// Starts recording this session (`--record`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn start_recording(&mut self, recorder: Recorder) {
+        self.recorder = Some(recorder);
+    }
+
+    /// Ends the recording: the closing digest, then the record. `None` without a recording.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn finish_recording(&mut self) -> Option<record::Record> {
+        let mut recorder = self.recorder.take()?;
+        recorder.digest(self.steps, self.state_digest());
+        let record = recorder.finish(self.steps).clone();
+        status(&format!("record: {} fixed steps", self.steps));
+        Some(record)
+    }
+
+    /// Feeds the logic from `record` instead of the window (`--play-record`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn start_replay(&mut self, record: record::Record) {
+        self.replay = Some(Replay::new(record));
     }
 
     fn axis(&self, plus: &[KeyCode], minus: &[KeyCode]) -> f32 {
@@ -1589,12 +1847,17 @@ impl App {
             self.accumulator -= STEP;
             due += 1;
         }
-        self.run_steps(due);
+        if self.replay.is_some() {
+            self.replay_frame(due);
+        } else {
+            self.run_steps(due);
+        }
     }
 
     /// Runs `due` fixed steps of the game logic.
     fn run_steps(&mut self, due: u32) {
         for _ in 0..due {
+            self.step_begin();
             // `KeyManager::RefreshKeys` (`0x020122ac`): the first frame a button is held
             // raises flag 0x113e. The app's buttons are the d-pad, the action key, the
             // headless pilot's walk and a replayed input.
@@ -2544,10 +2807,24 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 self.audio.gesture();
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    self.key(event_loop, code, event.state == ElementState::Pressed);
+                    let pressed = event.state == ElementState::Pressed;
+                    if self.replay.is_some() {
+                        // A replay drives the logic; the keyboard only closes the window and
+                        // changes what is heard and seen.
+                        match code {
+                            KeyCode::Escape if pressed => event_loop.exit(),
+                            KeyCode::KeyM if pressed => self.audio.toggle_mute(),
+                            KeyCode::KeyR if pressed => {
+                                self.set_layout(self.options.layout.next());
+                            }
+                            _ => {}
+                        }
+                    } else if self.key(code, pressed) {
+                        event_loop.exit();
+                    }
                 }
             }
-            WindowEvent::Focused(false) => self.held.clear(),
+            WindowEvent::Focused(false) if self.replay.is_none() => self.focus_lost(),
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
@@ -2559,20 +2836,23 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some((x, y)) = self.cursor
                     && self.dragging
+                    && self.replay.is_none()
                 {
                     let speed = 0.005;
-                    self.rotate += Vec2::new(
+                    let rotate = Vec2::new(
                         ((position.x - x) * speed) as f32,
                         ((position.y - y) * speed) as f32,
                     );
+                    self.mouse(rotate, 0.0);
                 }
                 self.cursor = Some((position.x, position.y));
             }
-            WindowEvent::MouseWheel { delta, .. } => {
-                self.zoom += match delta {
+            WindowEvent::MouseWheel { delta, .. } if self.replay.is_none() => {
+                let zoom = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => (p.y / 40.0) as f32,
                 };
+                self.mouse(Vec2::ZERO, zoom);
             }
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}
@@ -2583,6 +2863,13 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        // The record is written when the window closes, however it was closed. (The Web
+        // build offers it to the page instead.)
+        #[cfg(not(target_arch = "wasm32"))]
+        self.finish_recording();
     }
 }
 

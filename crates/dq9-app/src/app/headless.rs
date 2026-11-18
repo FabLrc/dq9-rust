@@ -10,6 +10,17 @@ use glam::Vec3;
 use super::{App, status};
 use crate::talk::Button;
 
+/// How a replayed record ended (`--play-record`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RecordStop {
+    /// The event asked for ended.
+    Event(u16),
+    /// The record's last step ran.
+    End,
+    /// A digest differed: the first one, with its step and field.
+    Mismatch(String),
+}
+
 /// The d-pad bit and its JSONL name, in the order `--trace-inputs` writes them.
 pub(crate) const PAD_NAMES: [(u8, &str); 4] = [(1, "up"), (2, "down"), (4, "left"), (8, "right")];
 
@@ -61,11 +72,18 @@ impl App {
     /// One fixed step of a recorded input trace (`--trace-inputs`, replayed): the pad keys and
     /// the action key are fed exactly as recorded, and the journal checkpoints are captured.
     pub(crate) fn replay_step(&mut self, bits: u8, confirm: bool) {
-        let recorded = self.journal.steps.len();
         self.replay_pad = Some(bits);
         if confirm {
             self.talk.press(Button::Confirm);
         }
+        self.observe_step();
+    }
+
+    /// One fixed step with the journal's checkpoints and the control points captured, as the
+    /// pilot's runs do: what both `--replay` and a replayed human record (`--play-record`)
+    /// compare.
+    pub(crate) fn observe_step(&mut self) {
+        let recorded = self.journal.steps.len();
         self.run_steps(1);
         self.capture_journal(recorded);
         // The pilot's control points are part of the proof: record them the same way. The
@@ -241,5 +259,99 @@ impl App {
         self.audio
             .take_recording()
             .map(|samples| (crate::audio::RECORD_RATE, samples))
+    }
+
+    /// Whether the replayed record has steps left and no digest has differed.
+    fn replay_running(&self) -> bool {
+        self.replay
+            .as_ref()
+            .is_some_and(|replay| self.steps < replay.end() && replay.failure().is_none())
+    }
+
+    /// After the record's last step: the inputs stamped at the end, then the closing digest.
+    fn finish_replay(&mut self) {
+        let step = self.steps;
+        self.replay_inputs(step);
+        self.replay_check(step);
+    }
+
+    /// How the replay stands: a mismatch, else the expected event, else the end.
+    fn replay_outcome(&self, hit: Option<u16>) -> RecordStop {
+        match self.replay.as_ref().and_then(|replay| replay.failure()) {
+            Some(why) => RecordStop::Mismatch(why.to_owned()),
+            None => hit.map_or(RecordStop::End, RecordStop::Event),
+        }
+    }
+
+    /// The window's frame of a replayed record: `due` fixed steps of it, the checkpoints
+    /// captured as the headless replay captures them, and the outcome said once at the end.
+    pub(super) fn replay_frame(&mut self, due: u32) {
+        for _ in 0..due {
+            if !self.replay_running() {
+                break;
+            }
+            self.observe_step();
+        }
+        if self.replay_running() || !self.replay.as_mut().is_some_and(|r| r.first_report()) {
+            return;
+        }
+        self.finish_replay();
+        status(&self.record_stop_line(&self.replay_outcome(None)));
+    }
+
+    /// Plays the loaded record without a window, to its end or to the end of `expect`, and
+    /// returns how it stopped. Every step is the window's: the inputs come through
+    /// `App::key`, the digests are checked as they fall due.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn play_record(&mut self, expect: Option<u16>) -> RecordStop {
+        self.checkpoints.clear();
+        let mut hit = None;
+        while hit.is_none() && self.replay_running() {
+            let recorded = self.journal.steps.len();
+            self.observe_step();
+            hit = expect.filter(|event| {
+                self.journal.steps[recorded..]
+                    .iter()
+                    .any(|(_, step)| matches!(step, Step::EventEnded(id) if id == event))
+            });
+        }
+        if hit.is_none() {
+            self.finish_replay();
+        }
+        self.replay_outcome(hit)
+    }
+
+    /// The line that says where a replayed record stopped (`stopped: event N ended ...`).
+    pub(crate) fn record_stop_line(&self, stop: &RecordStop) -> String {
+        let seconds = self.tick as f64 / 60.0;
+        match stop {
+            RecordStop::Event(event) => format!(
+                "stopped: event {event} ended after {seconds:.1} s of game time ({} steps)",
+                self.steps
+            ),
+            RecordStop::End => {
+                let map = self.current.as_ref().map_or(0, |(entry, _)| entry.id);
+                let track = &self.state.tracks[self.state.track];
+                format!(
+                    "stopped: record ended after {} steps ({seconds:.1} s of game time), map {map}, story {}.{}.{}",
+                    self.steps, track.chapter, track.step, track.substep
+                )
+            }
+            RecordStop::Mismatch(why) => format!("stopped: {why}"),
+        }
+    }
+
+    /// The report of a replayed record: the journal, where it stopped, the digests checked
+    /// and the party.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn record_report(&self, stop: &RecordStop) -> String {
+        let mut out = self.journal.to_string();
+        out.push_str(&format!("events played: {:?}\n", self.journal.events()));
+        out.push_str(&self.record_stop_line(stop));
+        out.push('\n');
+        let checked = self.replay.as_ref().map_or(0, |replay| replay.checked());
+        out.push_str(&format!("digests: {checked} checked\n"));
+        out.push_str(&self.party_report());
+        out
     }
 }
