@@ -153,9 +153,10 @@ commands, 549 models, 3,466 commands (2,761 of them `0x08`); the 738 archive set
 builds expose 550 such models and 3,576 commands (`crates/dq9-render/tests/real_rom.rs`), and
 no model is placed twice. `M01` (Angel Falls) has 21, all `0x08`: 12 in `M01M0003` (one per
 `tre` node), 8 in `M01M0004`, 1 in `M01M00L1` (the rainbow, hidden at this time of day).
-`D01` has 9, all `0x08`, in `D01M0000` (its lamps). `F01`, the field map around the village,
-has none: its vegetation is drawn without billboard commands, **[unknown]** how
-(`F01M0100.nsbmd`, which carries 8 of them, belongs to the archive of `M01M12`, not to `F01`).
+`D01` has 9, all `0x08`, in `D01M0000` (its lamps). The field maps have almost none: 67 of the
+68 `F*` archive sets have no billboard command (the 68th, `F01M01`, has two models); how their
+vegetation stays readable is the next section (`F01M0100.nsbmd`, which carries 8 of them,
+belongs to the archive of `M01M12`, not to `F01`).
 
 Implementation: `nds_rom::g3d::Model::billboards` keeps each command's position in the render
 op list (`BillboardCommand`), `Geometry::billboards` the draws it leaves to the camera (pivot,
@@ -164,6 +165,51 @@ frame from the render camera. A model with a billboard is copied per placement, 
 result depends on the placement's world transform. **[hypothesis]** the DS sorts the affected
 translucent quads by their on-screen depth per frame; our scene sorts draws by the *static*
 model-space centre of each mesh, so a billboarded quad keeps the order of its rest pose.
+
+### Field vegetation is not billboarded (`F01`, `F02`, …)
+
+Question (user report): the bushes and trees around the path outside the village "only face one
+direction"; should they follow the camera like the sprites? **Normal: the original draws them
+the same way.** Evidence, strongest last:
+
+1. **Geometry.** `F01.amdj` has 25 placements, all at the origin, angle 0, scale 1; the terrain
+   is cut into tiles (`F01M1100` … `F01M4300`) whose `tre01`, `tre04` and `fst03`–`fst05`,
+   `fst07`, `fst08` materials (a round tree, bush crowns and hedge strips on 32×32 and
+   16×16 textures) are plain quads with no billboard command. `f01_quads.log` in
+   `build/evidence/j4-vegetation-billboards/` (`a02e7e0408de`): 3,490 faces of these
+   materials, mean normal `(0, 0.06–0.40, 0.88–0.99)`: all of them face `+z`, tilted back by up
+   to ~25° towards the home camera, which sits on `+z` above the hero. The 116 other faces
+   of `tre`/`fst` materials (`tre03` trunks, `fst01`, `fst02`, `fst06` ground patches) are
+   flat or irregular by design. The quads are modelled facing the camera at its home yaw;
+   the engine does not turn them.
+2. **No command anywhere.** Over the 738 archive sets a scene builds, 67 of the 68 `F*` sets
+   have no `0x07`/`0x08` (`F01M01` has two models); the town and dungeon maps do (`C` 44 of 53
+   sets, `M` 101 of 115, `D` 54 of 85). The engine's only per-model hooks are the render
+   commands of § Billboards, and no other model flag exists in the formats read so far.
+3. **The original does not look at them from the side.** `FieldCamera_Update` (`0x020a213c`)
+   keeps the camera yaw out of the band `(π/4, 7π/4)`, so a map's camera never leaves ±45° of
+   its home direction (`movement.md`, § Field camera); a quad seen 45° off is foreshortened to
+   0.71 of its width, not edge-on. On `F02` (Western Stornway Region, the only field map with
+   oracle states) **`L` and `R` do not turn the camera at all**: in melonDS (DS core, core
+   savestates of `build/oracle/field-F02`, `lr_camera.py`, log `lr_camera.log`,
+   `378185380956`), holding `L` or `R` for 106 frames changes the 3D screen exactly as no
+   button does (summed grey difference identical to the unit in four states, `f02-enter`,
+   `w-c120`, `w-c250`, `w-c395`), while the same hold in the Stornway town state turns it
+   both ways (`ds/town_none_l_r.png`, `7e70b05dcc91`; `ds/f02-enter_none_l_r.png`,
+   `85acab544f16`). The cause of that lock is **[unknown]** (`FieldCamera_Update` reads
+   `L`/`R` only with its second argument set and not when `+0x244` bit 1 is set; which
+   condition holds on a field map was not read); that field maps never rotate is observed on
+   `F02` only, **[hypothesis]** for the other `F*` maps, whose geometry is built the same way.
+
+What the user sees in the port is its own camera: `dq9-app`'s orbit turns freely with the
+mouse drag, and `Q`/`E` turn it within ±45° on every map. `f01b_grid.png` (`ff99668425c5`;
+`dq9-app --map F01 --time day --layout stacked --size 768x768`, target `-6,1.5,8`, eye on a
+circle of radius 9.22 at height +6, yaw 0, +45°, −45°, +90°) shows the same tree row
+readable at 0° and ±45° and reduced to slivers at 90°, a view the original's field camera
+cannot reach. The renderer is **unchanged**: turning these quads would make field vegetation
+look unlike the original at every reachable yaw (the home view is the one modelled).
+Follow-up for the owner of `app.rs`: rotation by `Q`/`E` on field maps does not match the
+observed original on `F02`.
 
 ## Joint animations (`JNT0`, block `J\0AC`)
 
