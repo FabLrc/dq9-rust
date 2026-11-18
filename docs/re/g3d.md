@@ -196,10 +196,12 @@ the same way.** Evidence, strongest last:
    button does (summed grey difference identical to the unit in four states, `f02-enter`,
    `w-c120`, `w-c250`, `w-c395`), while the same hold in the Stornway town state turns it
    both ways (`ds/town_none_l_r.png`, `7e70b05dcc91`; `ds/f02-enter_none_l_r.png`,
-   `85acab544f16`). The cause of that lock is **[unknown]** (`FieldCamera_Update` reads
-   `L`/`R` only with its second argument set and not when `+0x244` bit 1 is set; which
-   condition holds on a field map was not read); that field maps never rotate is observed on
-   `F02` only, **[hypothesis]** for the other `F*` maps, whose geometry is built the same way.
+   `85acab544f16`). The cause is read (`j4-fmap-camera-lock`, `docs/re/movement.md`):
+   `ov_017::0219e234` sets the camera's `+0x244` bit 4 when the map record's kind (`+0xc & 0xf`)
+   is 0 or its `+0xc` bit 7 is clear, and `FieldCamera_Update` then reads no shoulder button. 82 of
+   871 maps are locked (65 of kind 0, E01M01–11, X03M01, X04, O00/O01, F99M01/02), checked on 121
+   melonDS states (9 maps) with no mismatch. `dq9_core::camera::rotation_allowed` models it and
+   `App::load_map` applies it (`FieldCamera::new(entry.byte_c)`).
 
 What the user sees in the port is its own camera: `dq9-app`'s orbit turns freely with the
 mouse drag, and `Q`/`E` turn it within ±45° on every map. `f01b_grid.png` (`ff99668425c5`;
@@ -208,8 +210,7 @@ circle of radius 9.22 at height +6, yaw 0, +45°, −45°, +90°) shows the same
 readable at 0° and ±45° and reduced to slivers at 90°, a view the original's field camera
 cannot reach. The renderer is **unchanged**: turning these quads would make field vegetation
 look unlike the original at every reachable yaw (the home view is the one modelled).
-Follow-up for the owner of `app.rs`: rotation by `Q`/`E` on field maps does not match the
-observed original on `F02`.
+The port's `Q`/`E` therefore no longer turn the camera on a locked map; its mouse orbit still does.
 
 ## Joint animations (`JNT0`, block `J\0AC`)
 

@@ -829,7 +829,8 @@ impl App {
             self.camera.follow_hero(hero_start);
         }
         self.camera_home = self.camera.yaw;
-        self.field_camera = FieldCamera::default();
+        // `ov_017::0219e234`: the map record's kind and flags may forbid the L/R turn.
+        self.field_camera = FieldCamera::new(loaded.entry.byte_c);
         self.events.map_loaded(&self.camera);
         // `Cast_LoadMap` ends with `0x0203e2d4`: a snapshot kept on this map gives its NPCs
         // back, one kept elsewhere is dropped.

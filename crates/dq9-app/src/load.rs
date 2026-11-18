@@ -232,6 +232,8 @@ mod tests {
 pub struct MapEntry {
     pub id: u16,
     pub code: String,
+    /// `maplist9.bin` record `+0xc` (kind and flags; `dq9_core::camera::rotation_allowed`).
+    pub byte_c: u8,
 }
 
 /// A map ready to upload.
@@ -305,6 +307,7 @@ pub fn maps(rom: &[u8]) -> Result<Vec<MapEntry>> {
         .map(|r| MapEntry {
             id: r.id,
             code: text(r.code),
+            byte_c: r.byte_c,
         })
         .collect())
 }
@@ -379,6 +382,7 @@ pub fn load(
         entry: MapEntry {
             id: record.id,
             code: text(record.code),
+            byte_c: record.byte_c,
         },
         label,
         time,
