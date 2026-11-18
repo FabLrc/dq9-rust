@@ -38,6 +38,7 @@ use winit::window::{Window, WindowId};
 use self::services::Services;
 use self::services::containers::{Containers, Taken};
 use crate::audio::Audio;
+use crate::battle::transition::{self, Swirl};
 use crate::battle::{self, BattleScene};
 use crate::event::{EventPlayer, Outcome, Stage, apply_collision_changes};
 use crate::gpu::Gpu;
@@ -79,10 +80,10 @@ pub const STEP: f32 = 1.0 / 60.0;
 /// bytes swapped, and returns on any other map.
 const GATE_ROOM: u16 = 7101;
 
-/// Fixed steps of a battle transition (native 547): the swirl narrows the view for 15, then
-/// both screens go to black over the next 20 (`SetMainBrightness(−16, 20)`).
-const BATTLE_ENTER_AT: u32 = 15;
-const BATTLE_ENTER_DONE: u32 = 35;
+/// Half field of view the field camera is given back after the encounter swirl
+/// (`SwirlEffect_Release`, `0x02046f94`: roll 0, half field of view 15°;
+/// `battle/transition.rs`, `docs/re/battle-transition.md`).
+const FIELD_HALF_FOV: f32 = 15.0;
 /// Steps the scene is shown before the stand-in settles it (there is no battle logic yet).
 const BATTLE_HOLD: u32 = 90;
 /// Steps the scripted transition holds black when no battle follows it.
@@ -92,24 +93,17 @@ const BATTLE_TRANSITION_HOLD: u32 = 90;
 const BATTLE_LEAVE_AT: u32 = 15;
 const BATTLE_LEAVE_DONE: u32 = 45;
 
-/// The black cover's alpha during the 15 → 35 step fade of the transition.
-fn fade_in(ticks: u32) -> f32 {
-    if ticks <= BATTLE_ENTER_AT {
-        0.0
-    } else {
-        ((ticks - BATTLE_ENTER_AT) as f32 / (BATTLE_ENTER_DONE - BATTLE_ENTER_AT) as f32).min(1.0)
-    }
-}
-
 /// A battle phase (`docs/app.md`, § "Battle scene"): native 547's transition, the scene,
 /// and the way back to the field.
 #[derive(Debug)]
 enum BattleChange {
-    /// Native 547 with no battle asked for (yet): both screens to black, the battle track on.
-    Transition { ticks: u32 },
-    /// The scene is being built; the screens are black when it appears.
+    /// Native 547 with no battle asked for (yet): the swirl rolls and narrows the field, both
+    /// screens go to black, the battle track on. `ticks` counts the black hold that follows.
+    Transition { swirl: Swirl, ticks: u32 },
+    /// The swirl runs while the field is still drawn; the scene is built when its clock is
+    /// done and both screens are black.
     Entering {
-        ticks: u32,
+        swirl: Swirl,
         request: battle::Resolved,
         auto_leave: bool,
     },
@@ -423,6 +417,9 @@ pub struct App {
     saved_field: Option<SavedField>,
     /// Alpha of the black cover of the transition, 0 to 1.
     battle_cover: f32,
+    /// The field scene's swirl disc, hidden until the transition places it
+    /// (`docs/re/battle-transition.md`).
+    swirl: Option<dq9_render::swirl::Swirl>,
     /// The last battle a headless run built and settled at once ([`ShownBattle`]).
     last_battle: Option<ShownBattle>,
     /// The fight in play (windows and the Web, or `--fight`): the engine, its menus and its
@@ -562,6 +559,7 @@ impl App {
             battle_change: None,
             saved_field: None,
             battle_cover: 0.0,
+            swirl: None,
             last_battle: None,
             fight: None,
             battle_pad: Default::default(),
@@ -872,6 +870,23 @@ impl App {
             None => Containers::default(),
         };
         self.current = Some((loaded.entry, loaded.label));
+        // The encounter transition's swirl (`docs/re/battle-transition.md`): the field scene
+        // carries it, hidden, so `redraw` can place it over the field. Only the field needs it
+        // (a battle stage and a preview are loaded without one: `load::load` knows nothing of
+        // the transition).
+        let swirl = nds_rom::Rom::parse(rom)
+            .ok()
+            .and_then(|parsed| dq9_formats::map::rom_file(&parsed, dq9_render::swirl::CHR_PATH));
+        self.swirl = match swirl {
+            Some(chr) => match dq9_render::swirl::Swirl::add(&mut loaded.runtime, chr) {
+                Ok(swirl) => swirl,
+                Err(e) => {
+                    status(&format!("swirl: {e:#}"));
+                    None
+                }
+            },
+            None => None,
+        };
         if let Err(e) = loaded.runtime.face_camera(&self.camera) {
             status(&format!("facing cast: {e}"));
             return true;
@@ -2193,6 +2208,9 @@ impl App {
             self.present_frame(&camera, false, false);
             return;
         }
+        // The encounter's swirl over the field: posed at the clock's model frame and pinned in
+        // front of the rolling, narrowing field camera (`docs/re/battle-transition.md`).
+        self.draw_swirl(self.swirl_clock());
         if let (Some(runtime), Some(gpu), Some(renderer)) =
             (&mut self.runtime, &self.gpu, &mut self.renderer)
             && let Err(e) = runtime
@@ -2404,8 +2422,11 @@ impl App {
             return;
         };
         self.audio.set_sequence(rom, Some(battle::BATTLE_TRACK));
-        status("battle transition (native 547): the screens go to black");
-        self.battle_change = Some(BattleChange::Transition { ticks: 0 });
+        status("battle transition (native 547): the swirl, both screens to black");
+        self.battle_change = Some(BattleChange::Transition {
+            swirl: Swirl::new(),
+            ticks: 0,
+        });
     }
 
     /// Starts a battle: the record (or the explicit stage and monsters) is read now, then the
@@ -2458,9 +2479,19 @@ impl App {
             }
             return;
         }
-        let ticks = if immediate { BATTLE_ENTER_DONE } else { 0 };
+        // A preview (`--battle`, `?battle=`) has no field to fade from: its clock starts at the
+        // end of the swirl, so the first step builds the scene as before.
+        let swirl = if immediate {
+            let mut swirl = Swirl::new();
+            for _ in 0..transition::entry_ticks() {
+                swirl.step();
+            }
+            swirl
+        } else {
+            Swirl::new()
+        };
         self.battle_change = Some(BattleChange::Entering {
-            ticks,
+            swirl,
             request: resolved,
             auto_leave,
         });
@@ -2474,12 +2505,13 @@ impl App {
         };
         let mut finished = false;
         match &mut change {
-            BattleChange::Transition { ticks } => {
+            BattleChange::Transition { swirl, ticks } => {
                 *ticks += 1;
-                let alpha = fade_in(*ticks);
-                self.set_battle_cover(alpha);
-                if *ticks >= BATTLE_TRANSITION_HOLD + 20 {
-                    // No battle followed: the field comes back.
+                swirl.step();
+                self.drive_swirl(swirl);
+                if *ticks >= BATTLE_TRANSITION_HOLD + transition::FADE_TICKS {
+                    // No battle followed: the field comes back, its own camera and no disc.
+                    self.release_swirl();
                     self.set_battle_cover(0.0);
                     if let Some(map) = self.current.as_ref().map(|(entry, _)| entry.id) {
                         self.restore_field_music(map);
@@ -2488,15 +2520,18 @@ impl App {
                 }
             }
             BattleChange::Entering {
-                ticks,
+                swirl,
                 request,
                 auto_leave,
             } => {
-                *ticks += 1;
-                self.set_battle_cover(fade_in(*ticks));
-                if *ticks >= BATTLE_ENTER_DONE {
+                swirl.step();
+                if swirl.done() && swirl.cover() >= 1.0 {
                     let request = request.clone();
                     let auto_leave = *auto_leave;
+                    self.set_battle_cover(swirl.cover());
+                    // `SwirlEffect_Release` before the field is set aside: native 844 gives
+                    // the camera back as it was, and the disc must not stay in its scene.
+                    self.release_swirl();
                     if self.enter_battle(&request) {
                         // The fight starts on the scene; one that cannot be built leaves the
                         // stand-in to settle the battle after its hold.
@@ -2514,6 +2549,8 @@ impl App {
                         self.settle_battle(&request, None);
                         finished = true;
                     }
+                } else {
+                    self.drive_swirl(swirl);
                 }
             }
             BattleChange::Fighting {
@@ -2558,7 +2595,8 @@ impl App {
             } => {
                 *ticks += 1;
                 if *ticks < BATTLE_LEAVE_AT {
-                    self.set_battle_cover(fade_in(*ticks));
+                    // Both screens go to black over 15 steps (`SetMainBrightness(-16, 15)`).
+                    self.set_battle_cover(*ticks as f32 / BATTLE_LEAVE_AT as f32);
                 } else {
                     if !*restored {
                         self.restore_field();
@@ -2580,6 +2618,70 @@ impl App {
         }
         if !finished {
             self.battle_change = Some(change);
+        }
+    }
+
+    /// One step of the swirl on the field (`SwirlEffect_Update`, `0x0204701c`): the camera's
+    /// roll and half field of view, its black cover, then the release once both are done.
+    fn drive_swirl(&mut self, swirl: &Swirl) {
+        if swirl.done() && swirl.cover() >= 1.0 {
+            self.release_swirl();
+            return;
+        }
+        self.camera.roll = swirl.roll_degrees().to_radians();
+        self.camera.fovy = 2.0 * swirl.half_fov_degrees().to_radians();
+        self.set_battle_cover(swirl.cover());
+    }
+
+    /// `SwirlEffect_Release` (`0x02046f94`): roll 0, half field of view 15°, and the disc gone
+    /// from the field's scene. The uploaded instance is moved too: `AnimatedScene::upload`
+    /// does not carry instance worlds, so the renderer would keep the last placed one.
+    fn release_swirl(&mut self) {
+        self.camera.roll = 0.0;
+        self.camera.fovy = 2.0 * FIELD_HALF_FOV.to_radians();
+        self.draw_swirl(None);
+    }
+
+    /// The swirl's clock while a transition still draws it: `None` at the field, in a fight and
+    /// once `SwirlEffect_Release` has run (the clock is done and the cover full).
+    fn swirl_clock(&self) -> Option<Swirl> {
+        match &self.battle_change {
+            Some(BattleChange::Entering { swirl, .. } | BattleChange::Transition { swirl, .. })
+                if !(swirl.done() && swirl.cover() >= 1.0) =>
+            {
+                Some(*swirl)
+            }
+            _ => None,
+        }
+    }
+
+    /// Poses and places the field scene's disc for this frame: `Some((instance, world))` while
+    /// `clock` runs, or to hide one that is still placed. `None` when there is nothing to do.
+    fn place_swirl(&mut self, clock: Option<Swirl>) -> Option<(usize, glam::Mat4)> {
+        let disc = self.swirl?;
+        let camera = self.camera;
+        let runtime = self.runtime.as_mut()?;
+        let visible = runtime.scene.instances[disc.instance()].drawn();
+        let world = match clock {
+            Some(clock) => {
+                if let Err(e) = disc.pose(runtime, clock.model_frame()) {
+                    status(&format!("swirl animation: {e}"));
+                }
+                disc.place(runtime, Some(&camera))
+            }
+            None if visible => disc.place(runtime, None),
+            None => return None,
+        };
+        Some((disc.instance(), world))
+    }
+
+    /// [`place_swirl`](Self::place_swirl) and the renderer's copy of the world.
+    fn draw_swirl(&mut self, clock: Option<Swirl>) {
+        let Some((instance, world)) = self.place_swirl(clock) else {
+            return;
+        };
+        if let (Some(gpu), Some(renderer)) = (&self.gpu, &mut self.renderer) {
+            renderer.update_instance_world(&gpu.queue, instance, world);
         }
     }
 

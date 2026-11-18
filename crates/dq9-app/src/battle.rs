@@ -46,7 +46,6 @@ pub mod motion;
 pub mod narrate;
 #[cfg(test)]
 mod tests;
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod transition;
 pub mod ui;
 

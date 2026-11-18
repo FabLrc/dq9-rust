@@ -30,6 +30,20 @@ fn map_options(map: &str, story: (u8, u8, u8, bool)) -> Options {
     }
 }
 
+/// The window's `Entering` phase one fixed step before the scene is built: the swirl's clock
+/// has stopped, only its last tick of black cover is missing.
+fn entering_at_the_end(request: crate::battle::Resolved) -> BattleChange {
+    let mut swirl = battle::transition::Swirl::new();
+    for _ in 0..battle::transition::entry_ticks() - 1 {
+        swirl.step();
+    }
+    BattleChange::Entering {
+        swirl,
+        request,
+        auto_leave: false,
+    }
+}
+
 /// Whether the cast instance of NPC `npc` is drawn on the loaded scene.
 fn cast_drawn(app: &App, npc: u16) -> bool {
     let runtime = app.runtime.as_ref().expect("a map is loaded");
@@ -1831,11 +1845,7 @@ fn the_window_path_plays_a_battle_from_the_pad() {
         ..Default::default()
     };
     let resolved = request.resolve(rom).unwrap();
-    app.battle_change = Some(BattleChange::Entering {
-        ticks: BATTLE_ENTER_DONE - 1,
-        request: resolved,
-        auto_leave: false,
-    });
+    app.battle_change = Some(entering_at_the_end(resolved));
     let mut seen_menu = false;
     let mut seen_message = false;
     for _ in 0..20_000 {
@@ -1863,6 +1873,203 @@ fn the_window_path_plays_a_battle_from_the_pad() {
         app.current.as_ref().map(|(e, _)| e.id),
         map,
         "the field is back"
+    );
+}
+
+/// The encounter transition the window draws (roaming contact and native 547 alike): the
+/// swirl's clock rolls the field camera −8° and narrows its half field of view by 0.4333° per
+/// 30 Hz update, blackens both screens from its 18th step and builds the battle scene when it
+/// is done and the cover is full (step 38), then `SwirlEffect_Release` gives the camera back
+/// (roll 0, 15°) and takes the disc out of the field's scene
+/// (`docs/re/battle-transition.md`).
+#[test]
+fn the_swirl_rolls_the_field_camera_before_the_battle_scene() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_replay(map_options("1100", (1, 2, 1, true)), Some(rom.to_vec()));
+    let camera = app.camera;
+    assert_eq!(camera.roll, 0.0, "the field camera starts level");
+    assert!((camera.fovy.to_degrees() - 30.0).abs() < 1e-3);
+    let disc = app.swirl.expect("the field scene carries the swirl");
+    let drawn = |app: &App| {
+        app.runtime
+            .as_ref()
+            .expect("the field is drawn")
+            .scene
+            .instances[disc.instance()]
+        .drawn()
+    };
+    assert!(!drawn(&app), "the disc starts hidden");
+    let request = crate::battle::Request {
+        stage: 0,
+        monsters: vec![(1, 2)],
+        surprise: Some(dq9_core::battle::Surprise::None),
+        ..Default::default()
+    };
+    app.start_battle(request, false, false);
+    // The field is still the scene on screen: the swirl runs over it.
+    app.run_steps(1);
+    app.draw_swirl(app.swirl_clock());
+    assert!(
+        app.battle().is_none(),
+        "the field is drawn during the swirl"
+    );
+    assert!(drawn(&app), "the swirl is placed over the field");
+    assert!(
+        (app.camera.roll.to_degrees() + 8.0).abs() < 1e-3,
+        "the first update rolls −8°, {}",
+        app.camera.roll.to_degrees()
+    );
+    assert!((app.camera.fovy.to_degrees() / 2.0 - 14.567).abs() < 1e-2);
+    assert_eq!(app.battle_cover, 0.0);
+    let clock = app.swirl_clock().expect("the clock is still running");
+    assert!(
+        (clock.model_frame() - 2.5).abs() < 1e-4,
+        "frame 1 + 3 × 0.5"
+    );
+    // The fade starts after the counter passes 15: the 18th step.
+    app.run_steps(16);
+    assert_eq!(app.battle_cover, 0.0, "both screens are still lit");
+    app.run_steps(1);
+    assert!(app.battle_cover > 0.0 && app.battle_cover < 0.5);
+    app.run_steps(19);
+    assert!(app.battle_cover > 0.9 && app.battle_cover < 1.0);
+    assert!(app.battle().is_none(), "the scene waits for the black");
+    // The 38th step: done and covered, the scene is built and the camera given back.
+    app.run_steps(1);
+    assert!(app.battle().is_some(), "the scene is built on the black");
+    assert_eq!(app.battle_cover, 1.0);
+    assert_eq!(app.camera.roll, 0.0);
+    assert!((app.camera.fovy.to_degrees() - 30.0).abs() < 1e-3);
+    let field = app
+        .saved_field
+        .as_ref()
+        .and_then(|saved| saved.runtime.as_ref())
+        .expect("the field is set aside");
+    assert!(
+        !field.scene.instances[disc.instance()].drawn(),
+        "the released disc must not stay in the field's scene"
+    );
+}
+
+/// The same transition rendered offscreen on the real map: the field rolls and narrows, the
+/// swirl's rings cover it, both screens end black. Frames at steps 1, 10, 20, 30 and 38 go to
+/// `DQ9_EVIDENCE_DIR` when it is set (they are the window's own scene, clock and camera).
+#[test]
+fn the_swirl_is_drawn_over_the_field() {
+    use dq9_render::{Renderer, Viewport};
+
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_replay(map_options("1100", (1, 2, 1, true)), Some(rom.to_vec()));
+    let disc = app.swirl.expect("the field scene carries the swirl");
+    let request = crate::battle::Request {
+        stage: 0,
+        monsters: vec![(1, 2)],
+        surprise: Some(dq9_core::battle::Surprise::None),
+        ..Default::default()
+    };
+    app.start_battle(request, false, false);
+    let (device, queue) = pollster::block_on(async {
+        let instance = crate::gpu::instance().await;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .expect("a GPU adapter for the swirl capture");
+        crate::gpu::device(&adapter).await.unwrap()
+    });
+    let mut renderer = Renderer::new(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &app.runtime.as_ref().expect("a map is loaded").scene,
+    );
+    renderer.environment = app.environment.clone();
+    let viewport = Viewport {
+        x: 0,
+        y: 0,
+        width: 256,
+        height: 192,
+    };
+    let frame = |app: &mut App, renderer: &mut Renderer, show_disc: bool| {
+        // `App::redraw`'s field path: the disc placed by the clock, the scene's geometry, the
+        // camera the clock drives and the cover both screens share.
+        app.draw_swirl(app.swirl_clock());
+        if let Some(runtime) = app.runtime.as_mut() {
+            runtime
+                .upload(renderer, &device, &queue)
+                .expect("uploading the field");
+        }
+        let world = app
+            .runtime
+            .as_ref()
+            .or_else(|| {
+                app.saved_field
+                    .as_ref()
+                    .and_then(|saved| saved.runtime.as_ref())
+            })
+            .expect("the field scene")
+            .scene
+            .instances[disc.instance()]
+        .world;
+        let world = if show_disc {
+            world
+        } else {
+            glam::Mat4::from_scale(Vec3::ZERO)
+        };
+        renderer.update_instance_world(&queue, disc.instance(), world);
+        let cover = (app.battle_cover > 0.0).then_some([0.0, 0.0, 0.0, app.battle_cover]);
+        renderer.environment.cover = cover;
+        renderer
+            .render_to_rgba_with(
+                &device,
+                &queue,
+                (256, 192),
+                viewport,
+                &app.camera,
+                |_, _| {},
+            )
+            .unwrap()
+    };
+    let evidence = std::env::var_os("DQ9_EVIDENCE_DIR").map(std::path::PathBuf::from);
+    let mut covered = 0usize;
+    let mut last = Vec::new();
+    for step in 1..=38u32 {
+        app.run_steps(1);
+        let with = frame(&mut app, &mut renderer, true);
+        if step == 20 {
+            // The disc's own pixels: the same frame with it out of the picture.
+            let without = frame(&mut app, &mut renderer, false);
+            covered = with
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(without.as_chunks::<4>().0)
+                .filter(|(a, b)| a != b)
+                .count();
+        }
+        if let Some(dir) = &evidence
+            && [1, 10, 20, 30, 38].contains(&step)
+        {
+            std::fs::create_dir_all(dir).unwrap();
+            let file =
+                std::fs::File::create(dir.join(format!("swirl-field-step{step:02}.png"))).unwrap();
+            let mut encoder = png::Encoder::new(file, 256, 192);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&with)
+                .unwrap();
+        }
+        last = with;
+    }
+    assert!(
+        covered > 5_000,
+        "the rings cover a good part of the picture at step 20 ({covered} pixels differ)"
+    );
+    assert!(
+        last.as_chunks::<4>().0.iter().all(|p| p[..3] == [0, 0, 0]),
+        "both screens are black when the scene is built"
     );
 }
 
@@ -2197,11 +2404,7 @@ fn a_battle_preview_is_fought_once_and_not_restarted() {
     app.save_field();
     let resolved = request.resolve(rom).unwrap();
     let expected_stage = resolved.stage;
-    app.battle_change = Some(BattleChange::Entering {
-        ticks: BATTLE_ENTER_DONE - 1,
-        request: resolved,
-        auto_leave: false,
-    });
+    app.battle_change = Some(entering_at_the_end(resolved));
     let mut fought = false;
     for _ in 0..20_000 {
         if !app.battle_is_active() {

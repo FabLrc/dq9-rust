@@ -117,10 +117,44 @@ ends (frame 1098, queue `[3]`, then empty at 1153).
 
 ## What the application does with it
 
-Established and implemented (`battle/transition.rs`, `dq9-render::swirl`): the swirl's clock
-(30 Hz updates, roll, field of view, animation frame, fade request), the orthographic placement of
-the model over a field camera, and the entry timeline of a roaming encounter (swirl 38 ticks to black,
-then the 15-tick fade-in). The window's old constants (fade 15 → 35) were two ticks early.
+**Wired** (batch `j4-swirl-wire`), in `battle/transition.rs` (the clock), `dq9_render::swirl`
+(the disc) and the application:
+
+- `App::load_map` adds the disc to the field scene (`data/effect/ev999991500.chr`, hidden)
+  after the map is built and before its first upload, and `App` keeps it across the battle: the
+  renderer is built from that scene, so the disc is an ordinary instance of the field's. A
+  battle stage or a preview is loaded without one (`load::load` knows nothing of the
+  transition).
+- `App::step_battle` carries the clock instead of a tick counter for both entries: the
+  `Entering` phase of a roaming contact or a scripted battle, and native 547's `Transition`. Each
+  fixed step it reads `roll_degrees`/`half_fov_degrees` into `camera.roll`/`camera.fovy`, the
+  `cover` into the black overlay of both screens, and builds the battle scene when `done()` and
+  the cover is full — 38 steps (the port's old constants said 35, two early, and had no roll).
+- On that step `SwirlEffect_Release` runs: roll 0, half field of view 15°, the disc hidden in
+  the field scene *before* `save_field`, so native 844 gives the field its own camera back.
+  `App::redraw` poses the disc at `model_frame()` and pins it in front of the camera while the
+  clock runs (`dq9-render::swirl::world`), and hides it once placed.
+- The way back to the field fades over its 15 steps again: `fade_in` was reused there and
+  returned 0 (an instant black).
+- `BATTLE_ENTER_AT`/`BATTLE_ENTER_DONE`/`fade_in` are deleted; the transition module is no
+  longer `allow(dead_code)`.
+- Headless runs (`battles_instant()`) still return before any step is spent: the traces, the
+  route digest and `parity.ps1` do not move. A shown run spends 3 more steps per battle
+  (38 instead of 35) and nothing else.
+
+Checked on the pilot's route (`--new-game --pilot --fight --route 2750 --seed 7`; the shown
+battles of the Web session's `battles=show` are the same `battles_instant()` false path, run
+here through `App::new_replay`; 60,000 fixed steps from a new game):
+the instant run's 173 checkpoints are **byte-identical** before and after
+(`build/evidence/j4-swirl-wire/{before,after}/route-instant-checkpoints.jsonl`,
+`191aeec870d3`), and the shown run's 167 checkpoints are identical apart from
+`tick`/`vblank`/`seconds`: the one battle checkpoint moved from tick 9387 to 9390 (**+3**, the
+entry's 35 → 38) and the last state (map 4105, chapter 1 step 4, the same flags, party 13/20 HP,
+2 xp, 4 gold) is the same — `route-shown-checkpoints.jsonl`, before `d46fb483c2a3`, after
+`ea2345449f71`. At 60,000 steps the pilot is still at the start of chapter 1 (its own stuck
+point on `4101`), so this is a window of one shown battle, not the whole route; shown and
+instant runs diverge past it on the roamers' draws, a **[hypothesis]** recorded before this
+batch.
 
 **Not modelled / [unknown]**: the load-bound black periods (94 and 95 frames; headless runs never
 spend them and the window would add 3 s per fight for nothing), the 12-frame freeze after contact,
@@ -128,8 +162,13 @@ the intro camera's script (the arc above is measured, its source in `ov_000` not
 battle's 15-update delay (derived from the code; no set battle was run in the DS core), the map
 screen's own transition on the top screen.
 
-Logic timeline: the shown transition now takes 38 ticks instead of 35; headless runs spend none
-(unchanged), so the traces and `parity.ps1` do not move.
+Ours, `cargo test -p dq9-app -- the_swirl_is_drawn_over_the_field` with `DQ9_EVIDENCE_DIR`
+(local, `build/evidence/j4-swirl-wire/`; map 1100, the window path's own field scene, clock and
+camera, 256 × 192):
+`swirl-field-step01.png` `8b0272a81aca`, `-10` `00792e17c4d8`, `-20` `9447da14bd7f` (the rings
+cover the field), `-30` `4fb0d094967a`, `-38` `82b2f963a8c2` (black, the same bytes as the
+earlier swirl capture's last frame). `cargo test -p dq9-app -- swirl` also runs
+`battle::tests::the_swirl_rolls_zooms_and_blacks_out_the_field` (the disc over a battle stage).
 
 ## Evidence (local, `build/evidence/j4-battle-transition/`, sha256 first 12)
 

@@ -4,9 +4,9 @@
 //!
 //! port: 0x0204701c
 //!
-//! The application's transition (`App::step_battle`) reads it once `app.rs` is wired to it
-//! (`docs/re/battle-transition.md`, "What the application does with it"); until then only
-//! the tests do.
+//! The application's transition (`App::step_battle`) feeds it one fixed 60 Hz step at a time
+//! and reads the roll, the field of view and the cover back (`docs/re/battle-transition.md`,
+//! "What the application does with it").
 //!
 //! The original runs the swirl from a task that is updated about every second frame (the game
 //! loop's `numTicks`: 3 on the first update, 2 after) and `SwirlEffect_Update` (`0x0204701c`)

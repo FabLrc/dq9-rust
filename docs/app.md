@@ -445,15 +445,25 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
   `remove` hides immediately. `upload` transfers geometry and every fighter world matrix,
   including hidden entries, to the existing GPU renderer. `set_shot` and
   `fighter_screen_pos` provide framing and damage-number positions on the 256×192 top screen.
-- **Transition** (native 547, `ov_001::02163ccc`). A scripted battle (`Request::Battle`, action
-  `0x78`) or 547 starts it: the battle track (`eventbattle.bin` `+0x24`, else sequence `0x17`)
-  plays at once, both screens go to black over 20 frames from the 15th, the scene is built
-  while black and comes up over 15 (`0x021d9d18`); the fight is played on it (§ "Battle"),
-  then the screens go to black again over 15, the field comes back and trigger event 15 or 16
-  fires. When no fight can be built, the stand-in holds the scene 90 steps and settles it as
-  won. 547 without a following battle gives the field back after 110 steps. The
-  swirl's model (`ev999991500.chr`), its roll and field of view, and the encounter transition
-  of a roaming monster are **[hypothesis]/not modelled** (J4 roaming batch).
+- **Transition** (native 547, `ov_001::02163ccc`; a roaming contact through the battle task
+  `ov_017::021b790c`, state 6). A scripted battle (`Request::Battle`, action `0x78`), 547 and a
+  roamer's contact all run the original's swirl (`battle/transition.rs`,
+  `ov_017::021b6290`/`0x0204701c`): the battle track (`eventbattle.bin` `+0x24`, else sequence
+  `0x17`) plays at once, and the field is still drawn while the swirl's clock runs it — the
+  camera rolls −8° and its half field of view drops by 0.4333° per 30 Hz update (15° → 7.2°
+  over the 18 updates), and the swirl's disc (`data/effect/ev999991500.chr`,
+  `dq9_render::swirl`) is pinned in front of that camera as the original draws it in an
+  orthographic box (`ov_017::02195ecc`). Once the update counter passes 15 both screens fade
+  to black over 20 steps (`SetMainBrightness(-16, 20)`); at the 38th fixed step the clock is
+  done and the cover full, the scene is built on the black, `SwirlEffect_Release`
+  (`0x02046f94`) gives the field camera back (roll 0, 15°) and hides the disc, and the scene
+  comes up over 15 (`0x021d9d18`). The fight is played on it (§ "Battle"), then the screens go
+  to black again over 15, the field comes back and trigger event 15 or 16 fires. When no
+  fight can be built, the stand-in holds the scene 90 steps and settles it as won. 547 without
+  a following battle gives the field back after 110 steps. Frames, the load-bound black
+  periods (94 and 95 frames) and the intro camera: [`re/battle-transition.md`](re/battle-transition.md);
+  the load blacks, the 12-frame freeze after contact and the 15-update delay of a set battle
+  are not modelled.
 - **Headless** (`--headless`, `--auto`, `--replay`, tests): the scene is built and checked,
   then the battle is settled in the **same fixed step** (`App::last_battle` records its stage
   and fighter count). No step is spent on a presentation: the headless timeline is the
