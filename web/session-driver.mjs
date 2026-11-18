@@ -11,6 +11,12 @@
 //   node web/session-driver.mjs --url https://fablrc.github.io/dq9-rust/ --rom path.nds \
 //        --out build/evidence/j4-web-show/hosted --query "newgame=1&pilot=1&battles=show"
 //
+// `--mode record` (with `?record=1`) plays a short session by hand through the page — real key
+// events on the canvas — and saves the record with the page's "Save recording" button, keeping
+// the download in `--out/downloads`; `--mode replay --record <file>` (with `?play-record=1`)
+// picks the `.dq9rec` and the ROM in the page and reads the stop line
+// (`docs/app.md`, "Recording a human session").
+//
 // `--url` drives an already served page (the hosted Pages deployment) instead of `--site`: no
 // local server is started, `--query` becomes that page's query string, and the ROM is still
 // chosen through the page's <input type=file>.
@@ -186,6 +192,226 @@ await cdp("Log.enable");
 await cdp("Page.enable");
 await cdp("DOM.enable");
 await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+
+// ---- page modes: record and replay (`docs/app.md`, § Recording a human session) ----
+// `--mode record` plays a short session by hand through the page (`?record=1`), presses real
+// keys, saves the record with the page's "Save recording" button and keeps the download;
+// `--mode replay` picks a `.dq9rec` in the page (`?play-record=1`) with the ROM and reads the
+// stop line. The pilot session is the default mode (below).
+const mode = args.mode ?? "pilot";
+if (mode === "record" || mode === "replay") {
+  const pageText = (selector) =>
+    evaluate(
+      `(() => { const el = document.querySelector(${JSON.stringify(selector)});
+        return el ? el.textContent : null; })()`,
+    ).catch(() => null);
+  const stepsShown = async () => {
+    const match = /(\d+) steps/.exec((await pageText("#recording")) ?? "");
+    return match ? Number(match[1]) : 0;
+  };
+  const waitForRom = async () => {
+    for (let i = 0; i < 1200; i++) {
+      const ready = await evaluate(
+        "(() => { const r = document.querySelector('#rom'); return !!r && !r.disabled; })()",
+      ).catch(() => false);
+      if (ready) return true;
+      await sleep(250);
+    }
+    return false;
+  };
+  const pickFile = async (selector, file) => {
+    const doc = await cdp("DOM.getDocument", { depth: 0 });
+    const node = await cdp("DOM.querySelector", { nodeId: doc.root.nodeId, selector });
+    if (!node.nodeId) throw new Error(`no ${selector} field in the page`);
+    await cdp("DOM.setFileInputFiles", { files: [file], nodeId: node.nodeId });
+  };
+  // Real keyboard events on the canvas: the same `App::key` path a person drives.
+  const virtualKeys = {
+    Enter: 13, Space: 32, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39,
+    KeyW: 87, KeyA: 65, KeyS: 83, KeyD: 68, KeyZ: 90, KeyX: 88, KeyI: 73, Escape: 27,
+  };
+  const keyText = (name) =>
+    name === "Space" ? " " : name.startsWith("Key") ? name.slice(3).toLowerCase() : name;
+  const keyEvent = (type, name) =>
+    cdp("Input.dispatchKeyEvent", {
+      type,
+      key: keyText(name),
+      code: name,
+      windowsVirtualKeyCode: virtualKeys[name] ?? 0,
+      nativeVirtualKeyCode: virtualKeys[name] ?? 0,
+    });
+  const tap = async (name = "Enter", gap = 220) => {
+    await keyEvent("keyDown", name);
+    await sleep(60);
+    await keyEvent("keyUp", name);
+    await sleep(gap);
+  };
+  const hold = async (name, ms) => {
+    await keyEvent("keyDown", name);
+    await sleep(ms);
+    await keyEvent("keyUp", name);
+    await sleep(150);
+  };
+  const shot = async (name) => {
+    const file = `shots/${name}.png`;
+    try {
+      const png = await cdp("Page.captureScreenshot", { format: "png" });
+      fs.writeFileSync(path.join(out, file), Buffer.from(png.data, "base64"));
+      say(`screenshot ${file}`);
+    } catch (e) {
+      say(`screenshot ${file} failed: ${e.message}`);
+    }
+  };
+
+  const url = hosted ? hosted.toString() : `http://127.0.0.1:${port}/?${query}`;
+  say(`open ${url}`);
+  await cdp("Page.navigate", { url });
+  if (!(await waitForRom())) throw new Error("the page never offered the ROM field");
+  let recordFile = null;
+  let stop = null;
+  let ok = false;
+
+  if (mode === "record") {
+    const target = Number(args.steps ?? 3000);
+    const downloads = path.join(out, "downloads");
+    fs.mkdirSync(downloads, { recursive: true });
+    // The browser saves the page's Blob here (the record never leaves the machine).
+    await cdp("Browser.setDownloadBehavior", {
+      behavior: "allow",
+      downloadPath: downloads,
+      eventsEnabled: true,
+    });
+    say(`choose ROM ${path.basename(rom)} (read by the browser, not served)`);
+    const doc = await cdp("DOM.getDocument", { depth: 0 });
+    const input = await cdp("DOM.querySelector", { nodeId: doc.root.nodeId, selector: "#rom" });
+    await cdp("DOM.setFileInputFiles", { files: [rom], nodeId: input.nodeId });
+    for (let i = 0; i < 2400 && !(await pageText("#recording"))?.includes("recording"); i++) {
+      await sleep(250);
+    }
+    if (!(await pageText("#recording"))?.includes("recording")) {
+      throw new Error("the page never started recording");
+    }
+    say(`recording: ${await pageText("#recording")}`);
+    await evaluate("document.querySelector('#dq9').focus()");
+    await sleep(1500);
+    // A short hand: read the opening, walk about, turn the camera, open the field menu.
+    for (let i = 0; i < 14; i++) await tap("Enter");
+    await hold("ArrowDown", 900);
+    await hold("ArrowLeft", 500);
+    for (let i = 0; i < 6; i++) await tap("Space");
+    await hold("ArrowUp", 700);
+    await hold("ArrowRight", 600);
+    await tap("KeyQ", 0);
+    await tap("Enter");
+    await tap("KeyI", 400);
+    for (let i = 0; i < 4; i++) await tap("ArrowDown", 200);
+    await tap("Enter", 300);
+    // Cancel inside the menu, then Escape in the field: on the page Escape must not stop the
+    // session (it closes a native window, `App::key`), or the recording and its download die
+    // with the loop.
+    await tap("KeyX", 300);
+    const beforeEscape = await stepsShown();
+    await tap("Escape", 600);
+    await sleep(1200);
+    if ((await stepsShown()) <= beforeEscape) {
+      throw new Error("Escape stopped the page's session");
+    }
+    say(`Escape left the session running (${await stepsShown()} steps)`);
+    for (let i = 0; i < 10; i++) await tap("Enter");
+    await hold("ArrowDown", 1200);
+    for (let i = 0; i < 8; i++) await tap("Enter");
+    // Walk until the session is long enough (the page counts its own steps).
+    const until = Date.now() + maxWall;
+    let lastSteps = 0;
+    let lastMove = Date.now();
+    while ((await stepsShown()) < target && Date.now() < until) {
+      const steps = await stepsShown();
+      if (steps > lastSteps) {
+        lastSteps = steps;
+        lastMove = Date.now();
+      } else if (Date.now() - lastMove > stallLimit) {
+        throw new Error(`the recording stopped at ${steps} steps (Escape ends the session)`);
+      }
+      await hold("ArrowLeft", 600);
+      await tap("Enter");
+      await sleep(500);
+    }
+    const steps = await stepsShown();
+    say(`recorded ${steps} steps (target ${target}); saving through the page's button`);
+    await shot("recording-indicator");
+    await evaluate("document.querySelector('#dq9').focus()");
+    await evaluate("document.querySelector('#recordsave').click()");
+    for (let i = 0; i < 240 && !recordFile; i++) {
+      const found = fs.existsSync(downloads)
+        ? fs.readdirSync(downloads).filter((name) => name.endsWith(".dq9rec"))
+        : [];
+      if (found.length) recordFile = path.join(downloads, found[0]);
+      else await sleep(250);
+    }
+    if (!recordFile) throw new Error("the page's download never appeared");
+    const bytes = fs.readFileSync(recordFile);
+    const header = bytes.toString("utf8").split("\n")[0];
+    say(`record ${path.basename(recordFile)}: ${bytes.length} bytes, ${header}`);
+    stop = (await pageText("#status")) ?? null;
+    say(`status: ${stop}`);
+    ok = /Record saved/.test(stop ?? "");
+    fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({
+      ok,
+      mode,
+      url,
+      browser: version.Browser,
+      wallSeconds: (Date.now() - started) / 1000,
+      recordFile,
+      recordBytes: bytes.length,
+      header,
+      steps,
+      status: stop,
+      consoleErrors,
+    }, null, 2));
+  } else {
+    const record = path.resolve(need("record"));
+    const bytes = fs.readFileSync(record);
+    say(`choose record ${path.basename(record)} (${bytes.length} bytes) then the ROM`);
+    await pickFile("#recordfile", record);
+    await sleep(750);
+    say(`replaying: ${await pageText("#recording")}`);
+    await pickFile("#rom", rom);
+    const until = Date.now() + maxWall;
+    let last = "";
+    while (Date.now() < until) {
+      const text = (await pageText("#status")) ?? "";
+      if (text !== last) {
+        last = text;
+        say(`status: ${text}`);
+      }
+      if (/stopped:/.test(text)) {
+        stop = text;
+        break;
+      }
+      await sleep(500);
+    }
+    await shot("replay-end");
+    // "record ended" means every due digest matched: `Replay` stops at the first difference.
+    ok = !!stop && !/mismatch/.test(stop);
+    fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({
+      ok,
+      mode,
+      url,
+      browser: version.Browser,
+      wallSeconds: (Date.now() - started) / 1000,
+      record,
+      recordBytes: bytes.length,
+      stop,
+      consoleErrors,
+    }, null, 2));
+  }
+  say(`result: ${JSON.stringify({ ok, mode, stop, consoleErrors })}`);
+  await new Promise((resolve) => consoleLog.end(resolve));
+  await new Promise((resolve) => progressLog.end(resolve));
+  stopBrowser();
+  server?.close();
+  process.exit(ok ? 0 : 1);
+}
 
 // ---- screenshots ----
 const shots = [];

@@ -6,10 +6,20 @@
 # format), the report and the milestone screenshots. See docs/app.md, "Route mode in the
 # browser".
 #
+# `-Mode record` plays a short session by hand through the page (`?record=1`), presses real
+# keys, saves the record with the page's "Save recording" button and keeps the download
+# (`-Steps`, 3000 by default); `-Mode replay -Record <file>` picks that `.dq9rec` in the page
+# (`?play-record=1`) with the ROM and reads the stop line (docs/app.md, "Recording a human
+# session"). Both write result.json and console.log like the pilot.
+#
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out build/evidence/j4-web-pilot/run1
 #   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out ... `
 #       -Query 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1&speed=60&render=0'
+#   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out build/evidence/j4-web-record/browser `
+#       -Mode record -Steps 3000
+#   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out build/evidence/j4-web-record/replay `
+#       -Mode replay -Record build/evidence/j4-web-record/browser/downloads/dq9-7-3000.dq9rec
 #   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out build/evidence/j4-web-show/hosted `
 #       -Url https://fablrc.github.io/dq9-rust/ -Query 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1&battles=show'
 #
@@ -21,7 +31,10 @@
 # docs/app.md, "Build and local server"). The Cargo target is the caller's CARGO_TARGET_DIR.
 param(
     [Parameter(Mandatory = $true)] [string] $Out,
-    [string] $Query = 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1',
+    [ValidateSet('pilot', 'record', 'replay')] [string] $Mode = 'pilot',
+    [string] $Record = '',
+    [int] $Steps = 3000,
+    [string] $Query = '',
     [string] $Url = '',
     [string] $Rom = '',
     [int] $Port = 8765,
@@ -45,6 +58,16 @@ if (-not $Rom -or -not (Test-Path -LiteralPath $Rom)) {
     throw 'no ROM: pass -Rom or set DQ9_ROM'
 }
 
+# Each mode drives the page with its own query string (`docs/app.md`).
+if (-not $Query) {
+    $Query = switch ($Mode) {
+        'record' { 'newgame=1&seed=7&record=1&mute=1' }
+        'replay' { 'play-record=1&mute=1' }
+        default { 'newgame=1&pilot=1&fight=1&route=2750&seed=7&mute=1' }
+    }
+}
+if ($Mode -eq 'replay' -and -not $Record) { throw '-Mode replay needs -Record <a .dq9rec file>' }
+
 $Site = Join-Path $Repo 'build/web-session/site'
 if (-not $Url -and -not $SkipBuild) {
     $env:RUSTFLAGS = '-D warnings'
@@ -66,10 +89,12 @@ if (-not $Url -and -not $SkipBuild) {
 
 $nodeArgs = @(
     (Join-Path $Repo 'web/session-driver.mjs'),
-    '--rom', $Rom, '--out', $Out, '--query', $Query,
+    '--rom', $Rom, '--out', $Out, '--query', $Query, '--mode', $Mode,
     '--port', $Port, '--debug-port', $DebugPort,
     '--max-wall', $MaxWallSeconds, '--stall', $StallSeconds
 )
+if ($Mode -eq 'record') { $nodeArgs += @('--steps', "$Steps") }
+if ($Record) { $nodeArgs += @('--record', (Resolve-Path -LiteralPath $Record).Path) }
 if ($Url) { $nodeArgs += @('--url', $Url) } else { $nodeArgs += @('--site', $Site) }
 if ($Browser) { $nodeArgs += @('--browser', $Browser) }
 if ($BrowserArgs) { $nodeArgs += "--browser-args=$BrowserArgs" }

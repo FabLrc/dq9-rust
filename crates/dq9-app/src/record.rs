@@ -37,6 +37,9 @@ pub const FORMAT: &str = "dq9rec";
 pub const VERSION: u32 = 1;
 /// Fixed steps between two digests.
 pub const DIGEST_EVERY: u64 = 600;
+/// Fixed steps between two updates of the Web page's recorded step count (once a second).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub const PROGRESS_EVERY: u64 = 60;
 
 /// The keys the game logic reads, with their file names (winit's `KeyCode` variant names).
 const KEYS: [(KeyCode, &str); 23] = [
@@ -551,6 +554,29 @@ impl Recorder {
         self.write();
     }
 
+    /// The record so far, ended at `steps` with that step's digest: the Web page's
+    /// "Save recording" (`docs/app.md`, § Recording a human session). The recording goes on,
+    /// so a page can offer the file at any moment.
+    ///
+    /// A digest is stamped with the state the step of the same number starts from
+    /// (`App::step_begin`), which is the state the session is in between two steps: the
+    /// snapshot's closing digest is therefore checked by a replay like any other.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn snapshot(&self, steps: u64, digest: Digest) -> Record {
+        let mut record = self.record.clone();
+        if record.digests.last().is_none_or(|(at, _)| *at != steps) {
+            record.digests.push((steps, digest));
+        }
+        record.end = steps;
+        record
+    }
+
+    /// The start options of the recording (the seed names the file the page downloads).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn header(&self) -> &Header {
+        &self.record.header
+    }
+
     /// The record so far, ended at `steps`.
     pub fn finish(&mut self, steps: u64) -> &Record {
         self.record.end = steps;
@@ -769,5 +795,47 @@ mod tests {
         assert_eq!(key_name(KeyCode::KeyQ), Some("KeyQ"));
         assert_eq!(key_name(KeyCode::KeyM), None);
         assert_eq!(key_name(KeyCode::KeyR), None);
+    }
+
+    #[test]
+    fn a_snapshot_ends_at_its_step_with_that_steps_digest() {
+        let mut recorder = Recorder::new(header());
+        recorder.input(
+            3,
+            Input::Key {
+                key: KeyCode::KeyZ,
+                pressed: true,
+            },
+        );
+        recorder.digest(0, vec![("map".into(), "1100".into())]);
+        // 37 steps in, the page saves: the file ends at 37 with the state step 37 starts from.
+        let closing = vec![("map".into(), "1100".into()), ("gold".into(), "12".into())];
+        let saved = recorder.snapshot(37, closing.clone());
+        assert_eq!(saved.end, 37);
+        assert_eq!(
+            saved.digests,
+            vec![
+                (0, vec![("map".into(), "1100".into())]),
+                (37, closing.clone())
+            ]
+        );
+        assert_eq!(saved.inputs.len(), 1);
+        // A second snapshot covers the later step: its own closing digest, not the first one.
+        assert_eq!(recorder.snapshot(37, closing.clone()).digests.len(), 2);
+        recorder.input(
+            40,
+            Input::Key {
+                key: KeyCode::KeyZ,
+                pressed: false,
+            },
+        );
+        let later = recorder.snapshot(41, closing);
+        assert_eq!(
+            (later.end, later.inputs.len(), later.digests.len()),
+            (41, 2, 2)
+        );
+        assert_eq!(later.digests.last().unwrap().0, 41);
+        // A replay reads it back like any other file.
+        assert_eq!(Record::parse(&later.to_text()).unwrap(), later);
     }
 }

@@ -176,6 +176,16 @@ pub enum UserEvent {
     /// "New game" clicked in the page: starts the prologue (now, or once the ROM is read).
     #[cfg(target_arch = "wasm32")]
     NewGame,
+    /// `?record=1`: the page sends this right before the ROM, so the recording starts at the
+    /// first step of the session (`docs/app.md`, § Recording a human session).
+    #[cfg(target_arch = "wasm32")]
+    Record,
+    /// "Save recording" clicked in the page: the record so far, as a download.
+    #[cfg(target_arch = "wasm32")]
+    RecordSave,
+    /// A `.dq9rec` picked in the page (`?play-record=1`): its start options replace the page's.
+    #[cfg(target_arch = "wasm32")]
+    PlayRecord(Box<record::Record>),
 }
 
 /// Start-up options.
@@ -465,7 +475,8 @@ pub struct App {
     last: Instant,
     accumulator: f32,
     /// Fixed steps completed since the start: the stamp of a record's inputs and digests
-    /// (`record.rs`). Unlike `tick` it is never reset.
+    /// (`record.rs`). Unlike `tick` it is never reset, except when the page starts the session
+    /// over (`restart_clock`: a recording or a replay counts from its own first step).
     steps: u64,
     /// A windowless app that presents like a window: the field's monsters roam and battles
     /// are shown, not settled in the step that starts them (a replayed human session).
@@ -476,6 +487,12 @@ pub struct App {
     replay: Option<Replay>,
     /// A recorded jingle end waits for the next sound step.
     jingle_ended: bool,
+    /// `?record=1` in the page: the next ROM read starts a recording of the session.
+    #[cfg(target_arch = "wasm32")]
+    record_wanted: bool,
+    /// A `.dq9rec` picked before the ROM (`?play-record=1`): replayed once the ROM is read.
+    #[cfg(target_arch = "wasm32")]
+    pending_replay: Option<record::Record>,
 }
 
 impl std::fmt::Debug for App {
@@ -592,6 +609,10 @@ impl App {
             recorder: None,
             replay: None,
             jingle_ended: false,
+            #[cfg(target_arch = "wasm32")]
+            record_wanted: false,
+            #[cfg(target_arch = "wasm32")]
+            pending_replay: None,
         };
         if let Some(rom) = rom {
             app.set_rom(rom);
@@ -1215,23 +1236,14 @@ impl App {
     fn key(&mut self, code: KeyCode, pressed: bool) -> bool {
         if !pressed {
             if self.held.remove(&code) {
-                self.log_input(Logged::Key {
-                    key: code,
-                    pressed: false,
-                });
+                self.log_key(code, false);
             }
             return false;
         }
         if !self.held.insert(code) {
             return false; // key repeat
         }
-        // From the field Escape closes the window: the end of a session, not an input.
-        if code != KeyCode::Escape || self.fight.is_some() || self.services.is_open() {
-            self.log_input(Logged::Key {
-                key: code,
-                pressed: true,
-            });
-        }
+        self.log_key(code, true);
         if self.fight.is_some() {
             // The fight reads the pad itself; the conversation's presses must not pile up.
             match code {
@@ -1280,7 +1292,12 @@ impl App {
         match code {
             KeyCode::Enter | KeyCode::Space | KeyCode::KeyZ => self.talk.press(Button::Confirm),
             KeyCode::Backspace | KeyCode::KeyX => self.talk.press(Button::Cancel),
-            KeyCode::Escape => return true,
+            KeyCode::Escape => {
+                // From the field Escape ends the session: the native window closes. The page
+                // has no window to close, and its loop would stop with the recording
+                // (`docs/app.md`, § "Recording a human session"): Escape does nothing there.
+                return !cfg!(target_arch = "wasm32");
+            }
             KeyCode::Tab => {
                 self.camera.mode = match self.camera.mode {
                     CameraMode::Orbit => CameraMode::Fly,
@@ -1685,6 +1702,16 @@ impl App {
         self.log_input_at(self.steps, input);
     }
 
+    /// Records a key the logic reads. From the field Escape ends the session natively (not an
+    /// input) and does nothing on the page: neither its press nor its release is recorded, so a
+    /// record holds no unpaired line (`docs/app.md`, § Recording a human session).
+    fn log_key(&mut self, code: KeyCode, pressed: bool) {
+        if code == KeyCode::Escape && self.fight.is_none() && !self.services.is_open() {
+            return;
+        }
+        self.log_input(Logged::Key { key: code, pressed });
+    }
+
     fn log_input_at(&mut self, step: u64, input: Logged) {
         if let Logged::Key { key, .. } = input
             && record::key_name(key).is_none()
@@ -1786,6 +1813,12 @@ impl App {
                 recorder.digest(step, digest);
             }
         }
+        // The page shows how much it has recorded (`docs/app.md`, § Recording a human session).
+        #[cfg(target_arch = "wasm32")]
+        if self.recorder.is_some() && step.is_multiple_of(record::PROGRESS_EVERY) {
+            let seed = self.recorder.as_ref().map_or(0, |r| r.header().seed);
+            crate::web::recording_progress(seed, step);
+        }
         self.replay_check(step);
         self.steps += 1;
     }
@@ -1827,6 +1860,110 @@ impl App {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn start_replay(&mut self, record: record::Record) {
         self.replay = Some(Replay::new(record));
+    }
+
+    /// Starts recording the page's session (`?record=1`), with the options it started from.
+    #[cfg(target_arch = "wasm32")]
+    fn start_page_recording(&mut self) {
+        let Some(rom) = self.rom.as_deref() else {
+            return;
+        };
+        let Ok((code, version, crc)) = record::Header::rom_identity(rom) else {
+            return;
+        };
+        // The page's loop runs steps before the ROM is read: the record's first step must be
+        // the loaded session's first, as natively (`App::new` starts both counters at 0).
+        self.restart_clock();
+        let header = record::Header {
+            rom: code,
+            rom_version: version,
+            rom_crc: crc,
+            new_game: self.options.new_game,
+            seed: self.options.play.seed.unwrap_or_default(),
+            map: self.options.map.clone(),
+            save: self.options.save.as_deref().map(record::Header::save_hash),
+            time: self.options.time,
+            clock: self.options.clock,
+            chapter: self.options.story_override[0],
+            step: self.options.story_override[1],
+            substep: self.options.story_override[2],
+            night: !self.options.story.daytime,
+            stage: None,
+            event: self.options.event,
+            battles: "show".to_owned(),
+        };
+        self.recorder = Some(Recorder::new(header));
+    }
+
+    /// The page's "Save recording": the record so far, ended at this step with a closing
+    /// digest, handed to the page as a download. The recording goes on.
+    #[cfg(target_arch = "wasm32")]
+    fn save_page_record(&mut self) {
+        let digest = self.state_digest();
+        let snapshot = self
+            .recorder
+            .as_ref()
+            .map(|recorder| recorder.snapshot(self.steps, digest));
+        let Some(record) = snapshot else {
+            status("record: this session is not being recorded");
+            return;
+        };
+        crate::web::offer_record(
+            &format!("dq9-{}-{}.dq9rec", record.header.seed, record.end),
+            &record.to_text(),
+        );
+    }
+
+    /// Replays a `.dq9rec` picked in the page (`?play-record=1`): its start options replace the
+    /// page's, and the session starts over so the record's steps are the first ones again.
+    /// `rom` is the ROM the page queued with the record (picked before it); else the one the
+    /// page already loaded is loaded again under the record's options.
+    #[cfg(target_arch = "wasm32")]
+    fn start_page_replay(&mut self, record: record::Record, rom: Option<Vec<u8>>) {
+        let rom = rom.or_else(|| self.rom.take());
+        if let Some(rom) = rom {
+            if let Err(e) = record
+                .header
+                .check_start(&rom, self.options.save.as_deref())
+            {
+                // The page's own session goes on: its ROM is loaded, without a replay.
+                status(&format!("record: {e}"));
+                self.set_rom(rom);
+                return;
+            }
+            self.adopt_record_options(&record.header);
+            self.set_rom(rom);
+        } else {
+            self.adopt_record_options(&record.header);
+        }
+        let end = record.end;
+        self.start_replay(record);
+        status(&format!(
+            "replay: {end} recorded steps; the keyboard only closes the window (M mutes, R changes the layout)"
+        ));
+    }
+
+    /// The start options a record names replace the page's: the map it started on (or its new
+    /// game), its seed, its time of day, its story point and its save. The session's clock
+    /// starts over with them, so the record's step 0 is the session's.
+    #[cfg(target_arch = "wasm32")]
+    fn adopt_record_options(&mut self, header: &record::Header) {
+        let (layout, mute) = (self.options.layout, self.options.mute);
+        self.options = Options::from_record(header, self.options.save.take(), layout, mute);
+        self.restart_clock();
+        self.replay = None;
+    }
+
+    /// Starts the fixed step count and the free-running tick over, between two frames: a
+    /// record (made here or natively) counts its steps from the session's first one, while the
+    /// page's loop has already run steps before the ROM was read.
+    #[cfg(target_arch = "wasm32")]
+    fn restart_clock(&mut self) {
+        self.steps = 0;
+        self.tick = 0;
+        self.clock_ms = 0.0;
+        self.accumulator = 0.0;
+        self.last = Instant::now();
     }
 
     fn axis(&self, plus: &[KeyCode], minus: &[KeyCode]) -> f32 {
@@ -2875,7 +3012,20 @@ impl ApplicationHandler<UserEvent> for App {
                 event_loop.exit();
             }
             #[cfg(target_arch = "wasm32")]
-            UserEvent::Rom(rom) => self.set_rom(rom),
+            UserEvent::Rom(rom) => match self.pending_replay.take() {
+                // A record picked before the ROM names the session the ROM starts: its options
+                // are applied before the load, so the page's own start options never run.
+                Some(record) => self.start_page_replay(record, Some(rom)),
+                None => {
+                    self.set_rom(rom);
+                    // `?record=1`: the recording starts on the session the ROM loaded (a
+                    // refused ROM leaves `self.rom` empty and the page offers another).
+                    if self.record_wanted && self.rom.is_some() {
+                        self.record_wanted = false;
+                        self.start_page_recording();
+                    }
+                }
+            },
             #[cfg(target_arch = "wasm32")]
             UserEvent::Save(save) => self.set_save(save),
             #[cfg(target_arch = "wasm32")]
@@ -2890,6 +3040,18 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::NewGame => {
                 self.options.new_game = true;
                 self.start_new_game();
+            }
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::Record => self.record_wanted = true,
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::RecordSave => self.save_page_record(),
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::PlayRecord(record) => {
+                if self.rom.is_some() {
+                    self.start_page_replay(*record, None);
+                } else {
+                    self.pending_replay = Some(*record);
+                }
             }
         }
         if let Some(window) = &self.window {
@@ -2918,10 +3080,12 @@ impl ApplicationHandler<UserEvent> for App {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     let pressed = event.state == ElementState::Pressed;
                     if self.replay.is_some() {
-                        // A replay drives the logic; the keyboard only closes the window and
-                        // changes what is heard and seen.
+                        // A replay drives the logic; the keyboard only closes the window (not on
+                        // the page: Escape there does nothing) and changes what is heard/seen.
                         match code {
-                            KeyCode::Escape if pressed => event_loop.exit(),
+                            KeyCode::Escape if pressed && cfg!(not(target_arch = "wasm32")) => {
+                                event_loop.exit()
+                            }
                             KeyCode::KeyM if pressed => self.audio.toggle_mute(),
                             KeyCode::KeyR if pressed => {
                                 self.set_layout(self.options.layout.next());

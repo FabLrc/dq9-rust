@@ -996,14 +996,59 @@ through `App::key`, camera turn, mouse, menus, digests. `scripts/parity.ps1` tak
 a reference's `inputs` with `"kind": "record"` (it then runs `--play-record`); the record
 carries the start options, so the reference's `args` stay empty.
 
-**Web.** Not implemented in this batch: the page has no `?record=1` nor `?play-record`. The shared
-pieces already compile for wasm (`record.rs`, the `App` hooks: `App::start_recording`,
-`finish_recording` and `start_replay` take and return a `Record`/its text), so the page only has
-to offer the download and a file input. Until then a browser session cannot be recorded; a record
-made natively replays natively.
+**Web.** The page records and replays the same files, through the same `App` hooks (a
+recording is `App::recorder`, a replay `App::replay`):
 
-**Esc closes the window** from the field (it is the game's cancel key only inside a fight or a
-facility screen), which ends the recording: close the window on purpose.
+```text
+https://fablrc.github.io/dq9-rust/?record=1&newgame=1&seed=7&mute=1   record a session
+https://fablrc.github.io/dq9-rust/?play-record=1&mute=1               replay a .dq9rec
+```
+
+`?record=1` records the session that starts when the ROM is read, from its first step: the seed
+is `?seed=N`, else 7 — a record has to replay, so the page never picks a seed now — and the
+header shows it (`#recording`, `● recording · seed 7 · 1200 steps`). "Save recording"
+(`#recordsave`) is enabled while the page records and works at any moment: it downloads
+`dq9-<seed>-<steps>.dq9rec`, built by the page as a `Blob` (`index.html`'s `dq9Download`; the
+wasm side writes no file and uploads nothing), holding every input recorded so far plus a
+closing digest of the step it is saved at (`Recorder::snapshot`: a digest is stamped with the
+state its step starts from, like every other one), and the recording goes on. The step count is
+the app's own (`App::step_begin` calls `web::recording_progress` once a second). The fields that
+would replace the recorded session (ROM, save, time of day, "New game") are disabled while it
+runs; layout, screens and effects never reach the logic and stay live. No `beforeunload` offer
+is made: the download is the player's click.
+
+The header is the native one (`battles: "show"`, the start options of `Options`: `new_game`,
+`map`, the save's hash, `seed`, `time`/`clock`, chapter/step/substep, night, the event) and a
+replay starts from it. Like a native record it holds no `textspeed`: a replay types dialogue at
+the default (`normal`) pace, and `fight` is the presentation a session always has.
+`?play-record=1`, or "Play recording" (`#recordfile`) on any page, reads a `.dq9rec` (native- or
+Web-made) and then asks for the ROM, which must be the one the record was played on
+(`Header::check_start`: game code, version, header CRC, save hash); the choice of ROM is the
+page's normal one. A replay in the page is the native windowed one
+(`App::replay_frame`): its inputs feed `App::key` at their step, the digests are compared as they
+fall due, and the stop line goes to the console and to `#status` —
+`stopped: event N ended after S s of game time`, `stopped: record ended after N steps …`, or
+`stopped: digest mismatch at step N (recorded at M): field recorded X, replayed Y`. The page
+starts the replay on its own clock (`App::start_page_replay` resets `steps` and `tick` before
+loading the record's start options), so a record replays even when the page has already played
+something. During a replay the keyboard changes only what is heard and seen (`M` mutes, `R`
+changes the layout); a native window also closes on Escape, the page does not.
+
+**Escape on the page.** From the field, Escape ends the session (`App::key` returns `true`): the
+native window closes and writes its record. The page has no window to close, and its event loop
+would stop with everything in it, the recording and "Save recording" included, so there Escape
+does nothing in the field (`return !cfg!(target_arch = "wasm32")`, same in a replay) and the
+page keeps its session. Inside a fight or a facility screen Escape is the game's cancel key on
+both and is recorded like any other input; from the field neither its press nor its release is
+recorded (`App::log_key`), so a record holds no unpaired key line.
+
+Cross-compatibility is checked both ways (batch `j4-web-record`,
+`build/evidence/j4-web-record/`): a browser session replayed by `--play-record`, and a record
+made natively replayed in the page, every digest matching.
+
+**Esc closes the window** from the field natively (it is the game's cancel key only inside a
+fight or a facility screen), which ends the recording: close the window on purpose. On the page
+Escape leaves the session running: download the record, then reload the page.
 
 **Determinism hunt** (batch `j4-human-record`, evidence under `build/evidence/j4-human-record/`).
 Observed:
@@ -1054,7 +1099,9 @@ Battles are interactive; standalone battle 26 has been played to victory in the 
 screens are still missing;
 effects and battle motions are incomplete. The route mode and the pilot also run on the
 hosted page (deployment `2e580a1`): a `battles=show` session there played the chapter 2 route
-to event 2750 (§ "Route mode in the browser").
+to event 2750 (§ "Route mode in the browser"). The page also records and replays a session
+inside the browser (`?record=1`, `?play-record=1` or the "Play recording" field): § "Recording a
+human session".
 
 The ROM/save fields and the selectors stay disabled during the download and
 initialization of the engine. "New game" stays disabled until the bytes of
@@ -1105,8 +1152,9 @@ Open `http://localhost:8000/` (parameters `map`, `time` (name or 0 to 3), `clock
 (`enhanced` (default), `enhanced-reactive`, `stacked`, `side` or `top`), `fx`/`nofx` (the
 enhanced effects to switch on/off, § "Enhanced 16:9"), `screens` (`port` or `original`: where the field
 and its message window are drawn, § "DS screens"), `chapter`, `step`,
-`substep`, `night=1`, `mute=1`, `newgame=1`, `seed`, and the pilot session's `pilot`, `fight`, `route`,
-`speed`, `budget`, `render`, `battles`: § "Route mode in the browser"), then choose the ROM and, optionally, a `.sav` save in the
+`substep`, `night=1`, `mute=1`, `newgame=1`, `seed`, `record` and `play-record` (§ "Recording
+a human session"), and the pilot session's `pilot`, `fight`, `route`, `speed`, `budget`,
+`render`, `battles`: § "Route mode in the browser"), then choose the ROM and, optionally, a `.sav` save in the
 page. Both files are read locally in the browser, never sent or hosted;
 an explicit `map` takes precedence over the save's map. The "New game" button (or `?newgame=1`)
 launches the prologue (§ "New game"); it stays disabled until the ROM is read and

@@ -13,6 +13,15 @@ use crate::screens::{Layout, ScreenMode};
 use dq9_core::talk::TextSpeed;
 use dq9_render::EnhancedOptions;
 
+thread_local! {
+    /// Whether the page has queued the ROM (`#rom`): a record picked afterwards replays at
+    /// once instead of waiting for a ROM (`web.rs`, `watch_record_input`).
+    static ROM_READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether this page records its session (`?record=1`): a record picked then would start
+    /// the page's session over under another file's options, so it is refused.
+    static RECORDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn document() -> Option<web_sys::Document> {
     web_sys::window()?.document()
 }
@@ -156,12 +165,23 @@ pub fn canvas_size() -> Option<(u32, u32)> {
     ))
 }
 
+/// What the page's `record` and `play-record` parameters asked for (`docs/app.md`,
+/// § Recording a human session).
+#[derive(Debug, Clone, Copy, Default)]
+struct PageMode {
+    /// `?record=1`: the session is recorded from its first step (`UserEvent::Record`).
+    record: bool,
+    /// `?play-record=1`: the page expects a `.dq9rec` to replay (`UserEvent::PlayRecord`).
+    play_record: bool,
+}
+
 type PageOptions = (
     Options,
     Option<SessionSpec>,
     ScreenMode,
     EnhancedOptions,
     TextSpeed,
+    PageMode,
 );
 
 /// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
@@ -178,9 +198,13 @@ type PageOptions = (
 /// (the engine plays the battles the native headless run settles), `speed` (fixed steps per
 /// animation frame; real time without it), `budget` (milliseconds of steps per frame, 40 by
 /// default), `render=0` (no frame is drawn) and `battles=show` (battles are presented instead
-/// of settled in the step that starts them).
+/// of settled in the step that starts them). Recording adds `record=1` (the session is
+/// recorded from its first step, with seed 7 when `seed` is absent: a record must be
+/// replayable) and `play-record=1` (a `.dq9rec` picked in the page is replayed instead of a
+/// session being played).
 fn options() -> PageOptions {
     let mut fx = EnhancedOptions::ALL;
+    let mut mode = PageMode::default();
     let mut options = Options {
         map: None,
         save: None,
@@ -284,8 +308,18 @@ fn options() -> PageOptions {
                     request.monsters = monsters;
                 }
             }
+            "record" => mode.record = value != "0",
+            "play-record" => mode.play_record = value != "0",
             _ => {}
         }
+    }
+    if mode.record && mode.play_record {
+        error("record=1 and play-record=1 cannot be combined; recording this session");
+        mode.play_record = false;
+    }
+    // A record must replay: with no `seed` the bots' generators would differ on every play.
+    if mode.record && options.play.seed.is_none() {
+        options.play.seed = Some(7);
     }
     // Same order as `--fx` then `--no-fx`: the off list wins whatever the query order.
     if let Err(e) = fx.apply_list(&fx_on, true) {
@@ -296,7 +330,14 @@ fn options() -> PageOptions {
     }
     // The route mode needs the engine to play the battles, like `--route` needs `--fight`.
     options.play.fight |= session.route.is_some();
-    (options, pilot.then_some(session), screens, fx, text_speed)
+    (
+        options,
+        pilot.then_some(session),
+        screens,
+        fx,
+        text_speed,
+        mode,
+    )
 }
 
 /// `number[xcount]` comma-separated of the page's `monsters` parameter.
@@ -311,8 +352,10 @@ fn parse_monsters(text: &str) -> Option<Vec<(u16, u16)>> {
 
 /// Sends the bytes of each file picked in `#rom` to the event loop. The input and the new game
 /// button are disabled while the file is read, so a new game always has a ROM queued before it;
-/// the bytes stay in the browser.
-fn watch_rom_input(proxy: EventLoopProxy<UserEvent>) {
+/// the bytes stay in the browser. With `?record=1` (`record_seed`) the recording starts on that
+/// ROM's own session: `UserEvent::Record` goes first, so the record's first step is the
+/// session's first step, and the fields that would replace the session stay disabled.
+fn watch_rom_input(proxy: EventLoopProxy<UserEvent>, record_seed: Option<u64>) {
     let Some(input) = document()
         .and_then(|d| d.get_element_by_id("rom"))
         .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
@@ -341,13 +384,25 @@ fn watch_rom_input(proxy: EventLoopProxy<UserEvent>) {
             match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
                 Ok(buffer) => {
                     let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-                    let _ = proxy.send_event(UserEvent::Rom(bytes));
-                    target.set_disabled(false);
-                    set_disabled("newgame", false);
-                    announce(&format!(
-                        "ROM read locally ({:.0} MiB); it does not leave this browser.",
-                        size / 1048576.0
-                    ));
+                    ROM_READY.set(true);
+                    if let Some(seed) = record_seed {
+                        recording_ui(seed, 0);
+                        let _ = proxy.send_event(UserEvent::Record);
+                        let _ = proxy.send_event(UserEvent::Rom(bytes));
+                        announce(&format!(
+                            "Recording this session (seed {seed}, {:.0} MiB ROM read locally). \
+                             “Save recording” downloads it at any moment; nothing is uploaded.",
+                            size / 1048576.0
+                        ));
+                    } else {
+                        let _ = proxy.send_event(UserEvent::Rom(bytes));
+                        target.set_disabled(false);
+                        set_disabled("newgame", false);
+                        announce(&format!(
+                            "ROM read locally ({:.0} MiB); it does not leave this browser.",
+                            size / 1048576.0
+                        ));
+                    }
                     focus_canvas();
                 }
                 Err(e) => {
@@ -366,6 +421,146 @@ fn watch_rom_input(proxy: EventLoopProxy<UserEvent>) {
     // The listener lives as long as the page.
     on_change.forget();
 }
+
+/// The page's recorded step count and recording indicator (`App::step_begin`, once a second).
+pub fn recording_progress(seed: u64, steps: u64) {
+    recording_ui(seed, steps);
+}
+
+/// Shows the recording indicator with `steps` recorded so far, and the seed the record names.
+fn recording_ui(seed: u64, steps: u64) {
+    RECORDING.set(true);
+    let Some(el) = document().and_then(|d| d.get_element_by_id("recording")) else {
+        return;
+    };
+    el.set_text_content(Some(&format!("● recording · seed {seed} · {steps} steps")));
+    let _ = el.remove_attribute("hidden");
+    let _ = el.set_attribute("data-kind", "recording");
+    set_disabled("recordsave", false);
+    // A recorded session is the one that started with the ROM: nothing may replace it. The
+    // layout, the screens and the effects never reach the logic and stay live.
+    for id in ["rom", "save", "time", "newgame"] {
+        set_disabled(id, true);
+    }
+}
+
+/// Hands the record so far to the page as a download (`index.html`'s `dq9Download`): a `Blob`
+/// the browser saves, `dq9-<seed>-<steps>.dq9rec`. The file never leaves the machine.
+pub fn offer_record(name: &str, text: &str) {
+    let download = web_sys::window()
+        .and_then(|window| js_sys::Reflect::get(&window, &"dq9Download".into()).ok())
+        .and_then(|helper| helper.dyn_into::<js_sys::Function>().ok());
+    let Some(download) = download else {
+        error(
+            "The page has no download helper (index.html is out of date): the record was not saved.",
+        );
+        return;
+    };
+    if let Err(e) = download.call2(
+        &wasm_bindgen::JsValue::UNDEFINED,
+        &name.into(),
+        &text.into(),
+    ) {
+        error(&format!("Cannot hand the record to the page: {e:?}"));
+        return;
+    }
+    announce(&format!(
+        "Record saved as {name} ({} KiB) in your downloads folder; it stays on this machine.",
+        text.len() / 1024
+    ));
+}
+
+/// Watches the page's "Save recording" button (`#recordsave`): the app answers with
+/// `offer_record`.
+fn watch_record_save(proxy: EventLoopProxy<UserEvent>) {
+    let Some(button) = document().and_then(|d| d.get_element_by_id("recordsave")) else {
+        error("The page has no <button id=recordsave> button.");
+        return;
+    };
+    let on_click = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+        let _ = proxy.send_event(UserEvent::RecordSave);
+        focus_canvas();
+    });
+    if button
+        .add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())
+        .is_err()
+    {
+        error("Cannot watch the \"Save recording\" button.");
+    }
+    on_click.forget();
+}
+
+/// Reads the `.dq9rec` picked in `#recordfile` (a native- or Web-made record) and replays it:
+/// its start options replace the page's, and the ROM is chosen as for a normal run.
+fn watch_record_input(proxy: EventLoopProxy<UserEvent>) {
+    let Some(input) = document()
+        .and_then(|d| d.get_element_by_id("recordfile"))
+        .and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
+    else {
+        error("The page has no <input type=file id=recordfile> field.");
+        return;
+    };
+    let target = input.clone();
+    let on_change = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+        if RECORDING.get() {
+            // A replay restarts the session under the record's own start options (`App`): the
+            // page's recording would then hold two sessions' steps.
+            error("This page is recording its session: reload it to replay a record.");
+            return;
+        }
+        let Some(file) = target.files().and_then(|f| f.get(0)) else {
+            return;
+        };
+        let name = file.name();
+        // Same as the ROM field: choosing the same record twice replays it twice.
+        target.set_value("");
+        let proxy = proxy.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let buffer = match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+                Ok(buffer) => buffer,
+                Err(e) => {
+                    error(&format!("Cannot read {name}: {e:?}"));
+                    return;
+                }
+            };
+            let Ok(text) = String::from_utf8(js_sys::Uint8Array::new(&buffer).to_vec()) else {
+                error(&format!("{name} is not a .dq9rec file (not UTF-8 text)"));
+                return;
+            };
+            let record = match crate::record::Record::parse(&text) {
+                Ok(record) => record,
+                Err(e) => {
+                    error(&format!("{name}: {e}"));
+                    return;
+                }
+            };
+            let (end, seed) = (record.end, record.header.seed);
+            let _ = proxy.send_event(UserEvent::PlayRecord(Box::new(record)));
+            if let Some(el) = document().and_then(|d| d.get_element_by_id("recording")) {
+                el.set_text_content(Some(&format!("▶ replay · seed {seed} · {end} steps")));
+                let _ = el.remove_attribute("hidden");
+            }
+            if ROM_READY.get() {
+                announce(&format!(
+                    "{name}: replaying {end} recorded steps (seed {seed})…"
+                ));
+            } else {
+                announce(&format!(
+                    "{name}: {end} recorded steps (seed {seed}); choose the ROM it was played on."
+                ));
+            }
+            focus_canvas();
+        });
+    });
+    if input
+        .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+        .is_err()
+    {
+        error("Cannot watch the recording field.");
+    }
+    on_change.forget();
+}
+
 /// Sends the bytes of the optional save picked in `#save` to the event loop.
 fn watch_save_input(proxy: EventLoopProxy<UserEvent>) {
     let Some(input) = document()
@@ -599,10 +794,14 @@ pub fn main() {
         }
     };
     let proxy = event_loop.create_proxy();
-    watch_rom_input(proxy.clone());
+    let (options, session, screens, fx, text_speed, mode) = options();
+    // The seed of the recording the page asks for (`?record=1`; 7 unless `?seed=` names one).
+    let record_seed = mode.record.then_some(options.play.seed.unwrap_or(7));
+    watch_rom_input(proxy.clone(), record_seed);
     watch_save_input(proxy.clone());
     watch_new_game_button(proxy.clone());
-    let (options, session, screens, fx, text_speed) = options();
+    watch_record_save(proxy.clone());
+    watch_record_input(proxy.clone());
     watch_time_select(proxy.clone(), options.time.unwrap_or(0));
     watch_layout_select(proxy.clone(), options.layout);
     watch_fx_checkboxes(proxy.clone(), fx);
@@ -612,6 +811,12 @@ pub fn main() {
         "Choose your Dragon Quest IX ROM (.nds); a .sav save is optional. \
          These files stay in this browser.",
     );
+    if mode.play_record {
+        announce(
+            "Play recording: choose a .dq9rec file (native- or Web-made), then the ROM it \
+             was played on; it stays in this browser.",
+        );
+    }
     let mut app = App::new(proxy, options, None);
     app.set_screens(screens);
     app.set_text_speed(text_speed);

@@ -16,6 +16,9 @@
     #fx label { display: inline-flex; gap: 3px; align-items: center; }
     #status[data-kind="error"] { color: #ff8a80; opacity: 1; }
     #session { flex-basis: 100%; font-family: monospace; color: #9ccc65; overflow-wrap: anywhere; }
+    #recording { font-family: monospace; color: #ffd54f; }
+    #recording[data-kind="recording"]::before { color: #ef5350; }
+    #recordsave:enabled { color: #ffd54f; }
     main { flex: 1; min-height: 0; position: relative; }
     canvas#dq9 { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; outline: none; }
   </style>
@@ -59,9 +62,22 @@
         <code>?screens=original</code>) is the original's assignment; the top screen is then a
         plain placeholder until the map screen is read, and a battle is unchanged. Both work
         with every screen layout.</p>
+      <p><strong>Recording a session:</strong> open the page with <code>?record=1</code>
+        (and <code>?newgame=1</code> to record the prologue), choose the ROM: the session that
+        starts with it is recorded from its first step, and the header shows the seed
+        (<code>?seed=N</code>, 7 otherwise, so the run replays). "Save recording" downloads a
+        <code>dq9-&lt;seed&gt;-&lt;steps&gt;.dq9rec</code> file at any moment: it holds the
+        inputs so far plus a state digest every 10 s. The file stays on your machine, nothing
+        is uploaded. To replay one, choose it in "Play recording" (or open the page with
+        <code>?play-record=1</code>) and then the ROM it was played on: the status line and
+        the console say where the replay stopped, or the first state that differed. The same
+        file plays natively with <code>--play-record</code>.</p>
     </details>
     <label>ROM (.nds): <input type="file" id="rom" accept=".nds" disabled></label>
     <label>Save (.sav, optional): <input type="file" id="save" accept=".sav" disabled></label>
+    <label>Play recording (.dq9rec): <input type="file" id="recordfile" accept=".dq9rec" disabled></label>
+    <button id="recordsave" type="button" disabled>Save recording</button>
+    <span id="recording" hidden></span>
     <label>Time: <select id="time" disabled>
       <option value="0">night</option><option value="1">morning</option>
       <option value="2">day</option><option value="3">evening</option>
@@ -95,6 +111,18 @@
   </header>
   <main><canvas id="dq9" tabindex="0"></canvas></main>
   <script type="module">
+    // The record download (web.rs calls this through `Reflect`): a Blob the browser saves, so
+    // a recorded session never leaves the machine and the wasm side touches no filesystem.
+    window.dq9Download = (name, text) => {
+      const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    };
     // Built by `wasm-bindgen --target web --out-dir crates/dq9-app/web/pkg` (docs/app.md).
     const status = document.querySelector("#status");
     const fail = (message) => {
