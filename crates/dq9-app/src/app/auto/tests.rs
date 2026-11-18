@@ -680,17 +680,22 @@ fn a_shown_battle_leaves_the_game_in_the_state_an_instant_one_does() {
 
 /// The SHA-256 of the route's checkpoint JSONL, pinned on `main` before the batch: the
 /// acceptance file `build/evidence/j4-item-spend/route-before-checkpoints.jsonl` (12-char
-/// prefix `8ce4af30e497`; `j4-field-menu-rules` re-ran the route byte-identically).
+/// prefix `8ce4af30e497`; `j4-field-menu-rules` re-ran the route byte-identically), re-pinned
+/// by `j4-parity-regress` after the original message pacing (`d068809`, `f516d79`): the same
+/// 972 checkpoints with **every non-tick field identical** and the game time at 3627.8 s
+/// instead of 3035.5 s (`build/evidence/j4-parity-regress/route-2750-checkpoints.jsonl`,
+/// 970 of the 972 lines differ only in `tick`/`seconds`/`vblank`).
 const ROUTE_CHECKPOINTS_SHA256: &str =
-    "8ce4af30e4970a3facb70d3aa45c11e79090f0d4ccb5078c895ee9e8aa41cfea";
+    "3d27e89d9737c61f7596cf99714002ea5038fe6c97f6bf1351ab0249a8c5c02a";
 
 /// The prologue and chapter 2 played by the pilot with the real battle engine, from a new
 /// game to event 2750 (`--new-game --pilot --fight --route 2750 --seed 7 --headless`): the
 /// Hexagoon is lost at Lv 4, 5, 6 and 7 and won at Lv 8, the story ends at 2.6.5, and the
-/// checkpoints are the acceptance run's 972 lines, digest and all. The digest is the whole
+/// checkpoints are the acceptance run's 972 lines, digest and all, at 3627.8 s of game time
+/// (the original message pacing; 3057.2 s in the acceptance run). The digest is the whole
 /// game state the run went through, so a changed draw, step, flag or map fails it.
 ///
-/// `#[ignore = "long: ~19 min in release"]`: `cargo test` stays fast; `scripts/verify.ps1
+/// `#[ignore = "long: ~17 min in release"]`: `cargo test` stays fast; `scripts/verify.ps1
 /// -Only long` runs it before a milestone. Set `DQ9_ROUTE_REFERENCE` to a previous JSONL to
 /// have a failure name the first checkpoint and field that differ.
 #[test]

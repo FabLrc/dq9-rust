@@ -2639,6 +2639,106 @@ fn a_replay_without_the_players_inputs_fails_at_the_first_digest_that_differs() 
     );
 }
 
+/// The pad bits and action key of an `--trace-inputs` JSONL line, as `replay_step` takes them.
+fn replay_frames(jsonl: &str) -> Vec<(u8, bool)> {
+    jsonl
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let pad = line
+                .split_once("\"pad\":[")
+                .and_then(|(_, rest)| rest.split_once(']'))
+                .map(|(pad, _)| pad)
+                .unwrap_or_else(|| panic!("no pad in {line}"));
+            let mut bits = 0;
+            for (bit, name) in headless::PAD_NAMES {
+                if pad.contains(&format!("\"{name}\"")) {
+                    bits |= bit;
+                }
+            }
+            (bits, line.contains("\"a\":true"))
+        })
+        .collect()
+}
+
+/// The pilot's own `--trace-inputs` pad, replayed headless, reaches the pilot's own
+/// checkpoints, the first control point (story 1.1.1) included: both paths must spend the
+/// same fixed steps (`app/headless.rs`, `replay_step`). The parity references are such traces
+/// replayed on the headless runtime, so a step that only one path spends moves the replay off
+/// the route it was recorded on (batch `j4-parity-regress`: native 560 made event 1140 take
+/// the script's guest branch, 20 ticks earlier, and the recorded route aged).
+#[test]
+fn a_pilot_trace_replays_to_the_first_control_point() {
+    let Some(rom) = testrom::load() else { return };
+    let new_game = |trace_inputs: bool| Options {
+        map: None,
+        save: None,
+        time: None,
+        clock: None,
+        layout: Layout::default(),
+        mute: true,
+        record_sound: false,
+        trace_inputs,
+        event: None,
+        story: dq9_formats::cast::Story {
+            chapter: 1,
+            step: 1,
+            substep: 1,
+            daytime: true,
+            ..Default::default()
+        },
+        story_override: [None; 3],
+        new_game: true,
+        battle: None,
+        play: BattlePlay {
+            fight: true,
+            seed: Some(7),
+        },
+    };
+    // The prologue to the first free control takes 13 785 fixed steps at the original message
+    // rate (the opening, two scenes and battle 26 fought by the engine); the budget leaves
+    // the pilot walking after it, so the trace carries pad bits as well as the confirm key.
+    const STEPS: u64 = 15_000;
+    let controls = |app: &App| -> Vec<(u8, u8, u8)> {
+        app.journal
+            .steps
+            .iter()
+            .filter_map(|(_, step)| match step {
+                Step::Control { story, .. } => Some(*story),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut pilot = App::new_headless(new_game(true), Some(rom.to_vec()));
+    pilot.play_auto(STEPS, true);
+    let reached = controls(&pilot);
+    assert!(
+        reached.contains(&(1, 1, 1)),
+        "the prologue must reach the first control point within {STEPS} steps: {reached:?}"
+    );
+
+    let trace = pilot.input_trace_jsonl();
+    assert_eq!(
+        trace.lines().count() as u64,
+        STEPS,
+        "one line per fixed step"
+    );
+    let mut replay = App::new_headless(new_game(false), Some(rom.to_vec()));
+    for (bits, confirm) in replay_frames(&trace) {
+        replay.replay_step(bits, confirm);
+    }
+    let replayed = controls(&replay);
+    assert!(
+        replayed.contains(&(1, 1, 1)),
+        "the replayed trace must reach the first control point: {replayed:?}"
+    );
+    assert_eq!(
+        replay.checkpoints_jsonl(),
+        pilot.checkpoints_jsonl(),
+        "the replayed trace must land on the pilot's own checkpoints"
+    );
+}
+
 /// A route session that shows its battles, as a window does, to the end of event 2750: the
 /// tick, the line it stopped with, its checkpoints and the state it ended in.
 fn shown_route(rom: &[u8]) -> (u64, String, String, record::Digest) {

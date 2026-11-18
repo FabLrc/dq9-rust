@@ -610,7 +610,7 @@ or `W`/`A`/`S`/`D` move the cursor (left and up go back, right and down forward)
 `R` layout; `Esc` cancels command menus and still closes the application on the field. No
 touch. With `--layout top` the bottom screen's windows are laid over the top screen.
 
-**Headless and parity.** The 615 checkpoints and the recorded traces pin battle 26's "won at
+**Headless and parity.** The recorded checkpoints and traces pin battle 26's "won at
 once" timeline, so a headless run, `--replay` and the application's tests keep the stand-in
 unless `--fight` is given; the window and the Web always fight. `--fight` plays the battle in
 the same fixed step (no step is spent on a presentation) with the automatic policy (Attack
@@ -625,19 +625,22 @@ drop, so the female original's herb flag `4135` stays an `accepted` deviation
 the runtime's flags and fail the male reference, which is why the seed is part of the
 reference.
 
-**Recording a reference.** The inputs are the combined native route, and the originals are
-real-game checkpoints aligned by story point (`scripts/compare-runs.ps1`), never a
+**Recording a reference.** The inputs are the pilot's own closed-loop route, and the originals
+are real-game checkpoints aligned by story point (`scripts/compare-runs.ps1`), never a
 frame-synced replay of our trace: the runtime's fixed steps and melonDS's VBlanks do not
-share a base (1.1.1 at step 12625 against VBlank 23033; 1.1.2 at 20068 against 58392).
+share a base (1.1.1 at the reference's step 12625 against VBlank 23033; 1.1.2 at 20068 against
+58392; the current trace has them at 13,785 and 23,008 at the original message pacing).
 Everything below lives under `build/` (ignored); the file and its schema are documented in
 `docs/re/tools.md`.
 
 ```powershell
-# 1. Inputs: the driver's native route. The current references pin the archived 40,432-step
-#    trace (inputs/combined-final-inputs.jsonl, sha256 5394e04ed1cb...) and replay it as is;
-#    a fresh driver run records its own file, which the reference then pins by sha256.
-cargo run -p dq9-app --release -- --new-game --headless --auto --pilot `
-  --trace-inputs build/route.jsonl --checkpoints build/route-checkpoints.jsonl
+# 1. Inputs: the pilot's own closed-loop trace. The current references pin the 60,000-step
+#    pilot trace (inputs/pilot-inputs.jsonl, sha256 5bb6bc99b049..., batch j4-parity-regress)
+#    and replay it as is; a fresh run records its own file, which the reference then pins by
+#    sha256. The pilot re-walks the route, so a timeline change (a fade, a message tick) does
+#    not leave the replay standing at a post.
+cargo run -p dq9-app --release -- --new-game --fight --seed 7 --headless --auto --pilot `
+  --headless-steps 60000 --trace-inputs build/route.jsonl --checkpoints build/route-checkpoints.jsonl
 
 # 2. Runtime side: the same inputs with battle 26 played by the engine and seeded.
 cargo run -p dq9-app --release -- --new-game --fight --seed 7 --mute --headless `
@@ -756,12 +759,21 @@ global flags remain unknown (see `docs/re/trigger.md`).
 `up/down/left/right`, `a`). `--replay` reads this file back without a driver: each line feeds the
 D-pad and action button of one fixed step. The trace of the driver's run (40,432 steps, from the
 new game to `M01M08` in 1.2.1 via 1.1.2, `X01M04` and Angel Falls `M01`)
-replayed gives **the same 615 checkpoints, byte for byte** (sha256 `c2b10c767640`,
+replayed gave **the same 615 checkpoints, byte for byte** (sha256 `c2b10c767640`,
 `build/cast-reload/`), which is the evidence of reproducible inputs: the driver no longer reloads
 the map when the story advances, it sees the cast that the game's action `0x8d`
 rebuilds, like the replay and a player. The driver gives world directions with the camera at
 angle 0 and `--replay` forces the same heading: the trace proves the headless driver's evidence in
 our engine, not a replay with an arbitrary manual camera nor a melonDS gamepad.
+
+Batch `j4-parity-regress` replaced that open-loop A-mashing trace with the pilot's own closed
+loop (`inputs/pilot-inputs.jsonl`, 60,000 steps, recorded on `f516d79`): the pilot walks its
+route and presses confirm where it must, so a timeline change no longer strands the replay at a
+post — the mashing trace did exactly that after native 560 was implemented
+(`build/evidence/j4-parity-regress/report.md`). The test
+`a_pilot_trace_replays_to_the_first_control_point` pins that equality on a short prefix: the
+pilot's trace replayed through `replay_step` must land on the pilot's own checkpoints, the first
+control point included.
 
 On the Web: the page's "New game" button (or `?newgame=1`), after choosing the ROM.
 
@@ -986,12 +998,16 @@ facility screen), which ends the recording: close the window on purpose.
 **Determinism hunt** (batch `j4-human-record`, evidence under `build/evidence/j4-human-record/`).
 Observed:
 
-- The pilot's `--route 2750` (instant battles, release) run **twice** gives the same 972
-  checkpoints byte for byte and the same report, `stopped: event 2750 ended` at 3035.5 s
-  (`route-instant-a-checkpoints.jsonl`, sha256 `8ce4af30e497`; the second run is the same file;
-  1251 s of wall time each, the machine loaded). The headless `--replay` of the parity trace
-  gives the same 102 checkpoints on `c035fa9` and on this branch
-  (`parity-replay-mine-checkpoints.jsonl`): the hooks add nothing to the pilot's path.
+- The pilot's `--route 2750` (instant battles, release) pins the 972 checkpoints of the long
+  test: `stopped: event 2750 ended` at **3627.8 s** of game time, sha256 `3d27e89d9737`
+  (`build/evidence/j4-parity-regress/route-2750-checkpoints.jsonl`; the run before the original
+  message pacing of `d068809`/`f516d79` stood at 3035.5 s and `8ce4af30e497`, and the two files
+  differ on 970 of the 972 lines in `tick`/`seconds`/`vblank` alone). Two runs of one build give
+  the digest byte for byte (`route-instant-a-checkpoints.jsonl`, 1251 s of wall time each, the
+  machine loaded). The headless `--replay` of the parity trace runs on the same `App` step and
+  reaches the story points the trace was recorded on: since batch `j4-parity-regress` that trace
+  is the pilot's own closed loop (173 checkpoints, `parity.ps1` 2/2, and the test
+  `a_pilot_trace_replays_to_the_first_control_point`).
 - The window itself was recorded with real key presses sent to it as scan codes (`window.dq9rec`:
   2898 steps, Z, Up, Q; `window-sound.dq9rec`: 6217 steps, sound device on, one recorded jingle
   end `j5802`), and both replay headless with every digest matching (6 and 12).

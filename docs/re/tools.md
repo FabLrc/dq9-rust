@@ -290,13 +290,13 @@ its side is stale and fails too (remove it from the reference).
   does the flag appearing on the other side. No other key is allowed (a typo is an error,
   not an ignored option).
 
-### Current references (November 8, 2026)
+### Current references (November 18, 2026)
 
 Batch `build/evidence/parity/` (`manifest.json` via `scripts/evidence.ps1 -Batch parity`):
 
 | File | sha256 | Provenance |
 |---|---|---|
-| `inputs/combined-final-inputs.jsonl` | `5394e04ed1cb` | `build/v01-20261107/combined/final-inputs.jsonl`, combined native route (40,432 steps, first player control at step 12625, control 1.1.2 at step 20068) |
+| `inputs/pilot-inputs.jsonl` | `5bb6bc99b049` | closed-loop pilot trace, 60,000 fixed steps, recorded on `f516d79` with `dq9-app --new-game --fight --seed 7 --headless --auto --pilot --mute --headless-steps 60000 --trace-inputs …` (`build/evidence/j4-parity-regress/`, batch `j4-parity-regress`); the pilot has control at step 13,785 (1.1.1) and 23,008 (1.1.2) |
 | `original/first-control-1.1.1-male.jsonl` | `1fe8b98dfbc6` | `dq9re state --ram build/oracle-host/ram_male.bin --json` + `kind: control` (male libretro run, no loot) |
 | `original/control-1.1.2.jsonl` | `2255429503fd` | `build/v01-20261107/oracle/control112-as-control.jsonl` = `control112-cp.jsonl` (`d357eb188e0b`) with `kind` renamed `control` |
 
@@ -318,12 +318,26 @@ Batch `build/evidence/parity/` (`manifest.json` via `scripts/evidence.ps1 -Batch
   that stops matching fails): a seed-7 fight is a stand-in for that draw, not a proof of it
   (`build/evidence/j4-parity-party/report.md`, `references.json` in the same folder).
 
-Output after `j4-parity-battles` (European ROM; the references now launch the runtime with
-`--fight --seed 7`, the engine's battle 26; party fields since `j4-parity-party`):
+**Why the inputs were re-recorded (batch `j4-parity-regress`).** The previous trace
+(`inputs/combined-final-inputs.jsonl`, `5394e04ed1cb`, 40,432 steps) was an open-loop
+`--trace-inputs` recording that mashed A every 20 frames and then walked; it was recorded
+before native 560 (the wireless-session test) was implemented. That native gates event 1140's
+entry 200: `0` plays the **guest** variant (`fade_both(16)`, 16 updates), `1` the
+single-player NOFADE branch (two 1-update waits). With no session the original takes NOFADE,
+so `2930280` made the runtime correct and 20 ticks faster, and the mashing trace then left the
+hero at event 1130's post: the event re-fired 40 times, the run never left 1.1.1 and stalled
+on a message no later frame could close (`build/evidence/j4-parity-regress/report.md`). The
+new trace is recorded by the pilot itself (closed loop): it re-walks the route instead of
+staying at a post, so a timeline change no longer strands it. `d068809`/`f516d79` (original
+message pacing, `--text-speed`) moved the tick fields again; the same trace produced on that
+code is byte-identical (`5bb6bc99b049`), so the pilot and the replay are deterministic.
+
+Output (European ROM, `j4-parity-regress`; the pilot trace above, party fields since
+`j4-parity-party`):
 
 ```text
-ok      first-control-1.1.1-male  aligned 1/1 original checkpoint(s), runtime 615; accepted: party 0/hp -> 13, party 0/experience -> 2, party gold -> 4
-ok      control-1.1.2  aligned 1/1 original checkpoint(s), runtime 615; accepted: flag 4135 original only, party 0/hp -> 13, party 0/experience -> 2, party gold -> 4
+ok      first-control-1.1.1-male  aligned 1/1 original checkpoint(s), runtime 173; accepted: party 0/hp -> 13, party 0/experience -> 2, party gold -> 4
+ok      control-1.1.2  aligned 1/1 original checkpoint(s), runtime 173; accepted: flag 4135 original only, party 0/hp -> 13, party 0/experience -> 2, party gold -> 4
 parity: 2 reference(s), 2 ok, 0 failed
 ```
 
