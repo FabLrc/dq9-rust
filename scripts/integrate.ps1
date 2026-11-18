@@ -44,7 +44,9 @@
 # There is no option to skip a check. Without -Apply nothing is changed in main.
 #
 # -Apply: fast-forwards `main` to the verified integration commits (one squash commit per
-#   branch, messages `domain: summary`, required). Nothing is pushed.
+#   branch, messages `domain: summary`, required), then appends `<batch> <commit sha> <ISO
+#   date>` per branch to `build/batches/integrated.txt` (main checkout, ignored by git) so
+#   `queue.ps1` still sees a batch after its branch is pruned. Nothing is pushed.
 # -Cleanup: per branch, in this order:
 #   1. when `build/batches/runs.json` (main checkout, written by dispatch.ps1) has an entry
 #      for the batch (key = batch, or `branch` equal to the branch), runs
@@ -182,6 +184,19 @@ function Read-SpecCommit([string] $Path) {
         if ($Line -match '^Commit:\s*(\S.*?)\s*$') { return $Matches[1] }
     }
     $null
+}
+
+# Appends the trace `queue.ps1` reads for an integrated batch whose branch is pruned:
+# `<batch> <commit sha> <ISO date>` in `build/batches/integrated.txt` (main checkout, ignored
+# by git). Called once per branch after `-Apply`.
+function Add-IntegrationTrace([string] $Batch, [string] $Sha) {
+    $Path = Join-Path $Root 'build/batches/integrated.txt'
+    $Parent = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $Parent -PathType Container)) {
+        New-Item -ItemType Directory -Path $Parent -Force | Out-Null
+    }
+    $Line = '{0} {1} {2}' -f $Batch, $Sha, (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    [System.IO.File]::AppendAllText($Path, $Line + "`n", [System.Text.UTF8Encoding]::new($false))
 }
 
 # 1-based line numbers of the coverage markers in a README version, or $null.
@@ -721,6 +736,15 @@ try {
         if ($LASTEXITCODE -ne 0) { Fail 'apply' "git merge --ff-only $Final failed; main unchanged" }
         $Log = Invoke-Git 'apply' @('log', '--reverse', '--format=%h %s', "$MainHead..HEAD")
         Pass 'apply' ("main fast-forwarded, not pushed: {0}" -f ($Log -join '; '))
+        # A pruned branch leaves no ancestry: record every integration for `queue.ps1`.
+        $Applied = Invoke-Git 'apply' @('log', '--reverse', '--format=%H', "$MainHead..HEAD")
+        if ($Applied.Count -ne $Infos.Count) {
+            Fail 'trace' "expected $($Infos.Count) integration commit(s), found $($Applied.Count) in $MainHead..HEAD"
+        }
+        for ($Index = 0; $Index -lt $Infos.Count; $Index++) {
+            Add-IntegrationTrace $Infos[$Index].Batch $Applied[$Index]
+        }
+        Pass 'trace' ("{0} line(s) appended to build/batches/integrated.txt" -f $Infos.Count)
     } else {
         Pass 'apply' 'dry run: main unchanged (pass -Apply -Message to commit)'
     }

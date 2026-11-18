@@ -179,6 +179,8 @@ try {
     Assert-True ((Get-Head $Fix) -eq $Before) 'dry run leaves main untouched'
     Assert-True ((Get-VerifyCalls $Fix) -eq 1) 'dry run verifies the combined tree once'
     Assert-True (Test-NoIntegrationWorktree $Fix) 'dry run removes its integration worktree'
+    $TracePath = Join-Path $Fix.Main 'build/batches/integrated.txt'
+    Assert-True (-not (Test-Path -LiteralPath $TracePath)) 'dry run writes no integration trace'
     $Run = Invoke-Integrate $Fix @('FabLrc/t-a,FabLrc/t-b') @('', 'feat: add b') -Apply
     if ($Run.Code -ne 0) { Show-Output $Run }
     Assert-True ($Run.Code -eq 0) 'apply exits 0'
@@ -195,6 +197,12 @@ try {
     Assert-True (@(G $Fix.Main @('status', '--porcelain')).Count -eq 0) 'main checkout is clean after the run'
     Assert-True ((Get-Head $Fix 'FabLrc/t-a') -eq $HeadA -and (Get-Head $Fix 'FabLrc/t-b') -eq $HeadB) 'worker branches are not modified'
     Assert-True (Test-NoIntegrationWorktree $Fix) 'integration worktree is gone'
+    Assert-True (Test-Path -LiteralPath $TracePath) 'apply writes the integration trace'
+    $Trace = @(Get-Content -LiteralPath $TracePath)
+    Assert-True ($Trace.Count -eq 2) 'one trace line per integrated branch'
+    $Shas = @(G $Fix.Main @('log', '--reverse', '--format=%H', "$Before..main"))
+    Assert-True ($Trace[0] -match ('^t-a ' + $Shas[0] + ' \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')) 'trace line: batch, squash commit sha, ISO date'
+    Assert-True ($Trace[1] -match ('^t-b ' + $Shas[1] + ' ')) 'second trace line names its own commit'
 
     # --- culprit in the middle ----------------------------------------------------------------
     Write-Host 'culprit in the middle'

@@ -4,10 +4,14 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/queue.ps1
 #
 # State of a spec:
-#   running    its batch has an entry in `build/batches/runs.json` (a worker holds a slot);
-#   integrated its `Commit:` subject is in `git log main`, `docs/status.md` lists the batch, or
-#              main holds the content of the files its branch `FabLrc/<batch>` changed (nothing
-#              left to launch: squash integration leaves no branch ancestor to check);
+#   running    its batch has an entry in `build/batches/runs.json` (a worker holds a slot), or
+#              a worktree in `git worktree list` holds a branch `FabLrc/<batch>` or
+#              `FabLrc/<anything>-<batch>` (a worker launched by hand);
+#   integrated `build/batches/integrated.txt` lists the batch (trace written by
+#              `integrate.ps1 -Apply`), its `Commit:` subject is in `git log main`,
+#              `docs/status.md` lists the batch, or main holds the content of the files its
+#              branch changed (nothing left to launch: squash integration leaves no branch
+#              ancestor to check);
 #   no-owns    no ```owns block: `dispatch.ps1` refuses it, so it needs a spec fix first;
 #   draft      no `Model:` line (nor a legacy `Owner:` model): the spec is not ready to launch;
 #   waiting    a `Depends:` batch is not integrated yet (shown in `notes`);
@@ -190,22 +194,55 @@ function Invoke-Git([string[]] $GitArgs) {
     $Output
 }
 
-# Integration evidence, read once: the subjects of main, the local branches, and the
-# coordinator's record (docs/status.md). Squash integration leaves no branch ancestor, so the
-# branch check compares the tree of the files the branch changed, like `integrate.ps1`.
+# Integration evidence, read once: the subjects of main, the local branches with their
+# worktrees, the trace written by `integrate.ps1 -Apply`, and the coordinator's record
+# (docs/status.md). Squash integration leaves no branch ancestor, so the branch check compares
+# the tree of the files the branch changed, like `integrate.ps1`.
+$Subjects = @(Invoke-Git @('log', 'main', '--format=%s'))
 $SubjectSet = @{}
 foreach ($Item in $Subjects) { $SubjectSet["$Item"] = $true }
 $Branches = @(& git -C $Root for-each-ref '--format=%(refname:short)' refs/heads)
 if ($LASTEXITCODE -ne 0) { Exit-Error 'git for-each-ref failed' }
 $BranchSet = @{}
 foreach ($Item in $Branches) { $BranchSet["$($Item.Trim())"] = $true }
+# Branches with a worktree: a branch checked out in one means a worker holds the batch, even
+# when `runs.json` has no entry (a launch by hand).
+$WorktreeBranches = @{}
+$WorktreeLines = @(& git -C $Root worktree list --porcelain)
+if ($LASTEXITCODE -ne 0) { Exit-Error 'git worktree list failed' }
+foreach ($Line in $WorktreeLines) {
+    if ($Line -match '^branch refs/heads/(.+)$') { $WorktreeBranches[$Matches[1].Trim()] = $true }
+}
+# The integration trace, one `<batch> <commit sha> <ISO date>` line per applied batch: the
+# branch of an integrated batch is pruned, so `git log main` cannot find it by ancestry.
+$TraceSet = @{}
+$TracePath = Join-Path $BatchesDir 'integrated.txt'
+if (Test-Path -LiteralPath $TracePath -PathType Leaf) {
+    foreach ($Line in [System.IO.File]::ReadAllLines($TracePath)) {
+        $Fields = @($Line.Trim() -split '\s+' | Where-Object { $_ -ne '' })
+        if ($Fields.Count -ge 1 -and $Fields[0] -match '^[A-Za-z0-9._-]+$') { $TraceSet[$Fields[0]] = $true }
+    }
+}
 $StatusText = ''
 $StatusPath = Join-Path $Root 'docs/status.md'
 if (Test-Path -LiteralPath $StatusPath -PathType Leaf) {
     $StatusText = [System.IO.File]::ReadAllText($StatusPath)
 }
 
+# The branch of a batch checked out in a worktree, or $null: a worker launched by hand has no
+# `runs.json` entry. `dispatch.ps1` names the branch `FabLrc/<batch>`; older waves used
+# `FabLrc/<milestone>-<batch>`.
+function Find-RunningBranch([string] $Name) {
+    foreach ($Branch in $WorktreeBranches.Keys) {
+        if (-not $Branch.StartsWith('FabLrc/')) { continue }
+        if ($Branch -eq "FabLrc/$Name" -or $Branch.EndsWith("-$Name")) { return $Branch }
+    }
+    $null
+}
+
 function Test-Integrated([string] $Name, [string] $Commit) {
+    # A pruned branch leaves no ancestry: the trace of `integrate.ps1 -Apply` is authoritative.
+    if ($TraceSet.ContainsKey($Name)) { return $true }
     if ($Commit -and $SubjectSet.ContainsKey($Commit)) { return $true }
     # The status file lists the batches of every wave (AGENTS.md: it is the only place the
     # current state is recorded), so an integrated batch whose branch was pruned is found there.
@@ -227,7 +264,6 @@ if (-not (Test-Path -LiteralPath $BatchesDir -PathType Container)) {
 & git -C $Root rev-parse --verify --quiet refs/heads/main | Out-Null
 if ($LASTEXITCODE -ne 0) { Exit-Error "no local branch main in $Root" }
 
-$Subjects = @(Invoke-Git @('log', 'main', '--format=%s'))
 $Runs = Read-Runs
 
 $Specs = [System.Collections.Generic.List[object]]::new()
@@ -236,11 +272,15 @@ foreach ($File in @(Get-ChildItem -LiteralPath $BatchesDir -File -Filter '*.md' 
     $Spec = Read-Spec $File.FullName
     $State = $null
     $Notes = @()
+    $RunningBranch = Find-RunningBranch $Name
     if ($Runs.Contains($Name)) {
         $State = 'running'
         $Slot = $Runs[$Name].slot
         if ($null -ne $Slot -and "$Slot" -ne '') { $Notes += "slot $Slot" }
         if ($Runs[$Name].attempt) { $Notes += "attempt $($Runs[$Name].attempt)" }
+    } elseif ($RunningBranch) {
+        $State = 'running'
+        $Notes += "branch $RunningBranch, no runs.json entry"
     } elseif (Test-Integrated $Name $Spec.Commit) {
         $State = 'integrated'
     } elseif ($Spec.Owns.Count -eq 0) {

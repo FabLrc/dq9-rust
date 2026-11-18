@@ -341,6 +341,39 @@ docs/b{0}.md
     Assert 'queue: five slots used' ($Run.Code -eq 0 -and $Run.Text -match 'slots: 5 of 5 used') $Run.Text
     Assert 'queue: no wave at five running' ($Run.Text -match 'next wave: none \(all five slots are used\)') $Run.Text
 
+    # 8b. Queue: a `Commit:` subject in main marks the batch integrated (read before use).
+    $Dir = New-Fixture 'queue-commit'
+    Write-Spec $Dir 'alpha' $Specs['alpha']
+    Invoke-FixtureGit $Dir @('commit', '-q', '--allow-empty', '-m', 'core: alpha') | Out-Null
+    $Run = Invoke-Queue $Dir
+    Assert 'queue: integrated by the spec Commit line' ($Run.Code -eq 0 -and
+        $Run.Text -match '(?m)^alpha\s+integrated') $Run.Text
+    Assert 'queue: an integrated batch is not in the wave' (-not ($Run.Text -match 'dispatch\.ps1 -Batch alpha')) $Run.Text
+
+    # 8c. Queue: the integration trace marks a batch whose spec has no Commit line.
+    $Dir = New-Fixture 'queue-trace'
+    Write-Spec $Dir 'beta' $Specs['beta']
+    Write-FixtureFile (Join-Path $Dir 'build/batches/integrated.txt') "beta 0123456789ab 2026-11-19T00:00:00Z`n"
+    $Run = Invoke-Queue $Dir
+    Assert 'queue: integrated.txt marks the batch integrated' ($Run.Code -eq 0 -and
+        $Run.Text -match '(?m)^beta\s+integrated') $Run.Text
+
+    # 8d. Queue: a worktree branch means a worker runs, even without a runs.json entry.
+    $Dir = New-Fixture 'queue-manual'
+    Write-Spec $Dir 'beta' $Specs['beta']
+    Write-Spec $Dir 'epsilon' $Specs['epsilon']
+    Invoke-FixtureGit $Dir @('worktree', 'add', '--quiet', '-b', 'FabLrc/beta',
+        (Join-Path $Dir 'wt-beta'), 'main') | Out-Null
+    Invoke-FixtureGit $Dir @('worktree', 'add', '--quiet', '-b', 'FabLrc/wave-epsilon',
+        (Join-Path $Dir 'wt-epsilon'), 'main') | Out-Null
+    $Run = Invoke-Queue $Dir
+    Assert 'queue: worktree branch FabLrc/<batch> is running' ($Run.Code -eq 0 -and
+        $Run.Text -match '(?m)^beta\s+running.*branch FabLrc/beta') $Run.Text
+    Assert 'queue: worktree branch FabLrc/<anything>-<batch> is running' ($Run.Text -match
+        '(?m)^epsilon\s+running.*branch FabLrc/wave-epsilon') $Run.Text
+    Assert 'queue: manual runs use slots' ($Run.Text -match 'slots: 2 of 5 used') $Run.Text
+    Assert 'queue: manual runs are not in the wave' (-not ($Run.Text -match 'dispatch\.ps1 -Batch (beta|epsilon)')) $Run.Text
+
     # 9. A failed start is reported with its state and never recorded.
     $FailStub = Join-Path $StubBin 'orca-fail.cmd'
     $FailStubText = @'
