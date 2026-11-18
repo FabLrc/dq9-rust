@@ -965,8 +965,11 @@ impl EventPlayer {
             }
         }));
         let mut finished: Vec<(Target, u32)> = Vec::new();
-        let nodes: Vec<(Target, dq9_core::cutscene::Node)> =
+        let mut nodes: Vec<(Target, dq9_core::cutscene::Node)> =
             self.cutscene.nodes().map(|(t, n)| (t, n.clone())).collect();
+        // A model on a bone reads the pose its parent plays: the parent's motion request is
+        // served first, or the model follows the previous motion for the tick it changes.
+        nodes.sort_by_key(|(_, node)| self.attachment_depth(node));
         for (target, node) in nodes {
             // The motion the script asked for, started once per request.
             let requested = node

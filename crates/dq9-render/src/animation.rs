@@ -57,16 +57,27 @@ impl Clip {
             wraps: 0,
         })
     }
+
+    /// One 60 Hz tick of the clock.
     pub(crate) fn advance(&mut self) {
+        let (frame, wrapped) = self.stepped();
+        self.frame = frame;
+        self.wraps += u32::from(wrapped);
+    }
+
+    /// The frame [`advance`](Self::advance) would leave and whether that tick reaches the end
+    /// of the range, without moving the clip: what a read made before the step needs to see
+    /// the pose the step is about to draw.
+    pub(crate) fn stepped(&self) -> (i32, bool) {
         // Plain map models: Animation3D::AdvanceTimer (0x0207e178), full frame count.
         // Object3D::AdvanceAnimations_v0/v1 (0x02034e38/0x02035188) supplies explicit ranges.
         let (start, end) = self.range.unwrap_or((0, i32::from(self.frames) << 12));
         let length = i64::from(end) - i64::from(start);
         if length <= 0 {
-            self.frame = start;
-            return;
+            return (start, false);
         }
         let raw = i64::from(self.frame) - i64::from(start) + i64::from(self.speed);
+        let out = raw >= length || raw < 0;
         if self.once {
             // Holds the last pose once the end is reached.
             let last = if self.range.is_some() {
@@ -74,20 +85,15 @@ impl Clip {
             } else {
                 end - 0x1000
             };
-            if self.wraps > 0 {
-                self.frame = last;
-            } else if raw >= length || raw < 0 {
-                self.wraps += 1;
-                self.frame = last;
+            return if self.wraps > 0 {
+                (last, false)
+            } else if out {
+                (last, true)
             } else {
-                self.frame = (i64::from(start) + raw) as i32;
-            }
-            return;
+                ((i64::from(start) + raw) as i32, false)
+            };
         }
-        if raw >= length || raw < 0 {
-            self.wraps += 1;
-        }
-        self.frame = (i64::from(start) + raw.rem_euclid(length)) as i32;
+        ((i64::from(start) + raw.rem_euclid(length)) as i32, out)
     }
 }
 

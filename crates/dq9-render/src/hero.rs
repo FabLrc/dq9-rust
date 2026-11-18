@@ -455,13 +455,14 @@ impl HeroRig {
     }
 
     /// World matrix of the body bone `bone` in rig space, in the pose of the current frame
-    /// (the matrix the render commands hold after `MulObject`); `None` when no part of the
-    /// rig has such a bone.
-    pub(crate) fn bone(&self, bone: &str) -> Result<Option<Mat4>> {
+    /// (the matrix the render commands hold after `MulObject`), or of the frame the next
+    /// step leaves (`next`); `None` when no part of the rig has such a bone.
+    pub(crate) fn bone(&self, bone: &str, next: bool) -> Result<Option<Mat4>> {
         let clip = self
             .custom
             .as_ref()
             .unwrap_or(&self.clips[self.gait.index()]);
+        let frame = if next { clip.stepped().0 } else { clip.frame };
         let anim = G3dFile::parse(&clip.bytes)?;
         let joint = anim
             .joint_animations
@@ -476,7 +477,7 @@ impl HeroRig {
             let Some(i) = m.objects.iter().position(|o| o.name.is(bone)) else {
                 continue;
             };
-            let objects = joint.pose_at(m, Fx12(clip.frame))?;
+            let objects = joint.pose_at(m, Fx12(frame))?;
             if let Some(world) = object_worlds(m, &objects)?[i] {
                 return Ok(Some(to_glam(&world)));
             }

@@ -626,3 +626,85 @@ fn native_103_covers_the_screen_and_102_takes_it_away() {
     assert!(peak > 0.99, "the cover never reached full opacity: {peak}");
     assert!(!cover_seen_at_end, "the cover outlived the event");
 }
+
+/// In event 21507 Aquila's face (`s019f01`) hangs on her `head` bone while she flies at the
+/// monsters. The cutscene places it before the scene step evaluates her model, so a bone read
+/// from the frame the step is about to leave behind put the face one tick behind the head:
+/// at the flight's speed a second face, displaced down the path, under the real one (frame
+/// 2000 of the capture, `build/evidence/j4-aquila-bug/`). After every step, the face must sit
+/// where the head bone of the pose that was just drawn puts it.
+#[test]
+fn a_face_on_the_head_bone_is_placed_with_the_pose_drawn_in_the_same_tick() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    const FACE: &str = "chara_sub/s019f01.chr";
+    let state = initial_state(&pinned_story());
+    let (mut loaded, mut camera, mut talk) = load_event_map(rom, 21507);
+    let mut hero = loaded.hero;
+    let mut player = EventPlayer::new();
+    player.queue(21507);
+    let (mut checked, mut fastest) = (0u32, 0.0f32);
+    let mut previous: Option<Vec3> = None;
+    for tick in 0..3_000 {
+        frame(
+            rom,
+            &mut player,
+            &mut loaded,
+            &mut hero,
+            &mut camera,
+            &mut talk,
+            &state,
+            tick % 30 == 0,
+        );
+        let face = player
+            .cutscene
+            .nodes()
+            .find(|(_, n)| n.attached.is_some() && n.model.as_deref() == Some(FACE))
+            .map(|(target, node)| (target, node.clone()));
+        if let Some((target, node)) = face {
+            let (parent, bone) = node.attached.clone().expect("attached");
+            let parent_node = player.cutscene.node(parent).expect("parent").clone();
+            let scene = &loaded.runtime;
+            let actor = player.actor_of(parent, parent_node.model.as_deref());
+            let instance = player
+                .actor_of(target, node.model.as_deref())
+                .and_then(|a| scene.actor_instance(a));
+            if let (Some(actor), Some(instance)) = (actor, instance)
+                && parent_node.visible
+                && node.visible
+                && parent_node.placed
+            {
+                // The pose the step just drew.
+                let head = scene.actor_bone(actor, &bone).unwrap().expect("head bone");
+                let expected = world_of(&parent_node.pose, true)
+                    * head
+                    * world_of(&node.pose, node.model.is_some());
+                let placed = scene.scene.instances[instance].world;
+                assert!(
+                    placed.abs_diff_eq(expected, 1e-3),
+                    "tick {tick}: the face is not on the head drawn this tick\n{placed:?}\n{expected:?}"
+                );
+                let at = head.w_axis.truncate();
+                if let Some(before) = previous {
+                    fastest = fastest.max(at.distance(before));
+                }
+                previous = Some(at);
+                checked += 1;
+            }
+        }
+        if !player.is_active() && player.pending_start().is_none() {
+            break;
+        }
+    }
+    assert!(
+        checked > 500,
+        "the face was checked on {checked} ticks only"
+    );
+    // The test is only worth something if the head moves between ticks (the flight moves it
+    // by several model units per tick; a still head hides a one-tick lag).
+    assert!(
+        fastest > 1.0,
+        "the head never moved fast enough to show a one-tick lag: {fastest}"
+    );
+}

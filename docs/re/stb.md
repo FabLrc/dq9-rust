@@ -316,7 +316,12 @@ Implementation: `crates/dq9-core/src/cutscene.rs` (cutscene state, no I/O, tests
   an area (`settle_basic_entry`) only when the script does not force it.
 - A model attached to a bone (235) is drawn in the parent's frame × the bone matrix
   (`HeroRig::bone`, `actor_bone`), its own pose being relative to that bone; the parent's scale
-  is inherited **[hypothesis]**, which the scripts reset to 1 for the attached model.
+  is inherited **[hypothesis]**, which the scripts reset to 1 for the attached model. The bone
+  is the one of the pose the **next** scene step draws (`actor_bone_next`, `hero_bone_next`):
+  the cutscene is presented before `AnimatedScene::step` evaluates the models, and the bone of
+  the current frame is one tick behind the parent's vertices (see `characters.md`, "Faces hung
+  on a bone"). The nodes are presented parents first, so a motion a parent starts this tick is
+  already the one its attachments read.
 - The bubble (541) is a sprite placed on the ray through the DS screen pixel (actor
   projection offset by `(−6, −76)`), slightly in front of the actor, at a scale of one texel per DS
   pixel **[hypothesis]**: the game draws it in 2D over the image.

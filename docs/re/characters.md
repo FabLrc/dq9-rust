@@ -442,6 +442,66 @@ others. Evidence (Ghidra EU, `ov_001`/`ov_017`):
 - **[unknown]**: the guest's other places (field walking, battles) and what `Guest_LoadTask`
   does with record fields 3 onwards (`+0x10` bits 0–2 go into byte `+0x56b` of the character).
 
+## Faces hung on a bone (Aquila, event 21507)
+
+**Symptom** (user report: Aquila "runs toward the monsters" and "her head is duplicated"): in the
+prologue flight of `ev21507` (`--event 21507 --frame 1980..2030`) Aquila's face shows twice, one
+face above the other, under a single bald head.
+
+**What is drawn.** `chara_sub/s019.chr` is the body (16 bones, one `head` mesh with the default
+face). The script loads `chara_sub/s019f01.chr` (native 200, character −17): **a 20-vertex face
+decal** (one object, one texture `s019_00_f01`, skin and an expression) and hangs it on Aquila's
+`head` bone with native 235 (`AttachBone { child: 17, parent: 10, "head" }`, the `f01`…`f08`
+archives are the expressions). Checked on the ROM: the decal's vertices (bone space,
+`up_scale` 1) cover `y 0.27..4.59`, `z 1.33..2.64`, the head mesh's front is at `z 2.61` above the
+bone: at rest the decal lies on the face, which is why a still frame (`f1750`) looks right.
+
+**Cause (falsified both ways).**
+
+- Hiding only the decal removes the duplicate:
+  `build/evidence/j4-aquila-bug/ev21507hid-f2000.png` (`ac9089b1fed8`) against the same frame
+  with it, `ev21507nor-f2000.png` (`b342feb604aa`).
+- The head bone and the head mesh agree at every frame of every motion of the archive set
+  (`udegumi`, `yoko`, `cut_22`, `cut_24`, `cut_26`, `cut_27`: bone × (0, 3.2, 0) equals the
+  centroid of the head vertices to 0.1 model unit), so the decal is not on a wrong bone.
+- The cutscene is presented *before* `AnimatedScene::step` (`App::step_event`, `report::step_frame`:
+  `EventPlayer::step` → `runtime.step`): the decal's world was built from `actor_bone`, the
+  bone of the **current** clip frame, while the vertices drawn were evaluated one tick later.
+  The `cut_22…cut_27` motions carry the flight in the root (x +12, y −5.8, z +7 model units per
+  frame, 0.25 frame per tick): one tick of lag is 3.7 model units, the displacement of the second
+  face. A slow motion hides it, the flight does not.
+- The same test with the lag put back fails at the first tick the head moves
+  (`a_face_on_the_head_bone_is_placed_with_the_pose_drawn_in_the_same_tick`, tick 1540: the face is
+  1e-3 away from the drawn head; the capture shows the rest).
+
+A second, shorter lag: nodes were presented in `Target` order and the decal (`Model(-17)`) comes
+before Aquila (`Model(-10)`), so on the tick a motion started (`cut_22 → cut_23 → …`) the decal
+read the bone of the **previous** motion for one frame, hundreds of model units away
+(the root of `cut_24` sits at z ≈ 550). Without the parents-first order the same test fails at
+tick 1540.
+
+**Fix.** `AnimatedScene::{actor_bone_next, hero_bone_next}` return the bone of the pose the next
+step draws (`Clip::stepped`, the pure form of `Clip::advance`); `EventPlayer::attachment_base` uses
+them, and `present` serves the nodes parents first (`attachment_depth`). Result:
+`build/evidence/j4-aquila-bug/before-after-21507-f1980-f2000-f2020.png` (`18c09a0ca524`, top row
+before, bottom row after; the fixed frame 2000 is `ev21507fix-f2000.png`, `ea0dc6795c31`).
+
+**Not changed (listed, not hidden).**
+
+- Bone **cameras** (natives 552, 572) read `actor_bone` of the current frame too, so they sit one
+  tick behind the models they film. No visible defect was observed, so they are left as they
+  are **[hypothesis]**: the same order mismatch applies.
+- In the same flight the hero shows **two halos** (frames 2180–2260). One is the hero model's own
+  ring (`chara_pc.gp2` carries an `angelring02` material, contrary to the note in `stb-natives.md`
+  on 809), the other is `chara_sub/s069.chr` hung on the hero's `head` by the script. At rest they
+  coincide. Measured after the fix, the two ring centres agree to 2e-4 on even ticks and differ by
+  0.82 world unit (the step of the hero's node position) on odd ticks: the node pose the
+  attachment read is one 30 Hz script step behind the hero position of the same tick. The cause
+  of that offset between `present`'s snapshot and the hero position is **[unknown]** and not
+  fixed here; whether the original draws both rings is **[unknown]**.
+- `ev21593`/`ev21595` draw Aquila's face blank (`chara_sub/s019n.chr`, no `s019f0N` decal loaded):
+  not investigated.
+
 ## Checks
 
 - **RAM (melonDS)**: `cargo dq9re cast --state build/melonds/demo.ml1` (map 109 `C01M09`,

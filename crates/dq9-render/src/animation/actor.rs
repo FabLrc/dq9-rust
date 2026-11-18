@@ -326,6 +326,17 @@ impl AnimatedScene {
     /// current frame (the rest pose when no motion plays). `None` when the actor or the bone
     /// does not exist.
     pub fn actor_bone(&self, actor: usize, bone: &str) -> Result<Option<Mat4>> {
+        self.actor_bone_at(actor, bone, false)
+    }
+
+    /// [`actor_bone`](Self::actor_bone) in the pose the next [`step`](Self::step) draws. The
+    /// cutscene layer places what hangs on a bone before that step evaluates the model, so
+    /// the current frame is one tick behind the vertices the attached model must follow.
+    pub fn actor_bone_next(&self, actor: usize, bone: &str) -> Result<Option<Mat4>> {
+        self.actor_bone_at(actor, bone, true)
+    }
+
+    fn actor_bone_at(&self, actor: usize, bone: &str, next: bool) -> Result<Option<Mat4>> {
         let Some(rig) = self.actors.get(actor) else {
             return Ok(None);
         };
@@ -334,7 +345,7 @@ impl AnimatedScene {
             (None, Some(ghost)) => &ghost.bytes,
             (None, None) => return Ok(None),
         };
-        bone_world(bytes, rig.clips(&self.models), bone)
+        bone_world(bytes, rig.clips(&self.models), bone, next)
     }
 
     /// Turns a sprite NPC (`id` as in [`AnimatedScene::npc_instance`]) towards the game's
@@ -556,7 +567,9 @@ impl AnimatedScene {
     }
 }
 
-fn bone_world(bytes: &[u8], clips: &[Clip], bone: &str) -> Result<Option<Mat4>> {
+/// The bone `bone` in the pose of the clips' frames, or of the frames the next step leaves
+/// (`next`).
+fn bone_world(bytes: &[u8], clips: &[Clip], bone: &str, next: bool) -> Result<Option<Mat4>> {
     let file = G3dFile::parse(bytes)?;
     let model = file
         .models
@@ -569,7 +582,8 @@ fn bone_world(bytes: &[u8], clips: &[Clip], bone: &str) -> Result<Option<Mat4>> 
     for clip in clips {
         let anim = G3dFile::parse(&clip.bytes)?;
         if let Some(joint) = anim.joint_animations.first() {
-            objects = Some(joint.pose_at(model, Fx12(clip.frame))?);
+            let frame = if next { clip.stepped().0 } else { clip.frame };
+            objects = Some(joint.pose_at(model, Fx12(frame))?);
             break;
         }
     }
@@ -626,7 +640,16 @@ impl AnimatedScene {
     /// [`AnimatedScene::actor_bone`]); `None` without a hero or such a bone.
     pub fn hero_bone(&self, bone: &str) -> Result<Option<Mat4>> {
         match &self.hero {
-            Some(hero) => hero.bone(bone),
+            Some(hero) => hero.bone(bone, false),
+            None => Ok(None),
+        }
+    }
+
+    /// [`hero_bone`](Self::hero_bone) in the pose the next step draws (see
+    /// [`AnimatedScene::actor_bone_next`]).
+    pub fn hero_bone_next(&self, bone: &str) -> Result<Option<Mat4>> {
+        match &self.hero {
+            Some(hero) => hero.bone(bone, true),
             None => Ok(None),
         }
     }

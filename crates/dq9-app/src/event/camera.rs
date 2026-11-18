@@ -174,11 +174,30 @@ impl EventPlayer {
         }
     }
 
+    /// How many models the chain of bones a node hangs on crosses (0 for a free node); the
+    /// bound is `attachment_base`'s.
+    pub(super) fn attachment_depth(&self, node: &Node) -> u32 {
+        let mut depth = 0;
+        let mut current = node;
+        while let Some((parent, _)) = current.attached.as_ref() {
+            depth += 1;
+            match self.cutscene.node(*parent) {
+                Some(next) if depth <= 4 => current = next,
+                _ => break,
+            }
+        }
+        depth
+    }
+
     /// The matrix a model attached to a bone of another target (natives 235, 236) is placed in:
     /// the parent's world times the bone's (`02037868`, `020378a0`); the model's own pose is
     /// relative to it **[hypothesis]** (the scripts reset the scale of the attached models to
-    /// 1, which only makes sense if the parent's scale is inherited). `None` when the model
-    /// is not attached or its parent cannot be resolved.
+    /// 1, which only makes sense if the parent's scale is inherited). The bone is the one of
+    /// the pose the next scene step evaluates (`actor_bone_next`): the cutscene presents
+    /// before that step, so the pose of the current frame is one tick behind the parent's
+    /// vertices, which a fast motion turns into a second, displaced copy of what is attached
+    /// (Aquila's face in event 21507). `None` when the model is not attached or its parent
+    /// cannot be resolved.
     pub(super) fn attachment_base(
         &self,
         scene: &AnimatedScene,
@@ -194,11 +213,11 @@ impl EventPlayer {
         }
         let world = self.target_world(scene, *parent, depth + 1)?;
         let bone = match parent {
-            Target::Hero => scene.hero_bone(bone),
+            Target::Hero => scene.hero_bone_next(bone),
             Target::Model(_) | Target::Cast(_) => {
                 let model = self.cutscene.node(*parent)?;
                 match self.actor_of(*parent, model.model.as_deref()) {
-                    Some(actor) => scene.actor_bone(actor, bone),
+                    Some(actor) => scene.actor_bone_next(actor, bone),
                     None => Ok(None),
                 }
             }
