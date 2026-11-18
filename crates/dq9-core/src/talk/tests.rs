@@ -100,7 +100,7 @@ fn explicit_breaks_and_names_are_kept() {
 }
 
 #[test]
-fn typing_is_one_glyph_per_step_and_pages_wait() {
+fn typing_is_one_unit_per_step_and_pages_wait() {
     let mut d = Dialogue::new(script(b"ab<PAGE>cd", 100));
     play(&mut d, 1);
     assert_eq!(d.view().lines[0].len(), 1);
@@ -113,12 +113,132 @@ fn typing_is_one_glyph_per_step_and_pages_wait() {
     assert_eq!(d.view().lines[0].len(), 2, "nothing moves without input");
     d.step(press());
     assert!(d.view().lines[0].is_empty(), "the box is cleared");
-    d.step(press());
+    play(&mut d, 2);
+    assert_eq!(d.view().lines[0].len(), 2);
+    play(&mut d, 1);
+    assert!(d.view().arrow);
+}
+
+#[test]
+fn the_action_key_does_not_skip_the_typing() {
+    // `func_020440cc` has no case for the typing state: pressing A while the text types is
+    // ignored, the page finishes at its own rate (measured on the original, 400 frames).
+    let text = b"abcdabcd<PAGE>a";
+    let mut typed = Dialogue::new(script(text, 100));
+    let mut pressed = Dialogue::new(script(text, 100));
+    for step in 0..8 {
+        typed.step(Input::default());
+        pressed.step(press());
+        assert_eq!(
+            typed.view().lines,
+            pressed.view().lines,
+            "step {step}: the key changes nothing while typing"
+        );
+    }
+    assert!(!pressed.view().arrow);
+}
+
+#[test]
+fn spaces_and_line_breaks_cost_a_unit_like_the_original_stream() {
+    // The original's code stream (read from RAM) holds a `0xFF19` per space and a `0xFF18`
+    // per break, each spent by the update like a glyph: "a b\nc" is five units.
+    let mut d = Dialogue::new(script(b"a b\\nc<PAGE>", 100));
+    let mut seen = Vec::new();
+    for _ in 0..5 {
+        d.step(Input::default());
+        seen.push(d.view().lines.iter().map(Vec::len).collect::<Vec<_>>());
+    }
     assert_eq!(
-        d.view().lines[0].len(),
-        2,
-        "the action key types up to the next wait"
+        seen,
+        [vec![1], vec![1], vec![2], vec![2, 0], vec![2, 1]],
+        "glyph, space, glyph, break, glyph"
     );
+    d.step(Input::default());
+    assert!(d.view().arrow);
+}
+
+#[test]
+fn a_wrapped_space_is_the_break_not_an_extra_unit() {
+    // Width 12: "ab cd" wraps at the space; the stream holds one break where the space was.
+    let mut d = Dialogue::new(script(b"ab cd<PAGE>", 12));
+    play(&mut d, 2);
+    assert_eq!(d.view().lines, [[(0, 0), (1, 5)]]);
+    play(&mut d, 1);
+    assert_eq!(
+        d.view().lines.iter().map(Vec::len).collect::<Vec<_>>(),
+        [2, 0]
+    );
+    play(&mut d, 2);
+    assert_eq!(d.view().lines[1], [(2, 0), (3, 5)]);
+}
+
+#[test]
+fn text_speed_scales_the_units_per_step() {
+    let units = |speed: TextSpeed, steps: u32| {
+        let mut carry = 0;
+        (0..steps).map(|_| speed.units(&mut carry)).sum::<usize>()
+    };
+    // Normal is the original's rate: 2 units per 33 ms update, 60 per second.
+    assert_eq!(units(TextSpeed::Normal, 60), 60);
+    assert_eq!(units(TextSpeed::Slow, 60), 30);
+    assert_eq!(units(TextSpeed::Fast, 60), 120);
+    let mut carry = 0;
+    let slow: Vec<_> = (0..4).map(|_| TextSpeed::Slow.units(&mut carry)).collect();
+    assert_eq!(slow, [0, 1, 0, 1], "a unit every other step");
+    assert_eq!(TextSpeed::default(), TextSpeed::Normal);
+    assert_eq!(TextSpeed::parse("fast"), Ok(TextSpeed::Fast));
+    assert!(TextSpeed::parse("quick").is_err());
+}
+
+#[test]
+fn the_dialogue_types_at_its_speed() {
+    let typed = |speed: TextSpeed, steps: usize| {
+        let mut d = Dialogue::new(script(b"abcdabcdabcdabcd<PAGE>", 100));
+        d.set_speed(speed);
+        play(&mut d, steps);
+        d.view().lines[0].len()
+    };
+    assert_eq!(typed(TextSpeed::Slow, 8), 4);
+    assert_eq!(typed(TextSpeed::Normal, 8), 8);
+    assert_eq!(typed(TextSpeed::Fast, 8), 16);
+}
+
+#[test]
+fn time_pauses_count_window_updates_of_two_steps() {
+    // `<TIME=n>`: the counter drops once per `MsgWin_Update` call, 33 ms apart.
+    let mut d = Dialogue::new(script(b"a<TIME=3>b<PAGE>", 100));
+    play(&mut d, 1);
+    let steps_until_b = (1..40)
+        .find(|_| {
+            d.step(Input::default());
+            d.view().lines[0].len() == 2
+        })
+        .unwrap();
+    // "a" at step 1, the pause op at step 2, six steps of counting, "b" at step 9.
+    assert_eq!(steps_until_b, 3 * STEPS_PER_UPDATE + 2);
+}
+
+#[test]
+fn timed_waits_end_by_themselves() {
+    // `<PAGE_T=n>` counts `n` ticks (one per step) while the page waits, then acts as A.
+    let mut d = Dialogue::new(script(b"a<PAGE_T=5>b<PAGE>", 100));
+    play(&mut d, 2);
+    assert!(d.view().arrow);
+    play(&mut d, 4);
+    assert!(d.view().arrow, "still waiting after 4 steps");
+    play(&mut d, 1);
+    assert!(d.view().lines[0].is_empty(), "the 5th step turned the page");
+    // `<PAD_T=n>` counts `n` updates (2 steps each).
+    let mut d = Dialogue::new(script(b"a<PAD_T=2>b<PAGE>", 100));
+    play(&mut d, 2);
+    assert!(d.view().arrow);
+    play(&mut d, 3);
+    assert!(d.view().arrow);
+    play(&mut d, 1);
+    assert!(!d.view().arrow, "4 steps after the wait began");
+    // Without the limit a page never turns by itself.
+    let mut d = Dialogue::new(script(b"a<PAGE>b<PAGE>", 100));
+    play(&mut d, 500);
     assert!(d.view().arrow);
 }
 
@@ -146,7 +266,8 @@ fn a_fourth_line_scrolls_the_box() {
     let mut d = Dialogue::new(script(b"a\\nb\\nc\\nd", 100));
     play(&mut d, 5);
     assert_eq!(d.view().lines.len(), 3);
-    play(&mut d, usize::try_from(SCROLL_STEPS).unwrap() + 1);
+    // The fourth line's break starts the scroll (one pixel per step), then `d` types.
+    play(&mut d, usize::try_from(SCROLL_STEPS).unwrap() + 2);
     let view = d.view();
     assert_eq!(view.lines.len(), 3);
     assert_eq!(view.lines[0], [(1, 0)]);
@@ -473,7 +594,8 @@ fn jumps_continue_after_their_label() {
 fn an_answer_without_branch_ends_the_message() {
     // "Yes" loops back to the question; "No" has no branch and must not follow the jump.
     let mut d = Dialogue::new(script(b"<LB_A>a<YESNO><YES><JP_A><END>", 100));
-    play(&mut d, 2);
+    // The label spends a unit like any code, then "a", then the prompt opens.
+    play(&mut d, 3);
     d.step(Input {
         cancel: true,
         ..Input::default()

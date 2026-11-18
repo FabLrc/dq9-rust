@@ -264,10 +264,11 @@ next glyph would exceed the width (`max_width < x + kerning + width`) and a
 break has been seen, the line is broken at the **last break** — after a space (which
 disappears) or after a `-` glyph — and the rest moves to the next line. With no possible
 break, the word overflows. `\n`, `<PAGE>` and `//…// ` reset the position to zero.
-The fourth line of a page **scrolls** the window (`+0x19b4`, `+0x1868`): one pixel
-per tick up to the line height (20) then `func_0206b61c` (EU `0x0206b62c`), without
-waiting for a button **[hypothesis: one pixel per tick]**. `dq9-core` waits 20 steps, then
-moves the lines up at once (no smooth scrolling).
+The fourth line of a page **scrolls** the window (`+0x19b4`, `+0x1868`): `+0x1868 += ticks` per
+update up to the line height `+0x1864 = 20`, then `func_0206b61c` (EU `0x0206b62c`), without
+waiting for a button: 10 updates of 2 ticks, i.e. **one pixel per 60 Hz step** (the tick source
+is read, § "Text speed"). `dq9-core` waits `SCROLL_STEPS = 20` steps, then moves the lines up at
+once (no smooth scrolling).
 
 ### Codes and wait states (`+0x9a0`)
 
@@ -276,10 +277,12 @@ moves the lines up at once (no smooth scrolling).
 | `0xFF01` `<END>`, `0xFF02` | state 0: the text stays, the game waits for the button then closes |
 | `0xFF03` `<CLOSE>` | state 0 then immediate close (`func_02043204`, `func_02043124`) |
 | `0xFF0A` `<ADD>` | state 3: the window stays for the scene's next message |
-| `0xFF0B` `<AUTO=n>` | state 4: countdown then next page |
-| `0xFF0C`, `0xFF0D` | state 1: wait for the button (arrow), then the page is cleared |
-| `0xFF1A` `<TIME=n>` | counter `+0x186c + 4 × slot` decremented on each tick |
-| `0xFF1D`, `0xFF1E`, `0xFF1F` | state 2: wait for the button (with or without cursor) |
+| `0xFF0B` `<AUTO=n>` | state 4: `MsgWin_StepAutoPage` counts `n` ticks (`+0x195f`) then the next page starts by itself; **not modelled** (no text of the game carries it) |
+| `0xFF0C` `<PAGE_T=n>` | state 1 (arrow) with `+0x1961 = n`; `MsgWin_PollWaitKey` counts it down by `GetTickCount` and acts as the key at zero (`n` ticks = `n` 60 Hz steps). `Op::Timeout(n)` + `Op::Page` |
+| `0xFF0D` `<PAGE>` | state 1: wait for the button (arrow), then the page is cleared |
+| `0xFF1A` `<TIME=n>` | counter `+0x186c + 4 × slot` (added by `func_020457e8`), **decremented once per `MsgWin_Update` call** (33 ms): `n` updates = `2n` steps. 1009 of the 1027 uses are `<TIME=180>` (quest-complete banner: 6 s, not 3 s) |
+| `0xFF1D`, `0xFF1F` | state 2: wait for the button (with / without the cursor, `+0x19ca`) |
+| `0xFF1E` `<PAD_T=n>` | no state: the counter `+0x186c + 4 × slot` drops once per update and the code stays current until a key is pressed or it reaches zero: `2n` steps. `Op::Timeout(2n)` + `Op::Wait` |
 | `0xFF04`–`0xFF07`, `0xFF08` | state 6: choice; `0xFF05` (`<NOYES>`) places the cursor on No; answer in `+0x954` (up/down move, A confirms, B cancels = −2) |
 | `0xFF14`–`0xFF17` | **no handler** in the interpreter: plain markers |
 | `0xFF26`/`0xFF27`, `0xFF28`/`0xFF29` | `+0x19b1` (frame) and `+0x19b8` (centering) |
@@ -300,12 +303,63 @@ lines (all the lines of `<map><letter>0.gp2`) compile, lay out and
 play until closing, answering Yes and No in turn (775 display no
 glyph: `<END>` alone, `<ADD>`…).
 
-### Text speed **[hypothesis]**
+### Text speed
 
-`MsgWin_Update` advances `ticks` characters per call (`+0x80 += ticks × 0x10`, carry
-`>> 4`); `ticks` = `GetTickCount` (2 per 33 ms update, `stb-natives.md`): one
-glyph per 1/60 s tick. The action button during typing shows the text up to
-the next wait (hypothesis based on `+0x19c5`, which forces 16 characters per call).
+**Measured and read on the European ROM** (`j4-text-speed`; evidence local, never committed).
+
+*Tick source.* `MsgWin_Update(window, ticks)` (`0x020659a0`) is reached through the trampoline
+`0x020444e4`, called from two places only: the field task `ov_017::0218cbd4` (call at
+`ov_017::0218cd68`, `r1 = [sp+0xc]` = `GameState::GetTickCount()` read at `0218cc10`), and the
+battle `ov_019::0218bfb4` (`r1 = 1`). `GetTickCount` is `numTicks_` (`GameState+0x3c4`, `0x02010230`),
+2 on the field's 33 ms updates (`stb-natives.md`, native 840). The update runs **every 2nd
+frame**, with 2 ticks.
+
+*Typing.* `+0x80 += ticks × 0x10`, units revealed = `(new >> 4) − (old >> 4)` = `ticks`
+(`0x02065c64`..); `+0x19c5` (cleared by `MsgWin_Show`, `0x0204501c`, no setter found in the
+code the field and `MsgWin_Show` run) and the timed caption (native 409, `+0x195b & 4`) force 16
+and 24 units per call. A *unit* is one 16-bit code of the compiled stream: each glyph, each
+space `0xFF19`, each line break `0xFF18` (a break replaces the space it wraps at) and each
+code whose handler does not return (`<EXC>`, `<QES>`, `<YES>`… markers, labels, `<ME_n>`…): the
+loop decrements its budget `iVar2` once per code (`LAB_02066a4c`). Codes that stop the
+interpreter (page, wait, pause, prompt, end) spend none. **No setting scales it**: the update
+reads no option, and there is no message-speed entry in the strings of the game's menus
+(`dq9re text`, English, 51,089 strings, only the dialogue "slow" hits). `<W=n>` appears 5
+times, only in `data/bin/menu/*` records, never in a message window text. There is no
+punctuation pause: the rate is constant over "Hmph! Thanks, …!".
+
+*Capture.* `scripts/melondsds_host.py` (libretro melonDS), `--state-in build/orca/route/idle-state.bin`
+(the observatory cutscene, event 1600, window `W = 0x021152f4`), pad A held frames 61-66 closes
+the previous page, `--watch W:0x1a00`; per-frame values reconstructed from the byte changes:
+
+| frame | `+0x78` index | `+0x80` | `+0x9a0` state |
+|---:|---:|---:|---:|
+| 113 | 0 | 0 | 5 (typing starts) |
+| 118 | 2 | 160 | 5 |
+| 120 | 4 | 192 | 5 |
+| 122 | 6 | 224 | 5 |
+| 124 … 176 | +2 every 2 frames | +32 | 5 |
+| 176 | 60 | | 5 |
+| 178 | 61 (the end code `0xFF01`) | | 0 (waits for the key) |
+
+= **2 units every 2 frames, 1 unit per frame, 60 units per second**, for a 61-unit line (50
+glyphs, 10 spaces, 1 break; the stream was read from RAM, `+0x4c`, 64 codes).
+`build/evidence/j4-text-speed/trace-idle.txt` (sha256 prefix in the manifest). Pressing A
+again at frames 130-133, in the middle of the typing, gives **an identical trace**
+(`trace-a-during-typing.txt`, same 178-frame end): **the action key does not skip the typing**.
+That is also the code: `MsgWin_PollWaitKey` (`0x020440dc`) switches on the wait states 0-3 and has
+no case for state 5, where the update types.
+
+**What the port does** (`dq9_core::talk`, `speed.rs`): one unit per 60 Hz step at
+`TextSpeed::Normal`, the original's rate and the default; `Slow` (0.5×) and `Fast` (2×) are a port
+option (`--text-speed`, `?textspeed=`). The key no longer skips a page (it used to type up to the
+next wait, **wrong**: a second press while a page types showed the page at once, **[hypothesis]**
+the most likely cause of "too fast"). Spaces, breaks, markers and sound codes cost a unit (before,
+only glyphs did: 11 units of 61, 18 %, on the captured line). `<TIME=n>` lasts `2n` steps (was `n`), `<PAGE_T=n>` and
+`<PAD_T=n>` end by themselves. Unit test `a_captured_line_costs_the_units_the_original_spent`
+reads the captured line from the ROM (event 1600, third text, a five-letter name) and asserts the
+61 units. Codes the port does not model (NPC turns, quests, `<ALL_RECOVER>`, …) still cost 0
+(the original: 1 each) **[unknown whether any is mid-text]**; the battle window (ticks 1) is not
+played by `Dialogue`.
 
 ## Implementation
 
@@ -316,7 +370,9 @@ the next wait (hypothesis based on `+0x19c5`, which forces 16 characters per cal
   `compile_message`/`layout`/`prepare` (the six passes with
   the hero's identity — name and gender taken from the save, otherwise male "Hero" —
   and the gender/solo conditions, then layout), `Dialogue::step` (one button per fixed
-  60 Hz step) and `Dialogue::view`.
+  60 Hz step; the text reveals `TextSpeed::units` message units per step, `Dialogue::set_speed`)
+  and `Dialogue::view`. `Talk::set_text_speed` (`dq9-app`) applies the option to the dialogues
+  opened afterwards (`--text-speed slow|normal|fast`, `?textspeed=`; hooks in the batch report).
 - Hero identity: `dq9-app` reads it from the save's current slot
   (`Save::current_slot`) and from the first party character (index `standby_count`),
   like the hero model: name `+0x140` as glyph indices of the message font,

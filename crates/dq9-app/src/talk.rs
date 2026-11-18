@@ -10,7 +10,7 @@
 use anyhow::{Context as _, Result, bail};
 use dq9_core::Hero;
 use dq9_core::field::{Event, Field, TalkTrigger};
-use dq9_core::talk::{self, Dialogue, Input, Names, PromptKind, TalkCounts, Talkable};
+use dq9_core::talk::{self, Dialogue, Input, Names, PromptKind, TalkCounts, Talkable, TextSpeed};
 use dq9_core::trigger::{Request, State};
 use dq9_formats::dialogue::{self, Session, TalkState};
 use dq9_formats::spr::Sprite;
@@ -236,6 +236,9 @@ pub struct Talk {
     /// Buttons pressed since the last step.
     pending: Input,
     ticks: u32,
+    /// How fast the text types (`--text-speed`, `?textspeed=`): the original's rate unless the
+    /// player chose another (`dq9_core::talk::TextSpeed`).
+    speed: TextSpeed,
     /// An event message is open (see [`Talk::show_event`]).
     event_message: bool,
     /// The player closed it.
@@ -270,6 +273,19 @@ pub struct Talk {
 }
 
 impl Talk {
+    /// Sets the message speed of the dialogues opened from now on; `Normal` is the original's
+    /// rate and the default.
+    // Called by the entry points' option hooks (`build/evidence/j4-text-speed/app-hook.md`).
+    #[allow(dead_code)]
+    pub fn set_text_speed(&mut self, speed: TextSpeed) {
+        self.speed = speed;
+    }
+
+    fn dialogue(&self, mut dialogue: Dialogue) -> Dialogue {
+        dialogue.set_speed(self.speed);
+        dialogue
+    }
+
     /// Loads the font and the window pieces of the ROM.
     pub fn set_rom(&mut self, rom: &[u8]) {
         match Assets::load(rom) {
@@ -459,7 +475,7 @@ impl Talk {
         };
         let font = assets.font()?;
         let script = talk::prepare(&font, text, &self.names, TEXT_WIDTH);
-        self.active = Some(Dialogue::for_event(script));
+        self.active = Some(self.dialogue(Dialogue::for_event(script)));
         self.event_message = true;
         self.frameless = false;
         self.caption_alpha = None;
@@ -639,7 +655,7 @@ impl Talk {
         state.talk_counts.record(npc);
         self.conversation = Some((npc, context));
         self.service = service_tag(text);
-        self.active = Some(Dialogue::new(script));
+        self.active = Some(self.dialogue(Dialogue::new(script)));
         self.caption_alpha = None;
         self.centered_caption = false;
         self.silent_caption = false;

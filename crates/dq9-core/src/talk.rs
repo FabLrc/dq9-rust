@@ -7,7 +7,7 @@
 //!   application's names and builds a [`Script`]: glyphs placed on lines (word wrap),
 //!   pages, waits and prompts;
 //! - [`Dialogue`] plays a script one 60 Hz step at a time ([`Dialogue::step`]) and exposes
-//!   what the window shows ([`Dialogue::view`]).
+//!   what the window shows ([`Dialogue::view`]); [`TextSpeed`] is its typing rate.
 //!
 //! No port marker: `Talk_NearestNpc` is modelled without the object flags and the
 //! hero-busy tests, and the window state machine is rebuilt from the observed behaviour of
@@ -17,6 +17,7 @@ mod counts;
 mod dialogue;
 mod layout;
 mod partner;
+mod speed;
 
 pub use counts::TalkCounts;
 pub use dialogue::{Dialogue, Input, Outcome, PromptView, SCROLL_STEPS, View};
@@ -25,6 +26,10 @@ pub use layout::{
     compile_message, layout, prepare,
 };
 pub use partner::{RANGE, REACH, Talkable, Target, nearest, zones_containing};
+pub use speed::{STEPS_PER_UPDATE, TextSpeed};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod rom_tests;

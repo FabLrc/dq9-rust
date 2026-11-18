@@ -144,12 +144,17 @@
 0x02107834 g_FontBitmap             # fd_*.bin pointers [s7, me]
 
 # --- Message window (docs/re/dialogue.md, § Message window) ---
+0x02010230 GameState_GetTickCount   # numTicks_ (+0x3c4): ticks since the last update, 2 at the field's 33 ms updates (MsgWin_Update's `ticks`)
 0x0202f25c MsgWin_LoadFrames        # loads the 8 border pieces data/ani/win0..7.spr (SPRSprite x8, 0x88 bytes each) from a NARC
 0x02042b4c MsgWin_SetFramelessRect  # font cell 12x16, rect (2, 0x92, 0xfc, 0x4a), frame off (+0x19b1 = 0)
 0x02042ba8 MsgWin_SetRect           # (x, y, w, h): window rectangle on the 256x192 screen, text origin y + 8
+0x020440dc MsgWin_PollWaitKey       # wait states 0-3: A/B/X/Y/touch leave the wait; <PAGE_T> counts +0x1961 down by GetTickCount and acts as the key. Not called while typing (state 5): A does nothing then
+0x020444e4 MsgWin_UpdateTrampoline  # ldr r12,[pool]; bx r12 into MsgWin_Update(window, ticks); callers ov_017::0218cd68 (ticks = GetTickCount) and ov_019::0218bfb4 (ticks = 1)
 0x02044f4c MsgWin_AppendShow        # <ADD> path of MsgWin_Show: Msg_Prepare without clearing the window
 0x0204501c MsgWin_Show              # MessageShow: resets the window (3 lines, rect (2, 0x74, 0xfc, 0x4a)), runs Msg_Prepare and the layout
 0x02045750 MsgWin_MoveChoiceCursor  # wait state 6 with +0x19bc set: Up/Down move +0x954 among +0x9a4 choices with wrap, no sound
+0x020657d8 MsgWin_StepCaptionAlpha  # native 409's timed caption: +0x9b0 alpha ramps by ticks (state bits +0x195b 0x8/0x10/0x20)
+0x020658bc MsgWin_StepShake         # <SHAKE>/natives 417, 421: +0x195d -= ticks from 30 (restarts while +0x19c1 is set)
 0x02065930 MsgWin_StepAutoPage      # wait state 4: counts down +0x195f then restarts the page
 0x020659a0 MsgWin_Update            # message interpreter: types glyphs, runs the 0xFFxx codes, wait states +0x9a0
 0x020676f0 MsgWin_UpdatePrompt      # wait state 6: reads the keys, stores 0/1 (A) or -2 (B) at +0x954, dispatches the answer handler
@@ -158,6 +163,7 @@
 0x0206a3d0 Msg_ConsumeLeadingTags   # <N_TURN> <EXC> <QES> <WIN> <CEN> <GYOU=> <MOJI=> <COLOR=> <RECT=> <SKIP> at the start of a message
 0x0206ad84 MsgWin_ParseSpeakerName  # //Name// at the start of a page: name plate width = advance + 26 - (advance & 7), height 22
 0x0206b984 MsgWin_WrapLines         # line breaking: at the last space or after '-' when the next glyph passes the width
+ov_017::0218cbd4 Field_UpdateTask   # the field's per-update task: GetTickCount into r1 of MsgWin_Update (0218cd68), after the key reads
 ov_017::021a4700 Talk_AngleToTarget # signed fx32 angle between the hero's facing and the direction to a point
 
 # --- Message preparation passes (docs/re/text.md) ---

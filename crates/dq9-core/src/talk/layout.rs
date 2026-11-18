@@ -146,6 +146,10 @@ impl AnswerSound {
 /// off (`0x020659a0`) **[hypothesis: one character per count]**.
 pub const BLIP_EVERY: u32 = 4;
 
+// Fixed steps per `MsgWin_Update` call of the field (`speed.rs`). The counters of `<TIME=n>`
+// and `<PAD_T=n>` drop by one per call, those of `<PAGE_T=n>` by the tick count.
+use super::speed::STEPS_PER_UPDATE;
+
 /// One step of a prepared message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
@@ -156,15 +160,22 @@ pub enum Op {
     },
     /// Start of the next line.
     Line,
+    /// A space inside a line (`0xFF19`): nothing is drawn, the message unit is spent. A space
+    /// where the line breaks becomes the break instead ([`Op::Line`]).
+    Space,
     /// Speaker of the page (`//Name//`).
     Name(Plate),
     /// `<PAGE>`, `<PAGE_T=n>`: wait for the action key, then clear the box.
     Page,
+    /// `<PAGE_T=n>`, `<PAD_T=n>`: the next wait also ends by itself after this many steps
+    /// (`func_020440cc` counts `<PAGE_T>` in ticks, `0x020659a0` counts `<PAD_T>` in updates).
+    Timeout(u32),
     /// `<PAD_WAIT>`, `<PAD_T=n>` (with the cursor), `<PAD_WAIT_NOCUR>` (without).
     Wait {
         cursor: bool,
     },
-    /// `<TIME=n>`: pause for `n` steps.
+    /// `<TIME=n>`: pause for `n` updates of the window, 2 steps each (`0x020659a0`
+    /// decrements the counter once per call).
     Pause(u32),
     /// `<EXC>`, `<QES>`: a sound, no wait (`0x020659a0`).
     Sound(Sound),
@@ -236,6 +247,7 @@ pub fn layout(tokens: &[Token], tags: LeadingTags, font: &Font, max_width: i32) 
                         previous = NO_GLYPH;
                         if text[0] == b' ' {
                             break_at = Some((ops.len(), x));
+                            ops.push(Op::Space);
                         }
                         text = &text[1..];
                         continue;
@@ -245,7 +257,13 @@ pub fn layout(tokens: &[Token], tags: LeadingTags, font: &Font, max_width: i32) 
                     if let Some((at, bx)) = break_at
                         && x + kerning + i32::from(g.width) > max_width
                     {
-                        ops.insert(at, Op::Line);
+                        // A break on a space replaces it: the original's stream holds one
+                        // `0xFF18` where the line wraps, and no space.
+                        if matches!(ops.get(at), Some(Op::Space)) {
+                            ops[at] = Op::Line;
+                        } else {
+                            ops.insert(at, Op::Line);
+                        }
                         for op in &mut ops[at + 1..] {
                             if let Op::Glyph { x, .. } = op {
                                 *x -= bx;
@@ -275,6 +293,14 @@ pub fn layout(tokens: &[Token], tags: LeadingTags, font: &Font, max_width: i32) 
                         .and_then(|a| a.trim().parse::<u32>().ok())
                         .unwrap_or(0)
                 };
+                // `<PAGE_T=n>` (0xFF0C) copies `n` ticks into `+0x1961` and `func_020440cc`
+                // counts them down while the page waits; `<PAD_T=n>` (0xFF1E) counts `n`
+                // updates. Both then act as the action key. `n` = 0 never times out on a page.
+                match *code {
+                    0xFF0C if n() > 0 => ops.push(Op::Timeout(n())),
+                    0xFF1E => ops.push(Op::Timeout(n().max(1).saturating_mul(STEPS_PER_UPDATE))),
+                    _ => {}
+                }
                 let op = match *code {
                     0xFF01 | 0xFF02 => Some(Op::End(EndKind::Wait)),
                     0xFF03 => Some(Op::End(EndKind::Close)),
