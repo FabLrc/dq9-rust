@@ -79,6 +79,10 @@ struct Cli {
     /// placeholder panel, and a battle is unchanged.
     #[arg(long, default_value = "port", value_parser = ScreenMode::parse)]
     screens: ScreenMode,
+    /// How fast dialogue text types: `slow` (half), `normal` (the original's rate, the default)
+    /// or `fast` (double).
+    #[arg(long, default_value = "normal", value_parser = dq9_core::talk::TextSpeed::parse)]
+    text_speed: dq9_core::talk::TextSpeed,
     /// Render one frame offscreen into this PNG and exit, without a window.
     #[arg(long)]
     screenshot: Option<PathBuf>,
@@ -584,6 +588,7 @@ pub fn main() -> Result<()> {
         None => App::new_headless(options, Some(rom)),
     };
     app.set_screens(cli.screens);
+    app.set_text_speed(cli.text_speed);
     app.set_fx(cli.enhanced()?);
     if let Some(recorder) = recording {
         eprintln!(
@@ -675,6 +680,7 @@ fn play_record(cli: &Cli, rom: Vec<u8>, save: Option<Vec<u8>>, path: &Path) -> R
         let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
         let mut app = App::new(event_loop.create_proxy(), options, Some(rom));
         app.set_screens(cli.screens);
+        app.set_text_speed(cli.text_speed);
         app.set_fx(cli.enhanced()?);
         app.start_replay(record);
         event_loop.run_app(&mut app)?;

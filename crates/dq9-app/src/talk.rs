@@ -275,8 +275,6 @@ pub struct Talk {
 impl Talk {
     /// Sets the message speed of the dialogues opened from now on; `Normal` is the original's
     /// rate and the default.
-    // Called by the entry points' option hooks (`build/evidence/j4-text-speed/app-hook.md`).
-    #[allow(dead_code)]
     pub fn set_text_speed(&mut self, speed: TextSpeed) {
         self.speed = speed;
     }

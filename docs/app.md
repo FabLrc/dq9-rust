@@ -111,7 +111,10 @@ screens"); `enhanced` (default) is the single 16:9 field with the enhanced rende
 `enhanced-reactive` the same field filling the window (experimental). `--fx LIST`/`--no-fx
 LIST` switch the enhanced effects one by one (section "Enhanced 16:9"). `--screens
 port|original`: where the field's 3D view and its message window are drawn, `port` (default)
-on the top screen or `original` on the bottom one (section "DS screens").
+on the top screen or `original` on the bottom one (section "DS screens"). `--text-speed
+slow|normal|fast` (Web `?textspeed=`): how fast dialogue text types; `normal`, the default, is the
+original's rate of one message unit per 60 Hz frame (`re/dialogue.md`, § "Text speed"), `slow` is
+half and `fast` double. A does not skip the typing, as in the original.
 
 The cast follows the save's current scenario track when one is loaded:
 progress, flags and quests are restored. Otherwise, it is that of the prologue `1.1.1` by day.

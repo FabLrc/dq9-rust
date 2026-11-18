@@ -10,6 +10,7 @@ use winit::window::WindowAttributes;
 
 use crate::app::{App, Options, SessionSpec, UserEvent};
 use crate::screens::{Layout, ScreenMode};
+use dq9_core::talk::TextSpeed;
 use dq9_render::EnhancedOptions;
 
 fn document() -> Option<web_sys::Document> {
@@ -155,12 +156,22 @@ pub fn canvas_size() -> Option<(u32, u32)> {
     ))
 }
 
+type PageOptions = (
+    Options,
+    Option<SessionSpec>,
+    ScreenMode,
+    EnhancedOptions,
+    TextSpeed,
+);
+
 /// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
 /// `layout` (`enhanced`, `enhanced-reactive`, `stacked`, `side` or `top`), `fx`/`nofx`
 /// (comma-separated effects to switch on/off: `trilinear`, `fxaa`, `contact-shadows`,
 /// `bloom`, `tonemapping`, `grading`, `vignette`, `dithering`, `edge-accent`, `glass`, or
 /// `all`/`none`), `screens` (`port` or `original`: where
-/// the field and its message window are drawn), `mute`, `battle` (an `eventbattle.bin` index),
+/// the field and its message window are drawn), `textspeed` (`slow`, `normal` or `fast`: how
+/// fast dialogue text types, `normal` being the original's rate), `mute`, `battle` (an
+/// `eventbattle.bin` index),
 /// `battle-stage` and `monsters` (`1x3`), `seed` (the battle generators' seed) from the page's
 /// query string. The pilot session adds `pilot` (the autopilot plays the new game), `route`
 /// (an event number: the route mode of `--route`, which implies `pilot` and `fight`), `fight`
@@ -168,7 +179,7 @@ pub fn canvas_size() -> Option<(u32, u32)> {
 /// animation frame; real time without it), `budget` (milliseconds of steps per frame, 40 by
 /// default), `render=0` (no frame is drawn) and `battles=show` (battles are presented instead
 /// of settled in the step that starts them).
-fn options() -> (Options, Option<SessionSpec>, ScreenMode, EnhancedOptions) {
+fn options() -> PageOptions {
     let mut fx = EnhancedOptions::ALL;
     let mut options = Options {
         map: None,
@@ -201,6 +212,7 @@ fn options() -> (Options, Option<SessionSpec>, ScreenMode, EnhancedOptions) {
     };
     let mut pilot = false;
     let mut screens = ScreenMode::default();
+    let mut text_speed = TextSpeed::default();
     let (mut fx_on, mut fx_off) = (String::new(), String::new());
     let search = web_sys::window()
         .and_then(|w| w.location().search().ok())
@@ -216,6 +228,7 @@ fn options() -> (Options, Option<SessionSpec>, ScreenMode, EnhancedOptions) {
             "fx" => fx_on = value.to_owned(),
             "nofx" => fx_off = value.to_owned(),
             "screens" => screens = ScreenMode::parse(value).unwrap_or(screens),
+            "textspeed" => text_speed = TextSpeed::parse(value).unwrap_or(text_speed),
             "chapter" => {
                 if let Ok(n) = value.parse() {
                     options.story.chapter = n;
@@ -283,7 +296,7 @@ fn options() -> (Options, Option<SessionSpec>, ScreenMode, EnhancedOptions) {
     }
     // The route mode needs the engine to play the battles, like `--route` needs `--fight`.
     options.play.fight |= session.route.is_some();
-    (options, pilot.then_some(session), screens, fx)
+    (options, pilot.then_some(session), screens, fx, text_speed)
 }
 
 /// `number[xcount]` comma-separated of the page's `monsters` parameter.
@@ -589,7 +602,7 @@ pub fn main() {
     watch_rom_input(proxy.clone());
     watch_save_input(proxy.clone());
     watch_new_game_button(proxy.clone());
-    let (options, session, screens, fx) = options();
+    let (options, session, screens, fx, text_speed) = options();
     watch_time_select(proxy.clone(), options.time.unwrap_or(0));
     watch_layout_select(proxy.clone(), options.layout);
     watch_fx_checkboxes(proxy.clone(), fx);
@@ -601,6 +614,7 @@ pub fn main() {
     );
     let mut app = App::new(proxy, options, None);
     app.set_screens(screens);
+    app.set_text_speed(text_speed);
     app.set_fx(fx);
     if let Some(spec) = session {
         app.set_session(spec);

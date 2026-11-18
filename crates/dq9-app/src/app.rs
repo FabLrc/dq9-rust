@@ -1189,6 +1189,12 @@ impl App {
         self.screens = screens;
     }
 
+    /// Sets how fast dialogue text types (`--text-speed`, `?textspeed=`); `Normal` is the
+    /// original's rate (`docs/re/dialogue.md`).
+    pub fn set_text_speed(&mut self, speed: dq9_core::talk::TextSpeed) {
+        self.talk.set_text_speed(speed);
+    }
+
     /// Handles a key of the window or of a replay; `true` asks the window to close.
     fn key(&mut self, code: KeyCode, pressed: bool) -> bool {
         if !pressed {
