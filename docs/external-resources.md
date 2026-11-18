@@ -11,8 +11,9 @@ verified is marked **[unverified]**.
    organization [DQI-haX](https://github.com/DQIX) (decompilation, format wiki, tools) and
    the Discord *The Quester's Rest* (<https://discord.gg/dqix>, "DQI-haX" thread).
 2. **The USA decompilation symbols apply to our European ROM** with a simple address
-   offset (verified below on our 193 symbols). 1,704 names and the bounds of
-   ~20,000 functions, under the Unlicense (public domain).
+   offset (verified below on the 193 symbols present at the survey; `re/symbols.txt` now
+   holds 735 names, 86 of them overlay-17, and the mapping rule is unchanged). 1,704 names
+   and the bounds of ~20,000 functions, under the Unlicense (public domain).
 3. **The [DQIX wiki](https://github.com/DQIX/wiki) documents, on the same `YDQP` ROM, a
    good part of our roadmap**: triggers, `.stb` scripts, `.nat` tables,
    maps, sprites, SDAT, NSBMD… Read it before tackling a format.
@@ -49,8 +50,9 @@ verified is marked **[unverified]**.
 
 #### USA → Europe mapping
 
-Established by DQIX Enhanced's `tools/region.py` and **verified here**: the 177 ARM9-module
-symbols and the 16 overlay-17 symbols of `re/symbols.txt` all land on a symbol start
+Established by DQIX Enhanced's `tools/region.py` and **verified here** on the 193 names the
+file held at the survey: the 177 ARM9-module symbols and the 16 overlay-17 symbols of
+`re/symbols.txt` all land on a symbol start
 in `config/usa/arm9` once the address is converted (`Gpc2_LoadIndex` ↔
 `LoadAndDecompressGPCHeaderAndInnerFileInfo…`, `Gpc_FindEntryByHash` ↔ `GPCFile::GetFileByCRC`,
 `Msg_Compile` ↔ `func_02069fec`…).

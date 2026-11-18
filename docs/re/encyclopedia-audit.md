@@ -59,8 +59,8 @@ Page: [battle-the-games-formulas]. `Ours` gives `file:line` in `crates/dq9-core/
 | B13 | At tension 100 the fighter is immune to sleep, paralysis, confusion, poison and lost turns (except two abilities). | none cited | absent (no status at all) | **not implemented** | none |
 | B14 | An action without the metal flag always misses a metal monster; the others deal 0 or 1 except a critical, Quadraslash and Needle Shot, Metal Slash and Metalicker (1 + `random(2)`), a "+1 against metal" weapon, the poison needle. Damaging metal is set to 0 except on a critical and actions 517/130 (`0x205`/`0x82`). | `ov_024::021e6a90` for the damage side; `ov_000::02156648` for the miss | `battle/model.rs:442` (the singled-out actions, including `0x40`, `0x7E`, `0x82`, `0x205`) and `battle/model.rs:451` (`Unsupported::MetalBody`) | **not implemented** (refused before any draw). The site's two lists match the actions our code already singles out, so the work is bounded | none (no metal monster in chapter 2) |
 | B15 | A buff or debuff holds two levels; defence and agility are ×1.5 then ×2 up, ×0.5 then ×0.25 down; attack is ×1.25 a level. | none cited | `battle/round.rs:267` (`level_multiplier`), applied by `:989` (`apply_kind`, kinds 4 and 5) | **agrees** for defence and agility; attack (Oomph/Blunt, kind 3) is **not implemented** | `Buff moved the defence level` / `Accelerate the agility level` (real-ROM chapter-2 test) |
-| B16 | A defence or agility buff lasts 6 turns, then wears off with 63 %, 75 %, 88 %, 100 % on each following turn. | `ov_000::0215858c` | `battle/round.rs:278` (`wear_off_chance`) called from `:1096` after the count reaches 0 (`:1134` sets a second count of 4) | **differs**: our table is read one index too high — the code decrements the second count *before* indexing, so our four rolls are 75/88/100/100 instead of 63/75/88/100 | none |
-| B17 | A dazzle lasts 4 turns, then wears off with 38 %, 63 %, 88 %, 100 %. | `ov_000::0215858c` | same `wear_off_chance` (`battle/round.rs:278`), count 4 (`:1043`) | **differs**: the ROM reads a **different** array for dazzle (`0x02158d6c`) than for defence and agility (`0x02158d68`, four bytes earlier — `ghidra-status-tick.txt`); ours reuses the defence table. The exact dazzle values are **[unknown]** (both arrays live in RAM, initialised by code not read); the page's 38/63/88/100 is the only published reading | none |
+| B16 | A defence or agility buff lasts 6 turns, then wears off with 63 %, 75 %, 88 %, 100 % on each following turn. | `ov_000::0215858c` | `battle/round.rs` (`WEAR_OFF_CHANCE`, `wear_off_chance`), called after the count reaches 0 (a second count of 4 is a literal of `func_ov000_021599f4`) | **agrees** since `j4-audit-fixes` (`ed0974b`): the table is indexed by the decremented second count, so the four rolls are 62.5/75/87.5/100 % — the page's 63/75/88/100 rounded | `wear_off_rolls_by_the_decremented_count_and_dazzle_has_its_own_table` |
+| B17 | A dazzle lasts 4 turns, then wears off with 38 %, 63 %, 88 %, 100 %. | `ov_000::0215858c` | `battle/round.rs` (`DAZZLE_WEAR_OFF_CHANCE`, `wear_off_chance`), count 4 | **agrees** since `j4-audit-fixes` (`ed0974b`): the ROM's dazzle array (`0x02158d6c` → `0x02182bd4`) holds 37.5/62.5/87.5/100 %, the page's 38/63/88/100 rounded (`build/evidence/j4-audit-fixes/rom-wear-off-tables.txt`, `cdc2df1cee2d`) | `wear_off_rolls_by_the_decremented_count_and_dazzle_has_its_own_table` |
 | B18 | Recursing a buff already at two levels does nothing and does not restart its duration; below two it gains a level and restarts the duration. | `0x0208777c`, `0x020877d0` (the page's ARM9 addresses) | `battle/round.rs:1002`–`:1055`: the level check gates the whole write, and every move sets the count back to 6 | **agrees** | none (real-ROM: the chapter-2 Buff casts) |
 | B19 | A party member evades 2 % plus gear and skills; a monster's evasion is 0, 2, 4, 8 or 25 % from its record. | `RollEvasion` `ov_000::02156f98`; grade table | `party.rs:504` (`2.0` + item `+0x0c` bits 10–19 / 10), `battle/model.rs:30` (`GRADE_RATES`) | **agrees** (the roll truncates the rate) | `a_dodged_blow_skips_the_block_roll_but_still_draws_its_amount`; 18 dodged vectors |
 | B20 | Block comes from the shield; a monster's block is 0 to 25 % from its record. | `RollBlock` `ov_000::02156e30` | `party.rs:506` (zero with no shield, then the item sum), `battle/model.rs:30` | **agrees** (this roll does *not* truncate the rate) | `a_blocked_blow_deals_nothing_and_a_block_rate_is_not_truncated` |
@@ -118,7 +118,7 @@ outside the route.
 | S6 | The rusty sword, Hela's hammer and the oh-no bow miss one time in four. | none cited | absent | **not implemented** | none |
 | S7 | Some armour restores a flat 25 HP at the end of every turn, and does not stack. | none cited | absent (no end-of-turn effect) | **not implemented** | none |
 | S8 | Some armour returns a fifth of a blow half the time, reflects spells one time in four, or is cursed (a lost turn one time in four). | none cited | absent | **not implemented** | none |
-| S9 | A healing item is spent only if it did something (HP or MP restored, an ailment cured, an ally revived); attacking items are always spent; weapons used as items are never spent. | none cited | `crates/dq9-app/src/battle/fight.rs:935` spends any item whose record sets `+0x08` bit 19, whether or not it changed anything | **differs, fixed in `2da4e51`** (rule read at ResolveAction `0x021ed724`..`0x021ed7e4`, no longer a hypothesis): a medicinal herb used on an ally at full HP is kept in the original and was spent by the app. The rule's address is not given (**[hypothesis]**, from the page only); it needs the item action's handler read (`ov_017::021d0164` neighbourhood) before a fix | none |
+| S9 | A healing item is spent only if it did something (HP or MP restored, an ailment cured, an ally revived); attacking items are always spent; weapons used as items are never spent. | `ResolveAction` (EU `0x021ed724`..`0x021ed7e4`) gating `func_020ddb38` on the action's applied counter; the kinds' handlers raise it | `battle/item.rs` (`effect_applied`, `clears_held_slot`), fed by `battle/resolve.rs`'s `TargetOutcome` | **agrees** for the reachable items since `j4-item-spend` (`2da4e51`): a herb on an ally at full HP, a revive on a living ally and an antidote with nothing to cure all keep the item; the record's `+0x08` bit 19 and the category gate the held slot. The field menu's own no-effect rule is unread (`facility.md`) | `a_herb_at_full_hp_is_kept`, `a_herb_at_full_hp_is_kept_and_a_heal_spends_one` |
 | S10 | The prayer ring breaks one time in four each use. | none cited | absent | **n/a chapter 2** (the ring is not reachable) | none |
 | S11 | A book in a pocket grants an aptitude (an ability, a critical bonus, a tension retention, the Thief's Theory loot pass…). | none cited | absent; `party.rs:515` leaves `crit_book_bonus` at 0 | **not implemented** (v0.2 has no book) | none |
 | S12 | Items that inflict a status roll `0–99 < 90 × multiplier` (25 % for the sandstorm spear), never against metal. | none cited | absent (no item status path) | **not implemented** | none |
@@ -149,63 +149,57 @@ site:
    (`ghidra-company.txt`); our port stands.
 3. **Flight refuses species 38–40** (B22). The page names three monsters; the routine tests
    `0x26..0x28` before anything else. The range is the one our encounter code already reserves
-   for "never surprises", so it is the species, not a member index. Our engine lacks the test.
+   for "never surprises", so it is the species, not a member index. The engine refuses it since
+   `ed0974b` (`flight_is_refused_against_species_38_to_40`).
 4. **Defend halves a flagged blow, not every blow** (B10). The page words it as a rule for all
    blows; the function gates it on the action's `+0x10` bit 4. Our gate stands.
 
-Two more claims are ours to fix, not the site's:
+Two more claims were ours to fix, not the site's; both are done:
 
-5. **The wear-off chances are one index late** (B16), and **dazzle uses its own array** (B17).
+5. **The wear-off chances were one index late** (B16), and **dazzle has its own array** (B17).
    `ov_000::0215858c` decrements the second count and *then* indexes; it also reads two different
-   arrays for dazzle and for defence/agility. Our `wear_off_chance` (`battle/round.rs:278`) is
-   keyed as if indexed before the decrement and is shared by both.
-6. **The spawn block looks at every member** (R4). `0x02073e0c` loops over four members; ours
-   tests the leader only.
+   arrays for dazzle and for defence/agility. `ed0974b` keys the table by the decremented count and
+   wires dazzle's array (`battle/round.rs`, `WEAR_OFF_CHANCE`/`DAZZLE_WEAR_OFF_CHANCE`).
+6. **The spawn block looks at every member** (R4). `0x02073e0c` loops over four members; `e775c65`
+   gives `StepInput::party` the three other slots. `dq9-app` passes the leader only: it has no
+   follower field characters, so that call is the party of one the block sees on the field.
 
-## Next batches, by value for v0.2
+## Work items from this audit, by value for v0.2
 
-Each item names the work, the evidence and its confidence.
+Each item names the work, the evidence and its status: done, decided or still open.
 
-1. **Fix the wear-off chances** (`battle/round.rs:278`, `:1096`, `:1134`). Key the table by the
-   decremented second count (so the four rolls are 63/75/88/100) and give dazzle its own array.
-   Evidence: `ghidra-status-tick.txt` (`0x02158d6c` vs `0x02158d68`). The dazzle values themselves
-   are **[unknown]** until the initialiser of `0x02158d68` is read; the page's 38/63/88/100 is a
-   **[hypothesis]** to test. Cheap, and it changes the outcome of every buffed round — a
-   regression test should pin the four draws and the clear pass.
-2. **Refuse flight against species 38–40** (`battle/round.rs:682`, first test, before the surprise
-   round). Evidence: `ghidra-flight.txt`. One condition; a synthetic flow test. No chapter-2
-   monster is concerned, so it is cheap correctness, not a route fix.
-3. **Spawn block for every member** (`encounter.rs:327`). Pass the whole party's positions (and
-   their field id) into `spawn`, compare each with the spawn point at `< 0x3800`. Evidence:
-   `ghidra-spawn-point-test.txt`. Needs a model change to `StepInput` (one position today);
-   a party of one is unaffected.
-4. **Experience sharing** (`party.rs:686`). The decompiled `ov_023::021f4098` multiplies a second
-   per-member float into each share and divides by the weighted sum; identify `0x02053dfc`
-   (**[hypothesis]** turns alive: it bumps a counter when a status bit is clear) and
-   `0x0202053c` before changing anything, and add the ×1.05 of the elevating shoes
-   (`func_0208538c` gate then `uRam021f4434`). Evidence: `ghidra-xp-share.txt`,
-   `ghidra-xp-helpers.txt`. The chapter-2 pilot's XP totals were never compared with the original,
-   so a real-ROM test should assert the share of a two-member party first. **Update 2026-11-17 (`j4-xp-wire`): refuted** — the counter counts command passes of every present slot, not turns alive; it is uniform for a party present from the start and cancels in the share.
-5. **Item spend rule — done (`2da4e51`)** (`crates/dq9-app/src/battle/fight.rs:935`). Keep a healing item that healed
-   nothing. The page gives no address: read the item action's handler before deciding, then
-   assert with the app's battle test (a herb on an ally at full HP). **[hypothesis]** from the
-   page alone until then.
-6. **Grudge targeting** (`battle/ai.rs:384`). Model the +2/+1 of the last two attackers (the
-   writers are still unidentified; `battle.md`'s USA `0x0208978C` is not a European function
-   start) instead of refusing a multi-candidate pick.
-   The page's 263/438 is a [hypothesis] count; a ROM check over `mon_btldata` bit 26 gives it.
-   Unblocks any multi-member party against those monsters — the v0.2 pilot fights with one hero.
-   **Done 2026-11-17 (`j4-grudge-enrage`):** the writer is EU `0x0208979c` (USA `0x0208978C`),
-   called from `ov_024::021eb5d0` at `0x021ed0d4`; the memory (`+0x32`/`+0x34`) and the weights are
-   modelled (`Battle::last_attackers`, `target_weights`), the refusal is gone, and the ROM counts
-   **263 of 438**.
-7. **Enrage** (`ov_024::021eb08c`). Read the trigger fields the page does not name, then model the
-   target override. Whether the Hexagoon enrages decides if this is a v0.2 item; the site says
-   most bosses do, and our Hexagoon fight currently ignores it — **[unknown]**, decidable once
-   the trigger field is identified, from the set battle 2 record (`eventbattle.bin`).
-   **Decided 2026-11-17 (`j4-grudge-enrage`):** the fields are `+0x24` (two kind/chance pairs) and
-   `+0x28`/`+0x29` (the length range); the Hexagoon's word is `0x1000_0000` with both kind fields
-   zero, so **no chapter-2 fight enrages** and the target override is not needed for v0.2. The
+1. **Wear-off chances — done (`j4-audit-fixes`/`ed0974b`)** (`battle/round.rs`). The table is
+   indexed by the decremented second count (rolls 62.5/75/87.5/100, the page's 63/75/88/100) and
+   dazzle has its own array, read on the ROM: `DAZZLE_WEAR_OFF_CHANCE` holds 37.5/62.5/87.5/100
+   (`build/evidence/j4-audit-fixes/rom-wear-off-tables.txt`, `cdc2df1cee2d`), so the page's
+   38/63/88/100 is that table rounded. Regression test:
+   `wear_off_rolls_by_the_decremented_count_and_dazzle_has_its_own_table`.
+2. **Flight against species 38–40 — done (`ed0974b`)** (`battle/round.rs`, first test, before the
+   surprise round). Evidence: `ghidra-flight.txt`; test `flight_is_refused_against_species_38_to_40`.
+   No chapter-2 monster is concerned, so this is correctness, not a route fix.
+3. **Spawn block for every member — done (`e775c65`)** (`encounter.rs`). `StepInput::party` carries
+   the three other slots' positions and `spawn` compares each with the spawn point at `< 0x3800`;
+   evidence `ghidra-spawn-point-test.txt`. `dq9-app` passes the leader only (it has no follower
+   field characters), so a party of one is unchanged.
+4. **Experience sharing — done (`ca074aa`, wired by `3f8422e`)** (`Party::award_with`): the
+   decompiled `ov_023::021f4098`'s two per-member factors, the band lookup and the ×1.05 of the
+   elevating shoes are applied. Evidence: `ghidra-xp-share.txt`, `ghidra-xp-helpers.txt`; the
+   counter's writer is **refuted** as "turns alive" (below). Still unmodelled: the hold bit of
+   `live+0xA8` and mid-battle joins.
+5. **Item spend rule — done (`2da4e51`)** (`battle/item.rs`, `battle/fight.rs`). A healing item
+   that healed nothing is kept: `ResolveAction`'s applied counter (`0x021ed724`..`0x021ed7e4`)
+   gates the held-item helper, and each kind handler raises it only on a real change. The field
+   menu's own no-effect rule stays **[unknown]** (`facility.md`).
+6. **Grudge targeting — done (`j4-grudge-enrage`/`4e0a0ed`)** (`battle/ai.rs`). The writer is EU
+   `0x0208979c` (USA `0x0208978C`), called from `ov_024::021eb5d0` at `0x021ed0d4`; the memory
+   (`+0x32`/`+0x34`) and the weights are modelled (`Battle::last_attackers`, `target_weights`) and
+   the multi-candidate refusal is gone. The page's 263/438 is a fact: the ROM counts **263 of 438**
+   records with `mon_btldata` bit 26. Unblocks any multi-member party against those monsters — the
+   v0.2 pilot fights with one hero.
+7. **Enrage — read, not modelled, and not needed for v0.2** (`ov_024::021eb08c`). The trigger
+   fields the page does not name are `+0x24` (two kind/chance pairs) and `+0x28`/`+0x29` (the
+   length range), read by `j4-grudge-enrage`; the Hexagoon's word is `0x1000_0000` with both kind
+   fields zero, so **no chapter-2 fight enrages** and the target override is not modelled. The
    ROM counts 341 records with an armed pair, not the page's 287.
 8. **Metal rules** (B14). Refused today; the page's exception list matches the actions our code
    already singles out (`battle/model.rs:442`), so the scope is known. No chapter-2 monster is
@@ -216,7 +210,8 @@ Each item names the work, the evidence and its confidence.
 
 ## What the page does not settle
 
-- The wear-off arrays' contents and the initialiser of `0x02158d68` (**[unknown]**; see item 1).
+- The wear-off arrays are read (item 1); **not** settled: where the two pointers (`0x02158d68`,
+  `0x02158d6c`) are written, and whether a fourth status ever indexes them.
 - The exact spawn block's field test (`*param_1 == member's field`) and whether a guest counts as
   a member (**[unknown]**; `0x02073e0c` iterates the four party slots of `GetPartyMemberByIndex`).
 - The "turns alive" factor's writer (**[hypothesis]**: the counter `0x02053dd0` bumps). **Update 2026-11-17 (`j4-xp-wire`): refuted** — the counter counts command passes of every present slot, not turns alive; it is uniform for a party present from the start and cancels in the share.

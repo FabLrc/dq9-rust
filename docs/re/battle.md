@@ -29,13 +29,12 @@ verdicts that touch this note: the multiplication order **agrees** except the ca
 page's list — `ov_024::021e6a90` truncates once and clamps `+0x1C` bits 0–13 last, as this note
 already read. The metal rules, the coup-de-grâce thresholds, the enrage triggers (`ov_024::021eb08c`),
 the companion tactics and the family bonus are **not implemented** (refused or absent), so nothing
-diverges silently. Two rules **differ**: the buff wear-off chances — `ov_000::0215858c` reads two
-different chance arrays, one for dazzle (`0x02158d6c`) and one for defence and agility
-(`0x02158d68`, four bytes earlier), while our `wear_off_chance` is one array keyed one index late
-(below, "Statuses' run-down") — and, until this batch, the grudge weights (**now modelled**, below,
-"Monster AI"). Flight has one
-rule we lack: species 38–40 forbid it (below, "Flight"). Enrage is read but not modelled, and no
-chapter-2 fight carries a trigger (below, "Enrage").
+diverges silently. The rules the audit found **differing** are now modelled: the two buff wear-off
+chance arrays — `ov_000::0215858c` reads one for dazzle (`0x02158d6c`) and one for defence and
+agility (`0x02158d68`, four bytes earlier), indexed by the decremented count (`j4-audit-fixes`,
+`ed0974b`; below, "Statuses' run-down") — and the grudge weights (`j4-grudge-enrage`, `4e0a0ed`;
+below, "Monster AI"). Flight's species 38–40 refusal is modelled too (`ed0974b`; below, "Flight").
+Enrage itself is read but not modelled, and no chapter-2 fight carries a trigger (below, "Enrage").
 
 **Addresses.** EU first, USA in brackets where the ARM9 module shifts them (`AGENTS.md`: USA
 `0x0200F3B8..0x0200FB20` is +`0x8`, `0x0200FB20..0x020EEBD0` is +`0x10`); overlays are identical.
@@ -723,13 +722,11 @@ holder's passes; the model's counts and second counts are in `Status` (`WEAR_OFF
 **two** chance arrays, `0x02158d68` for defence and agility and `0x02158d6c` (four bytes later) for
 dazzle, and it decrements the second count *before* indexing it. With a second count of 4 the four
 rolls are therefore `T[3]`, `T[2]`, `T[1]`, `T[0]` — `0.625, 0.75, 0.875, 1.0` if `T` is read
-ascending by remaining count (the page's 63/75/88/100), and the dazzle array's first roll is a
-harsher value (the page's 38/63/88/100). `battle/round.rs`'s `wear_off_chance` keys
-`4 → 0.625, 3 → 0.75, …` but is called with the already-decremented count, so our four rolls are
-75/88/100/100; and dazzle reuses the defence table. The arrays' contents are **[unknown]** (they
-live in RAM at `0x02158d68`, past the extracted ARM9 image, initialised by code not read); the
-page's two sequences are the only published reading and stay **[hypothesis]** until the writers
-are read (`encyclopedia-audit.md`, B16–B17).
+ascending by remaining count (the page's 63/75/88/100), and dazzle's own array gives
+37.5/62.5/87.5/100 (the page's 38/63/88/100). Until `j4-audit-fixes` (`ed0974b`) the model had
+one array keyed one index late (rolls 75/88/100/100, dazzle reusing the defence table); it now
+holds `WEAR_OFF_CHANCE` and `DAZZLE_WEAR_OFF_CHANCE`, both read on the ROM (above), indexed by the
+decremented count.
 
 ## Open points
 

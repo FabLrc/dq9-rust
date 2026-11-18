@@ -357,7 +357,10 @@ inside (z −12.27), the exit (type-0 warp, z from 7.25 to 8.75) when the hero e
   `021984f4`, `02198618`, `021986fc`, `02198aa0`), warp values 9, 10, 15 and 16–24,
   doorway values 5, 6, 11 and 12–20, low nibble of `+0x2e`, transport entrance.
 - The "once only" bits of `+0x28` (what sets them is unknown: no record);
-  actions `0x6d`, `0x95`, `0x96`… that touch door objects are not modeled.
+  actions `0x6d`, `0x99`… that remove or move map objects are not applied, and the pending
+  placement states (`+0x41b`) they would leave are not modelled (`trigger.md`). Actions
+  `0x95`/`0x96` are emitted as `Request::SetPlacementHidden` and applied to rendering and
+  collisions by `dq9-app`.
 
 ## Lighting (`ats_<c>.ambl`)
 

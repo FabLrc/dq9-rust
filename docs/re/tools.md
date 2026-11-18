@@ -129,7 +129,7 @@ $env:DQIX_TRACEN     = "64"
 Each write produces `[f<frame> l<vblank>] watch: write32 <address> = <value> (lr <lr>)`,
 followed by `r0..r12` with `DQIX_WATCHREGS`, then the last ARM9 functions entered (names
 with `-DRECOMP_TRACE`). `DQIX_RAMDUMP` writes raw 4 MiB images at the requested frames,
-readable by `dq9re state --ram` once that mode ships. Limits: a single watched word per run,
+readable by `dq9re state --ram` (`melonds-state.md`). Limits: a single watched word per run,
 no PC or full stack, no value before the write. The full reasoning and the code paths (v33,
 `runtime/mem.c` l. 157-188, `runtime/io.c` l. 8-19) are in the local report
 `build/eval-dqix-enhanced/RAPPORT-watch-drapeaux.md`; as of November 6, 2026, the units

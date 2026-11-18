@@ -41,18 +41,19 @@ Every fact taken from elsewhere is cited in the docs and re-checked on the ROM.
 ## Commands
 
 ```powershell
-powershell -File scripts/verify.ps1              # fmt, clippy, test, wasm, coverage
-powershell -File scripts/verify.ps1 -Fast        # fmt + clippy
-powershell -File scripts/verify.ps1 -Only test,wasm
-powershell -File scripts/verify.ps1 -RequireRom  # fails without a ROM (integration gate)
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1              # fmt, clippy, test, wasm, coverage
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast        # fmt + clippy
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only test,wasm
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -RequireRom  # fails without a ROM (integration gate)
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/m01.png
 cargo dq9re --help                                # ROM exploration
-powershell -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
+powershell -ExecutionPolicy Bypass -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
 ```
 
 - `scripts/verify.ps1` is the **only** source of the verification commands (CI included);
-  do not copy its cargo commands elsewhere. The `coverage` step updates the README progress
-  block: commit it with the batch.
+  do not copy its cargo commands elsewhere. The `coverage` step rewrites the README progress
+  block locally: a worker leaves it **uncommitted** (`docs/orchestration/worker-rules.md`), the
+  coordinator regenerates and commits it at integration.
 - The `tests/real_rom.rs` tests skip themselves without a ROM; CI never has the ROM.
 - Ghidra locks `re/ghidra`: one copy per parallel query (`DQ9_GHIDRA_PROJECT`);
   `ghidra-apply-symbols.ps1` requires the project to be closed in the GUI.

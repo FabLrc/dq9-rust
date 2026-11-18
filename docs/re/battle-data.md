@@ -227,10 +227,11 @@ Captures on the demo save (`Adenine`, vocation 10, Lv 91, four members, stage 30
 rows, the unmodelled rows greyed — Dragon Slash first — and Gigaslash enabled), `cast.png`
 (`dfae80465143`: "Adenine uses Gigaslash.") and `spent.png` (`5e4fd1194708`: "The slime is
 defeated.", damage 392, MP 552 → 537), with each run's log beside it. A four-member party
-plays the round only on the stage battle: `--battle 26 --save` stops on a limit of the
+plays the round only on the stage battle: `--battle 26 --save` stopped on a limit of the
 engine, not of this wiring — a monster that remembers its attacker against several standing
-members was unmodelled when this was written (`Unsupported::TargetMemory`); the grudge
-weights are modelled since `4e0a0ed` (`docs/re/battle.md`).
+members was unmodelled when this was written (`Unsupported::TargetMemory`). The grudge weights
+are modelled since `4e0a0ed` and that refusal is gone (`docs/re/battle.md`, "Monster AI"), so the
+capture predates the fix and has not been replayed since.
 
 ## Equipment battle parameters — `itembtlprm.nat`
 
@@ -437,7 +438,7 @@ The scene therefore plays `skill1` for Weird Dance, not a log-skip.
   (`web-after-lunge.png`, `c461e1d32686`), then back on the same empty stage after victory
   (`web-after-victory.png`, `c39b70b7ba1a`). The console (`web-after-console.json`,
   `e616bcfb24af`) has one victory: 4 rounds, 2 XP, 4 gold. Extra confirmations and a
-  stacked → wide switch do not restart the preview or resurrect the models. Full ROM
+  stacked → enhanced switch do not restart the preview or resurrect the models. Full ROM
   integration gate: 5/5, 109.4 s, app 103/103 (`integration.log`, `be6722f0cb72`).
 
 Motion lengths come from the `.bcfg` tables (`0x66`: frames and speed, ×4096): a motion's
