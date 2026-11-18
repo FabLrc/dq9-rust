@@ -18,9 +18,8 @@ tool. The model is chosen when the worker is launched and recorded in the batch 
 Escalation: Flash fails twice or exceeds its cap → Sonnet; Sonnet fails → Opus,
 only with justification. No other model.
 
-**Standing instruction (user, 2026-11-18): launch no new Sonnet worker.** DeepSeek V4.1 Flash only;
-when Flash fails twice or exceeds its cap, the coordinator splits the goal further or reports the
-blocker instead of escalating, until the user lifts this. Workers already running keep their model.
+**Standing instruction (user): Sonnet 5.5 may be used again (lifted 2026-11-18 after a short
+no-Sonnet period).** Opus stays the last resort.
 
 OMP agents: `scout` has neither shell nor git (file reading only); any branch comparison,
 `git cherry`/`range-diff` or build command goes to a `task` agent.
