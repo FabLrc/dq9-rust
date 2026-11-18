@@ -119,7 +119,7 @@ RE → implementation → challenger → integration → final "docs consistency
 
 | Script | Example |
 |---|---|
-| `scripts/verify.ps1 [-Fast] [-Only <step[,step]>] [-RequireRom]` | `./scripts/verify.ps1 -Only fmt,clippy` — steps `fmt`, `clippy`, `test`, `wasm`, `coverage`; only source of the verification commands |
+| `scripts/verify.ps1 [-Fast] [-Only <step[,step]>] [-RequireRom]` | `./scripts/verify.ps1 -Only fmt,clippy` — steps `fmt`, `clippy`, `test`, `wasm`, `coverage`, plus the opt-in `long`; only source of the verification commands |
 | `scripts/integrate.ps1 -Branch <b> -Spec <batch> [-Message <subject>] [-Apply] [-Rebase] [-Cleanup]` | see cycle above |
 | `scripts/evidence.ps1 -Batch <batch> [-Command <text>] [-Note <text>]` | `./scripts/evidence.ps1 -Batch j3-sound-effects -Command 'cargo run -p dq9-app -- --headless' -Note 'capture'` → `build/evidence/<batch>/manifest.json` |
 | `scripts/prune-build.ps1` | `./scripts/prune-build.ps1` — never deletes a file listed in an evidence manifest |
@@ -128,6 +128,14 @@ RE → implementation → challenger → integration → final "docs consistency
 
 Docs cite evidence as `build/evidence/<batch>/<file>` + the first 12 characters of the
 sha256.
+
+`long` is the route's acceptance run as a test:
+`cargo test -p dq9-app --release -- --ignored the_route_reaches_event_2750` (~19 min in
+release): the prologue and chapter 2 played by the pilot to event 2750, with the story, the
+Hexagoon outcomes, the checkpoint count and the SHA-256 of the checkpoint JSONL pinned. It is
+never part of the default run nor of `-Fast`; CI has no ROM, and `integrate.ps1` does not run
+it. The **coordinator** runs `./scripts/verify.ps1 -Only long` (with `DQ9_ROM` set) before
+declaring a milestone.
 
 ## End of wave
 

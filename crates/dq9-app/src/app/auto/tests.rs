@@ -677,3 +677,295 @@ fn a_shown_battle_leaves_the_game_in_the_state_an_instant_one_does() {
     let shown = run(true);
     assert_eq!(instant, shown);
 }
+
+/// The SHA-256 of the route's checkpoint JSONL, pinned on `main` before the batch: the
+/// acceptance file `build/evidence/j4-item-spend/route-before-checkpoints.jsonl` (12-char
+/// prefix `8ce4af30e497`; `j4-field-menu-rules` re-ran the route byte-identically).
+const ROUTE_CHECKPOINTS_SHA256: &str =
+    "8ce4af30e4970a3facb70d3aa45c11e79090f0d4ccb5078c895ee9e8aa41cfea";
+
+/// The prologue and chapter 2 played by the pilot with the real battle engine, from a new
+/// game to event 2750 (`--new-game --pilot --fight --route 2750 --seed 7 --headless`): the
+/// Hexagoon is lost at Lv 4, 5, 6 and 7 and won at Lv 8, the story ends at 2.6.5, and the
+/// checkpoints are the acceptance run's 972 lines, digest and all. The digest is the whole
+/// game state the run went through, so a changed draw, step, flag or map fails it.
+///
+/// `#[ignore = "long: ~19 min in release"]`: `cargo test` stays fast; `scripts/verify.ps1
+/// -Only long` runs it before a milestone. Set `DQ9_ROUTE_REFERENCE` to a previous JSONL to
+/// have a failure name the first checkpoint and field that differ.
+#[test]
+#[ignore = "long: ~19 min in release; run scripts/verify.ps1 -Only long"]
+fn the_route_reaches_event_2750_with_the_pinned_checkpoints() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let started = std::time::Instant::now();
+    let mut app = App::new_headless(route_options(), Some(rom.to_vec()));
+    let stop = app.play_route(300_000, 2750);
+    let elapsed = started.elapsed();
+    let track = &app.state.tracks[0];
+    // `route_summary` repeats the attempts at the end of the journal: the first five are the
+    // fights as they were observed.
+    let attempts: Vec<&str> = app
+        .journal
+        .steps
+        .iter()
+        .filter_map(|(_, step)| match step {
+            Step::Autopilot(what) => what.strip_prefix("route: set battle 2 "),
+            _ => None,
+        })
+        .take(5)
+        .collect();
+    let jsonl = app.checkpoints_jsonl();
+    let digest = sha256_hex(jsonl.as_bytes());
+    eprintln!(
+        "route 2750: {stop:?} in {:.1} s of wall time, story {}.{}.{}, {} checkpoints, \
+         sha256 {digest}",
+        elapsed.as_secs_f64(),
+        track.chapter,
+        track.step,
+        track.substep,
+        app.checkpoints.len()
+    );
+    assert_eq!(
+        stop,
+        Stop::Reached { event: 2750 },
+        "the route must end on the event it was asked to reach"
+    );
+    assert_eq!(
+        (track.chapter, track.step, track.substep),
+        (2, 6, 5),
+        "the story must end chapter 2 at 2.6.5"
+    );
+    assert_eq!(
+        attempts,
+        [
+            "lost at Lv 4: 3 rounds, 0 experience, 0 gold",
+            "lost at Lv 5: 5 rounds, 0 experience, 0 gold",
+            "lost at Lv 6: 6 rounds, 0 experience, 0 gold",
+            "lost at Lv 7: 4 rounds, 0 experience, 0 gold",
+            "won at Lv 8: 7 rounds, 175 experience, 100 gold, HP 5/53 left",
+        ],
+        "the Hexagoon (set battle 2) as the acceptance run fought it"
+    );
+    assert_eq!(
+        jsonl.lines().count(),
+        972,
+        "the acceptance run's checkpoint count (sha256 {digest})"
+    );
+    let reference = std::env::var_os("DQ9_ROUTE_REFERENCE").map(|path| {
+        let path = std::path::PathBuf::from(path);
+        std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("reading DQ9_ROUTE_REFERENCE {}: {error}", path.display())
+        })
+    });
+    let against = reference.as_deref().map_or_else(String::new, |reference| {
+        first_checkpoint_difference(&jsonl, reference).map_or_else(
+            || {
+                format!(
+                    "; identical to DQ9_ROUTE_REFERENCE ({} checkpoints)",
+                    reference.lines().count()
+                )
+            },
+            |what| format!("; first difference against DQ9_ROUTE_REFERENCE: {what}"),
+        )
+    });
+    assert_eq!(
+        digest, ROUTE_CHECKPOINTS_SHA256,
+        "the checkpoint JSONL left the pinned route{against}"
+    );
+}
+
+/// The first difference between two checkpoint JSONLs, for `DQ9_ROUTE_REFERENCE`: the
+/// checkpoint index and the top-level field that differs, or the line counts.
+fn first_checkpoint_difference(actual: &str, reference: &str) -> Option<String> {
+    let actual: Vec<&str> = actual.lines().collect();
+    let reference: Vec<&str> = reference.lines().collect();
+    for (index, (line, pinned)) in actual.iter().zip(&reference).enumerate() {
+        if line == pinned {
+            continue;
+        }
+        let fields = checkpoint_fields(line);
+        let expected = checkpoint_fields(pinned);
+        if fields.len() != expected.len() {
+            return Some(format!(
+                "checkpoint {index} has {} fields, the reference {}: {line} against {pinned}",
+                fields.len(),
+                expected.len()
+            ));
+        }
+        for ((key, value), (pinned_key, pinned_value)) in fields.iter().zip(&expected) {
+            if key != pinned_key || value != pinned_value {
+                return Some(format!(
+                    "checkpoint {index} field \"{key}\" is {value}, the reference's \"{pinned_key}\" \
+                     is {pinned_value}"
+                ));
+            }
+        }
+        return Some(format!(
+            "checkpoint {index} differs in its layout: {line} against {pinned}"
+        ));
+    }
+    (actual.len() != reference.len()).then(|| {
+        format!(
+            "{} checkpoints against the reference's {}",
+            actual.len(),
+            reference.len()
+        )
+    })
+}
+
+/// The top-level members of a checkpoint line as `(key, value)` slices of it.
+fn checkpoint_fields(line: &str) -> Vec<(&str, &str)> {
+    let mut fields = Vec::new();
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut begin = 0usize;
+    for (index, byte) in line.bytes().enumerate() {
+        if quoted {
+            match byte {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => quoted = true,
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 1 => {
+                fields.push(split_field(&line[begin..index]));
+                begin = index + 1;
+            }
+            _ => {}
+        }
+    }
+    fields.push(split_field(&line[begin..]));
+    fields
+}
+
+/// One top-level member, `"key":value`, as its key and its value; the writer quotes every key.
+fn split_field(field: &str) -> (&str, &str) {
+    let field = field.trim();
+    let Some(rest) = field.strip_prefix('"') else {
+        return ("", field);
+    };
+    let Some((key, rest)) = rest.split_once('"') else {
+        return ("", field);
+    };
+    (key, rest.strip_prefix(':').unwrap_or(rest))
+}
+
+/// The failure aid of the long test: it names the first checkpoint and field against
+/// `DQ9_ROUTE_REFERENCE`, and the line counts when one run stopped earlier.
+#[test]
+fn the_reference_difference_names_the_first_checkpoint_and_field_that_moved() {
+    let before = "{\"tick\":1,\"kind\":\"map\",\"event\":null,\"hero\":{\"x\":1.000,\"y\":2.000,\
+                  \"z\":3.000,\"yaw\":0.000}}";
+    let after = before.replace("\"event\":null", "\"event\":2750");
+    assert_eq!(first_checkpoint_difference(before, before), None);
+    let what = first_checkpoint_difference(&after, before).expect("a changed field");
+    assert!(
+        what.contains("checkpoint 0") && what.contains("\"event\""),
+        "the field that moved is named: {what}"
+    );
+    let what = first_checkpoint_difference(&format!("{before}\n{after}\n"), &format!("{before}\n"))
+        .expect("a changed line count");
+    assert!(
+        what.contains("2 checkpoints against the reference's 1"),
+        "a shorter reference is named: {what}"
+    );
+}
+
+/// SHA-256 (`FIPS 180-4`) of `bytes` as 64 lowercase hex digits. The pin needs one digest and
+/// `dq9-app` has no hash crate (adding one would also change the wasm build's surface), so the
+/// test spells it here; [`the_checkpoint_digest_matches_the_fips_vectors`] checks it.
+fn sha256_hex(bytes: &[u8]) -> String {
+    #[rustfmt::skip]
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let mut state: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    let mut message = bytes.to_vec();
+    let bits = (bytes.len() as u64).wrapping_mul(8);
+    message.push(0x80);
+    while message.len() % 64 != 56 {
+        message.push(0);
+    }
+    message.extend_from_slice(&bits.to_be_bytes());
+    for block in message.as_chunks::<64>().0 {
+        let mut words = [0u32; 64];
+        for (index, word) in block.as_chunks::<4>().0.iter().enumerate() {
+            words[index] = u32::from_be_bytes(*word);
+        }
+        for index in 16..64 {
+            let s0 = words[index - 15].rotate_right(7)
+                ^ words[index - 15].rotate_right(18)
+                ^ (words[index - 15] >> 3);
+            let s1 = words[index - 2].rotate_right(17)
+                ^ words[index - 2].rotate_right(19)
+                ^ (words[index - 2] >> 10);
+            words[index] = words[index - 16]
+                .wrapping_add(s0)
+                .wrapping_add(words[index - 7])
+                .wrapping_add(s1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
+        for index in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let choose = (e & f) ^ (!e & g);
+            let t1 = h
+                .wrapping_add(s1)
+                .wrapping_add(choose)
+                .wrapping_add(K[index])
+                .wrapping_add(words[index]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let majority = (a & b) ^ (a & c) ^ (b & c);
+            let t2 = s0.wrapping_add(majority);
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(t1);
+            d = c;
+            c = b;
+            b = a;
+            a = t1.wrapping_add(t2);
+        }
+        for (slot, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+            *slot = slot.wrapping_add(value);
+        }
+    }
+    state.iter().map(|word| format!("{word:08x}")).collect()
+}
+
+/// The digest the checkpoint pin relies on, against the FIPS 180-4 vectors.
+#[test]
+fn the_checkpoint_digest_matches_the_fips_vectors() {
+    assert_eq!(
+        sha256_hex(b""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(
+        sha256_hex(b"abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(
+        sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+    );
+}

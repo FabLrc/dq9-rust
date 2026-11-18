@@ -6,12 +6,17 @@
 #   wasm      cargo build of the portable crates and the app for wasm32-unknown-unknown
 #   coverage  cargo dq9re coverage --readme README.md (rewrites the README progress block
 #             locally; commit it with the change, CI fails when it is stale)
+#   long      cargo test -p dq9-app --release -- --ignored the_route_reaches_event_2750 (the
+#             whole chapter-2 route with the real battle engine, ~19 min in release). Opt-in:
+#             not in the default run, not in -Fast, and CI has no ROM to run it; the
+#             coordinator runs it with -Only long before declaring a milestone.
 # The script stops at the first failing step and prints each step's duration plus a summary.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1                 # all five steps
+#   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1                 # the five stages
 #   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast           # fmt + clippy
 #   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only fmt,clippy
+#   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only long      # the long route
 #   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -RequireRom     # integration gate
 #
 # -Only takes step names as an array or as one comma-separated string (`powershell -File`
@@ -42,7 +47,13 @@ $AllSteps = @(
         '-p', 'dq9-audio', '-p', 'dq9-app',
         '--target', 'wasm32-unknown-unknown'
     ) },
-    @{ Name = 'coverage'; Args = @('dq9re', 'coverage', '--readme', 'README.md') }
+    @{ Name = 'coverage'; Args = @('dq9re', 'coverage', '--readme', 'README.md') },
+    # Opt-in only: the whole route to event 2750 (~19 min in release, 182,129 steps). No
+    # RUSTFLAGS of its own, as the `test` step: CI never runs it (no ROM) and the coordinator
+    # runs `-Only long` before declaring a milestone.
+    @{ Name = 'long'; Args = @(
+        'test', '-p', 'dq9-app', '--release', '--', '--ignored', 'the_route_reaches_event_2750'
+    ) }
 )
 $StepNames = @($AllSteps | ForEach-Object { $_.Name })
 
@@ -62,7 +73,8 @@ if ($Only) {
     $Steps = @($AllSteps | Where-Object { @('fmt', 'clippy') -contains $_.Name })
     $Mode = 'fast'
 } else {
-    $Steps = $AllSteps
+    # `long` is opt-in only (`-Only long`): the default run stays the five gates.
+    $Steps = @($AllSteps | Where-Object { $_.Name -ne 'long' })
     $Mode = 'full'
 }
 

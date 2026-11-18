@@ -1133,11 +1133,18 @@ and CI call it. It chains five stages in this order and stops at the first failu
 `wasm32-unknown-unknown`) and `coverage` (`cargo dq9re coverage --readme README.md`).
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/verify.ps1                    # all five stages
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1                    # the five stages
 powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Fast              # fmt + clippy
 powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only test,wasm    # subset
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only long         # the long route
 powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -RequireRom        # integration gate
 ```
+
+`long` is the route's acceptance run as a test:
+`cargo test -p dq9-app --release -- --ignored the_route_reaches_event_2750` plays from a new
+game to event 2750 (~19 min in release) and pins the story, the Hexagoon outcomes, the
+checkpoint count and the SHA-256 of the checkpoint JSONL. It is opt-in only (never in the
+default run nor `-Fast`; CI has no ROM): the coordinator runs it before declaring a milestone.
 
 `-Fast` is a short pass while editing. `-Only` takes stage names (array or
 comma-separated string) and runs them in canonical order; an unknown name is an
