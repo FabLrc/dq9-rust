@@ -114,6 +114,36 @@ eye 6 units above the target, vertical field of view 30°. The target follows th
 + half his height (0.75), like `FieldCamera_Update` (`0x020a213c`). Framing the
 bounds of the whole map remains reserved for free flight (`F`); `F` in orbit restores following.
 
+**The map decides whether the buttons turn it.** On every map change
+`ov_017::0219e234` reads the map's `maplist9.bin` record byte `+0xc` (kind in bits 0-3, bit 7
+below): when the kind is 0 (a terrain region, the `F` maps — `K03` is the other kind-0 map)
+**or** bit 7 is clear, it sets bit 4 of the camera's `+0x244`; otherwise it clears it.
+`FieldCamera_Update` reads `L`/`R` only when bit 4 is clear, so those maps keep the camera at
+its home yaw. `dq9_core::camera::rotation_allowed(byte_c)` is that condition and
+`FieldCamera::new(byte_c)` stores its result: a locked camera still follows the hero and
+finishes a return, but ignores the shoulder buttons. Over the 871 maps of the list, 82 are
+locked (65 kind 0, plus 17 maps whose `+0xc` bit 7 is clear: `E01M01`…`E01M11`, `X03M01`,
+`X04`, `O00`, `O01`, `F99M01`, `F99M02`) and 789 turn. This is **not** the code letter:
+`F07M02` and `F34M01` are kind-2 interiors that turn, `F99M01` is locked.
+
+The lock is observed on original states stored in
+`build/evidence/j4-vegetation-billboards/` and in this batch's
+`build/evidence/j4-fmap-camera-lock/`: `F02` (20002) keeps `+0x244` = `0x10` and `L`/`R` change
+nothing, the Stornway exterior (`C01`, 100) and church (`C01M09`, 109) keep `+0x244` = `0` and
+the same hold turns the camera; a scan of the melonDS states under `build/` (121 with a field
+camera, 9 maps) finds the flag exactly as the rule predicts, with no mismatch. Bit 1 of
+`+0x244` is a **different**, transient lock: a message window or a warp menu sets it
+(`ov_017::021a7378`, `ov_017::021a9454`, `ov_017::021b2388`), so it is not a map rule.
+
+**[pending]** `dq9-app` still builds its camera with `FieldCamera::default()` (unlocked), so
+`Q`/`E` turn it on every map. The exact hook is in
+`build/evidence/j4-fmap-camera-lock/app-hook.md`: `load::MapEntry` carries the record's
+`+0xc` byte and the map load builds `FieldCamera::new(byte_c)` instead.
+
+The headless driver, the pilot and the parity replays never hold `Q`/`E` (the camera turn
+reads the window's held keys, and a replayed record only feeds the pad): the lock changes
+nothing on those paths, and `scripts/parity.ps1` stays 2/2 with the same accepted entries.
+
 A cutscene keeps the field camera parameters; a map change in the
 chain replaces that return point with the destination's. The last cutscene state is
 applied **before** restoration, then the target joins the hero at his final pose: no

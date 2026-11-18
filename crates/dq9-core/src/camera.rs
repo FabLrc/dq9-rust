@@ -3,6 +3,9 @@
 //! `0x020a213c`; `docs/re/movement.md`, "Field camera"). Only the yaw is modelled: the
 //! camera's height, distance and target follow the application's camera.
 //!
+//! Which maps let the buttons turn it is [`rotation_allowed`] (`ov_017::0219e234`): a
+//! terrain region (`F` maps) keeps the camera fixed, as does a record without bit 7.
+//!
 //! Angles are `fx32` (0x6488 per turn) as in the game, where yaw 0 looks towards `-z` and a
 //! positive yaw swings the eye towards `+x`.
 
@@ -19,15 +22,51 @@ const BAND_HIGH: i32 = 0x57f7;
 /// The return stops this close to the home direction.
 const ARRIVED: i32 = 0x28;
 
-/// The camera's turn state: whether it is returning to its home direction (`+0x245`, bit 1).
+/// `maplist9.bin` record `+0xc` bits 0-3: the map kind (`MapRecord::kind`).
+const MAP_KIND_MASK: u8 = 0xf;
+/// Kind of the 65 terrain regions (`F` maps): `Zone3D::SwitchZone` records the last one in
+/// the protagonist; their camera is fixed.
+const MAP_KIND_TERRAIN: u8 = 0;
+/// `maplist9.bin` record `+0xc` bit 7: keeps the field camera's turn. Clear on 12 story
+/// maps (`E01M01`…), `O00`/`O01`, `X03M01`, `X04` and `F99M01`/`F99M02`.
+const MAP_TURN_BIT: u8 = 0x80;
+
+/// Whether `L`/`R` may turn the field camera on a map, from its `maplist9.bin` record's
+/// `+0xc` byte (`ov_017::0219e234`, called on every map change): the game sets bit 4 of the
+/// camera's `+0x244` when the map kind is 0 or when `+0xc` bit 7 is clear, and
+/// `FieldCamera_Update` (`0x020a213c`) then reads no shoulder button.
+///
+/// Bit 1 of the same byte is a different, transient lock (a message window or a warp menu
+/// sets it; `ov_017::021a7378`, `ov_017::021a9454`), not a map rule.
+pub fn rotation_allowed(byte_c: u8) -> bool {
+    byte_c & MAP_KIND_MASK != MAP_KIND_TERRAIN && byte_c & MAP_TURN_BIT != 0
+}
+
+/// The camera's turn state: whether it is returning to its home direction (`+0x245`, bit 1),
+/// and whether this map keeps the camera fixed (`+0x244` bit 4, [`rotation_allowed`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FieldCamera {
     returning: bool,
+    locked: bool,
 }
 
 impl FieldCamera {
+    /// A camera for a map whose `maplist9.bin` record has this `+0xc` byte: the lock bit is
+    /// [`rotation_allowed`] (`ov_017::0219e234`). A locked camera still updates (it follows the
+    /// hero and finishes a return), but reads no shoulder button.
+    pub fn new(byte_c: u8) -> Self {
+        Self {
+            returning: false,
+            locked: !rotation_allowed(byte_c),
+        }
+    }
+
     pub fn is_returning(&self) -> bool {
         self.returning
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.locked
     }
 
     /// One update of `delta_ms` milliseconds (the game's effective delta time, 33 at 30 Hz)
@@ -35,6 +74,10 @@ impl FieldCamera {
     /// `home` is the direction both buttons return to. Returns the new yaw.
     pub fn step(&mut self, yaw: i32, home: i32, left: bool, right: bool, delta_ms: u32) -> i32 {
         let (mut left, mut right) = (left, right);
+        if self.locked {
+            left = false;
+            right = false;
+        }
         if self.returning {
             if !left && !right && yaw == home {
                 self.returning = false;
@@ -83,6 +126,53 @@ impl FieldCamera {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_terrain_region_locks_the_turn() {
+        // `F02` (0x10), `K03` (0xa0): kind 0.
+        assert!(!rotation_allowed(0x10));
+        assert!(!rotation_allowed(0x00));
+        assert!(!rotation_allowed(0xa0));
+        // A kind-0 record with bit 7 set is still a terrain region.
+        assert!(!rotation_allowed(0x90));
+        assert!(rotation_allowed(0x92));
+    }
+
+    #[test]
+    fn a_record_without_bit_7_locks_the_turn() {
+        // `E01M01` (0x02), `O00` (0x57), `X04` (0x11), `F99M01` (0x11).
+        assert!(!rotation_allowed(0x02));
+        assert!(!rotation_allowed(0x57));
+        assert!(!rotation_allowed(0x11));
+        assert!(!rotation_allowed(0x66));
+    }
+
+    #[test]
+    fn an_ordinary_map_allows_the_turn() {
+        // `X01M05` (0x82), `C01M09` (0xa2), a `B` backdrop (0xa4), every kind with bit 7.
+        assert!(rotation_allowed(0x82));
+        assert!(rotation_allowed(0xa2));
+        assert!(rotation_allowed(0xa4));
+        for kind in 1..=0xf {
+            assert!(rotation_allowed(0x80 | kind), "kind {kind}");
+        }
+    }
+
+    #[test]
+    fn a_locked_map_ignores_the_buttons() {
+        // `F02` (`+0xc` = 0x10): holding `L` or `R` leaves the yaw where it is.
+        let mut camera = FieldCamera::new(0x10);
+        assert!(camera.is_locked());
+        assert_eq!(camera.step(0, 0, true, false, 33), 0);
+        assert_eq!(camera.step(0x600, 0, false, true, 33), 0x600);
+        // Both buttons do not start a return either.
+        assert_eq!(camera.step(0x600, 0, true, true, 33), 0x600);
+        assert!(!camera.is_returning());
+        // An ordinary map (`C01M09`, 0xa2) is not locked.
+        assert!(!FieldCamera::new(0xa2).is_locked());
+        // A map without bit 7 (`E01M01`, 0x02) locks too.
+        assert!(FieldCamera::new(0x02).is_locked());
+    }
 
     #[test]
     fn one_button_turns_and_stops_at_the_band() {

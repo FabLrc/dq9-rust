@@ -33,7 +33,7 @@ id; the 139 unshipped maps all have id 0.
 | `+5..+0xb` | 4 (string) | map code, 7 bytes copied, `+0xb` = 0: 6 characters at most |
 | `+0xc` bits 0-3 | 3 | map kind, below |
 | `+0xc` bit 4 | 9 | copied to `func_0208a9b4()+0x9c` by `Zone3D::SwitchZone` [unknown] |
-| `+0xc` bits 5-6, bit 7 | 10, 12 | [unknown] |
+| `+0xc` bits 5-6, bit 7 | 10, 12 | bits 5-6 [unknown]; bit 7 keeps the field camera's turn together with the kind (`ov_017::0219e234`, below) |
 | `+0xd` bits 0-6 | 6 | passed by `0x0209cb00` into a 47-byte table (with cases depending on `LightingManager+0x98`); [hypothesis, wiki Map-List] the music |
 | `+0xd` bit 7 | 16 | [unknown] |
 | `+0xe` bits 0-1 | 17 | space: 1 indoor, 2 outdoor, 0 none (wiki) |
@@ -51,6 +51,15 @@ story locations `M`/`C`/`H`/`S`/`X` (383), 4 = battle backdrops `B` (182), 6 = c
 `Z` (165), 5 and 8 = `R` codes, 7 = `O00`/`O01`, 3 = one tower. When it is 0,
 `Zone3D::SwitchZone` (`0x0201384c`) copies the map id into the protagonist object
 (`+0x566`): [hypothesis] the last terrain region visited.
+
+**Camera lock.** `ov_017::0219e234`, called on every map change, sets bit 4 of the field
+camera's `+0x244` when the kind is 0 or `+0xc` bit 7 is clear, and clears it otherwise;
+`FieldCamera_Update` (`0x020a213c`) then reads no `L`/`R` button. Kind 0 is the 65 terrain
+regions (`F01`…`F99`, `K03`); bit 7 is clear on 17 other maps (`E01M01`…`E01M11`, `X03M01`,
+`X04`, `O00`, `O01`, `F99M01`, `F99M02`), so 82 of the 871 maps keep the camera fixed and 789
+turn it. Checked on the melonDS states under `build/` (121 states with a field camera, 9 maps,
+no mismatch) and by `crates/dq9-core/tests/camera_rom.rs`; [`movement.md`](movement.md) § Field
+camera.
 
 ## Verification
 
