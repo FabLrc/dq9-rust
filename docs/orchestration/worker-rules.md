@@ -67,6 +67,11 @@ For analysis, follow the "Where to look before analysing" order of `AGENTS.md`.
   allowance on the same condition, `#[cfg_attr(not(all(test, windows)), allow(dead_code))]`, not
   on `not(test)` (CI failure of `2d94e5e`). Likewise, items used only natively need
   `cfg(not(target_arch = "wasm32"))` or `cfg_attr(target_arch = "wasm32", allow(dead_code))`.
+  Modules declared `#[cfg(test)]` and not `(test, windows)` (`app/auto/tests.rs`,
+  `app/services/tests.rs`) also compile on Linux CI: a helper they call from another crate must
+  exist in that crate's **normal** build, because `cfg(test)` is not set when the crate is a
+  dependency. Keep such a helper unconditional (a pure diagnostic such as
+  `Dialogue::probe_arrow`), never `cfg(windows)` (CI failures of `3a2a868` and `cc9a1f0`).
 - Never write `docs/status.md`, `docs/roadmap.md`, `README.md`: the coordinator writes
   them. Your findings go into your `docs/re/<topic>.md` note (if it is in your scope)
   and into your report.
