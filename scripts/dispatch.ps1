@@ -232,9 +232,15 @@ function Get-MainSubjects {
     @(Invoke-Git @('log', 'main', '--format=%s'))
 }
 
-# A dependency is integrated when its one-line commit subject is in `git log main` or when its
-# branch is an ancestor of main (a branch still existing is not enough: it must be merged).
+# A dependency is integrated when `build/batches/integrated.txt` (written by `integrate.ps1
+# -Apply`) lists it, when its one-line commit subject is in `git log main`, or when its branch
+# is an ancestor of main (a branch still existing is not enough: it must be merged).
 function Test-Integrated([string] $Name, [string] $Commit, [string[]] $Subjects) {
+    $Trace = Join-Path $BatchesDir 'integrated.txt'
+    if ((Test-Path -LiteralPath $Trace) -and
+        (@(Get-Content -LiteralPath $Trace | Where-Object { ($_ -split '\s+')[0] -eq $Name }).Count -gt 0)) {
+        return $true
+    }
     if ($Commit -and $Subjects -contains $Commit) { return $true }
     $Branch = "FabLrc/$Name"
     & git -C $Root rev-parse --verify --quiet "refs/heads/$Branch" | Out-Null
