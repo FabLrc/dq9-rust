@@ -672,7 +672,7 @@ Evidence on the ROM:
   (`z < -8`). A single leaf is not enough: both zones are touched together.
 - X01M01, X01M07, X01M05: the type-1 `0x73` zones (43 in the ROM) are **inert** at
   runtime — no routine of `Field_CheckRegions` reads their list —; they are neither a
-  lift nor a task 8. See the route limit in `app.md`.
+  lift nor a task 8. See the route limit in `app/new-game.md`.
 
 ## End of conversation (event 1)
 

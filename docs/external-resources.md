@@ -27,6 +27,9 @@ verified is marked **[unverified]**.
    game's **mechanics read from the code, with the original addresses**: battle formulas,
    companion AI, the three random tables, monster spawn nodes, loot, grottoes. No license:
    reusable as facts and as an oracle, cited and re-checked (addresses to convert, below).
+7. **[DQ9Recompiled](https://github.com/birabittoh/DQ9Recompiled)** (added 19 November 2026,
+   MIT) recompiles **our exact European ROM** and documents 157 hook points at European
+   addresses with structure offsets: [`re/dq9recompiled.md`](re/dq9recompiled.md).
 
 ## DQ9-specific projects
 
@@ -128,6 +131,28 @@ and [`ROADMAP.md`](https://github.com/sackchief/dqix-enhanced/blob/main/ROADMAP.
 - Fixes required in the game itself: anti-piracy memory leak in the file
   loader (freeze after the first battle), encrypted anti-piracy code run by an
   interpreter (dqix-functions places the protection in overlay 29 **[unverified]**).
+
+### DQ9Recompiled — MIT recompilation of our exact ROM, with documented hooks
+
+<https://github.com/birabittoh/DQ9Recompiled> · MIT (the built runner links GPL-3.0 melonDS) · C++ ·
+added 19 November 2026, read at commit `f6e8571` (note: [`re/dq9recompiled.md`](re/dq9recompiled.md))
+
+Statically recompiles **`YDQP` Europe** (our ROM, same SHA-1) with the
+[ndsrecomp](https://github.com/mstan/ndsrecomp) framework and patches it with "hooks" (15 manifests,
+157 hook points) written at **European addresses**: no USA → EU conversion. Each hook's comments
+state the function, registers, structure offsets and surrounding code (main-loop pacing, field task
+queue, battle rewards, per-hit damage, drop rolls, text pipeline, menus, camera, quests).
+
+- **Used now**: facts only. 155/155 ARM9 hook points fall inside functions of the same overlay in
+  `re/functions.txt`; 28 new names were added to `re/symbols.txt` (cited `DQ9Recompiled`); no
+  contradiction, three points kept as **[hypothesis]** (`MsgWin_DrawGlyphs` is wider than its
+  name, two member-getter bits, the 30 Hz main-loop cadence).
+- **Licence**: MIT, so data and facts are integrable with attribution; we still reimplement rather
+  than copy C++ handlers, and nothing generated from the ROM (banks, assets) is ever committed.
+  A **built runner** is GPL-3.0-or-later: do not redistribute one.
+- **Possible oracle** (not adopted, not built here: clang and SDL3 missing): headless `--serve` mode
+  with `read_mem`, `state_save`, `run_vblanks` and hooks that can log RNG draws and per-hit damage,
+  which would give the chapter-2 reference we lack. Steps, cost and stop rule: § 9 of the note.
 
 ### Dragon Quest IX Modern — instrumented reference, not a replacement engine
 
@@ -322,8 +347,8 @@ keeps GPL and unlicensed sources as read-only references.
 
 | Status | Projects | Rule |
 |---|---|---|
-| Integrable (with attribution) | dqix-decomp (Unlicense), apicula (0BSD), ds-decomp/ds-rom, dsd-ghidra, ndskit, libntr, dqix-script-disasm, ArchiveTool, BattleEmulator, DualRip (MIT), objdiff (Apache-2.0), SSEQPlayer/FSS (WTFPL) | reusable code and data; cite the source |
-| Read-only | DQIX Enhanced, Dragon Quest IX Modern, melonDS, Kuriimu2, dqix-functions, Collapsus (GPL-3.0), FFmpeg (LGPL) | learn the facts, reimplement yourself; do not copy or translate the code |
+| Integrable (with attribution) | dqix-decomp (Unlicense), DQ9Recompiled hook data and comments (MIT), apicula (0BSD), ds-decomp/ds-rom, dsd-ghidra, ndskit, libntr, dqix-script-disasm, ArchiveTool, BattleEmulator, DualRip (MIT), objdiff (Apache-2.0), SSEQPlayer/FSS (WTFPL) | reusable code and data; cite the source |
+| Read-only | DQIX Enhanced, Dragon Quest IX Modern, melonDS (and any built DQ9Recompiled runner), Kuriimu2, dqix-functions, Collapsus (GPL-3.0), FFmpeg (LGPL) | learn the facts, reimplement yourself; do not copy or translate the code |
 | No license | DQIX wiki, DQ9 Encyclopedia, editor, desmume-scripts, auction, pret | facts reusable citing the page; do not copy text or code |
 
 Facts about the game (offsets, formulas, constants) are not protected by these licenses;

@@ -7,7 +7,7 @@ are moved to European ones as `AGENTS.md` gives (`+0x8` up to `0x0200FB20`, `+0x
 overlay addresses are identical. Data, code and layout below were checked on this ROM;
 **[hypothesis]** and **[unknown]** mark what was not.
 
-This note corrects the assumption in `docs/app.md` that the field's 3D view is the top
+This note corrects the assumption in `docs/app/screens.md` that the field's 3D view is the top
 screen and that the bottom one is empty: **the field draws its 3D view, message window and
 touch UI on the bottom (touch) screen, and the map screen on the top one; the battle does
 the opposite.**

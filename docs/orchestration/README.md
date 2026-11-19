@@ -11,8 +11,8 @@ tool. The model is chosen when the worker is launched and recorded in the batch 
 
 | Model | Id | Provider | Use |
 |---|---|---|---|
-| DeepSeek V4.1 Flash | `opencode-go/deepseek-v4.1-flash` | OpenCode Go | **default**: docs, mechanical scripts, data collection, tests against a given contract |
-| Sonnet 5.5 | `anthropic/claude-sonnet-5-5` | Anthropic | RE, challenger, design, non-trivial debugging, scripts touching user files |
+| DeepSeek V4.1 Flash | `opencode-go/deepseek-v4.1-flash` | OpenCode Go | **default**: docs, mechanical scripts, data collection/import, tests against a given contract |
+| Sonnet 5.5 | `anthropic/claude-sonnet-5-5` | Anthropic | **only when the task needs stronger reasoning**, chosen from the start (no Flash attempt first): RE that must establish a cause, design and structural refactors, non-trivial debugging, scripts that merge, rebase or delete |
 | Opus 5.5 | `anthropic/claude-opus-5-5` | Anthropic | last resort after a documented Sonnet failure; justification in `docs/status.md` |
 
 Escalation: Flash fails twice or exceeds its cap → Sonnet; Sonnet fails → Opus,
@@ -42,11 +42,14 @@ RE → implementation → challenger → integration → final "docs consistency
   `README.md`, `docs/status.md` against the code (grep for constants such as the tick rate,
   list of crates…).
 - At most 4-5 concurrent workers.
-- One owner per file. Shared files (`crates/dq9-app/src/app.rs`,
-  `crates/dq9-app/src/event.rs` + `event/**`, `crates/dq9-core/src/field.rs`,
-  `crates/dq9-core/src/state.rs`, `crates/dq9-core/src/trigger.rs` + `trigger/**`,
-  `Cargo.toml`, `re/symbols.txt`) appear in the
-  ```owns block of a single batch at a time.
+- One owner per file. Shared files (`crates/dq9-app/src/app.rs` — state, constructor and step
+  loop only; `app/input.rs`; `app/draw.rs::present_frame`; `crates/dq9-app/src/event.rs` +
+  `event/**`, `crates/dq9-core/src/field.rs`, `crates/dq9-core/src/state.rs`,
+  `crates/dq9-core/src/trigger.rs` + `trigger/**`, `Cargo.toml`, `re/symbols.txt`) appear in the
+  ```owns block of a single batch at a time. A feature owns its module under
+  `crates/dq9-app/src/app/` (`docs/app-structure.md`): the swirl, text speed or record/replay no
+  longer queue behind each other, and the one-line hook in the loop is written by the batch that
+  owns the file (or by the module's batch when it is alone on it).
 
 ## Batch cycle
 

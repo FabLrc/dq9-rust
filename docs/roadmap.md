@@ -235,7 +235,7 @@ Progress:
       part flags, initial `.chr` movements, camera-facing sprites and monsters.
       Deterministic captures `--frame N`, progress selection `--chapter/--step/--substep`
       (prologue by default). Placement heights kept without ground collision;
-      behavior and rendering limits detailed in [`app.md`](app.md).
+      behavior and rendering limits detailed in [`app/rendering.md`](app/rendering.md).
 - [x] **Animated hero** (`dq9_formats::hero`, `dq9_render::hero`, `dq9re hero`,
       [`re/characters.md`](re/characters.md) § "The hero"): `chara_pc.gp2` pieces
       resolved from worn items (face and hair through `itemdt_def`, hair shape
@@ -349,7 +349,7 @@ Progress:
       battle system (stand-in "won": `scenario::stand_in`) and `Other` requests
       (141…).
 - [x] **New game: the prologue chains** (`dq9-app --new-game`, the Web "New
-      game" button, `dq9_core::scenario`, [`app.md`](app.md) § "New game",
+      game" button, `dq9_core::scenario`, [`app/new-game.md`](app/new-game.md),
       [`re/stb.md`](re/stb.md) § "Prologue chaining"): `GameState::new_game` state,
       default hero, first cutscene `21500`; `21507 → battle 26 → 21520 → … → 21596` through
       native 538, trigger 11, action `0x78` and trigger 15, then the player gets control at
@@ -369,7 +369,7 @@ Progress:
       prologue scripts (stages 1.1 to 1.3) run to completion without error (`cargo dq9re script 1.1-3`, real
       test `prologue_scripts_run_to_completion`); 7 natives with unknown role or no rendered
       effect are reported once and ignored. **On-screen execution** (`dq9_core::cutscene`, `dq9-app/src/event.rs`,
-      [`app.md`](app.md) § "Events", [`re/stb.md`](re/stb.md) § "On-screen execution"):
+      [`app/events.md`](app/events.md), [`re/stb.md`](re/stb.md) § "On-screen execution"):
       `--stage 1.1` / `--event N` play the cutscenes (fades, messages in the conversation
       window, actors that move, turn and play their motions, script camera
       including the one carried by a model's bones, movement at the game's step, light and time,
@@ -439,7 +439,7 @@ Progress:
       (`j4-party-progress`), the chapter 2 monsters' actions, statuses, Defend and items
       (`j4-battle-actions`; code-read, **no oracle** for them, 20-seed tests); `re/battle.md`.
 - [ ] Battle in play: **done in the window and on the Web** (`j4-battle-play`: menus, messages,
-      award, level-up, wipe-out, `--fight`; `app.md` § "Battle"); headless keeps the stand-in for
+      award, level-up, wipe-out, `--fight`; `app/battle.md`); headless keeps the stand-in for
       the parity traces. Held-item commands and execution-only consumption are done
       (`j4-battle-held-items`); standalone battle 26 played to victory in the browser.
       ROM-backed action/damage/death/flight motions, weapon sets, hit timing and window

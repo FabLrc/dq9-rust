@@ -246,7 +246,7 @@ not an emulator validation: order and durations are not compared against melonDS
 Implementation: `crates/dq9-core/src/cutscene.rs` (cutscene state, no I/O, tests),
 `crates/dq9-app/src/event.rs` (`EventPlayer`: `Director` + rendering), actors and movements in
 `dq9-render` (`AnimatedScene::add_actor`…); usage and per-cutscene result in
-[`app.md`](../app.md), § "Events". No game function is ported in full
+[`app/events.md`](../app/events.md). No game function is ported in full
 (no `port:` marker): these are behaviour models drawn from the natives
 ([`stb-natives.md`](stb-natives.md)) and the data. The points below are what the
 30 prologue scripts require; this is not a comparison against melonDS.
@@ -362,7 +362,7 @@ movements 545/546; palette (238); camera return (328) — details and evidence i
 **Not executed** (reported by `--events-report`): 815, 581, 582 and 809 have no
 established visible effect or no drawn object; 571 sets the shadow flag (`Object3D` bit `0x10`,
 read by `Character_DrawShadow`) and the engine draws no blob shadow. Native 547 (battle
-transition) is executed by the battle scene (`app.md`, § "Battle scene"); the door sound (584)
+transition) is executed by the battle scene (`app/battle-scene.md`); the door sound (584)
 is played. 560 is executed as the wireless session test and answers 1 without a session
 (chapter 2 scripts poll it 20 times: `stb-natives.md`); 573 destroys the object of a type 2/6
 slot (`ev02900`), and the runtime drops it.
@@ -388,8 +388,7 @@ What chains the cutscenes is established (EU ROM, Ghidra, `cargo dq9re triggers`
   Falls) starts from the conversation with NPC 101 (`6 : 101`, `11 : 193`, `16 : 0` → `0x77(21591)`),
   ends with `0xe1(1100)`; `21592` starts from the arrival trigger (3) of `M01` at stage 1.2;
   `21593` from a conversation (NPC 99) and ends with `0x84(1, 4, 1)` (stage 1.4) and `0x85(4105)`.
-- Full run: `dq9-app --new-game --headless --auto [--pilot]` (`app.md`, § "New
-  game"); the continuous route to event 2750 is the next section.
+- Full run: `dq9-app --new-game --headless --auto [--pilot]` (`app/new-game.md`); the continuous route to event 2750 is the next section.
 
 ## Chapter 2 route (continuous play, J4)
 

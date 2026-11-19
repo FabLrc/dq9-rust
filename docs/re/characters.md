@@ -407,7 +407,7 @@ the hero of the current slot (first character of the party).
 - **Skin tones, eyes, eyebrows**: `data/chara/palette.bin` recolours the face and
   arm palettes (Character-Colours); only the original palettes are used **[unknown]**.
 - Hair colours: the skin ramp of `GetItemSkinShades` (`0x020731f0`, wiki) is not applied.
-- Lighting: fixed character light (`app.md`), not the DS lights.
+- Lighting: fixed character light (`app/rendering.md`), not the DS lights.
 - Item parts without a model (see above); party companions outside cutscenes (the guest of
   the scenes is drawn: § The guest); the hero during
   cutscenes (script `walk`, event scale and camera).

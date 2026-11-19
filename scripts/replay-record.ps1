@@ -1,4 +1,4 @@
-# Replays a recorded human session (`dq9-app --record`, docs/app.md, § "Recording a human
+# Replays a recorded human session (`dq9-app --record`, docs/app/record.md, § "Recording a human
 # session") headless in release mode and checks it: every state digest of the record must match
 # (a mismatch names the step and the field), and with -Expect the event must end.
 #

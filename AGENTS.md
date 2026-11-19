@@ -24,7 +24,11 @@ Recommended order, so as not to rediscover what is already published (`docs/exte
 4. [DQ9 Encyclopedia](https://dq9encyclopedia.com/): mechanics read from the code (battle
    formulas, companion AI, random tables, spawn nodes, loot), each "Under the hood" block
    citing its address. Overlay addresses as they are, **ARM9 ones in USA** (`+0x10`).
-5. Ghidra (`scripts/ghidra-query.ps1`) and melonDS to check or complete.
+5. [DQ9Recompiled](https://github.com/birabittoh/DQ9Recompiled) (MIT, same European ROM):
+   hook points documented at **European** addresses, with structure offsets (`docs/re/dq9recompiled.md`).
+   No conversion; facts only, re-checked on the ROM.
+6. The decompilation corpus (`scripts/decomp-find.ps1`, `docs/re/decomp-corpus.md`), then Ghidra
+   (`scripts/ghidra-query.ps1`) and melonDS to check or complete.
 
 Every fact taken from elsewhere is cited in the docs and re-checked on the ROM.
 
@@ -47,7 +51,11 @@ powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -Only test,wasm
 powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -RequireRom  # fails without a ROM (integration gate)
 cargo run -p dq9-app --release -- --map M01 --screenshot build/scratch/app/m01.png
 cargo dq9re --help                                # ROM exploration
-powershell -ExecutionPolicy Bypass -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4
+powershell -ExecutionPolicy Bypass -File scripts/decomp-find.ps1 ov_017::0218c0f4   # corpus in build/decomp (docs/re/decomp-corpus.md), < 1 s
+powershell -ExecutionPolicy Bypass -File scripts/ghidra-query.ps1 decomp ov_017::0218c0f4   # only when the corpus lacks it
+powershell -ExecutionPolicy Bypass -File scripts/queue.ps1                  # state of every batch spec, next wave
+powershell -ExecutionPolicy Bypass -File scripts/dispatch.ps1 -Batch <name> # launch one worker (slot target, runs.json)
+powershell -ExecutionPolicy Bypass -File scripts/integrate.ps1 -Branch a,b -Apply -Cleanup   # one verify for several branches
 ```
 
 - `scripts/verify.ps1` is the **only** source of the verification commands (CI included);
@@ -90,18 +98,25 @@ Kit: `docs/orchestration/README.md` (coordinator), `worker-rules.md` (workers),
 `batch-template.md` (spec, local instance `build/batches/<batch>.md`).
 
 - **Always the OMP harness** (Orca workers launched with OMP, subagents through OMP's `task`).
-  Models: `opencode-go/deepseek-v4.1-flash` (DeepSeek V4.1 Flash via OpenCode Go, default:
-  mechanical work, docs, scripts, tests against a contract); `anthropic/claude-sonnet-5-5`
-  (Sonnet 5.5 via Anthropic: RE, challenging, design, debugging, risky code);
-  `anthropic/claude-opus-5-5` (Opus 5.5 via Anthropic, last resort). Escalation: Flash
-  fails twice or exceeds its cap → Sonnet; Sonnet fails → Opus, justified in
-  `docs/status.md`. No other model.
+  Models: `opencode-go/deepseek-v4.1-flash` (DeepSeek V4.1 Flash via OpenCode Go, **default**:
+  mechanical work, docs, scripts, tests against a contract, data import); `anthropic/claude-sonnet-5-5`
+  (Sonnet 5.5 via Anthropic, **only when the task needs stronger reasoning**: RE with a cause to
+  establish, design or structural refactors, non-trivial debugging, scripts that merge or delete;
+  chosen from the start for such a task, no Flash attempt first); `anthropic/claude-opus-5-5`
+  (Opus 5.5 via Anthropic, last resort). Escalation: Flash fails twice or exceeds its cap →
+  Sonnet; Sonnet fails → Opus, justified in `docs/status.md`. No other model. The spec's
+  `Model:` line is read by `scripts/dispatch.ps1`; `build/batches/runs.json` records attempts.
 - **State in `docs/status.md` only**, rewritten by the coordinator alone; workers
   write neither status, nor roadmap, nor README (except the progress block).
-- **One owner per shared file.** `dq9-app/src/app.rs`, `dq9-app/src/event.rs` + `event/**`,
+- **One owner per shared file.** `dq9-app/src/app.rs` (state struct, constructor and step loop:
+  a feature adds one call there), `dq9-app/src/app/input.rs` (key match),
+  `dq9-app/src/app/draw.rs::present_frame` (draw order), `dq9-app/src/event.rs` + `event/**`,
   `dq9-core/src/{field,state}.rs`, `dq9-core/src/trigger.rs` + `trigger/**`, `Cargo.toml`,
-  `re/symbols.txt`: in the ```owns block of a single batch at a time. Out of scope or
-  blocked: one precise `ask`, then stop; no concurrent patch, no status loop.
+  `re/symbols.txt`: in the ```owns block of a single batch at a time. A feature owns its module
+  (`app/<module>.rs` + `app/<module>/**`, `docs/app-structure.md`): batches on different modules
+  do not conflict. `scripts/dispatch.ps1` refuses an `owns` overlap with a running batch;
+  `scripts/queue.ps1` lists the next disjoint wave. Out of scope or blocked: one precise `ask`,
+  then stop; no concurrent patch, no status loop.
 - **One batch = one branch `FabLrc/<milestone>-<batch>`** (no wave suffix), one spec,
   evidence, one squash commit by `scripts/integrate.ps1` (gate: scope, forbidden
   files, `verify.ps1 -RequireRom`). End of wave: `scripts/prune-branches.ps1`.

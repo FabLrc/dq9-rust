@@ -3,7 +3,7 @@
 Rewritten by the coordinator at integration; no history log.
 Plan: [`roadmap.md`](roadmap.md); rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 18, 2026
+## Status as of November 19, 2026
 
 **v0.1 functional natively; v0.2's native and browser criteria are met by the pilot, the
 hand-played one is not.** A new game played by the pilot with the real battle engine reaches
@@ -27,6 +27,7 @@ Fixed 60 Hz loop; hero, field and model pose at 30 Hz.
 | Field, services, story | `j4-field-services`, `-containers`, `j4-field-menu-rules` fcd135a, `j4-wipeout-priest` 615b24c, `j4-ch2-gaps` 2930280 (49/50), `j4-guest-slot`, `j4-gate-*`, `j4-aquila-bug` 5349f43 (face decal one tick late) |
 | Presentation | `j4-enhanced-mode` 8189bf9 (`enhanced` default, ten `--fx`, `enhanced-reactive`), `j4-screens-original` 5ecb58e (opt-in), `j4-text-speed` d068809 + f516d79 (1 unit/frame, A does not skip, `--text-speed`) |
 | Research | `j4-encyclopedia-audit` 236ea6a, `j4-bottom-screen-re` 2183df4 (the original runs the field with swapped screens), `j4-vegetation-billboards` bbe8bc3 (F-map bushes are fixed quads: normal), `j4-docs-consistency` 598cef3 |
+| Tooling wave k1/k2 (Nov 19) | `k1-fast-test` a713ea8 (`dq9-app` test binary 89 s → 44 s measured on a loaded machine, 24.9 s quiet per the worker), `k1-linker` 10f94e1 (`rust-lld` + no test DWARF: cold target 488 s → 105 s, warm touch loop 66.9 s → 17.6 s, `docs/build-speed.md`), `k1-integrate` dc99dbb + `k1-queue-fix` b6c76e7 (several branches, one verify, README block folded, release/cleanup from `runs.json`), `k1-dispatch` 5bbc5e5 + 569d1bf (`dispatch.ps1`, `queue.ps1`, slot targets), `k1-ghidra-corpus` d184e3f (12,056 game functions in `build/decomp`, 0.6 s per question against 5–17 s), `k1-app-split` a15a406 (`app.rs` 3150 → 637 lines, 12 modules, route digest, parity and screenshot unchanged), `k1-docs-split` 0955548 (`docs/app.md` → index + `docs/app/`), `k2-recomp-facts` cc290ae (DQ9Recompiled: 157 hook points, 28 names) |
 
 ## Limits recorded, not hidden
 
@@ -54,7 +55,11 @@ Fixed 60 Hz loop; hero, field and model pose at 30 Hz.
 ## Next
 
 Nothing is unmerged. (1) The user's hand-played, recorded session, replayed by `--play-record`;
-(2) wire the swirl and run the shown route before/after; (3) the F-map camera lock; (4) more
-original references beyond 1.1.2 (melonDS states along the route); (5) the top screen's map and
-party strips, then make `--screens original` the default after the user's test.
+(2) the top screen's map and party strips, then `--screens original` as default after the user's
+test (the swirl `d321f28` and the F-map camera lock `0fdd397` are wired); (3) more original
+references beyond 1.1.2: **try the DQ9Recompiled runner on a spare slot**
+(`docs/re/dq9recompiled.md` § 9: needs clang and SDL3, ~10 GB, time-boxed, stop rule written) or
+extend the melonDS states; (4) use the 28 new names and 144 hook anchors of that note for battle
+rewards, per-hit damage and the 30 Hz cadence check; (5) an autonomous coordinator over
+`queue.ps1`/`dispatch.ps1` is **not enabled**: it waits for the user's go.
 Pages deploys on each push to `main`. Evidence stays local under `build/evidence/<batch>/`.

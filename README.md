@@ -96,7 +96,7 @@ Each effect can be switched off (`--fx`/`--no-fx`, Web `?fx=`/`?nofx=` or the pa
 checkboxes); `--no-fx all` gives the DS look inside the 16:9 frame. `enhanced-reactive` is an
 experimental layout that fills any window shape. Switch presentation in the window with `R` or in
 the page's layout select (`--screens original` / `?screens=original` is a separate option for
-the field's screen assignment). Details: [`docs/app.md`](docs/app.md#enhanced-169).
+the field's screen assignment). Details: [`docs/app/screens.md`](docs/app/screens.md#enhanced-169).
 
 ## Status
 
@@ -138,9 +138,9 @@ What works:
   Defend, resolved through the same engine;
 - a **continuous route** driven by the headless pilot with the real battle engine
   (`--route 2750`): a new game reaches event 2750 on the European ROM, Hexagoon lost at
-  Lv 4–7 and won at Lv 8, story 2.6.5 (`docs/app.md`, Route mode);
+  Lv 4–7 and won at Lv 8, story 2.6.5 (`docs/app/new-game.md`, Route mode);
 - visible animated roaming monsters and contact-triggered battles, with the field restored
-  afterwards; native F01 and Hexagon smoke checks (`docs/app.md`, Field encounters);
+  afterwards; native F01 and Hexagon smoke checks (`docs/app/battle.md`, Field encounters);
 - trees and scenery that face the camera.
 
 Still missing:
@@ -219,7 +219,7 @@ powershell -ExecutionPolicy Bypass -File scripts/parity.ps1              # compa
 `scripts/verify.ps1` is the single source of the verification commands (CI calls it): it runs
 fmt, clippy, tests (the real-ROM ones when a ROM is present), the wasm build and the progress
 block above, and stops at the first failure; the per-worktree Cargo target and the optional
-`cargo nextest` are described in [`docs/app.md`](docs/app.md#development-loop).
+`cargo nextest` are described in [`docs/app/dev-loop.md`](docs/app/dev-loop.md).
 
 Two diagnostic tools, with no effect on the game:
 

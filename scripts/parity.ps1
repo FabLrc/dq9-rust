@@ -26,7 +26,7 @@
 # The script adds `--rom <rom> --headless --replay <inputs> --checkpoints <out>` itself; `args`
 # must not repeat them. `source` is provenance text only. With `"kind": "record"` it adds
 # `--rom <rom> --play-record <inputs> --checkpoints <out>` instead (the headless replay of a
-# human session, `docs/app.md` § "Recording a human session"): the record carries the start
+# human session, `docs/app/record.md`): the record carries the start
 # options, so `args` must be empty or hold only options that do not change the logic.
 #
 # Each reference: both files must exist and match their sha256 before use; the runtime run

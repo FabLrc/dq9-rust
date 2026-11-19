@@ -3,13 +3,13 @@
 # page with the session's query string, chooses the ROM through the page's <input type=file>
 # (read by the browser; the local server only serves the bundle), then follows the run until
 # `stopped: ...` and writes the console log, the checkpoints (JSONL, the native --checkpoints
-# format), the report and the milestone screenshots. See docs/app.md, "Route mode in the
+# format), the report and the milestone screenshots. See docs/app/browser.md, "Route mode in the
 # browser".
 #
 # `-Mode record` plays a short session by hand through the page (`?record=1`), presses real
 # keys, saves the record with the page's "Save recording" button and keeps the download
 # (`-Steps`, 3000 by default); `-Mode replay -Record <file>` picks that `.dq9rec` in the page
-# (`?play-record=1`) with the ROM and reads the stop line (docs/app.md, "Recording a human
+# (`?play-record=1`) with the ROM and reads the stop line (docs/app/record.md, "Recording a human
 # session"). Both write result.json and console.log like the pilot.
 #
 # Usage:
@@ -28,7 +28,7 @@
 #
 # `-Rom` defaults to DQ9_ROM, then the single *.nds of rom/. `-SkipBuild` reuses the bundle in
 # build/web-session/site. The wasm-bindgen CLI must match Cargo.lock (tools/wasm-bindgen, see
-# docs/app.md, "Build and local server"). The Cargo target is the caller's CARGO_TARGET_DIR.
+# docs/app/browser.md, "Build and local server"). The Cargo target is the caller's CARGO_TARGET_DIR.
 param(
     [Parameter(Mandatory = $true)] [string] $Out,
     [ValidateSet('pilot', 'record', 'replay')] [string] $Mode = 'pilot',
@@ -58,7 +58,7 @@ if (-not $Rom -or -not (Test-Path -LiteralPath $Rom)) {
     throw 'no ROM: pass -Rom or set DQ9_ROM'
 }
 
-# Each mode drives the page with its own query string (`docs/app.md`).
+# Each mode drives the page with its own query string (`docs/app/browser.md`).
 if (-not $Query) {
     $Query = switch ($Mode) {
         'record' { 'newgame=1&seed=7&record=1&mute=1' }
