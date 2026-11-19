@@ -267,6 +267,20 @@ touched, and the list read at `+0xf78` of the battle context is not filled by an
 - Roamer movement after the state is entered is `Character_Update` with the roamer's constants; whether a roamer slows when turning like
   the hero, the wall test of `0x020322c0`, and the alpha steps of a fade are **[hypothesis]**. The story-flag range of `0x02073d54`, A-button contacts (`+0xbe == 2` objects), multiplayer, solid monsters (`+0x17d & 6`) are not modelled.
 - `func_02028638` (the nearest node used when a roamer stops running) is approximated by the nearest node.
+- **The notice marker [not modelled]**: during the first 226 ms of state 10, the update the table
+  `0x020e893c` names for it (`0x020789a8`) sets the roamer's `+0x17a` to 1 and `+0x170` to the
+  height of its head (`+0x48` plus its height × scale) plus a bounce (`+0x174`, which gains
+  `3 × (0x70 − 2 × state_ms)` per update and never goes below 0), and clears `+0x17a` after
+  226 ms, when the decision runs. While `+0x17a` is not 0, the roamer's draw (`0x02076bfc`,
+  `ov_017::021a1d98` calls it) draws a **2D sprite facing the camera** there, after the model:
+  `RenderConfig::SetObjectPosition((+0x44, +0x170, +0x4c))`, the camera's inverse-view rotation
+  (`Camera+0x144`, `0x0202ed84`) as the object's rotation, then
+  `SPRSprite::DrawTextureScaleRotateTranslate(+0x16c, 0, 1)`: texture 0 of the sprite sheet shared
+  at `field context + 0x31f0` (`func_02076cc4` stores it at the spawn, `ov_017::021a2128`). The
+  port draws nothing there (`app/roaming.rs` sets the model only). Not read **[unknown]**: which
+  sheet `+0x31f0` holds and what texture 0 shows; **[hypothesis]**: the mark over a monster that
+  has seen the party (the state, its 226 ms and the bounce fit). This is the one camera-facing
+  thing a roamer draws; its model is not turned (see "Application wiring", Orientation).
 
 ## Symbols
 
@@ -380,6 +394,19 @@ movement, notice decision, contact, surprise roll, company and stage are `dq9_co
   (`stand`, `walk`, `run`, `appear`; a missing name falls back within the same archive), and its
   alpha is `GetInheritedAlpha`. A model added after the scene was uploaded forces one renderer
   rebuild; nothing else does.
+- **Orientation (`j4-field-facing`).** The model is drawn at the roamer's own heading and **not
+  turned to the camera**, as in the original: `ov_017::021a1d98` draws each visible roamer with
+  `0x02076bfc` → `Character::Draw` → `Object3D::Draw`, whose `PopulateRenderConfigWorld`
+  (`0x0203575c`) builds `RotY(+0x54)` unless flag `0x80000` of `+0x6c` (the camera's matrix) is
+  set, and that flag is clear on all 50 live roamers of the ten original RAM images of
+  `build/oracle/field-F02`; the camera angle (`0x0202e800`) is read by none of the state
+  handlers, and the F-map camera does not rotate (`camera+0x70` = 0 in every state). The port's
+  roamer at the position, heading and camera of six of those states shows the same side as the
+  melonDS capture (`build/evidence/j4-field-facing/roamers-original-left-port-right.png`: a
+  funghoul and a hammerhood at heading 235° and 221° are seen from behind in both). Detail and
+  addresses in [`../app/rendering.md`](../app/rendering.md) § Field monsters. A model's own
+  billboard commands (27 of 397 field bodies) are the only camera-facing parts. **Not modelled**:
+  the field draw loop shows only the `7 − party members on the map` nearest visible roamers.
 - **Generators.** One live stream is shared by the field and every battle. A map's `Roamers` are
   seeded from the application's `World` (so `--seed` reaches the spawns and companies); every field
   step copies the roamers' `CRand` and world generator into `World`, a battle starts from that state

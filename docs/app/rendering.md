@@ -39,10 +39,56 @@ Faithful to what the game reads:
   ([`re/mortal-veil.md`](../re/mortal-veil.md) § 7).
 - **NPCs**: cast and placements from `cast::load`, `.spr` sprites decoded once
   (cut-out images), `stand_*` names chosen by `cast::sprite_stand`, billboards facing the
-  camera; seated `sleep_*` variants with mirroring. Game scales: sprites `0x8f/4096`
-  per pixel, models `0x10a/4096`; positions `fx32/4096`, rotation in radians.
-  `.chr` archives, motion from `cast::initial_motion` (including the extra package of
+  camera; seated `sleep_*` variants with mirroring and the lying-back quad below. Game scales:
+  sprites `0x8f/4096` per pixel, models `0x10a/4096`; positions `fx32/4096`, rotation in
+  radians. `.chr` archives, motion from `cast::initial_motion` (including the extra package of
   type 19), monsters from the `.mon` member of `enemy.gp2` then first `.cchr`.
+- **Seated sprites** (flag `0x800`, sheet `<name>_s.spr`; `SpriteAnimation::face`,
+  `seated_frame`; `j4-field-facing`). The sprite draw `0x0203f54c` (USA `func_0203f53c`) puts the
+  pivot at the middle of the sheet like a standing one, but a seated sheet is **not a plain
+  billboard**: `NpcSprite_FaceCamera` (`0x0203cbe8`) stores `+0x54 = −θ`, with `θ` = the NPC's
+  angle plus the type 15 angle (`+0x90`) minus the camera's, in `[0, 2π)`, and the draw multiplies
+  the matrix by `RotX33(a) · C` (`MTX_Concat33`, `0x020c15b4`), then `RotZ(r)` (`0x02031288`):
+  `C` is the camera's inverse-view rotation (`Camera+0x144`, rows right, up, back),
+  `a = −|cos θ| / 2` (`fix32abs(fix32cos(θ)) >> 1`, negated), and `r` is `θ` reduced by whole
+  `π/4` (`0xc91`) to `[−π/8, π/8)`: the eight-sector table `0x020e7938` (`sleep_down`,
+  `sleep_r_down`, `sleep_right`, `sleep_r_up`, `sleep_up`, then `sleep_r_up`, `sleep_right`,
+  `sleep_r_down` mirrored) picks the picture, the roll takes up the rest. `MTX_RotX33_`
+  (`0x020c1274`) stores `_11 = cos`, `_12 = sin`, `_21 = −sin`, `_22 = cos`, so the sheet's up
+  goes to `cos a · up + sin a · back`:
+  with `a < 0` the **top leans away from the eye** (up to 0.5 rad, none seen from the side,
+  where `cos θ = 0`), the quad lying back as a sleeper in a bed seen from above, and it rolls
+  in its own plane by `r`. The port tilted the other way (`forward · sin a`, the top towards the
+  eye) from a guess before this was read; `animation/sprite.rs` tests transcribe the DS chain
+  and `animation/seated_rom.rs` checks `C01M15`'s sleeper over 16 yaws. **Challenger pending**:
+  read from the code and its machine code (`0x0203f730..0x0203f84c`: `fix32cos`/`fix32abs`
+  of `θ`, the reduction loop, `MTX_RotX33_(out, sin a, cos a)` through `blx 0x020c1274`,
+  `MTX_Concat33(RotX, C, out)` through `bl 0x020c15b4`, `translate(0, −h/2, 0)`, `MULT_3x3` =
+  GX command `0x1a` (`0x020c51d0`), `RotZ(r)`, `translate(0, +h/2, 0)`; the object's own rotation
+  `0x020e79f8` is the identity and its scale 1); not compared with a melonDS capture of a seated
+  NPC at several camera angles (none taken). **Open**: the same
+  draw has a second billboard mode, sprite flag `+0x50` bit 4: `RotY(camera angle)`
+  (`0x02031244`) instead of the camera's matrix, an upright turn like a `BBY` command; which
+  sprites set it was not read **[unknown]**, and `face` always uses the full camera frame for
+  standing sheets.
+- **Field monsters** (`<code>_f.mon` of the roamers, `app/roaming.rs`): the model's world matrix is
+  `T(position) · RotY(heading) · S(scale)`, the object's own `+0x54`; **nothing turns it to the
+  camera**. `Object3D::PopulateRenderConfigWorld` (`0x0203575c`) takes the camera's matrix only
+  when flag `0x80000` of `+0x6c` is set, and it is clear on all 50 live roamers of the ten
+  original RAM images read (`build/oracle/field-F02/run/w-*-ram.bin`: `0x4`, `0x84`,
+  `0x10000004`, `0x10000084`); no
+  roamer state handler (`0x02076d44..0x02078e60`) is among the eleven callers of the camera's
+  angle getter (`0x0202e800`, `calls.txt`); the field draw loop (`ov_017::021a1d98`) draws each
+  visible roamer with `0x02076bfc`, which goes through `Character::Draw` (`0x02032fec`) and
+  `Object3D::Draw` (`0x02035a3c`) with that rotation. 27 of the 397 field bodies that build
+  carry model billboard commands (`z011a`, `z014a`, `z029a`…): those parts are already turned by
+  `face_camera` like a map's. The port's roamer drawn at the position, heading and camera of six
+  original states (`w-c60`, `w-c190`, `w-c395`, `w-c410`, `w-contact2`, `w-contact3`) shows the
+  same side as the original's capture (five readable): the roamers are drawn like the original,
+  and `a_roamers_model_keeps_its_own_heading_whatever_the_camera_yaw` (`app/roaming/tests.rs`,
+  eight camera yaws) pins it, so no change can add a camera turn unseen. The one camera-facing
+  thing a roamer draws is a 2D marker during its notice state, **not modelled**
+  ([`re/encounter.md`](../re/encounter.md) § Not modelled / open).
 - **Animations**: files explicitly selected by the flags of the map
   parts, G3D pose (`JNT0`), texture matrices (`SRT0`), colors/alpha (`MAT0`) and
   texture/palette changes (`PAT0`). Simple models loop over the full

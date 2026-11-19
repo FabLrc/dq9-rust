@@ -22,7 +22,7 @@ pub(crate) struct SpriteAnimation {
     step: usize,
     elapsed: u32,
     duration: u32,
-    seated: bool,
+    pub(super) seated: bool,
     /// Walking (`+0x5c` bit 3, native 545): the four `walk_*` animations instead of the eight
     /// `stand_*` ones.
     pub(super) walking: bool,
@@ -212,6 +212,32 @@ impl AnimatedScene {
     }
 }
 
+/// The axes of a seated sprite's quad: the billboard's `right`, `up` and view `forward` turned
+/// the way the sprite draw (`0x0203f54c`) turns its matrix for a seated sheet, for an NPC angle
+/// `relative` to the camera's (radians, `NpcSprite_FaceCamera`'s `+0x54` is its opposite).
+///
+/// The draw puts the pivot at the sheet's centre and multiplies, in the DS convention (row
+/// vectors, each command applied closer to the vertex than the one before):
+/// `MTX_Concat33(MTX_RotX33(a), C)` (`0x020c15b4`: `RotX · C`, `C` the camera's inverse-view
+/// rotation whose rows are right, up and back = `−forward`), then `RotZ(r)` (`0x02031288`).
+/// `a = −|cos θ| / 2` (`fix32abs(fix32cos(θ)) >> 1`, negated) and `r` is `θ` reduced to
+/// `[−π/8, π/8)` by whole `π/4` (the loop on `0xc91`): the sheet shows the sector's picture
+/// and the roll takes up the rest. `MTX_RotX33_` (`0x020c1274`) stores `_11 = cos`, `_12 = sin`,
+/// `_21 = −sin`, `_22 = cos`, so the sheet's up `y` goes to `y·(cos a · up + sin a · back)`:
+/// with `a < 0` the top leans **away** from the eye and the quad lies back, as a person lying
+/// in a bed seen from above. The tilt is about the camera's right axis, after the roll.
+fn seated_frame(right: Vec3, up: Vec3, forward: Vec3, relative: f32) -> (Vec3, Vec3) {
+    use std::f32::consts::{FRAC_PI_4, FRAC_PI_8};
+    let tilt = -relative.cos().abs() * 0.5;
+    let roll = (relative + FRAC_PI_8).rem_euclid(FRAC_PI_4) - FRAC_PI_8;
+    // `back` is `-forward`: `up · cos a + back · sin a`.
+    let tilted = up * tilt.cos() - forward * tilt.sin();
+    (
+        right * roll.cos() + tilted * roll.sin(),
+        tilted * roll.cos() - right * roll.sin(),
+    )
+}
+
 impl SpriteAnimation {
     pub(super) fn advance(&mut self) -> Result<()> {
         let Some((_, steps)) = self.animations.get(self.animation) else {
@@ -287,20 +313,14 @@ impl SpriteAnimation {
             .ok_or(Error::Malformed("sprite texture frame out of range"))?;
         let model = &mut scene.models[self.model];
         model.materials[0].texture = Some(texture);
-        let mut right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin());
-        let mut up = right.cross(camera.forward()).normalize_or_zero();
-        if self.seated {
+        let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin());
+        let up = right.cross(camera.forward()).normalize_or_zero();
+        let (right, up) = if self.seated {
             let relative = self.angle.wrapping_sub(camera_angle) as f32 / 4096.0;
-            let tilt = -relative.cos().abs() * 0.5;
-            let roll = (relative + std::f32::consts::FRAC_PI_8)
-                .rem_euclid(std::f32::consts::FRAC_PI_4)
-                - std::f32::consts::FRAC_PI_8;
-            let forward = camera.forward();
-            let tilted = up * tilt.cos() + forward * tilt.sin();
-            let r = right * roll.cos() + tilted * roll.sin();
-            up = tilted * roll.cos() - right * roll.sin();
-            right = r;
-        }
+            seated_frame(right, up, camera.forward(), relative)
+        } else {
+            (right, up)
+        };
         // NpcTable_Build (0x0203d038): sprites use scale 0x8f, models 0x10a.
         let (width, height) = (width * (143.0 / 4096.0), height * (143.0 / 4096.0));
         // 0x0203f54c: billboard pivot is half the sheet's height above its placement.
@@ -399,5 +419,131 @@ mod tests {
         let width = Vec3::from_array(scene.models[0].vertices[1].position)
             - Vec3::from_array(scene.models[0].vertices[0].position);
         assert!((width.length() - 16.0 * 143.0 / 4096.0).abs() < 1e-6);
+    }
+
+    /// A point `(x, y)` of the sheet (centred on its pivot) through the sprite draw's matrix
+    /// chain, written the way the DS applies it: row vectors, `v · RotZ(r) · RotX(a) · C`
+    /// (`0x02031288`, `MTX_Concat33(RotX, C)` of `0x020c15b4`, `MTX_RotX33_` of `0x020c1274`:
+    /// `_11 = cos`, `_12 = sin`, `_21 = −sin`, `_22 = cos`), with `C`'s rows the camera's right,
+    /// up and back.
+    fn ds_chain(camera: &Camera, relative: f32, x: f32, y: f32) -> Vec3 {
+        let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin());
+        let up = right.cross(camera.forward()).normalize();
+        let back = -camera.forward();
+        let (sin_a, cos_a) = (-relative.cos().abs() * 0.5).sin_cos();
+        let step = std::f32::consts::FRAC_PI_4;
+        let residue = (relative + step / 2.0).rem_euclid(step) - step / 2.0;
+        let (sin_r, cos_r) = residue.sin_cos();
+        // v · RotZ: `x' = x cos − y sin`, `y' = x sin + y cos`.
+        let (x, y, z) = (x * cos_r - y * sin_r, x * sin_r + y * cos_r, 0.0);
+        // · RotX: `y' = y cos − z sin`, `z' = y sin + z cos`.
+        let (x, y, z) = (x, y * cos_a - z * sin_a, y * sin_a + z * cos_a);
+        // · C: the rows are the images of the local axes.
+        right * x + up * y + back * z
+    }
+
+    fn seated(angle: i32) -> (SpriteAnimation, Scene) {
+        let mut scene = Scene::default();
+        scene.models.push(SceneModel {
+            archive: String::new(),
+            member: String::new(),
+            name: String::new(),
+            vertices: vec![SceneVertex::default(); 4],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            materials: vec![SceneMaterial {
+                name: String::new(),
+                texture_name: None,
+                palette_name: None,
+                texture: Some(0),
+                wrap: [Wrap::Clamp; 2],
+                alpha: 31,
+                cull: Cull::None,
+                mode: PolygonMode::Modulate,
+                depth_equal: false,
+                translucent_depth_write: false,
+                uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                light: MaterialLight::default(),
+            }],
+            draws: vec![SceneDraw {
+                material: 0,
+                indices: 0..6,
+                center: [0.0; 3],
+            }],
+            bounds: None,
+            lit: false,
+            tinted: false,
+        });
+        let step = Step {
+            next: 0,
+            duration: 8,
+            frame: 0,
+        };
+        let names = [
+            "sleep_down",
+            "sleep_r_down",
+            "sleep_right",
+            "sleep_r_up",
+            "sleep_up",
+        ];
+        let sprite = SpriteAnimation {
+            model: 0,
+            angle,
+            frames: vec![(0, 64.0, 32.0)],
+            animations: names
+                .iter()
+                .map(|n| (n.as_bytes().to_vec(), vec![step]))
+                .collect(),
+            animation: 0,
+            step: 0,
+            elapsed: 0,
+            duration: 8,
+            seated: true,
+            walking: false,
+            flip_y: false,
+            fixed: false,
+        };
+        (sprite, scene)
+    }
+
+    /// A seated sprite is not a plain billboard (`0x0203f54c`): its quad lies back by half of
+    /// `|cos θ|` radians, the top **away** from the eye, rolled by what the sector's picture
+    /// leaves of `θ`. The vertices equal the DS matrix chain's, whatever the camera does.
+    #[test]
+    fn a_seated_sprite_leans_away_from_the_eye_like_the_ds_chain() {
+        let (mut sprite, mut scene) = seated(0x0f00);
+        let (width, height) = (64.0 * 143.0 / 4096.0, 32.0 * 143.0 / 4096.0);
+        for pitch in [0.2, 0.55] {
+            for k in 0..8 {
+                let camera = Camera {
+                    yaw: k as f32 * std::f32::consts::FRAC_PI_4 + 0.3,
+                    pitch,
+                    ..Camera::default()
+                };
+                sprite.face(&camera, &mut scene).unwrap();
+                let relative =
+                    (sprite.angle.wrapping_sub((-camera.yaw * 4096.0) as i32)) as f32 / 4096.0;
+                let at = |i: usize| Vec3::from_array(scene.models[0].vertices[i].position);
+                for (i, (x, y)) in [(-0.5, 0.5), (0.5, 0.5), (0.5, -0.5), (-0.5, -0.5)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let want = Vec3::Y * (height * 0.5)
+                        + ds_chain(&camera, relative, x * width, y * height);
+                    assert!(
+                        (at(i) - want).length() < 2e-3,
+                        "yaw {k} pitch {pitch} vertex {i}: {:?} against {want:?}",
+                        at(i)
+                    );
+                }
+                // The observable: the top is never nearer the eye than the bottom.
+                let lean = ((at(0) + at(1)) * 0.5 - (at(2) + at(3)) * 0.5)
+                    .normalize()
+                    .dot(camera.forward());
+                assert!(lean >= -1e-4, "yaw {k}: the top leans to the eye ({lean})");
+                if relative.cos().abs() > 0.9 {
+                    assert!(lean > 0.3, "yaw {k}: lies back by half a radian ({lean})");
+                }
+            }
+        }
     }
 }

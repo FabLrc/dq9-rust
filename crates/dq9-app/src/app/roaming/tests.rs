@@ -305,3 +305,64 @@ fn a_flight_keeps_and_resumes_the_roamer() {
     );
     assert!(app.roaming_roamers().iter().any(|(_, r)| r.id == id));
 }
+
+/// The original draws a roamer at its own heading: `Object3D::PopulateRenderConfigWorld`
+/// (`0x0203575c`) builds `RotY(+0x54)`, and takes the camera's matrix only under flag `0x80000` of
+/// `+0x6c`, which is clear on every live roamer of the original RAM images
+/// (`docs/app/rendering.md` § Field monsters). The model's world matrix is `T(position) ·
+/// RotY(heading) · S(scale)` whatever the camera's yaw, and the camera turning does not turn the
+/// model: a change that made roamers face the eye would show here.
+#[test]
+fn a_roamers_model_keeps_its_own_heading_whatever_the_camera_yaw() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    a_winning_party(&mut app);
+    app.set_roaming_enabled(true);
+    let (slot, spawned) = wait_for_roamer(&mut app, 2_000).expect("F01 must spawn a roamer");
+    assert_ne!(spawned.angle, 0, "a spawn faces the party, not yaw 0");
+    let mut relative_to_the_eye = Vec::new();
+    for k in 0..8 {
+        let yaw = k as f32 * std::f32::consts::TAU / 8.0;
+        app.view.camera.yaw = yaw;
+        app.run_steps(2);
+        let turned = (app.view.camera.yaw - yaw).abs();
+        assert!(
+            turned.min(std::f32::consts::TAU - turned) < 1e-3,
+            "the camera keeps the yaw the test gave it: {} against {yaw}",
+            app.view.camera.yaw
+        );
+        let roamer = app
+            .roaming_roamers()
+            .into_iter()
+            .find(|(now, _)| *now == slot)
+            .map(|(_, roamer)| roamer)
+            .expect("the roamer stays on the field");
+        let world = app.roaming_slot_world(slot).expect("it has a model");
+        let position = Vec3::new(
+            roamer.position[0] as f32 / 4096.0,
+            roamer.position[1] as f32 / 4096.0,
+            roamer.position[2] as f32 / 4096.0,
+        );
+        let own = glam::Mat4::from_translation(position)
+            * glam::Mat4::from_rotation_y(roamer.angle as f32 / 4096.0)
+            * glam::Mat4::from_scale(Vec3::splat(roamer.scale as f32 / 4096.0));
+        assert!(
+            world.abs_diff_eq(own, 1e-4),
+            "camera yaw step {k}: the model is T · RotY(heading) · S, not turned: {world:?} against {own:?}"
+        );
+        // The model's facing seen from the camera's side of the ground plane.
+        let facing = world.z_axis.truncate().normalize();
+        let to_eye = Vec3::new(-yaw.sin(), 0.0, yaw.cos());
+        relative_to_the_eye.push(facing.cross(to_eye).y.atan2(facing.dot(to_eye)));
+    }
+    // A model that turned to the eye would hold one angle to it; this one's moves with the
+    // camera, a step of 45° each time.
+    for pair in relative_to_the_eye.windows(2) {
+        let step = (pair[1] - pair[0]).rem_euclid(std::f32::consts::TAU);
+        let step = step.min(std::f32::consts::TAU - step);
+        assert!(
+            (step - std::f32::consts::FRAC_PI_4).abs() < 0.05,
+            "the camera turned 45°, the model did not: {relative_to_the_eye:?}"
+        );
+    }
+}

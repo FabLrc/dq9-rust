@@ -12,6 +12,8 @@ use nds_rom::g3d::{Fx12, G3dFile, Geometry, Name};
 use nds_rom::{Error, Narc, Result};
 
 mod actor;
+#[cfg(test)]
+mod seated_rom;
 mod sprite;
 
 pub(crate) use sprite::SpriteAnimation;
