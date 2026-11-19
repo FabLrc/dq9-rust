@@ -441,7 +441,7 @@ fn hero_model_follows_its_gait() {
     a.step(&camera).unwrap();
     assert_ne!(running, a.scene.models[model].vertices);
     assert_eq!(Gait::from_speed(0.0), Gait::Stand);
-    assert_eq!(Gait::from_speed(4.0), Gait::Walk);
+    assert_eq!(Gait::from_speed(4.0), Gait::Run);
     assert_eq!(Gait::from_speed(8.0), Gait::Run);
 }
 

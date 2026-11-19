@@ -26,12 +26,6 @@ use crate::scene::{Builder, Scene, SceneDraw, SceneInstance, SceneModel, Texture
 /// Scale of character models (`NpcTable_Build`, `0x0203d038`): `0x10a / 4096`.
 const MODEL_SCALE: i32 = 0x10a;
 
-/// The speed in world units per second from which the hero runs instead of walking: just under
-/// the game's top speed (`Character_Init` `0x02032e68`, `0x189` per 1/60 s ≈ 5.76 units/s)
-/// **[hypothesis]**: the game itself plays `run` for any movement in the field
-/// (`func_02033dd4` maps state 1 to the `run` animation), `walk` is only used by scripts.
-pub const RUN_SPEED: f32 = 5.0;
-
 /// Below this speed (units per second) the hero stands.
 const STAND_SPEED: f32 = 0.05;
 
@@ -44,12 +38,18 @@ pub enum Gait {
 }
 
 impl Gait {
-    /// Motion for a horizontal speed in world units per second.
+    /// Motion of a hero measured moving at `speed` world units per second over a game update.
+    ///
+    /// The game picks `stand` for state 0 and `run` for state 1, whatever the speed
+    /// (`Character_UpdateAnimation` `0x02033de4` → `func_02033ba0`, `walk` being scripts'
+    /// only), so any movement runs. No speed threshold may separate walking from running:
+    /// the displacement measured here is horizontal and a staircase shortens it by the cosine
+    /// of its slope (4.68 units/s on the 36° ramp of `X01M05` at the top speed of 5.76), which
+    /// is why a threshold under the top speed played `walk` on stairs (`docs/re/movement.md`
+    /// § "Stairs and the run cycle").
     pub fn from_speed(speed: f32) -> Self {
         if speed < STAND_SPEED {
             Self::Stand
-        } else if speed < RUN_SPEED {
-            Self::Walk
         } else {
             Self::Run
         }
@@ -538,5 +538,22 @@ impl HeroRig {
         target.recenter_draws();
         self.dirty = true;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Gait;
+
+    /// Horizontal speeds a hero held on the d-pad measures during an update, in units per
+    /// second: the speed ramp-up on the flat (1.17 … 4.69), the 36° ramp of `X01M05` at the top
+    /// speed (4.68, `dq9-core/tests/stairs_rom.rs`) and the flat top speed (5.76). All of them
+    /// are state 1 in the game, hence `run`; only a hero that does not move stands.
+    #[test]
+    fn a_moving_hero_runs_on_the_flat_and_on_stairs() {
+        for speed in [1.17, 2.34, 3.52, 4.68, 4.69, 5.0, 5.76] {
+            assert_eq!(Gait::from_speed(speed), Gait::Run, "{speed}");
+        }
+        assert_eq!(Gait::from_speed(0.0), Gait::Stand);
     }
 }

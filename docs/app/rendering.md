@@ -31,7 +31,7 @@ Faithful to what the game reads:
   14-bone template, animated by `mp0200n`/`mp0200ne` (`stand`, `walk`, `run`), face, hair and headgear
   placed on the `head` bone, arms and shoes by texture files, merged into one model;
   oriented by heading (`angle_of_yaw`), scale `0x10a × build`; the gait comes from the
-  distance covered per step (`Gait::from_speed`). Appearance: the first character of the
+  distance covered per step (`Gait::from_speed`: stand if still, run otherwise). Appearance: the first character of the
   save (`--save`), otherwise a default hero **[hypothesis]**; no weapons, no shields, no
   wings, no tints from `palette.bin` ([`re/characters.md`](../re/characters.md)).
 - **NPCs**: cast and placements from `cast::load`, `.spr` sprites decoded once

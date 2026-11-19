@@ -76,6 +76,51 @@ reproduce the cadence. Game paths (window, Web, driver, replay) all go through
 **[hypothesis]** scaling discrepancies (`0x28` ground hysteresis, half-pass rounding)
 are negligible at this cadence.
 
+### Stairs and the run cycle (`j4-stair-run`)
+
+Reported by hand-playing: on stairs the hero did not really run. Cause (established, with the
+falsified alternatives): the application gave `Gait::from_speed` the **horizontal** distance
+covered per update, and that function played `walk` under `RUN_SPEED = 5.0` units/s. The movement
+itself is right: along the ramp the hero covers the top speed (`0x189` per tick = 5.76 units/s,
+3D), but a slope of normal `y` = `n` shortens the horizontal part to `5.76 × n`. The collision
+ramp of `X01M05` (4105; triangles `ny = 0xd05` from `(±1.45, −0.35, −5.5)` to
+`(±1.45, 2.15, −9)`, 36°) gives **4.68 units/s** (4.67/4.70 alternating), under 5.0; every
+update of the climb and of the descent played `walk`, the flat floor beside it (5.76) played
+`run`. The gentler 26° ramp at `z ≈ 10..12` of the same map gives 5.13–5.16, 3 % over the
+threshold, which is why only steep stairs showed it. The same threshold also played `walk` for
+the four updates of the speed ramp-up on the flat (1.17 … 4.69).
+
+Falsified: (1) the **falling state** toggling on step edges: `Hero::is_walking()` stays true on
+every update of both walks (it only drops with `started_falling`), the speed stays `0x189`;
+(2) a **`.col2` face read as a wall** cancelling the motion: the displacement along the slope is
+5.75–5.76 units/s on every update, with no `slide_along_wall` heading change; (3) the
+**position snapping between steps**: the ramp is a plane, `y` rises/falls 0.11 per update,
+monotonically; (4) the **30 Hz cadence**: both gaits are chosen once per update in `run_steps`,
+flat and stairs alike; (5) the animation clock restarting: `HeroRig::set_gait` only restarts a
+clip when the gait changes, and the gait was a constant `walk` along the whole climb, so the
+cycle played continuously, just the wrong one (the one that changes it is the first update past
+the ramp-up). Measured, not
+assumed: `dq9-app --map X01M05 --start=0,-2 --walk "-z:2" --frame N` printed `motion Some(Walk)`
+at frames 64 and 80 (on the ramp) and `Some(Run)` at 20, 44 and 100 (flat) before the fix, and
+`Some(Run)` at all five after it, with identical positions.
+
+The game does not look at a speed: it plays the animation of the character's **state**
+(`Character_UpdateAnimation` `0x02033de4`: `stand` for state 0, `run` for state 1; `walk` only
+from scripts, `characters.md` § "Motions"). `Gait::from_speed` now maps any movement to `run` and
+only a hero that does not move to `stand` (the previous threshold was a **[hypothesis]** of
+`characters.md`, now refuted). Not modelled: the game's state also stays `run` while a held key
+pushes the hero against a wall, and `stand` while the speed decays after the key is released; the
+application derives the gait from displacement, so it stands in the first case and runs in the
+second. Passing `Hero::is_walking()` to the gait would model both **[hypothesis]**, it needs the
+application call sites (`app.rs`, `native.rs`).
+
+Check: `crates/dq9-core/tests/stairs_rom.rs`
+(`the_hero_runs_the_staircase_at_the_flat_speed`, real ROM) walks the hero north up and south
+down that ramp, asserts the state, the 3D speed on the flat and the horizontal speed `5.76 × 0xd05 /
+4096` on the stairs, and pins the end positions bit-exact (`[0, 7119, −33928]` and `[0, −981,
+−14741]`, fx32; the route digest and parity are unchanged since no movement code changed);
+`dq9-render`'s `a_moving_hero_runs_on_the_flat_and_on_stairs` pins the gait for those speeds.
+
 ### Collision (`CollisionWorld::resolve`, `ov_017::0219344c` / `02192b48`)
 
 - A *piece* is a placed `.col2` (position and angle of the placement). The game works in the

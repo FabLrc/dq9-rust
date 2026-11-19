@@ -385,11 +385,11 @@ the expression (`+0xc1 >> 4`). Result: **idle (state 0) → `stand`, keypad walk
 `stand` exists in three packages (`n`, `f`, `n2`): we take `n`, the one that moves the
 character the least (wiki) **[hypothesis]**; "per motion" playback (`AdvanceAnimations_v1`,
 loop over `[0, frames − 1[`). **Gait choice in the application** (`Gait::from_speed`):
-horizontal speed measured over the step (units/s): idle under 0.05, walk up to
-`RUN_SPEED` = 5, run above **[hypothesis]**: the game plays `run` at any speed, `walk`
-is used here for speeds under the established maximum speed (5.76 units/s, `movement.md`), hence for
-the provisional 4 units/s speed of `dq9-core` and for the acceleration of faithful
-movement. To revisit once faithful movement is in place.
+idle (stand) when the horizontal displacement measured over the update is under 0.05 units/s,
+run otherwise. The game plays `run` for state 1 whatever the speed; a former threshold
+(`RUN_SPEED` = 5, walk below it) played `walk` on stairs, whose slope shortens the horizontal
+displacement (`movement.md` § "Stairs and the run cycle"). `walk` stays available to scripts
+(`HeroRig::play`).
 
 ### Default appearance (new game)
 
