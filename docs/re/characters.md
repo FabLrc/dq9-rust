@@ -481,27 +481,12 @@ two heads) against `ivor-after-sheet.png`.
   0.24 unit from the sprite NPC 8 (`n001a`); the sprite and the model share no model data, so
   the rule above does not hide it.
 
-**Open: effect models and billboards (the benevolessence, user report "almost invisible, does not
-face the camera").** Not fixed; the next batch starts here.
-- **Fact:** `AnimatedScene::add_actor` (`dq9-render/src/animation/actor.rs`) builds every scripted
-  model with `Builder::model`, which drops the billboard render commands (`0x07`/`0x08`,
-  `docs/re/g3d.md` § Billboards). The effect archives the scenes load carry them: file ids 2855
-  (`ev010000010`, 1), 2860 (`ev010000300`, 4), 2861 (`ev010000310`, 12), 2879 (`ev010100400`, 1),
-  2880 (`ev010100500`, 17), 2884 (`ev014200000`, 13), 3166 (`ev180003410`, 12), 3202
-  (`ev999990100`, 8). Map models get them applied by `Scene::face_billboards`; actors never do.
-- **Experiment:** building the actor with `Builder::model_with_billboards` and registering the
-  result in `Scene::billboards` changes the `--event 21510` captures (frames 300, 900, 1200: a
-  larger four-point star; `build/scratch/e21510-f*.png` before, `a21510-f*.png` after, local,
-  not registered evidence). A native test (`effect/ev010100400.chr` at a set world, eight camera
-  yaws, the billboard's first three vertices against the eye direction) still failed: the quad
-  stayed edge-on (normal·eye = 0.00) after `face_billboards`, with or without the default motion
-  and `AnimatedScene::step`. **[unknown]** why: **[hypothesis]** the quad lies in the XZ plane of
-  the command's local frame, or `rebase` (`animation.rs`) re-captures offsets against the rest
-  rotation after an animated pose. The change and the test were reverted; nothing is committed.
-- **[unknown]** which scene shows the benevolessence itself (22159): 21510's sparkle
-  (`ev010100400`), the halo-like `ev010000310` (attached to the hero bone in 21510), or the
-  effects of 1330, 1340, 21595. Needs the user's answer before a test can assert size, alpha and
-  facing.
+**Effect models and billboards (the benevolessence, user report "almost invisible, does not face
+the camera"): fixed by `j4-benevolessence`.** The cause was in `nds_rom::g3d::Geometry`, which
+dropped the billboard flag at the matrix-stack commands; the experiment, the fix and the
+scenes covered are in `docs/re/g3d.md` § Billboards and `docs/app/events.md`. **[unknown]**
+still: which scene shows the benevolessence itself (22159): 21510's sparkle (`ev010100400`),
+the 21595 orb, or the effects of 1330 and 1340. The user's confirmation is pending.
 
 ## Faces hung on a bone (Aquila, event 21507)
 

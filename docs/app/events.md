@@ -182,7 +182,8 @@ outside the v0.2 target.)
 **Limits and hypotheses.** See also [`re/stb.md`](../re/stb.md), § "On-screen execution": default binding
 of declared member `n` to slot and actor `n`, actor channels, roll direction, unit of
 camera and light durations, terrain camera pose for 328, bubble placed in the
-world. The game's hero has wings and a halo (winged form) that the renderer does not draw; outside
+world. The winged form's wings and halo are drawn on the field hero (`App::sync_winged`,
+[`re/mortal-veil.md`](../re/mortal-veil.md)), not in cutscenes that do not attach them; outside
 events, NPCs keep their initial motion; NPC shadows are not drawn. The
 models are not yet compared with melonDS. For 584, the sound and the sliding/reverse
 branches are not read (the zone's low nibble is the only source of the index);
