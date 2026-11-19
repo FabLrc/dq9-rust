@@ -225,10 +225,9 @@ impl Dialogue {
         )
     }
 
-    /// The waits the application's Windows test probes (`Talk::trace`) log as "window shows:
+    /// The waits the application's test probes (`Talk::trace`) log as "window shows:
     /// arrow": states 0, 1 and 2 with the cursor, the class those probes were written against.
     /// What the window actually draws is [`View::arrow`] (states 1, 2 and 3, blinking).
-    #[cfg(windows)]
     pub fn probe_arrow(&self) -> bool {
         matches!(
             self.state,
