@@ -256,8 +256,18 @@ pub struct SceneBillboard {
 }
 
 impl SceneBillboard {
-    /// Recomputes the offsets from the vertices as they stand, after an animation posed them.
-    pub(crate) fn rebase(&mut self, vertices: &[SceneVertex]) {
+    /// Poses the billboard: the matrix the command found when the animation posed the model
+    /// (`posed`, from [`Geometry::build_posed`]) gives the pivot and the axes, and the offsets
+    /// are recomputed from the vertices as the pose left them. The offsets then hold the
+    /// object's own matrices after the command (`Rₐᵀ · (p − pivot)`), whatever the animation
+    /// turned them to: the command replaces the rotation of the matrix, not what comes after.
+    pub(crate) fn repose(
+        &mut self,
+        posed: &nds_rom::g3d::geometry::Billboard,
+        vertices: &[SceneVertex],
+    ) {
+        self.pivot = Vec3::from_array(posed.pivot);
+        self.rotation = Mat3::from_cols_array(&posed.rotation);
         let inverse = self.rotation.transpose();
         for entry in &mut self.vertices {
             let Some(v) = vertices.get(entry.0 as usize) else {

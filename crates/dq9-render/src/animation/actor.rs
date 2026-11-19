@@ -201,9 +201,9 @@ impl AnimatedScene {
             texture_ids: HashMap::new(),
             lit: false,
         };
-        let built = builder.model("event actor", "model.nsbmd", model);
+        let built = builder.model_with_billboards("event actor", "model.nsbmd", model);
         self.scene = builder.scene;
-        let built = built?;
+        let (built, billboards) = built?;
         let bytes: Arc<[u8]> = model_bytes.into();
         if built.vertices.is_empty() || built.indices.is_empty() {
             self.actors.push(ActorRig {
@@ -220,6 +220,11 @@ impl AnimatedScene {
         }
         let model_id = self.scene.models.len();
         self.scene.models.push(built);
+        // The model's billboard commands turn their draws to the camera
+        // (`RenderCommand_7`/`_8`, `docs/re/g3d.md` § Billboards), as for a map's models.
+        if !billboards.is_empty() {
+            self.scene.billboards.insert(model_id, billboards);
+        }
         let instance = self.scene.instances.len();
         self.scene.instances.push(SceneInstance {
             model: model_id,

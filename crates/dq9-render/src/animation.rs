@@ -8,7 +8,7 @@ use dq9_formats::cast::{self, Appearance, Story};
 use dq9_formats::chr::{Chr, MotionTable};
 use dq9_formats::map::{AnimKind, Map};
 use glam::{Mat4, Vec3};
-use nds_rom::g3d::{Fx12, G3dFile, Name};
+use nds_rom::g3d::{Fx12, G3dFile, Geometry, Name};
 use nds_rom::{Error, Narc, Result};
 
 mod actor;
@@ -773,11 +773,16 @@ impl AnimatedScene {
                 )?;
                 target.recenter_draws();
                 state.vertices_dirty = true;
-                // A billboard's offsets are taken from the vertices as the pose left them.
+                // A billboard's pivot and axes are those of the matrix its command found in
+                // this pose, and its offsets are taken from the vertices as the pose left them.
                 if let Some(billboards) = self.scene.billboards.get_mut(&state.model) {
+                    let posed = Geometry::build_posed(model, &objects)?.billboards;
+                    if posed.len() != billboards.len() {
+                        return Err(Error::Malformed("billboard count changed by a pose"));
+                    }
                     let vertices = &target.vertices;
-                    for b in billboards {
-                        b.rebase(vertices);
+                    for (b, posed) in billboards.iter_mut().zip(&posed) {
+                        b.repose(posed, vertices);
                     }
                 }
             }

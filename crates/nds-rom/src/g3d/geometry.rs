@@ -122,6 +122,7 @@ impl Geometry {
             sp: 0,
             material: 0,
             billboard: None,
+            stack_billboard: std::array::from_fn(|_| None),
             out: Geometry::default(),
             prim_start: 0,
             prim_type: 0,
@@ -166,6 +167,9 @@ struct Builder<'m, 'a> {
     material: u8,
     /// Billboard the current matrix is under, until a command replaces that matrix.
     billboard: Option<ActiveBillboard>,
+    /// The billboard each stack slot's matrix was stored under: `MTX_STORE` keeps the matrix
+    /// the billboard command rewrote, so a later restore draws billboarded again.
+    stack_billboard: [Option<ActiveBillboard>; 32],
     out: Geometry,
     prim_start: usize,
     prim_type: u32,
@@ -196,17 +200,23 @@ impl Builder<'_, '_> {
     fn op(&mut self, op: &RenderOp) -> Result<()> {
         match op {
             RenderOp::LoadMatrix { stack_pos } => {
-                self.cur = self.stack[slot(*stack_pos)?];
-                self.billboard = None;
+                let slot = slot(*stack_pos)?;
+                self.cur = self.stack[slot];
+                self.billboard = self.stack_billboard[slot].clone();
             }
-            RenderOp::StoreMatrix { stack_pos } => self.stack[slot(*stack_pos)?] = self.cur,
+            RenderOp::StoreMatrix { stack_pos } => {
+                let slot = slot(*stack_pos)?;
+                self.stack[slot] = self.cur;
+                self.stack_billboard[slot] = self.billboard.clone();
+            }
+            // A matrix multiplied after a billboard command turns with it: the draws keep the
+            // offsets they have from the pivot along the command's axes.
             RenderOp::MulObject { object_idx } => {
                 let m = self
                     .objects
                     .get(usize::from(*object_idx))
                     .ok_or(Error::Malformed("G3D object index out of range"))?;
                 self.cur = self.cur.mul(m);
-                self.billboard = None;
             }
             RenderOp::Skin { terms } => {
                 self.skin(terms)?;
@@ -296,19 +306,27 @@ impl Builder<'_, '_> {
     fn gpu(&mut self, cmd: GpuCmd, w: f32, h: f32) -> Result<()> {
         match cmd {
             GpuCmd::Restore(i) => {
-                self.cur = self.stack[slot(i as usize)?];
-                self.billboard = None;
+                let slot = slot(i as usize)?;
+                self.cur = self.stack[slot];
+                self.billboard = self.stack_billboard[slot].clone();
             }
-            GpuCmd::Store(i) => self.stack[slot(i as usize)?] = self.cur,
+            GpuCmd::Store(i) => {
+                let slot = slot(i as usize)?;
+                self.stack[slot] = self.cur;
+                self.stack_billboard[slot] = self.billboard.clone();
+            }
             GpuCmd::Push => {
-                self.stack[slot(self.sp)?] = self.cur;
+                let slot = slot(self.sp)?;
+                self.stack[slot] = self.cur;
+                self.stack_billboard[slot] = self.billboard.clone();
                 self.sp += 1;
             }
             GpuCmd::Pop(n) => {
                 self.sp = usize::try_from(self.sp as i64 - i64::from(n))
                     .map_err(|_| Error::Malformed("G3D matrix stack underflow"))?;
-                self.cur = self.stack[slot(self.sp)?];
-                self.billboard = None;
+                let slot = slot(self.sp)?;
+                self.cur = self.stack[slot];
+                self.billboard = self.stack_billboard[slot].clone();
             }
             GpuCmd::Identity => {
                 self.cur = Mat4::IDENTITY;
@@ -321,12 +339,10 @@ impl Builder<'_, '_> {
             GpuCmd::MultMatrix(m) => {
                 let rows = if m.len() == 16 { 4 } else { 3 };
                 self.cur = self.cur.mul(&fx_columns(&m, rows));
-                self.billboard = None;
             }
             GpuCmd::Scale(s) => self.cur = self.cur.mul(&Mat4::scale(s.map(Fx12::to_f32))),
             GpuCmd::Translate(t) => {
                 self.cur = self.cur.mul(&Mat4::translation(t.map(Fx12::to_f32)));
-                self.billboard = None;
             }
             GpuCmd::Begin(t) => {
                 self.end_prim();
@@ -457,6 +473,30 @@ mod tests {
         );
     }
 
+    /// A matrix stored after a billboard command keeps it: `MTX_STORE` saves the matrix the
+    /// command rewrote, so the draws that restore it are billboarded and the ones that restore
+    /// the matrix stored before the command are not (the star of an event's sparkle hangs from
+    /// a stored billboarded matrix, `docs/re/g3d.md` § Billboards).
+    #[test]
+    fn a_stored_billboard_matrix_is_billboarded_when_restored() {
+        // Multiply by object 0 and store 0; billboard flat; multiply by object 0 again and
+        // store 1; restore 0 and draw; restore 1, scale up and draw; end.
+        let render = [
+            0x26, 0, 0, 0, 0, 0x07, 0, 0x26, 0, 0, 0, 1, 0x03, 0, 0x05, 0, 0x03, 1, 0x0b, 0x05, 0,
+            0x01, 0,
+        ];
+        let data = file(b"BMD0", &[sample_mdl0_with(&triangle_list(), &render)]);
+        let f = G3dFile::parse(&data).unwrap();
+        let g = Geometry::build(&f.models[0]).unwrap();
+        assert_eq!(g.draw_calls.len(), 2);
+        assert_eq!(g.billboards.len(), 1);
+        let b = &g.billboards[0];
+        assert_eq!(b.vertex_range, 3..6);
+        assert!(!b.y_only);
+        // The pivot is the matrix the command found, whatever came after it.
+        assert_eq!(b.pivot, [1.0, 2.0, 3.0]);
+    }
+
     #[test]
     fn strips_and_quads() {
         let data = file(b"BMD0", &[sample_mdl0(&triangle_list())]);
@@ -469,6 +509,7 @@ mod tests {
             sp: 0,
             material: 0,
             billboard: None,
+            stack_billboard: std::array::from_fn(|_| None),
             out: Geometry::default(),
             prim_start: 0,
             prim_type: 2,

@@ -166,6 +166,97 @@ result depends on the placement's world transform. **[hypothesis]** the DS sorts
 translucent quads by their on-screen depth per frame; our scene sorts draws by the *static*
 model-space centre of each mesh, so a billboarded quad keeps the order of its rest pose.
 
+### The billboard belongs to the current matrix: stored, restored, posed (scripted effect models)
+
+**Symptom** (user report from a hand-played new game: the benevolessence is "almost invisible and
+does not turn to face the camera"). Captures `build/evidence/j4-benevolessence/` (before = the
+`b476940` build, after = this fix): `21595` (the blue orb, `sheet-21595-f1600-yaws.png`),
+`1330` and `1340` (the swirl, `sheet-1330-f1200-yaws.png`, `sheet-1340-frames.png`: at frame 900
+of 1340 nothing is drawn before, a full swirl after) and `21510` (the sparkle and halo at
+Yggdrasil, `sheet-21510-f900.png`): a sliver or nothing from most sides before, the same
+shape from every one of six yaws after. **[hypothesis]**: the orb and the swirl are the
+benevolessence the user saw (`22159` is given in `21595`, `1330` and `1340`,
+[`trigger.md`](trigger.md)); the user did not name the scene.
+
+**What the original does** (`RenderCommand_7`, EU `0x020b50fc`, read in Ghidra,
+`decomp-rendercommand7.txt`): the plain form reads the hardware's current clip matrix, keeps its
+translation and axis lengths, replaces the rotation and **writes the result back through the
+geometry FIFO into the current matrix** (`func_020ca430`, `0x48` bytes in the case
+without an inverse view; § Billboards above gives the load it is). Only the modified forms
+(`0x27`/`0x47`/`0x67`, none on the cartridge) issue `MTX_RESTORE` (`0x14`) before and `MTX_STORE`
+(`0x13`) after. So the billboard is a property of the *current matrix*, and the `0x26`
+("multiply by an object and store") and `0x03` ("restore") commands that follow save and bring
+back that very matrix: a node that restores a slot stored after the command is drawn
+billboarded, one that restores a slot stored before it is not. `ExecuteRenderCommands`
+(`0x020b4030`) runs the commands in order with nothing in between.
+
+**Cause.** `nds_rom::g3d::Geometry` tracked the billboard as a flag dropped at `LoadMatrix`, at
+`MulObject`, and at the GPU's `Restore`/`Pop`/`Translate`/`MultMatrix`. For a map model
+(a command right before its draw, as the 549 map models carry them) that is harmless; for the
+effect archives, where the command sits early and later nodes `LoadMatrix` a slot stored
+after it, only the draws between the command and the first restore were marked.
+`ev010100400` (the sparkle of 21510): ops 0..3 store identity matrices, op 4 is the command,
+op 6 draws a **3-vertex dummy mesh** (0.046 wide, in the XZ plane), then `MulObject 2` +
+`StoreMatrix 2` store the billboarded matrix and each of the four star quads does
+`LoadMatrix 2`. The old geometry billboarded the 3 dummy vertices (the previous worker's test
+measured those and found them edge-on: normal·eye = 0.000, which is also what the original
+would show for that mesh) and left the 132 vertices of the star in the rest orientation.
+After the fix all 135 vertices are under the command (5 commands; 1 before).
+
+**Fix.**
+
+1. `Geometry` keeps the billboard of each matrix-stack slot (`stack_billboard`): `StoreMatrix`
+   / `MTX_STORE` / `MTX_PUSH` save it, `LoadMatrix` / `MTX_RESTORE` / `MTX_POP` bring it back,
+   and a multiplication (`MulObject`, `MultMatrix`, `Translate`, `Scale`) keeps it, as the
+   record's offsets already hold what comes after the command; `Skin`, `MTX_IDENTITY` and
+   `MTX_LOAD` replace the matrix and end it. Test
+   `a_stored_billboard_matrix_is_billboarded_when_restored`.
+2. `AnimatedScene::add_actor` builds the model with `Builder::model_with_billboards` and
+   registers the records in `Scene::billboards` (it dropped them: `Builder::model`), so
+   `face_billboards` turns them like a map's.
+3. `AnimatedScene::evaluate` takes each command's pivot and axes from the pose it runs in
+   (`Geometry::build_posed` with the animated objects, `SceneBillboard::repose`) instead of the
+   rest pose, which `rebase` kept: animation moves the nodes a command is under (after 60
+   ticks, 12 of 17 commands of `ev010100500`, 6 of 13 of `ev014200000`, 12 of 12 of
+   `ev180003410` have another pivot or axes than at rest), and a pivot left at rest makes the
+   quad swing around the wrong point as the camera turns.
+
+**Falsification** (`crates/dq9-render/tests/billboard_rom.rs`, native, 8 yaws × 2 pitches around an
+effect stood at a world with a yaw and a scale of its own):
+
+| Variant | Result |
+|---|---|
+| `b476940` (actor billboards dropped) | no record exists to test; the captures above are this variant |
+| actor billboards, geometry as it was (the previous worker's attempt) | `effect_models_face_the_camera` fails: `ev010100400 at rest: camera 0: the largest quad faces the eye by 0.000`; `the_sparkle_of_21510_is_billboarded_whole` fails (3 of 135 vertices under a command) |
+| actor billboards + geometry fix, `rebase` kept | `a_billboard_pivot_follows_the_animation` fails (`ev180003410`: no pivot moved in 60 ticks) |
+| all three | the 4 tests pass |
+
+`effect_models_face_the_camera` takes the 8 archives of the scenes a new game plays from the
+observatory to the village (`ev010000010`, `ev010000300`, `ev010000310`, `ev010100400`,
+`ev010100500`, `ev014200000`, `ev180003410`, `ev999990100`: `21510`, `21595`, `1330`, `1340`;
+the end trigger of `21596` loads none) at rest and after 1, 40 and 250 ticks of their first
+motion: every camera sees the same shape of every flat (`0x07`) command, and the largest
+billboarded triangle faces the eye within 3°. `every_scripted_model_with_a_billboard_turns_to_the_camera`
+runs the same shape check on the 833 archives of `data/effect`, `data/event_lv5` and
+`data/chara_sub` whose model has a command (an `0x08` command keeps the object's up axis, so
+its shape depends on the camera; only finiteness is checked for those).
+
+**Side effects, measured.** The geometry fix also adds billboard commands to 39 map archive
+sets (`map-billboards-before.txt` / `map-billboards-after.txt`): 3,576 → 3,768 commands
+(+192), 14,850 → 15,618 vertices (+768, four per added command: `M12*`, `X03*`, `X04*`,
+`D16M02/04/08/09/12`, `S08`, `S09M01/03`, `Z02M01`, `E01M11`, `M13M99`), draws that hung from a
+stored billboarded matrix and were left in their rest orientation. `M01`, `D01`, `C01` and
+every `F*` set are unchanged, and the `--map M01` screenshot is byte-identical before and after
+(`m01-before.png`, `m01-after.png`). Those 39 sets were not looked at in game.
+
+**What the original draws, and what is not read.** Read (EU `0x020b50fc`): the command keeps
+the axis lengths (no size change) and sets no depth or blend state; a quad's blend and depth
+come from its material (`PolygonMode`, alpha), read for maps. **[unknown]**: the effects' alpha
+ramps (the orb and the swirl fade in and out) are not compared with an original capture, none
+exists for these scenes, and neither is the size of the 21510 halo. **[unknown]**: what
+`RenderCommand_8` does with a matrix stored after it (the `0x08` effect archives were not
+exercised by a scene of this route; the tests check them for finiteness only).
+
 ### Field vegetation is not billboarded (`F01`, `F02`, …)
 
 Question (user report): the bushes and trees around the path outside the village "only face one

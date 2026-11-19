@@ -157,12 +157,15 @@ outside the v0.2 target.)
   (`stand`), as the game does, not in the bind pose; the map NPCs drawn with the same model
   are hidden while it is shown (`21592`: one Ivor, [`re/characters.md`](../re/characters.md)
   § A model a script loads).
-- **Open (effect models).** Scripted effect models (sparkles, glows of 21510, 1330, 1340) lose
-  their billboard commands in `AnimatedScene::add_actor`, so they never face the camera; a fix
-  attempt did not make the quad face the eye and is not committed; the scene that shows the
-  benevolessence is unconfirmed ([`re/characters.md`](../re/characters.md) § Open: effect models
-  and billboards). Ivor's duplicate case 2 (sprite NPC 8 `n001a` against the scene's `s064`) is
-  also open.
+- **Effect models (native 200, `effect/`).** The sparkles, halos and swirls of 21510, 21595, 1330
+  and 1340 are billboards: their render commands turn them to the camera like a map's
+  (`AnimatedScene::add_actor` keeps the records, `face_billboards` turns them, the pose gives
+  each command's pivot and axes). The cause was in `nds_rom::g3d::Geometry`, which dropped the
+  billboard of a matrix stored after the command, and in `add_actor`, which dropped the records
+  ([`re/g3d.md`](../re/g3d.md) § The billboard belongs to the current matrix; test
+  `crates/dq9-render/tests/billboard_rom.rs`). Which scene the user saw as the benevolessence
+  is still **[hypothesis]** (the orb of 21595 or the swirl of 1330/1340). Ivor's duplicate
+  case 2 (sprite NPC 8 `n001a` against the scene's `s064`) is open.
 - **Doors by 540, show/hide of a sprite (223), placement scale (577).** 540 opens the doorway
   `(block entry, identifier)` like 584; 223 shows or hides a script sprite; 577 scales a map
   placement's drawn instance (not its collision).
