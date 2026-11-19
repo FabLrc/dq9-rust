@@ -269,6 +269,12 @@ fn stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden() {
         app.state.tracks[0].flags[1].contains(&5),
         "the end of 1340 raises game-1 flag 5"
     );
+    // The scene hides the stablemaster's slot and never shows it again (a hide a script makes
+    // stays, like the object's flag): the cast task its end asks for (action 0x8d) builds him
+    // again with the rest of the stable.
+    assert!(app.cast_reload, "the end of 1340 queues the cast rebuild");
+    app.run_steps(1);
+    assert!(!app.cast_reload, "the cast task ran");
     for npc in 211..=215 {
         assert!(
             !cast_drawn(&app, npc),

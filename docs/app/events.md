@@ -133,6 +133,16 @@ outside the v0.2 target.)
   package and event packages); `walk`/`stand` of sprites; "!" bubbles (541/561/542);
   `.spr` sheets created by script (521/522); placements hidden, shown or moved (574/575);
   character palette (238); camera return to the hero (328).
+- **The map's cast during a scene.** Native 568's bit `0x20` makes the scene draw only the map
+  NPCs its cast binds (566 modes 4 and 5), and an event whose record tears the cast down (value
+  21, bit 0 or 2) draws none: `EventPlayer` hides the other instances when the scene is built
+  (the Observatory scenes `21522`, `21591`, `21596`, `21597` and the Angel Falls arrival
+  `21592` show their own characters alone) and gives them back at its end
+  ([`re/characters.md`](../re/characters.md) § The map's cast during a scene; the cause of the
+  three user reports of the Observatory and Angel Falls, with the tests and the evidence).
+  What a script does to an NPC it binds stays when the scene ends, as in the game: the guard of
+  `1170` who steps aside stays aside (`restore_npcs` is gone), and a sprite NPC the scene does
+  not turn keeps the angle it faces.
 - **Captions (409/411/413).** The message window becomes a caption: timed alpha (fade
   of 60 ticks, hold `W+0x9a8`, fade of 60), text vertically centered when 410 has removed
   the frame, typing beep filtered. Screenshots: `21500` frame 420 (partial alpha, pale text) and 600
@@ -154,9 +164,8 @@ outside the v0.2 target.)
   `stand`, `talk`… of the script's package. `EventPlayer` keeps who the guest is and replays
   the trigger rules that add or dismiss him at the end of each event.
 - **A model the script loads (native 200).** It starts in record 0 of its motion table
-  (`stand`), as the game does, not in the bind pose; the map NPCs drawn with the same model
-  are hidden while it is shown (`21592`: one Ivor, [`re/characters.md`](../re/characters.md)
-  § A model a script loads).
+  (`stand`), as the game does, not in the bind pose (`21592`: one Ivor, the map's NPCs are not
+  drawn, [`re/characters.md`](../re/characters.md) § A model a script loads).
 - **Effect models (native 200, `effect/`).** The sparkles, halos and swirls of 21510, 21595, 1330
   and 1340 are billboards: their render commands turn them to the camera like a map's
   (`AnimatedScene::add_actor` keeps the records, `face_billboards` turns them, the pose gives
@@ -165,7 +174,7 @@ outside the v0.2 target.)
   ([`re/g3d.md`](../re/g3d.md) § The billboard belongs to the current matrix; test
   `crates/dq9-render/tests/billboard_rom.rs`). Which scene the user saw as the benevolessence
   is still **[hypothesis]** (the orb of 21595 or the swirl of 1330/1340). Ivor's duplicate
-  case 2 (sprite NPC 8 `n001a` against the scene's `s064`) is open.
+  case 2 (sprite NPC 8 `n001a` against the scene's `s064`) is closed: the scene draws no map NPC.
 - **Doors by 540, show/hide of a sprite (223), placement scale (577).** 540 opens the doorway
   `(block entry, identifier)` like 584; 223 shows or hides a script sprite; 577 scales a map
   placement's drawn instance (not its collision).

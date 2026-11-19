@@ -91,15 +91,22 @@ its map), the rebuild at event end before event 11, the restoration of
 positions (to 1/256), angles (to 1/4096) and removals on the same map, its
 consumption by every cast load (event end, 0x8d, map
 load). Test: `the_end_of_21595_rebuilds_the_cast_with_the_poses_and_removals_kept_at_its_start`.
+The table the teardown empties is what the scene is drawn with: the instances of the map's
+NPCs are hidden while the scene plays, and the rebuild at its end replaces them (§ "The map's
+cast during a scene", test `a_scene_that_sets_the_cast_aside_draws_no_map_npc`).
 
-**Not modelled**: the teardown at the start (the map's NPCs remain drawn during the
-cutscene); bits 10–15 of word 4 and the `0x40000` mask; the `+0x7e7e` jump; the other
+**Not modelled**: the rest of the teardown (`ov_017::021a316c` also destroys the field
+monsters `0x70..0x9f` and the characters `0xc9`–`0xce`; the map's NPC objects are not freed
+here, their instances are hidden); bits 10–15 of word 4 and the `0x40000` mask; the `+0x7e7e`
+jump; the other
 writers (`ov_017::021a1284`, `ov_017::021c0850`, `ov_017::021b1564`,
 `ov_011::02184cc0`, role **[unknown]**). **[hypothesis]** `TestFlags00(0x1000)` is zero: this
 flag is not modelled, so bit 0 always suffices and the rebuild happens
 even before a chained event (native 538). **[hypothesis]** a chained event
 reads back its own record (`+0x50`): the application decides on the rebuild based on
-the event that ends.
+the event that ends. The flag may be set in `9310`, whose record has bit 0 and whose script
+binds NPC 40 (a mode 4 member finds nothing in an emptied table); the application then keeps a
+bound NPC drawn whatever the record says.
 
 ## `<zone>npc.bin`: the cast
 
@@ -444,6 +451,139 @@ others. Evidence (Ghidra EU, `ov_001`/`ov_017`):
 - **[unknown]**: the guest's other places (field walking, battles) and what `Guest_LoadTask`
   does with record fields 3 onwards (`+0x10` bits 0–2 go into byte `+0x56b` of the character).
 
+## The map's cast during a scene: native 568 bit `0x20`, the teardown, what a script leaves
+
+**Symptoms** (user report on a hand-played session; `NIGHT` in the captures; no capture of the
+original and no melonDS state inside these scenes exist). (1) In the Observatory hall `X01M05`
+(the one with the columns) the winged hero talks with Aquila and our port draws two winged
+NPCs behind a table that the game does not show; in a second room (a winged NPC with brown hair
+and a green and brown outfit beside the hero, a torch, a small tree) the same. The second room
+is **[inference]** the entrance `X01M01`: the guard NPC 127 (`n041a`) stands there beside the
+hero with exactly that look, by a torch and a tree (`captures/before-guard-1170-f600.png`,
+`bf007bf2ee0d`), and `21522`, which plays there, calls the same native 568. (2) In the entrance
+an NPC steps aside to let the hero go toward Yggdrasil: ours walks back to his place when the
+scene ends, the original's stays aside. (3) Coming down to Angel Falls (`M01`, story 1.2) ours
+draws the village's sprite NPCs under the camera that looks down on it, the game only the two
+characters who talk. Reproduced with `--event 21596`, `21597`, `21591`, `21522`, `--event 1170`,
+`--event 21592 --chapter 1 --step 2 --substep 1`. Evidence in `build/evidence/j4-cast-scenes/`:
+contact sheets before/after `captures/sheet-observatory-hall.png` (`d9605085b545`),
+`sheet-observatory-entrance-and-guard.png` (`52cb3b459149`), `sheet-angel-falls-arrival.png`
+(`64f34db62dca`), `sheet-hall-21591.png` (`d1fdadf9bbf9`); the map NPCs and actors drawn by
+tick, `instance-lists-before.txt` (`fb6e0f4b43b1`) and `instance-lists-after.txt`
+(`1d6b4fe45bb9`); the tests' output before the fix, `tests-before-fix.txt` (`0a8604fbea0e`).
+
+### How the original draws the map's NPCs
+
+1. **The draw loop.** The field draws the NPC table once a frame (`ov_017::02195bbc` →
+   `0x0203de94`, skipped when `Flags04 & 8`). It visits the 32 entries and draws one when action
+   `0x7c` has not removed it (flag `0x8000`) **and `NpcTable+0x98 == 0` or the entry's flags have
+   `0x10000`**: `0x02040920` draws the `s069` halo object, then the sprite (`0x0203cd74`) or the
+   model, and the blob shadow (`0x0208f88c`) follows. (The note of `j4-angel-falls-cast` called
+   this loop, by its corpus name `func_0203de84`, "the shadow loop": it is the loop that draws,
+   `0x02040920` is called inside its condition.) There is no distance test.
+2. **Native 568's bit `0x20`.** The mask accumulates in `E+0xf8`. When the scene is built
+   (`ov_001::021539d8`, called by `02154de4` and `02155bb8` once the loads are in: **between the
+   prepare entry, 200, and the main entry, 100**) `E+0xf8 & 0x20` does `NpcTable+0x98 |= 2`;
+   `ov_001::02154974`, the teardown, clears it. A 568 in a later entry is not read: the 184
+   events (every stage) with `0x20` all have it in their prepare entry, 22 of them bind map NPCs.
+3. **The entries that keep `0x10000`.** `021539d8` sets it on the sprite entry a mode 3 cast
+   member creates (it takes a free slot of the table), and on the NPC entry a mode 4 or mode 5
+   member names (`0x0203df88` finds it by id); mode 4 also turns the NPC's model into one of the
+   scene's characters (`Object3D+0xd4 |= 1`, which stops the table drawing it, and a `Chara`
+   slot), mode 5 flags the sprite. The teardown clears them. So **a scene with `0x20` draws, of
+   the map's NPCs, only those its cast binds**; the characters a script loads (native 200) are
+   `Chara` objects drawn by their own loop. Scripts use it both ways: they bind an NPC they move
+   (`1170`, `14760`) or bind it only to hide it and show their own copy (`3111`, `4000`).
+4. **The teardown.** A record whose value 21 has bit 0 or 2 empties the table when the event
+   starts (`ov_001::02154f24` → `ov_017::021a316c` → `0x0203cfc4`, which also zeroes the count
+   and `+0x98`) and builds the cast again when it ends (`EventTask_Update`): no map NPC is
+   drawn in between, and the binding of modes 4 and 5 finds none.
+
+### Observed on the original
+
+`build/evidence/j4-cast-scenes/original-npc-table-states.txt` (`df1efc178c0c`; melonDS states of the main
+checkout, read with `dq9re state --peek`): `pro1.ml1` is inside **21500** (event task `+8` =
+21500, `+0x50` = `0x4`, the record's value) and `NpcTable+0x98` is **2**: native 568(`0x34`)
+of its prepare entry, bit `0x20`. `pro11.ml1` is inside **21520** (record `0x4`) and
+`NpcTable+0x98` is **0**: its prepare entry calls 568(`0x14`), no `0x20`. Both maps have an empty
+cast at 1.1.1, so the states show the flag, not the draw of a populated table: that part (points
+1 and 3) is **read from the code**, not observed, and so is point 4's emptying (the value 21 of
+the record is observed, the table is not populated).
+
+### What the symptoms are not (falsified)
+
+| Cause tried | Experiment | Result |
+|---|---|---|
+| The NPCs are not placed at this story point, or at this time of day | `dq9re cast <map> --chapter 1 --step S --substep U [--night]`: `X01M05` 1.1.1 to 2.1.1, `X01M01` 1.1.1/1.1.2, `M01` 1.2.1/1.2.2, day and night (`build/evidence/j4-cast-scenes/day-night-cast.txt`, `a5cac6c415f7`) | The hall's fifteen sprite NPCs, the entrance's nine and the village's eleven are placed at every point of the scenes, by day and by night. By night NPC 101 of the hall and NPCs 127 and 123 of the entrance lose their halo flag, and three NPCs of the village stand elsewhere (95, 9 and 3); none disappears. Where the time does change a cast it is outside these scenes: `M01` at 1.3.1 has 13 NPCs by day and 6 by night, and at 1.2.1 Aquila (NPC 99) stands in `X01M07` by night only and in `X01M04` by day only. `NIGHT` is the application's default (`--time` without a value) and what the clock reads after the prologue's minutes, not what hides them. The captures before the fix are the same by day (`before-day-21596-f450.png`) and by night. |
+| The record sets the cast aside | value 21 of the record (`EventPlace::flags`, asserted in `the_observatory_scenes_draw_no_map_npc_behind_their_actors`) | `21591`, `21592`, `21596`, `21597`: 0, no teardown. `21522` has 4, so it is torn down too. |
+| A native or a trigger hides them | `dq9re script <event>`, `dq9re triggers <room> --with <event>` | No action `0x7c`, no 570/201 on an NPC; the only placement hidden in `21596`/`21597` is `(0, 28)`, the star-shaped pool of the hall in the captures, and `21592` moves scenery. |
+| The NPCs are culled by distance from the hero or the camera | the draw loop, read | There is none. |
+| **Native 568's `0x20`** | code (points 2 and 3), states `pro1`/`pro11`, the data | All of `21522`, `21591`, `21592`, `21596`, `21597` call 568(`0x34`) in their prepare entry. |
+
+### What the application does
+
+`EventPlayer` (`event/scene_cast.rs`) reads the script's events before the scene is built
+(`SceneCast::observe`: native 568's masks, the cast members of modes 4 and 5, the first phase
+other than the prepare entry) and, when it is built, hides the instances of the map's NPCs
+that a scene with `0x20` or a torn-down cast does not bind (`set_cast_aside`: null world scale,
+the world kept); `bring_cast_back` puts them back when the scene is over or another begins, and
+a cast rebuild (action `0x8d`, the end of a torn-down event) or a map load forgets them.
+`present` does not move an NPC the scene keeps aside. A bound NPC is never hidden by the rule,
+also in a torn-down scene (`9310`, above). Tests (`event/cast_rom_tests.rs`, all failing
+before): `the_observatory_scenes_draw_no_map_npc_behind_their_actors` (`21522`, `21591`,
+`21596`, `21597`, day and night), `the_angel_falls_arrival_draws_the_two_speakers_and_no_village_npc`
+(`21592`), `a_scene_keeps_drawn_the_map_npcs_it_binds` (`14760`),
+`a_scene_that_sets_the_cast_aside_draws_no_map_npc` (`3090`, no `0x20`, record `0x141`).
+The coverage report is untouched: `--events-report` for the stages 1 to 19 prints the same 511
+rows before and after (266 complete, 217 partial, 9 stopped, same step counts;
+`events-report-before.txt` and `events-report-after.txt`, `a778fc5924dc`), and the 972
+checkpoints of the pilot's route to 2750 keep their pinned digest (`route-test-after.txt`).
+
+### What a scene leaves behind (the guard of `1170`)
+
+`1170` (`X01M01`, "Then you may pass") binds NPC 127 (cast mode 5) and walks him by a path to
+`(3.72, 11.25, 16.87)`; the application put him back at `(0.68, 11.36, 17.56)` when the scene
+ended (`EventPlayer::restore_npcs` reset every NPC to the pose it had at the scene's start).
+The original keeps what the script did: a bound slot **is** the NPC's object, and the teardown
+(`ov_001::02154974`) only clears `0x10000` on the entry (mode 4: also the `Chara` slot and
+`Object3D+0xd4 & 1`); nothing restores a position, an angle or the hidden flag a native 570 set.
+Alternatives falsified: a native 575 on a placement (575 moves map placements, scenery; the
+guard is moved by a path on his slot), the snapshot `kept_cast` (record value 21 of `1170` is
+`0x40`: neither bit 0 nor bit 2, no snapshot), a hidden NPC whose copy stays (`1170` loads no
+model: "0 models to load"). The map's own placement script agrees: from 1.1.2, where the end of
+`1170` advances the story (`0x84(0, 1, 1, 2)`, no `0x8d`), `dq9re cast X01M01 --chapter 1
+--step 1 --substep 2` places NPC 127 at exactly that point, angle 0 (the script's last
+`RotateTo`), 3.72 units from his 1.1.1 place. Application: `restore_npcs` is gone; the scene
+only gives back the NPCs it set aside. Test `an_npc_the_scene_moves_aside_stays_aside` (before:
+the guard back at his place); the same fix keeps a scripted hide (`SlotVisible 0` on a bound
+NPC) until a cast rebuild, as the object's flag does: `stable_pickups_hide_each_pile_and_the_scene_keeps_them_hidden`
+now runs the rebuild `1340`'s end asks for (`0x8d`) before it looks for the stablemaster the
+scene hid.
+
+A second defect of the same reset: the scene's node for a **sprite** NPC started at angle 0 (a
+sprite's instance matrix is a translation; the angle it faces lives in its sheet,
+`set_npc_angle`) and `present` wrote that angle back every tick, so after any scene every NPC
+it left alone faced down (`1170`: NPCs 143, 141, 140 and 126 to 123 went from 1.57 or 4.71 to
+0; `tests-before-fix.txt`). `seed` now starts the node at the sheet's angle. Test
+`the_sprite_npcs_a_scene_leaves_alone_keep_the_angle_they_face`.
+
+### Not modelled
+
+- The delay between the start of a torn-down event and the scene's construction (the prepare
+  entry, 2 to 18 updates): the map's NPCs stay drawn until then, the original empties the table
+  at the start, under a fade nothing here plays.
+- Mask bit `0x1` (`Flags04 |= 8`, which skips the whole NPC draw, bound entries included;
+  `24170`, `11610`, `20834`, `20960`, `20986`, `20989`), `0x2` (`Flags04 |= 0x10`) and `0x8`
+  (`Flags04 |= 0x400`): effect on the NPCs unread or not modelled. `ov_017::021a1284` and
+  `ov_017::021b1564` set `NpcTable+0x98 |= 1` around the tasks that take the screen (draw
+  only the flagged entries and the sprites' texture staging stops), role **[unknown]**.
+- The conversation list (`Talk`) keeps the placement's position of an NPC a scene moved:
+  `Talk_NearestNpc` reads the object's position for an NPC without a zone (`dialogue.md`).
+- The palette a script gives a map NPC (native 238) is reset when the scene ends; whether the
+  object keeps it is **[unknown]**.
+- A hidden NPC's pose is lost (a null scale has no position): a later scene cannot show it
+  again before a cast rebuild (`seed` skips it).
+
 ## A model a script loads: default motion and the map's copy (Ivor, event 21592)
 
 **Symptom** (user report, Angel Falls arrival): Ivor first shows in a T-pose, then there are two
@@ -464,22 +604,21 @@ two heads) against `ivor-after-sheet.png`.
 - **Duplicate.** Not the party guest (it is added at the end of `2210`, the scene is `21592` at
   1.2). The scene loads its own Ivor at `(5.24, -1.05, 1.83)` while the map's NPC 7 (`s017`,
   `(5.47, -1.05, 1.74)`, `stand`) is in the cast at 1.2.1..1.2.2 (`dq9re cast M01 --chapter 1
-  --step 2`); the record's flags are 0 so the cast is not set aside
-  (`event_records_say_which_scenes_keep_the_cast_aside`), and no trigger or native of the scene
-  hides NPC 7. Falsified alternatives: the guest (absent at 1.2), natives 574/575 (the scene moves
-  placements 31 and 24, which are scenery `M01M0004`/`M01M0001`), native 568 (`4|16|32` of this
-  scene: bit 0x4 hides the party members 0 to 3 outside the cast, `021539d8` lines 116–129, not
-  NPCs; 0x20 sets `NpcTable+0x98` bit 1, read only by the shadow loop `0203de84`).
-- **Fix.** The scene's copy replaces the field's: while a script-loaded model is drawn, the map
-  NPCs drawn with the same model data are not (`AnimatedScene::npcs_drawn_like_actor`,
-  `EventPlayer::stand_in`), and are back when the copy is hidden and at the end of the event.
-  **[hypothesis]**: the original hides NPC 7 some way this note did not find (the original's
-  mechanism is unread; the scene placing its Ivor 0.25 unit from NPC 7 shows the authors meant
-  one). Test `the_arrival_scene_of_angel_falls_draws_one_ivor_standing_from_his_first_frame`
-  (before: `tick 6: 2 Ivors are drawn`).
-- **Not covered [hypothesis]**: the same scene stands its `s064` model (`(6.46, -1.05, 2.25)`)
-  0.24 unit from the sprite NPC 8 (`n001a`); the sprite and the model share no model data, so
-  the rule above does not hide it.
+  --step 2`). **Cause: the scene draws no map NPC at all** (native 568's bit `0x20`, § "The map's
+  cast during a scene"): NPC 7 is one of the eleven the village's cast has, and none is drawn
+  while the scene plays; the second speaker (`s064`) stands beside the sprite NPC 8 (`n001a`)
+  for the same reason, and the earlier note's "not covered" case is covered. Before this the
+  application hid the map NPCs drawn with the same model data as a script's model
+  (`AnimatedScene::npcs_drawn_like_actor`, `EventPlayer::stand_in`) and guessed that the
+  original hid NPC 7 some way it had not found; the rule is the exact one now, the guess is
+  removed. Of the 58 scenes whose script loads a model equal to a map NPC's, 53 are scenes with
+  `0x20` or a torn-down cast; of the five others `4000` and `13700` bind the map's copy (cast
+  mode 4) and hide it themselves, `2250` loads the party guest, and `14670` and `14740` are played
+  by the report at a story point where the map has the NPC, **[hypothesis]** which the game's own
+  point does not. Falsified alternatives: the guest (absent at 1.2), natives 574/575 (the scene
+  moves placements 31 and 24, which are scenery `M01M0004`/`M01M0001`).
+  Test `the_arrival_scene_of_angel_falls_draws_one_ivor_standing_from_his_first_frame` (before:
+  `tick 6: 2 Ivors are drawn`) still holds: one Ivor, the scene's.
 
 **Effect models and billboards (the benevolessence, user report "almost invisible, does not face
 the camera"): fixed by `j4-benevolessence`.** The cause was in `nds_rom::g3d::Geometry`, which

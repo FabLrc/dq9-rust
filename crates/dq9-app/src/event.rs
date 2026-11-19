@@ -32,11 +32,13 @@ use crate::talk::Talk;
 use self::camera::ThreeBoneDrag;
 use self::placement::Placement;
 use self::scan::{LazyRom, field_sprite, icon_sprite, monster_archive, scan};
+use self::scene_cast::SceneCast;
 
 mod camera;
 mod guest;
 mod placement;
 pub(crate) mod scan;
+mod scene_cast;
 
 /// Language of the event texts.
 const LANGUAGE: &str = "en";
@@ -126,13 +128,8 @@ impl Coverage {
 struct Bindings {
     /// Scene actor of each scripted model.
     actors: HashMap<(Target, String), usize>,
-    /// Map NPCs each scripted actor stands in for (drawn with the same model), by actor: the
-    /// scene's own copy of a character replaces the field's while it is shown.
-    stand_ins: HashMap<usize, Vec<u16>>,
     /// Instances of the actors, hidden again when the event is over.
     instances: Vec<usize>,
-    /// Instance and world matrix of each map NPC before the event moved it.
-    homes: Vec<(usize, Mat4)>,
     /// Animation request last started for each target.
     played: HashMap<Target, u32>,
     /// Scene instance of each scripted sprite sheet (cast mode 3).
@@ -211,6 +208,9 @@ pub struct EventPlayer {
     /// script updates (a scene seeds every NPC of the cast). A map change or a cast rebuild
     /// forgets them, except those the cast snapshot (`kept_cast`) gives back.
     removed_npcs: BTreeSet<u16>,
+    /// What the running event does to the map's cast: the NPCs it keeps off the screen
+    /// (`event/scene_cast.rs`).
+    cast: SceneCast,
     /// The cast snapshot an event start took (`0x0203e0b0`), restored by the next cast load
     /// of the same map and consumed by any (`0x0203e2d4`).
     kept_cast: Option<KeptCast>,
@@ -263,6 +263,7 @@ impl EventPlayer {
             three_bone: None,
             applied_light: SceneLight::default(),
             removed_npcs: BTreeSet::new(),
+            cast: SceneCast::default(),
             kept_cast: None,
             guest: None,
             guest_rules: OnceCell::new(),
@@ -340,6 +341,7 @@ impl EventPlayer {
         // from them). The event state that does not name the scene (events started, coverage,
         // the saved camera) stays.
         self.bindings = Bindings::default();
+        self.cast = SceneCast::default();
         self.dirty.clear();
         // The removals of action 0x7c belong to the map that is left.
         self.removed_npcs.clear();
@@ -389,7 +391,7 @@ impl EventPlayer {
 
     /// Action 0x7c: NPC `npc` leaves the map (the object's flag `0x8000`). Its cast instance is
     /// hidden now and is not seeded or placed by the next scripts (`seed`, `present`,
-    /// `restore_npcs` skip it) until the cast is built again without a snapshot that keeps
+    /// `bring_cast_back` skip it) until the cast is built again without a snapshot that keeps
     /// the removal ([`EventPlayer::cast_loaded`]).
     pub fn remove_npc(&mut self, scene: &mut AnimatedScene, npc: u16) {
         self.removed_npcs.insert(npc);
@@ -403,8 +405,9 @@ impl EventPlayer {
 
     /// An event that keeps the cast aside starts (`ov_001::02154f24`, event-list flags bit 0
     /// or bit 2): `0x0203e0b0` records every NPC of the table for the map `map` before
-    /// `ov_017::021a316c` tears the cast down. The teardown itself is not modelled: the map's
-    /// NPCs stay drawn while the event plays.
+    /// `ov_017::021a316c` tears the cast down. The teardown empties the table the scene is
+    /// drawn with: [`EventPlayer::set_cast_aside`] hides the instances when the scene is built
+    /// (`event/scene_cast.rs`), and the rebuild at the event's end replaces them.
     pub fn keep_cast(&mut self, scene: &AnimatedScene, map: u16) {
         let ids: BTreeSet<u16> = scene
             .scene
@@ -450,8 +453,8 @@ impl EventPlayer {
     /// [`EventPlayer::cast_loaded`] applies the snapshot. Returns the NPCs it removes again.
     pub fn cast_rebuilt(&mut self, scene: &mut AnimatedScene, map: u16) -> Vec<u16> {
         self.removed_npcs.clear();
-        // The homes of a running event name the old cast's instances, now hidden.
-        self.bindings.homes.clear();
+        // The NPCs a running event hid are instances of the old cast, now hidden for good.
+        self.cast = SceneCast::default();
         self.cast_loaded(scene, map)
     }
 
@@ -562,7 +565,6 @@ impl EventPlayer {
             }
         }
         self.bindings.actors.clear();
-        self.bindings.stand_ins.clear();
         // The hero and the map's NPCs keep their palettes until the script resets them; the
         // models of the previous event are gone.
         self.bindings
@@ -571,7 +573,11 @@ impl EventPlayer {
         self.bindings.sprites.clear();
         self.bindings.balloons.clear();
         self.bindings.played.clear();
-        self.restore_npcs(stage);
+        // The previous scene gives the NPCs it hid back; this one decides about its own when
+        // it is built, from its record and its script.
+        self.bring_cast_back(stage);
+        self.cast =
+            SceneCast::new(crate::event::place(rom, event).is_some_and(|place| place.keeps_cast()));
         self.cutscene.restart();
         self.three_bone = None;
         self.prepared = Some(event);
@@ -661,10 +667,6 @@ impl EventPlayer {
                     // (native 200, `ov_001::0215b72c`): a model the script has not animated yet
                     // stands, it is not in its bind pose.
                     stage.scene.play_default_motion(actor);
-                    let stand_ins = stage.scene.npcs_drawn_like_actor(actor);
-                    if !stand_ins.is_empty() {
-                        self.bindings.stand_ins.insert(actor, stand_ins);
-                    }
                     self.bindings
                         .actors
                         .insert((plan.target, plan.path.clone()), actor);
@@ -732,10 +734,15 @@ impl EventPlayer {
                 ..Pose::default()
             },
         );
-        self.bindings.homes.clear();
-        for (index, instance) in stage.scene.scene.instances.iter().enumerate() {
+        for instance in &stage.scene.scene.instances {
             // Map NPCs: a placement of the cast (`block` unset) that is not the hero.
             if instance.block != usize::MAX || instance.instance == usize::MAX {
+                continue;
+            }
+            // A hidden NPC has no pose to start from (a null scale has no position): an
+            // earlier scene left it so (a hide a script made stays, like the object's flag) and
+            // `present` would otherwise place it again, at the origin.
+            if !instance.drawn() {
                 continue;
             }
             let id = instance.instance as i32;
@@ -745,35 +752,22 @@ impl EventPlayer {
             }
             let (scale, rotation, position) = instance.world.to_scale_rotation_translation();
             let (y, x, z) = rotation.to_euler(EulerRot::YXZ);
+            // A sprite is a billboard: its instance matrix is a translation and the angle it
+            // faces lives in its sheet (`set_npc_angle`); `present` writes the node's angle
+            // back every tick, so a node that started at 0 would turn every NPC to face down.
+            let facing = u16::try_from(id)
+                .ok()
+                .and_then(|id| stage.scene.npc_sprite_angle(id))
+                .unwrap_or(y);
             self.cutscene.seed(
                 Target::Npc(id),
                 Pose {
                     position,
-                    rotation: Vec3::new(x, y, z),
+                    rotation: Vec3::new(x, facing, z),
                     scale,
                     ..Pose::default()
                 },
             );
-            self.bindings.homes.push((index, instance.world));
-        }
-    }
-
-    /// Puts the map NPCs back where the cast placed them.
-    fn restore_npcs(&mut self, stage: &mut Stage) {
-        for (index, world) in std::mem::take(&mut self.bindings.homes) {
-            // An NPC removed after its home was recorded (action 0x7c during the scene) stays
-            // away.
-            if stage.scene.scene.instances.get(index).is_some_and(|i| {
-                u16::try_from(i.instance).is_ok_and(|id| self.removed_npcs.contains(&id))
-            }) {
-                continue;
-            }
-            if let Some(i) = stage.scene.scene.instances.get_mut(index)
-                && i.world != world
-            {
-                i.world = world;
-                self.dirty.push(index);
-            }
         }
     }
 
@@ -849,6 +843,11 @@ impl EventPlayer {
         if matches!(event, Event::Preload(_)) {
             self.director.signal(Signal::Preloaded);
         }
+        // The scene is built when its prepare entry is over: the map's cast it keeps off the
+        // screen goes then (`event/scene_cast.rs`).
+        if self.cast.observe(&event) {
+            self.set_cast_aside(stage);
+        }
         match &event {
             Event::Started { event } => {
                 status(&format!("event {event} starts"));
@@ -916,7 +915,7 @@ impl EventPlayer {
         self.cutscene.clear_fades();
         stage.talk.set_fade(None);
         stage.talk.close_event();
-        self.restore_npcs(stage);
+        self.bring_cast_back(stage);
         for instance in self.bindings.instances.drain(..) {
             if let Some(i) = stage.scene.scene.instances.get_mut(instance) {
                 i.world = Mat4::from_scale(Vec3::ZERO);
@@ -924,7 +923,6 @@ impl EventPlayer {
             }
         }
         self.bindings.actors.clear();
-        self.bindings.stand_ins.clear();
         // The field draws the hero and the map's NPCs with their own colours again.
         for (target, applied) in std::mem::take(&mut self.bindings.tinted) {
             if applied.is_none() {
@@ -955,33 +953,6 @@ impl EventPlayer {
             self.coverage.missing,
             self.unimplemented()
         ));
-    }
-
-    /// The map NPCs a scripted model stands in for (the scene loaded its own copy of the
-    /// character, native 200) are not drawn while the copy is: the field's instance would
-    /// be a second one of the same person beside it. They come back with the copy hidden
-    /// and at the end of the event (`restore_npcs`).
-    fn stand_in(&mut self, stage: &mut Stage, actor: usize, shown: bool) {
-        let Some(ids) = self.bindings.stand_ins.get(&actor).cloned() else {
-            return;
-        };
-        for id in ids {
-            if self.removed_npcs.contains(&id) {
-                continue;
-            }
-            let Some(instance) = stage.scene.npc_instance(id) else {
-                continue;
-            };
-            let world = if shown {
-                Mat4::from_scale(Vec3::ZERO)
-            } else {
-                match self.bindings.homes.iter().find(|(i, _)| *i == instance) {
-                    Some(&(_, home)) => home,
-                    None => continue,
-                }
-            };
-            self.set_world(stage.scene, instance, world);
-        }
     }
 
     fn set_world(&mut self, scene: &mut AnimatedScene, instance: usize, world: Mat4) {
@@ -1126,6 +1097,10 @@ impl EventPlayer {
                     let Some(instance) = stage.scene.npc_instance(id) else {
                         continue;
                     };
+                    // The scene keeps this NPC off the screen: no node of the script reaches it.
+                    if self.cast.is_aside(instance) {
+                        continue;
+                    }
                     if !node.placed {
                         continue;
                     }
@@ -1179,15 +1154,6 @@ impl EventPlayer {
                         ),
                     };
                     self.set_world(stage.scene, instance, world);
-                    if let Some(actor) = actor {
-                        let shown = stage
-                            .scene
-                            .scene
-                            .instances
-                            .get(instance)
-                            .is_some_and(|i| i.drawn());
-                        self.stand_in(stage, actor, shown);
-                    }
                 }
                 Target::Detached(_) => {}
             }
@@ -1266,3 +1232,7 @@ mod tests;
 /// absent: every test returns early, as the other ROM-backed tests do).
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rom_tests;
+
+/// The map's cast while a scene plays, and the NPCs it moved (real-ROM regressions).
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod cast_rom_tests;
