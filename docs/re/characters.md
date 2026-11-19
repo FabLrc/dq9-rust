@@ -520,6 +520,20 @@ the record is observed, the table is not populated).
 | The NPCs are culled by distance from the hero or the camera | the draw loop, read | There is none. |
 | **Native 568's `0x20`** | code (points 2 and 3), states `pro1`/`pro11`, the data | All of `21522`, `21591`, `21592`, `21596`, `21597` call 568(`0x34`) in their prepare entry. |
 
+### Challenger
+
+An independent challenger tried to refute the rule and confirmed it (scratch
+`build/scratch/challenger-cast/scan`, local). It recomputed the scan from the ROM: 518 story
+events, **184** with `0x20` in the prepare entry, **22** of them binding map NPCs (16 distinct
+scripts and 6 map aliases: `20742`, `20743`, `20744` resolve to `ev20740`, `20746`, `20747`,
+`20748` to `ev20745`, on the maps 50201/50301/50401). A wider scan of the 687 archives finds 194,
+10 of them in `evl_quest.bin`, and **none** with `0x20` outside a prepare entry. Two caveats it
+recorded: the bit-0 teardown path reaches `0x0203cfc4` through `TestFlags00(0x1000)` (the port
+keys on the record's value 21), and natives **581/582** write the same mask and are always
+redundant with 568's `0x20` in the shipped data (not modelled; no divergence observed). The
+zero-table lookup of modes 4/5 in a torn-down scene has no observable effect in the events the
+challenger checked (`9310`, `53361`).
+
 ### What the application does
 
 `EventPlayer` (`event/scene_cast.rs`) reads the script's events before the scene is built
