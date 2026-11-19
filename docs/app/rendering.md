@@ -51,22 +51,30 @@ Faithful to what the game reads:
   the matrix by `RotX33(a) · C` (`MTX_Concat33`, `0x020c15b4`), then `RotZ(r)` (`0x02031288`):
   `C` is the camera's inverse-view rotation (`Camera+0x144`, rows right, up, back),
   `a = −|cos θ| / 2` (`fix32abs(fix32cos(θ)) >> 1`, negated), and `r` is `θ` reduced by whole
-  `π/4` (`0xc91`) to `[−π/8, π/8)`: the eight-sector table `0x020e7938` (`sleep_down`,
-  `sleep_r_down`, `sleep_right`, `sleep_r_up`, `sleep_up`, then `sleep_r_up`, `sleep_right`,
-  `sleep_r_down` mirrored) picks the picture, the roll takes up the rest. `MTX_RotX33_`
-  (`0x020c1274`) stores `_11 = cos`, `_12 = sin`, `_21 = −sin`, `_22 = cos`, so the sheet's up
-  goes to `cos a · up + sin a · back`:
+  `π/4` (`0xc91`) to `[−π/8, π/8)`: the eight-entry sector table `0x020e7938` picks one of
+  five pictures (`sleep_down`, `sleep_r_down`, `sleep_right`, `sleep_r_up`, `sleep_up`, with
+  `sleep_r_up`, `sleep_right`, `sleep_r_down` mirrored), the roll takes up the rest. The DS's
+  matrix commands concatenate on the right (`MTX_MULT` sets `C = M · C`), so a vertex sees
+  `v · RotZ(r) · RotX(a) · C`: roll first, then the lean, then the camera. `MTX_RotX33_`
+  (`0x020c1274`) writes the **YZ** block (`m[4] = cos`, `m[5] = sin`, `m[7] = −sin`,
+  `m[8] = cos`), so the sheet's up goes to `cos a · up + sin a · back`:
   with `a < 0` the **top leans away from the eye** (up to 0.5 rad, none seen from the side,
   where `cos θ = 0`), the quad lying back as a sleeper in a bed seen from above, and it rolls
-  in its own plane by `r`. The port tilted the other way (`forward · sin a`, the top towards the
+  in its own plane by `r`. `θ` includes the type 15 seat angle (`+0x90`), which the port models.
+  The port tilted the other way (`forward · sin a`, the top towards the
   eye) from a guess before this was read; `animation/sprite.rs` tests transcribe the DS chain
-  and `animation/seated_rom.rs` checks `C01M15`'s sleeper over 16 yaws. **Challenger pending**:
-  read from the code and its machine code (`0x0203f730..0x0203f84c`: `fix32cos`/`fix32abs`
+  and `animation/seated_rom.rs` checks `C01M15`'s sleeper over 16 yaws.
+  **Challenger: confirmed** (`build/evidence/j4-field-facing/challenger-seated/`). An
+  independent transcription of the chain (`0x0203f730..0x0203f84c`: `fix32cos`/`fix32abs`
   of `θ`, the reduction loop, `MTX_RotX33_(out, sin a, cos a)` through `blx 0x020c1274`,
   `MTX_Concat33(RotX, C, out)` through `bl 0x020c15b4`, `translate(0, −h/2, 0)`, `MULT_3x3` =
   GX command `0x1a` (`0x020c51d0`), `RotZ(r)`, `translate(0, +h/2, 0)`; the object's own rotation
-  `0x020e79f8` is the identity and its scale 1); not compared with a melonDS capture of a seated
-  NPC at several camera angles (none taken). **Open**: the same
+  `0x020e79f8` is the identity and its scale 1) matches the port at 16 angles (max difference
+  1.1e-16), and a melonDS state (`build/oracle/field-F02/states/town-state.bin`: `C01`, night,
+  19.2.1, the seated `n008a_s.spr` at angle 0 + seat 6430) turned 45° shows the same picture,
+  position and size as the port at 256×192. The **sign** of the lean is not resolvable on that
+  capture (a 20° tilt differs by under a pixel at ~14.5 units): it rests on the machine code.
+  **Open**: the same
   draw has a second billboard mode, sprite flag `+0x50` bit 4: `RotY(camera angle)`
   (`0x02031244`) instead of the camera's matrix, an upright turn like a `BBY` command; which
   sprites set it was not read **[unknown]**, and `face` always uses the full camera frame for
