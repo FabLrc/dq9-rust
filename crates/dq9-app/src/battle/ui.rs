@@ -3,7 +3,7 @@
 //!
 //! What the original draws where is not read from the overlay: the layout below is built on
 //! the field's message window geometry (`talk.rs`) and is a **[hypothesis]**, listed in
-//! `docs/app.md` § "Battle".
+//! `docs/app/battle.md` § "Battle".
 
 use dq9_formats::Font;
 use dq9_render::ui::{Atlas, Quad};

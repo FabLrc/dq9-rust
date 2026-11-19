@@ -1,5 +1,5 @@
 //! The battle scene: a stage map, the fighters on its grid, their idle motions and the
-//! battle camera (`docs/app.md`, § "Battle scene"; wiki *Battle-Stages*).
+//! battle camera (`docs/app/battle-scene.md`, § "Battle scene"; wiki *Battle-Stages*).
 //!
 //! The stage is an ordinary map of the map list (30116 "F01 - Field", 30215 "D01 -
 //! Hexagoon"…), assembled and lit like a field, but the party and the monsters stand where

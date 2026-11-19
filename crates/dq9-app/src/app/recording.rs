@@ -1,5 +1,5 @@
-//! Recording a human session and replaying a record (`record.rs`, `docs/app.md`): the input log,
-//! the state digest, the start of a fixed step and the page's recording commands.
+//! Recording a human session and replaying a record (`record.rs`, `docs/app/record.md`): the
+//! input log, the state digest, the start of a fixed step and the page's recording commands.
 
 use super::App;
 #[cfg(target_arch = "wasm32")]
@@ -58,7 +58,7 @@ impl App {
 
     /// Records a key the logic reads. From the field Escape ends the session natively (not an
     /// input) and does nothing on the page: neither its press nor its release is recorded, so a
-    /// record holds no unpaired line (`docs/app.md`, § Recording a human session).
+    /// record holds no unpaired line (`docs/app/record.md`).
     pub(super) fn log_key(&mut self, code: KeyCode, pressed: bool) {
         if code == KeyCode::Escape && self.combat.fight.is_none() && !self.services.is_open() {
             return;
@@ -151,7 +151,7 @@ impl App {
                 recorder.digest(step, digest);
             }
         }
-        // The page shows how much it has recorded (`docs/app.md`, § Recording a human session).
+        // The page shows how much it has recorded (`docs/app/record.md`).
         #[cfg(target_arch = "wasm32")]
         if self.recording.recorder.is_some() && step.is_multiple_of(record::PROGRESS_EVERY) {
             let seed = self

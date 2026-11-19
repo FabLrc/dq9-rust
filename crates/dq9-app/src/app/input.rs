@@ -135,7 +135,7 @@ impl App {
             KeyCode::Escape => {
                 // From the field Escape ends the session: the native window closes. The page
                 // has no window to close, and its loop would stop with the recording
-                // (`docs/app.md`, § "Recording a human session"): Escape does nothing there.
+                // (`docs/app/record.md`, § "Recording a human session"): Escape does nothing there.
                 return !cfg!(target_arch = "wasm32");
             }
             KeyCode::Tab => {

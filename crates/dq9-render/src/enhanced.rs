@@ -1,5 +1,5 @@
 //! The enhanced presentation's switches (`--fx`/`--no-fx`, the page's checkboxes), one boolean
-//! per effect of the 16:9 view (`docs/app.md`, § "Enhanced 16:9").
+//! per effect of the 16:9 view (`docs/app/screens.md`, § "Enhanced 16:9").
 //!
 //! The post pass reads the post effects as a bit mask (`post.wgsl`, [`PostBits`]); mipmapped
 //! textures, the single-pixel edge accent and the HUD's glass panels are decided on the CPU and

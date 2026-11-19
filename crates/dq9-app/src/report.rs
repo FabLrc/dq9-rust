@@ -1,5 +1,5 @@
 //! Headless playback of events (native only): the loop shared by `--screenshot --event` and
-//! the coverage report `--events-report` (`docs/app.md`, § Events).
+//! the coverage report `--events-report` (`docs/app/events.md`, § Events).
 
 use std::collections::HashSet;
 use std::ops::RangeInclusive;

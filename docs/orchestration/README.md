@@ -51,10 +51,14 @@ RE → implementation → challenger → integration → final "docs consistency
 ## Batch cycle
 
 1. Write `build/batches/<batch>.md` from `batch-template.md` (model, base SHA, ```owns, cap).
-2. Orca dispatch (OMP worker, spec model, branch `FabLrc/<milestone>-<batch>`): the
-   `prompt-dispatch.md` prompt filled in, launched with the `orca orchestration worker-start`
-   command given in that file (`--base-branch main`, `--agent omp`, `--setup skip`; the
-   per-batch `CARGO_TARGET_DIR` is in the prompt).
+2. `./scripts/queue.ps1` prints the state of every spec (running, integrated, waiting,
+   ready…) and the next wave; `./scripts/dispatch.ps1 -Batch <batch>` launches one worker. It
+   reads the spec's `Model:`, ```owns and `Depends:`, refuses an ```owns overlap with a running
+   batch of `build/batches/runs.json` and a dependency that is not integrated, picks the lowest
+   free Cargo target slot, fills `prompt-dispatch.md` into
+   `build/batches/<batch>.prompt.txt` and runs `orca orchestration worker-start
+   --spec-file …` with `--base-branch main`, `--agent omp`, `--setup skip`; `-DryRun` prints
+   everything and launches nothing. The branch is `FabLrc/<milestone>-<batch>`.
 3. Wait for `worker_done`; read the report and the evidence.
 4. Checks, then integration from the main checkout on `main`, clean tree. One run takes the
    whole list of settled branches in integration order and runs **one**
@@ -91,10 +95,10 @@ RE → implementation → challenger → integration → final "docs consistency
    `orca orchestration worker-release --dispatch <id>` when `build/batches/runs.json` has an
    entry for the batch (`$env:DQ9_ORCA` replaces `orca`; a failed release is a warning), then
    removes the junctions without following their target, the worktree (never forced) and the
-   branch, then the legacy `%LOCALAPPDATA%\dq9-target-<batch>`, then the `runs.json` entry.
-   The release comes first because the worker's open terminal is what made
-   `git worktree remove` fail (exit 255) in wave v2-1. `dq9-target-slot<N>` (long-lived targets
-   reused by successive workers) and `dq9-target-integrate` are never deleted. Do not clean a
+   branch, then the `runs.json` entry. The release comes first because the worker's open
+   terminal is what made `git worktree remove` fail (exit 255) in wave v2-1.
+   `dq9-target-slot<N>` (the long-lived targets reused by successive workers, cleaned of their
+   workspace members by the next dispatch) and `dq9-target-integrate` are never deleted. Do not clean a
    branch up after another batch has touched the same shared file: the "integrated" check
    compares `main` with the branch on the files it changed.
 
@@ -118,15 +122,17 @@ RE → implementation → challenger → integration → final "docs consistency
 
 ## Workflow optimisations (wave r1)
 
-- **One Cargo target per worktree** (`worker-rules.md` § 0, `docs/app.md`): with a shared
-  target, Cargo took the `nds-rom` rlib built from another worktree's sources as fresh and
-  the `dq9-formats` doctests failed (`module bytes is private`) on a correct branch; the same
-  mechanism can produce a false pass. A cold target builds in ~96 s; `sccache` was measured
-  and dropped (0 hits across targets, see `docs/app.md`). A target
-  costs ~4-5 GB: the 13 targets of the r1 wave filled the disk and a verify failed with
-  `os error 112` (no space), so `integrate.ps1 -Cleanup` now deletes
-  `%LOCALAPPDATA%\dq9-target-<batch>` after removing the worktree (never
-  `dq9-target-integrate`).
+- **One Cargo target per worktree, from a pool of slots** (`worker-rules.md` § 0,
+  [`app/dev-loop.md`](../app/dev-loop.md)): with a shared target, Cargo took the `nds-rom` rlib
+  built from another worktree's sources as fresh and the `dq9-formats` doctests failed
+  (`module bytes is private`) on a correct branch; the same mechanism can produce a false pass.
+  So each worker gets `%LOCALAPPDATA%\dq9-target-slot<N>` (1..5), reused by successive workers:
+  `dispatch.ps1` cleans a slot's workspace members when it last served another batch and keeps
+  the third-party cache, a worker never deletes its slot, and `integrate.ps1 -Cleanup` leaves
+  every slot and `dq9-target-integrate` alone. The numbers (cold ~105 s with the adopted
+  settings, 17.6 s per incremental loop, ~4-5 GB per target) are in
+  [`build-speed.md`](../build-speed.md); `sccache` was measured and dropped (0 hits across
+  targets).
 - **`DQ9_ROM` instead of a `rom` junction**: `rom/` is tracked (it holds `rom/README.md`), so
   the junction could never be created in a fresh worktree.
 - **`integrate.ps1` owns its verify environment**: it always sets
@@ -141,12 +147,15 @@ RE → implementation → challenger → integration → final "docs consistency
   checkout is used when `-References` is not given.
 - **Dispatch flags and prompt** (`prompt-dispatch.md`): `--base-branch main` starts from the
   local integrated `main` (not the lagging `origin/main`), `--agent omp` selects the harness,
-  `--setup skip` avoids the `pnpm install` hook, and the prompt sets the per-batch target.
+  `--setup skip` avoids the `pnpm install` hook, and the prompt carries the slot target the
+  dispatch picked (`dispatch.ps1` writes it, never a human).
 
 ## Scripts (contract interfaces)
 
 | Script | Example |
 |---|---|
+| `scripts/queue.ps1` | `./scripts/queue.ps1` — read-only: every spec's state and the next wave, each line the `dispatch.ps1` command to run |
+| `scripts/dispatch.ps1 -Batch <batch> [-Model <id>] [-Attempt <n>] [-RetryOf <id>] [-DryRun]` | `./scripts/dispatch.ps1 -Batch k1-linker` — spec checks, slot, prompt, `runs.json`, `worker-start`; tests: `scripts/tests/dispatch.tests.ps1` |
 | `scripts/verify.ps1 [-Fast] [-Only <step[,step]>] [-RequireRom]` | `./scripts/verify.ps1 -Only fmt,clippy` — steps `fmt`, `clippy`, `test`, `wasm`, `coverage`, plus the opt-in `long`; only source of the verification commands |
 | `scripts/integrate.ps1 -Branch <b[,b…]> [-Spec <batch>[,…]] [-Message <subject>[,…]] [-Apply] [-Rebase] [-Cleanup]` | see cycle above; tests: `scripts/tests/integrate.tests.ps1` |
 | `scripts/evidence.ps1 -Batch <batch> [-Command <text>] [-Note <text>]` | `./scripts/evidence.ps1 -Batch j3-sound-effects -Command 'cargo run -p dq9-app -- --headless' -Note 'capture'` → `build/evidence/<batch>/manifest.json` |

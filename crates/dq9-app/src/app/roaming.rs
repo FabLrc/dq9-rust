@@ -44,7 +44,7 @@ enum Motion {
 
 impl Motion {
     /// The archive's motions, the model's own names first; a chapter-2 body carries only
-    /// `stand`, `run`, `walk` and `appear` (`docs/app.md`, § "Battle scene").
+    /// `stand`, `run`, `walk` and `appear` (`docs/app/battle-scene.md`, § "Battle scene").
     fn names(self) -> &'static [&'static str] {
         match self {
             Motion::Stand => &["stand", "appear", "run", "walk"],

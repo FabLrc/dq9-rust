@@ -147,7 +147,7 @@ struct Cli {
     )]
     new_game: bool,
     /// Shows a set battle of `data/event/eventbattle.bin` (`--battle 2`: the Hexagoon) on the
-    /// record's stage with its monsters, instead of a map (`docs/app.md`, § Battle scene).
+    /// record's stage with its monsters, instead of a map (`docs/app/battle-scene.md`).
     /// With `--save`, the party fought with is the save's current slot.
     #[arg(
         long,
@@ -184,7 +184,7 @@ struct Cli {
     #[arg(long, requires = "headless")]
     auto: bool,
     /// With `--auto`: at each free control, have the conversation (or take the exit) that moves
-    /// the story on, instead of stopping: a player's stand-in (docs/app.md, § New game).
+    /// the story on, instead of stopping: a player's stand-in (docs/app/new-game.md, § New game).
     #[arg(long, requires = "auto")]
     pilot: bool,
     /// With `--pilot --fight`: the route mode (`app/auto/route.rs`): the field's monsters roam,
@@ -219,7 +219,7 @@ struct Cli {
     /// picks the draws).
     #[arg(long, value_name = "PHASE")]
     battle_capture: Option<String>,
-    /// Records a human session of the window into this file (`dq9rec`, `docs/app.md`,
+    /// Records a human session of the window into this file (`dq9rec`, `docs/app/record.md`,
     /// § "Recording a human session"): every input the game logic reads, by fixed step, with
     /// the start options and a state digest every 600 steps. Start the session with
     /// `--new-game --seed N` (a seed is picked and stored when absent); the file is written
@@ -1006,7 +1006,7 @@ pub(crate) fn battle_start(stage: u16, save: Option<&[u8]>) -> Result<load::Star
 }
 
 /// Renders one frame of a battle scene offscreen and writes it as PNG: what the window shows
-/// after the transition, without one (`--battle 2 --screenshot …`, `docs/app.md`,
+/// after the transition, without one (`--battle 2 --screenshot …`, `docs/app/battle-scene.md`,
 /// § "Battle scene").
 fn battle_screenshot(
     cli: &Cli,

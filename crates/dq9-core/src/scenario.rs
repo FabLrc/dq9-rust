@@ -65,7 +65,7 @@ pub fn battle(files: &dyn Files, number: u16) -> Option<BattleRecord> {
 /// `--fight`, which keeps the recorded traces' timeline): the party wins at once. The game
 /// plays the fight and then fires trigger event 15 (won) or 16 (lost); the story continues
 /// exactly as after a win. A stand-in, not a model of a fight: the application plays the
-/// real fight in a window, on the Web and with `--fight` (`docs/app.md`, § "Battle").
+/// real fight in a window, on the Web and with `--fight` (`docs/app/battle.md`, § "Battle").
 pub fn stand_in(_battle: u16) -> bool {
     true
 }

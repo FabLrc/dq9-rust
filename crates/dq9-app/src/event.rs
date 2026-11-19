@@ -2,7 +2,7 @@
 //! `.stb` script of an event, the cutscene layer (`dq9_core::cutscene`) keeps what it did to
 //! the actors, the camera and the screen brightness, and this module draws it: actor
 //! transforms and motions go to the render instances, the camera to the view, messages to
-//! the message window, fades to an overlay (`docs/app.md`, § Events).
+//! the message window, fades to an overlay (`docs/app/events.md`, § Events).
 //!
 //! One fixed step of 1/60 s is one tick. The script runs every second tick (an update of the
 //! game is 2 ticks, `docs/re/stb-natives.md`, § Time and units); the cutscene advances at

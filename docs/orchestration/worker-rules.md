@@ -58,8 +58,9 @@ For analysis, follow the "Where to look before analysing" order of `AGENTS.md`.
   - while working: `./scripts/verify.ps1 -Fast` (fmt + clippy) and the tests of the crates
     touched;
   - once before `worker_done`: `./scripts/verify.ps1 -RequireRom`. If the `README.md`
-    progress block changes, **do not commit it** (`git checkout README.md`): the coordinator
-    regenerates and commits it after rebasing, so it never conflicts (waves v2-1/v2-2).
+    progress block changes, **do not commit it** (`git checkout README.md`):
+    `scripts/integrate.ps1` regenerates it and folds it into the last integration commit, so it
+    never conflicts between branches (waves v2-1/v2-2).
 - CI runs on Linux and `crates/dq9-app/src/app.rs` compiles its tests only on Windows
   (`#[cfg(all(test, windows))] mod tests;`): an item used **only by those tests** is dead code
   in CI's test and clippy builds (`-D warnings`) although `verify.ps1` passes locally. Gate its

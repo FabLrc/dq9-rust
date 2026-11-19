@@ -1,6 +1,6 @@
 //! The played fight in the application: the party, the world's generators, the fight state
 //! machine driven by the window or by the headless policy, what it does to the scene, and
-//! what its end does to the story (`docs/app.md`, § "Battle").
+//! what its end does to the story (`docs/app/battle.md`, § "Battle").
 //!
 //! Windows and the Web always fight; a headless run keeps the J4 stand-in (battle 26 "won at
 //! once", the recorded traces' timeline) unless `--fight` asks for the engine.

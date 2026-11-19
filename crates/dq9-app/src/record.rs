@@ -1,4 +1,4 @@
-//! `dq9rec` v1: the record of a human session and what replays it (`docs/app.md`,
+//! `dq9rec` v1: the record of a human session and what replays it (`docs/app/record.md`,
 //! § "Recording a human session").
 //!
 //! The game logic reads the outside world through a short list of inputs: the keys
@@ -555,7 +555,7 @@ impl Recorder {
     }
 
     /// The record so far, ended at `steps` with that step's digest: the Web page's
-    /// "Save recording" (`docs/app.md`, § Recording a human session). The recording goes on,
+    /// "Save recording" (`docs/app/record.md`, § Recording a human session). The recording goes on,
     /// so a page can offer the file at any moment.
     ///
     /// A digest is stamped with the state the step of the same number starts from

@@ -1,7 +1,7 @@
 # Build speed: the native Windows loop
 
 Numbers for the edit→test loop on the development machine, and the settings adopted from them.
-`docs/app.md` ("Development loop") owns the worktree/target rules; this note owns the link.
+[`app/dev-loop.md`](app/dev-loop.md) owns the worktree/target rules; this note owns the numbers.
 
 ## What is measured
 
@@ -14,7 +14,7 @@ touch crates/dq9-core/src/lib.rs; cargo test -p dq9-app --no-run
 `dq9-core` is a leaf of everything, so the touch rebuilds it, `dq9-app`, and relinks the test
 binaries. Second measure: `cargo clippy --workspace --all-targets -- -D warnings` after the
 same touch (the `-Fast` step of `scripts/verify.ps1`). A third, cold `cargo test -p dq9-app
---no-run` into an empty target gives the cost of a fresh per-batch target.
+--no-run` into an empty target gives the cost of a fresh target slot.
 
 Timings are wall time on
 `x86_64-pc-windows-gnu`, rustc 1.99.1, LLVM 23.1.1, MinGW-w64 gcc 16.2.0, 20 logical CPUs,
@@ -42,8 +42,8 @@ seconds the test binaries themselves reported, warm.
 shows the rebuild cost of each setting, not the empty-target cost.
 
 The adopted combination is rows 2+3: `24 500 → 17 600 ms` per incremental iteration
-(median; runs 16.9–23.9 s versus 19.1–29.2 s for LLD alone), and `488 → ~105 s` for a fresh
-per-batch target.
+(median; runs 16.9–23.9 s versus 19.1–29.2 s for LLD alone), and `488 → ~105 s` for an empty
+target slot.
 
 Raw runs, per configuration, in `build/evidence/k1-linker/timings.txt`. The spread is why the
 `opt-level = 1` row is not adopted: its runs (19.3–25.9 s) overlap the LLD-only runs
@@ -106,10 +106,10 @@ long route test are unchanged.
 
 ## How to re-measure
 
-One target per worktree (`docs/app.md`, "Development loop"), then the loop itself:
+One target slot per worktree ([`app/dev-loop.md`](app/dev-loop.md)), then the loop itself:
 
 ```powershell
-$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target-<batch>"
+$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\dq9-target-slot<N>"   # the slot dispatch gave you
 cargo test -p dq9-app --no-run                      # warm the target
 1..5 | ForEach-Object {
     (Get-Item crates/dq9-core/src/lib.rs).LastWriteTime = Get-Date

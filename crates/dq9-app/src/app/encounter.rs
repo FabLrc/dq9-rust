@@ -1,5 +1,5 @@
 //! The battle transition and the scene's phases: the swirl on the field, the scene swap, the way
-//! back (`docs/app.md`, § "Battle scene"). The fight in play is `app/fight.rs`.
+//! back (`docs/app/battle-scene.md`, § "Battle scene"). The fight in play is `app/fight.rs`.
 
 use super::App;
 use super::status;
@@ -33,8 +33,8 @@ const BATTLE_LEAVE_AT: u32 = 15;
 
 const BATTLE_LEAVE_DONE: u32 = 45;
 
-/// A battle phase (`docs/app.md`, § "Battle scene"): native 547's transition, the scene,
-/// and the way back to the field.
+/// A battle phase (`docs/app/battle-scene.md`, § "Battle scene"): native 547's transition,
+/// the scene, and the way back to the field.
 #[derive(Debug)]
 pub(super) enum BattleChange {
     /// Native 547 with no battle asked for (yet): the swirl rolls and narrows the field, both

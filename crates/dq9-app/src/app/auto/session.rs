@@ -1,6 +1,6 @@
 //! The Web session: the pilot and the route mode driven from the page, one animation frame at a
-//! time (`?newgame=1&pilot=1&fight=1&route=2750&seed=7&speed=20`, `docs/app.md`, § "Route mode
-//! in the browser").
+//! time (`?newgame=1&pilot=1&fight=1&route=2750&seed=7&speed=20`, `docs/app/browser.md`,
+//! § "Route mode in the browser").
 //!
 //! The session calls [`App::auto_step`], the very step of the native `--headless --auto` loop,
 //! so the browser plays the same logic; only the clock differs. The fixed 60 Hz step stays the

@@ -1,5 +1,5 @@
 //! A fight played from start to end: the opening, the command entry of every member, the
-//! rounds the engine resolves, what each says, and the end (`docs/app.md`, § "Battle").
+//! rounds the engine resolves, what each says, and the end (`docs/app/battle.md`, § "Battle").
 //!
 //! [`Fight`] is a pure state machine over `dq9_core::battle`: no scene, no GPU. It is advanced
 //! by [`Fight::step`] (one 60 Hz step and the pad of that step); what it asks of the scene it

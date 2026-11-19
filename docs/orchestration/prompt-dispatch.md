@@ -62,6 +62,8 @@ five, cleans that slot's workspace members when it last served another batch, wr
 prompt file and records the dispatch in `runs.json` (`integrate.ps1 -Cleanup` releases the
 worker and removes the entry). `-RetryOf <dispatch id>` and `-Attempt <n>` record a retry.
 
-The launch flags are fixed by the script: `--base-branch main` starts from the local integrated
+The launch flags are fixed by the script (or by its `-Model`/`-Attempt`/`-RetryOf` arguments):
+`--worktree new-top-level --name <batch>` opens the worker in a fresh worktree,
+`--model <id>` is the spec's model, `--base-branch main` starts from the local integrated
 `main` (not the lagging `origin/main`), `--agent omp` selects the harness of `AGENTS.md`,
 `--setup skip` avoids the `pnpm install` hook, and `--repo` names this repository in Orca.

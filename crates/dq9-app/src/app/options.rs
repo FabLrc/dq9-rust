@@ -28,7 +28,7 @@ pub struct Options {
     pub story: dq9_formats::cast::Story,
     /// Explicit chapter/step/substep overrides for a loaded save.
     pub story_override: [Option<u8>; 3],
-    /// Start a new game: the first scene of the story (`docs/app.md`, § New game).
+    /// Start a new game: the first scene of the story (`docs/app/new-game.md`, § New game).
     pub new_game: bool,
     /// Show a battle scene from the start (`--battle`, `?battle=`): an `eventbattle.bin`
     /// record or an explicit stage and its monsters.

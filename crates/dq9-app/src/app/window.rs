@@ -56,7 +56,7 @@ pub enum UserEvent {
     #[cfg(target_arch = "wasm32")]
     NewGame,
     /// `?record=1`: the page sends this right before the ROM, so the recording starts at the
-    /// first step of the session (`docs/app.md`, § Recording a human session).
+    /// first step of the session (`docs/app/record.md`, § Recording a human session).
     #[cfg(target_arch = "wasm32")]
     Record,
     /// "Save recording" clicked in the page: the record so far, as a download.
