@@ -3,63 +3,49 @@
 Rewritten by the coordinator at integration; no history log.
 Plan: [`roadmap.md`](roadmap.md); rules: [`../AGENTS.md`](../AGENTS.md).
 
-## Status as of November 19, 2026
+## Status as of November 19, 2026 (evening)
 
 **v0.1 functional natively; v0.2's native and browser criteria are met by the pilot, the
-hand-played one is not.** A new game played by the pilot with the real battle engine reaches
-**event 2750** (Hexagoon lost at Lv 4–7, won at Lv 8, story **2.6.5**, **3627.8 s** of game time,
-972 checkpoints; it was 3035.5 s before `d068809` slowed dialogue to the original rate). The same
-route runs in the wasm build in Edge and on the hosted Pages page, instant and shown battles, with
-the native run's state (`j4-web-pilot`, `j4-web-show`; ±2-step tick offsets unmodelled). Parity is
-2/2 with party and gold compared (`fddd4c6`). The route is pinned by an `#[ignore]` real-ROM test
-(`verify.ps1 -Only long`, ~16 min, run by the coordinator before a milestone). A human session can
-be recorded and replayed (`--record`, `--play-record`, `j4-human-record`): **none recorded yet**.
+hand-played one is not.** The pilot plays a new game with the real battle engine to **event
+2750** (story **2.6.5**, **3686.9 s** of game time, 972 checkpoints, digest `f33a42d4…`), in the
+window, in Edge and on the hosted page. The user hand-played a session, stopped it at the first
+defects and replayed it after their fixes (wave below); a full hand-played run to 2750 remains.
 Fixed 60 Hz loop; hero, field and model pose at 30 Hz.
 
 ## Integrated on main (every batch passed `verify.ps1 -RequireRom`)
 
 | Area | Batches (commit) |
 |---|---|
-| Route and browser | `j4-chapter2-route` a647098, `j4-web-pilot` a861eaf, `j4-show-battles` 2e580a1, `j4-web-show` ead8d8b, `j4-route-test` 80943a1, `j4-human-record` 7e2e62a, `j4-parity-regress` fddd4c6 |
-| Parity and oracle | `j4-parity-party` daa9553 (party/gold compared; fought ≠ stand-in on 611/615 lines), `j4-parity-regress` (native 560 = 1 moved event 1140's timeline; open-loop trace replaced by the pilot's) |
-| Battle rules | `j4-full-heal`, `j4-audit-fixes` ed0974b (wear-off, flight 38–40), `j4-xp-share` ca074aa + `j4-xp-wire` 3f8422e, `j4-grudge-enrage` 4e0a0ed, `j4-item-spend` 2da4e51, `j4-spawn-block` e775c65 |
-| Battle UI and scene | `j4-battle-motions`, `-gpu-sync`, `-skills`, `j4-abilities-capture` 97fd1e2, `j4-battle-worn-items` 0b5ceda, `j4-battle-transition` e973f6b (swirl read and clocked, **not wired**) |
-| Field, services, story | `j4-field-services`, `-containers`, `j4-field-menu-rules` fcd135a, `j4-wipeout-priest` 615b24c, `j4-ch2-gaps` 2930280 (49/50), `j4-guest-slot`, `j4-gate-*`, `j4-aquila-bug` 5349f43 (face decal one tick late) |
-| Presentation | `j4-enhanced-mode` 8189bf9 (`enhanced` default, ten `--fx`, `enhanced-reactive`), `j4-screens-original` 5ecb58e (opt-in), `j4-text-speed` d068809 + f516d79 (1 unit/frame, A does not skip, `--text-speed`) |
-| Research | `j4-encyclopedia-audit` 236ea6a, `j4-bottom-screen-re` 2183df4 (the original runs the field with swapped screens), `j4-vegetation-billboards` bbe8bc3 (F-map bushes are fixed quads: normal), `j4-docs-consistency` 598cef3 |
-| Tooling wave k1/k2 (Nov 19) | `k1-fast-test` a713ea8 (`dq9-app` test binary 89 s → 44 s measured on a loaded machine, 24.9 s quiet per the worker), `k1-linker` 10f94e1 (`rust-lld` + no test DWARF: cold target 488 s → 105 s, warm touch loop 66.9 s → 17.6 s, `docs/build-speed.md`), `k1-integrate` dc99dbb + `k1-queue-fix` b6c76e7 (several branches, one verify, README block folded, release/cleanup from `runs.json`), `k1-dispatch` 5bbc5e5 + 569d1bf (`dispatch.ps1`, `queue.ps1`, slot targets), `k1-ghidra-corpus` d184e3f (12,056 game functions in `build/decomp`, 0.6 s per question against 5–17 s), `k1-app-split` a15a406 (`app.rs` 3150 → 637 lines, 12 modules, route digest, parity and screenshot unchanged), `k1-docs-split` 0955548 (`docs/app.md` → index + `docs/app/`), `k2-recomp-facts` cc290ae (DQ9Recompiled: 157 hook points, 28 names) |
+| First session fixes | `j4-message-flow` b10e337 (`<ADD>` waits for a key, one-press Yes/No), `j4-message-arrow` 749a03e (32/32 wait arrow, A/B/X/L/R/d-pad), `j4-stair-run` ed5108f (run on stairs), `j4-angel-falls-cast` eb45d8f (Ivor once, default motion), `j4-benevolessence` 7854d2b (effect billboards), `j4-scene-camera` 9af9908 (map home yaw, four framings), `j4-mortal-veil` b476940 + `j4-winged-form` 9866b5a (palette add `0x97(1)`, rooms 1100–1110 at 1.2–1.3; wings `s023n2`, halo `s069`) |
+| Second session fixes | `j4-outline-width` 3434887 (edge 1 DS px at 17/32), `j4-contact-shadow` 430688f (halo off in the enhanced default), `j4-cast-scenes` d522143 (568 bit `0x20`; a bound NPC a scene moved stays), `j4-field-facing` cfc830e (seated sprites lean away; roamer headings pinned) |
+| Tooling k1/k2 | `k1-fast-test` a713ea8, `k1-linker` 10f94e1, `k1-integrate` dc99dbb + `k1-queue-fix` b6c76e7, `k1-dispatch` 5bbc5e5 + 569d1bf, `k1-ghidra-corpus` d184e3f, `k1-app-split` a15a406, `k1-docs-split` 0955548, `k2-recomp-facts` cc290ae |
+| Earlier v0.2 | pilot and web routes, parity (2/2), battle rules and UI, field services and containers, chapter 2 story, enhanced presentation, text speed, human record/replay |
 
 ## Limits recorded, not hidden
 
-- **Parity**: the original's RNG drew another battle-26 monster set (HP 16/20 vs 13, XP 7 vs 2, gold
-  13 vs 4); three `accepted` entries pin the runtime's value. Only two original references exist,
-  both in the prologue: chapter 2 has no comparison with the original.
-- **Timing**: shown runs are not tick-comparable with instant ones (draw divergence from checkpoint
-  715, **[hypothesis]**). Any change of dialogue or transition timing re-pins the route digest.
-- **Battle**: the swirl, the intro camera arc, the 12-frame post-contact freeze and the load blacks
-  are read (`re/battle-transition.md`) but not wired into the app (`app.rs`/`load.rs`, hook in
-  `build/evidence/j4-battle-transition/app-hook.md`). Formation (`79`), action-script cameras and
-  companions on the scene are unmodelled. Enrage draws for heal/Zing actions, metal rules, tension,
-  the weapon/shield skill-tree equip rule are later milestones. The xp counter's hold bit is **[unknown]**.
-- **Screens**: `--screens original` leaves the top screen a plain placeholder (map and party strips
-  need `re/bottom-screen.md` steps 2–3). The F-map camera does not rotate in the original (F02,
-  4 states); our Q/E still rotates it; the lock (`+0x244` bit 1 in `FieldCamera_Update`) is unread.
-- **Text**: codes the port does not model cost 0 units against 1 in the original; `<AUTO=n>` and the
-  battle window's pacing are not played by `Dialogue`; no window capture of the new pacing.
-- **Cutscenes**: bone cameras 552/572 read the current-frame bone; the hero's two halos diverge on
-  odd ticks in 21507; `s019n`'s blank face in 21593/21595 is not examined; 2535+22510 stays partial.
+- **Parity**: two original references, both in the prologue; the original's RNG drew another
+  battle-26 monster set (three `accepted` entries). Chapter 2 has no comparison with the original.
+- **Timing**: shown and instant runs are not tick-comparable; any change of dialogue or transition
+  timing re-pins the route digest. A `dq9rec` is replayed in its presentation.
+- **Text**: `<AUTO=n>` unmodelled (no prologue text carries it); codes the port does not model cost
+  0 units against 1; two states of the window probe still print "arrow".
+- **Battle**: the post-contact freeze, load blacks and formation (`79`) are unmodelled; enrage
+  draws for heal, metal rules, tension and the skill-tree equip rule are later milestones.
+- **Cast**: the 568 rule is read from code and two states, not observed inside the scenes; the
+  "second room" is an inference (`X01M01`); natives 581/582 and the sprite billboard bit 4 are
+  unmodelled; the notice marker over a roamer that spotted the party is not drawn.
+- **Seated sprites**: the lean's sign rests on the machine code (a 45° capture cannot resolve
+  under a pixel); the wings' own gate under `0x97(2)` and tint part `0x15` are `[unknown]`.
+- **Screens**: `--screens original` leaves the top screen a placeholder (map and party strips need
+  `re/bottom-screen.md` steps 2–3).
 - **Wipe-out**: the save-carried revival map, trigger 180 and `ME_009` are unmodelled.
-- **Route mode** is a test driver; `D01M02`'s west stair being a dead end is **[hypothesis]**.
-  Containers are runtime objects (nothing drawn); pending placement states (`+0x41b`) not modelled.
 
 ## Next
 
-Nothing is unmerged. (1) The user's hand-played, recorded session, replayed by `--play-record`;
-(2) the top screen's map and party strips, then `--screens original` as default after the user's
-test (the swirl `d321f28` and the F-map camera lock `0fdd397` are wired); (3) more original
-references beyond 1.1.2: **try the DQ9Recompiled runner on a spare slot**
-(`docs/re/dq9recompiled.md` § 9: needs clang and SDL3, ~10 GB, time-boxed, stop rule written) or
-extend the melonDS states; (4) use the 28 new names and 144 hook anchors of that note for battle
-rewards, per-hit damage and the 30 Hz cadence check; (5) an autonomous coordinator over
-`queue.ps1`/`dispatch.ps1` is **not enabled**: it waits for the user's go.
-Pages deploys on each push to `main`. Evidence stays local under `build/evidence/<batch>/`.
+(1) The user's full hand-played run to 2750, recorded (`--record`), and his answers on the
+"second room" and on the roaming monsters; (2) the top screen's map and party strips, then
+`--screens original` as default after the user's test; (3) more original references: the
+DQ9Recompiled runner on a spare slot (time-boxed, `re/dq9recompiled.md` § 9) or more melonDS
+states; (4) its 144 hook anchors for battle rewards, per-hit damage and the 30 Hz cadence;
+(5) an autonomous coordinator over `queue.ps1`/`dispatch.ps1` is **not enabled**: it waits for the
+user's go. Pages deploys on each push to `main`. Evidence stays local under `build/evidence/<batch>/`.
