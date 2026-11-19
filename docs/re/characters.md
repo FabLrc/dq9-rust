@@ -609,7 +609,7 @@ two heads) against `ivor-after-sheet.png`.
   while the scene plays; the second speaker (`s064`) stands beside the sprite NPC 8 (`n001a`)
   for the same reason, and the earlier note's "not covered" case is covered. Before this the
   application hid the map NPCs drawn with the same model data as a script's model
-  (`AnimatedScene::npcs_drawn_like_actor`, `EventPlayer::stand_in`) and guessed that the
+  (a rule since removed with its helpers) and guessed that the
   original hid NPC 7 some way it had not found; the rule is the exact one now, the guess is
   removed. Of the 58 scenes whose script loads a model equal to a map NPC's, 53 are scenes with
   `0x20` or a torn-down cast; of the five others `4000` and `13700` bind the map's copy (cast

@@ -269,27 +269,6 @@ impl AnimatedScene {
         self.play_actor(actor, &name, false, 1.0)
     }
 
-    /// The map NPCs drawn with the very model of an actor (same model data): the characters a
-    /// script that loads its own copy of a character stands in for.
-    pub fn npcs_drawn_like_actor(&self, actor: usize) -> Vec<u16> {
-        let Some(bytes) = self
-            .actors
-            .get(actor)
-            .and_then(|a| match (&a.drawn, &a.ghost) {
-                (Some((_, anim)), _) => Some(&self.models[*anim].bytes),
-                (None, Some(ghost)) => Some(&ghost.bytes),
-                (None, None) => None,
-            })
-        else {
-            return Vec::new();
-        };
-        self.npc_rigs
-            .iter()
-            .filter(|r| r.bytes[..] == bytes[..])
-            .map(|r| r.id)
-            .collect()
-    }
-
     /// The scene instance of an actor; `None` for a model without polygons.
     pub fn actor_instance(&self, actor: usize) -> Option<usize> {
         self.actors.get(actor)?.drawn.map(|(instance, _)| instance)
