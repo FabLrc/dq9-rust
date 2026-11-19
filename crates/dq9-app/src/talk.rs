@@ -272,9 +272,9 @@ pub struct Talk {
     sounds: Vec<talk::Sound>,
     /// What the window did, one `(step, what)` per change (the probes of `docs/re/dialogue.md`
     /// § "Message pacing").
-    #[cfg(all(test, windows))]
+    #[cfg(test)]
     pub(crate) trace: Vec<(u32, String)>,
-    #[cfg(all(test, windows))]
+    #[cfg(test)]
     traced_state: &'static str,
 }
 
@@ -410,7 +410,7 @@ impl Talk {
             return;
         };
         dialogue.step(input);
-        #[cfg(all(test, windows))]
+        #[cfg(test)]
         {
             // The probe names wait states 0, 1 and 2 with a cursor "arrow", the class the
             // message-flow probes were written against; the drawn triangle blinks and also
@@ -442,7 +442,7 @@ impl Talk {
             self.sounds.extend(sounds);
         }
         if let Some(outcome) = dialogue.outcome() {
-            #[cfg(all(test, windows))]
+            #[cfg(test)]
             self.trace.push((
                 self.ticks,
                 format!(
@@ -517,7 +517,7 @@ impl Talk {
         let font = assets.font()?;
         let script = talk::prepare(&font, text, &self.names, TEXT_WIDTH);
         self.active = Some(self.dialogue(Dialogue::for_event(script)));
-        #[cfg(all(test, windows))]
+        #[cfg(test)]
         self.trace.push((
             self.ticks,
             format!(
@@ -571,7 +571,7 @@ impl Talk {
 
     /// Native 401: closes the event message without reporting it as read.
     pub fn close_event(&mut self) {
-        #[cfg(all(test, windows))]
+        #[cfg(test)]
         self.trace
             .push((self.ticks, "close_event (native 401)".into()));
         if self.event_message {
