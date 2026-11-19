@@ -1021,3 +1021,33 @@ ov_002::0215a7b4 FieldMenu_ConsumeItem # spends the used copy: the bag (actor 4)
 ov_003::02159174 Church_SetMode     # +0x587 = mode; the wipe-out task ov_017::021ba998 is its only found caller
 ov_003::0215a740 Church_CureFlow    # member list, price, prayer, then the cure (Resurrection, Purification, Benediction)
 ov_003::0215af9c Church_QuickLine   # state 10: str_ch line 1080 + mode, then ends the visit
+
+# --- Cross-checked against DQ9Recompiled (docs/re/dq9recompiled.md; our ROM, European addresses) ---
+0x01ffd348 g_OverlayLoadBank       # DQ9Recompiled dq9_scene.h: u32 bank index of the loaded-overlay table (Overlay_Load 0x020a1950)
+0x01ffd364 g_OverlaySlots          # DQ9Recompiled dq9_scene.h: s8[6] per bank: overlay id in each slot, -1 = none
+0x0202e0b4 Camera_ApplyScene       # DQ9Recompiled dq9_arm9.toml: applies the camera (position +0x120, target +0x12c), publishes it, builds the view matrix
+0x020439c0 MsgWin_Redraw2D         # DQ9Recompiled dq9_arm9.toml: per pass, lays the 2D window's text out and redraws it (+0x19cc up, +0x34 tile buffer)
+0x0204e1d8 Gfx_Blit4bpp            # DQ9Recompiled dq9_arm9.toml: ORs a glyph or frame bitmap into a 4bpp tile buffer, two pixels a byte
+0x0205c5c0 MsgList_PenStep         # DQ9Recompiled dq9_arm9.toml: window list pen step: hit-test, cursor move, "same entry as before" flag
+0x0205c97c MsgList_DrawChoices     # DQ9Recompiled dq9_arm9.toml: draws a choice list's frame, entries and cursor on their own
+0x02080de4 Menu_TapHitTest         # DQ9Recompiled dq9_arm9.toml: layout menus: touched item becomes the cursor, a second tap chooses it
+0x0209646c QuestLog_Remove         # DQ9Recompiled dq9_arm9.toml: closes the gap of the 16-byte slots after a turn-in or a cancel
+0x020c99d8 OS_GetOwnerInfo         # DQ9Recompiled dq9_arm9.toml: firmware user settings; language = halfword +0x64 bits 0-2 into byte 0
+0x020ca440 CpuSend32               # DQ9Recompiled dq9_arm9.toml: MI_CpuSend32(src, dst, bytes): word loop, used to feed GXFIFO
+0x020e1e5c MsgChoice_HitTest       # DQ9Recompiled dq9_arm9.toml: simple choice list pen hit-test, -1 no press, -2 miss
+0x020e26ac MsgChoice_PenStep       # DQ9Recompiled dq9_arm9.toml: simple choice list: green look, then the choice on the next tap
+0x020e781c g_DirectionAngles       # DQ9Recompiled dq9_arm9.toml: 8 direction codes, fx12 radians from 0 = down towards right
+0x020e8f30 g_OverlaySlotOf         # DQ9Recompiled dq9_scene.h: u32 loader slot of overlay n, at +8n
+0x020f0da0 g_LangSuffixes          # DQ9Recompiled dq9_arm9.toml: "en","fr","de","it","es" substituted for <LG> in text file names
+0x020fefec g_CommSession           # DQ9Recompiled battle_multipliers.cpp: u32 nonzero while a multiplayer session is on (object of 0x0202ae28)
+0x021015a0 g_PlayerIndex           # DQ9Recompiled battle_multipliers.cpp: u16 player index: 0 alone or hosting, a guest's own otherwise
+0x02114e54 g_TouchManager          # DQ9Recompiled dq9_arm9.toml: +0x55 press edge, +0x24 touching, +0x38/+0x3c release position
+ov_000::0215ce80 Battle_Init             # DQ9Recompiled dq9_arm9_ov000.toml: per battle: resets the battle struct's fields before the first round
+ov_003::0215b1dc Scene_PowerOffScreen    # DQ9Recompiled dq9_arm9_ov003.toml: church "turn the power OFF": fade, text 110, then step 3 for good
+ov_004::0216b498 MainMenu_BuildRows      # DQ9Recompiled dq9_arm9_ov004.toml: builds the title menu's rows (WFC cell 60 among them) into grid 301/302
+ov_004::0216d6a0 MainMenu_WfcHandler     # DQ9Recompiled dq9_arm9_ov004.toml: handler 10: the WFC setup entry (main-loop mode 8, script label 999)
+ov_017::021a120c FieldMenu_OpenMemberPage # DQ9Recompiled dq9_arm9_ov017.toml: opens a member's page scene from the field (kind 3 = equipment)
+ov_017::021c17fc Field_ProfileTask       # DQ9Recompiled dq9_arm9_ov017.toml: Profile Settings task step (type 0x2f: state +28, from-menu +29, scene +32)
+ov_023::021f44d0 Battle_GoldShare        # DQ9Recompiled dq9_arm9_ov023.toml: won battle's gold share, u32(+0x58c4) x u16(+0x58cc) / u16(+0x58ce)
+ov_023::021f5150 Battle_ApplyRewards     # DQ9Recompiled dq9_arm9_ov023.toml: adds each slot's EXP to its current vocation and the gold share to the party
+ov_023::021f68dc Title_UpdateWidgets     # DQ9Recompiled dq9_arm9_ov023.toml: title scene widget step: the string table and the logo
