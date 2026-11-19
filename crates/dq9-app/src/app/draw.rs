@@ -9,12 +9,15 @@ use crate::hud::time_label;
 use crate::screens;
 use crate::screens::Layout;
 use crate::screens::ScreenMode;
+use dq9_core::cutscene::TexelOp;
 use dq9_core::field;
+use dq9_core::state::{WINGED_TINT, hero_winged};
 use dq9_render::Camera;
 use dq9_render::CameraMode;
 use dq9_render::EnhancedOptions;
 use dq9_render::Panel;
 use dq9_render::Renderer;
+use dq9_render::TexelTint;
 use glam::Vec3;
 
 /// How the frame is presented: where the DS screens go, the enhanced effects and the bottom
@@ -43,6 +46,43 @@ impl Presentation {
 }
 
 impl App {
+    /// The hero's Celestrian form in the field: while [`hero_winged`] holds for the map and the
+    /// story point, his models' palettes get [`WINGED_TINT`] added, the operation the game
+    /// applies with trigger action `0x97(1)` (`ov_017::021bdb78`, `0218fcf8`, `0218fd34`: the
+    /// same palette operation as native 238, so the cutscenes' hero and the field's look alike).
+    /// An event leaves the hero's colours to its script (its end puts them back, and this puts
+    /// the form back with them); rebuilding the hero (equipment) drops the tint and this restores
+    /// it. Draw-only: nothing of the logic reads it.
+    pub(super) fn sync_winged_tint(&mut self) {
+        if self.events.is_active() {
+            return;
+        }
+        let track = &self.state.tracks[self.state.track];
+        let winged = self.current.as_ref().is_some_and(|(entry, _)| {
+            hero_winged(entry.id, i32::from(track.chapter), i32::from(track.step))
+        });
+        let wanted = winged
+            .then(|| TexelOp::new(0, WINGED_TINT))
+            .flatten()
+            .map(|op| TexelTint {
+                mul: op.mul(),
+                add: op.add(),
+            });
+        let (Some(runtime), Some(instance)) = (self.runtime.as_mut(), self.hero_instance) else {
+            return;
+        };
+        let Some(model) = runtime.scene.instances.get(instance).map(|i| i.model) else {
+            return;
+        };
+        let drawn = runtime.scene.models[model]
+            .materials
+            .first()
+            .and_then(|m| m.light.texel_tint);
+        if drawn != wanted {
+            runtime.tint_hero(wanted);
+        }
+    }
+
     pub(super) fn upload(&mut self) {
         let Some(gpu) = &self.gpu else {
             return;
@@ -150,6 +190,7 @@ impl App {
         // The encounter's swirl over the field: posed at the clock's model frame and pinned in
         // front of the rolling, narrowing field camera (`docs/re/battle-transition.md`).
         self.draw_swirl(self.swirl_clock());
+        self.sync_winged_tint();
         if let (Some(runtime), Some(gpu), Some(renderer)) =
             (&mut self.runtime, &self.gpu, &mut self.renderer)
             && let Err(e) = runtime
@@ -320,5 +361,83 @@ impl App {
         }
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(frame);
+    }
+}
+
+/// The hero's drawn look in the field, through the application (real-ROM regression).
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use crate::app::Options;
+
+    fn app_at(map: &str, story: (u8, u8, u8)) -> Option<App> {
+        let rom = testrom::load()?;
+        let options = Options {
+            map: Some(map.into()),
+            save: None,
+            time: None,
+            clock: None,
+            layout: Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: dq9_formats::cast::Story {
+                chapter: story.0,
+                step: story.1,
+                substep: story.2,
+                daytime: true,
+                ..Default::default()
+            },
+            story_override: [None; 3],
+            new_game: false,
+            battle: None,
+            play: Default::default(),
+        };
+        Some(App::new_headless(options, Some(rom.to_vec())))
+    }
+
+    /// The palette operation on the hero's drawn model, as the renderer would upload it.
+    fn drawn_tint(app: &App) -> Option<TexelTint> {
+        let runtime = app.runtime.as_ref().expect("a map is loaded");
+        let instance = app.hero_instance.expect("a hero instance");
+        let model = runtime.scene.instances[instance].model;
+        runtime.scene.models[model]
+            .materials
+            .iter()
+            .map(|m| m.light.texel_tint)
+            .reduce(|a, b| if a == b { a } else { None })
+            .flatten()
+    }
+
+    /// Arriving at Angel Falls in 1.2.1 the hero is drawn in his winged form (the palette
+    /// colour `(8, 6, 16)` added, `ov_017::021bdb78`); the same map before the stage (1.1) and
+    /// after it (1.4) draws his own colours, and the Observatory never does.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_hero_arrives_at_angel_falls_winged_and_is_normal_before_and_after() {
+        let winged = TexelTint {
+            mul: [1.0; 3],
+            add: [8.0 / 31.0, 6.0 / 31.0, 16.0 / 31.0],
+        };
+        let Some(mut app) = app_at("M01", (1, 2, 1)) else {
+            eprintln!("skipping: DQ9_ROM missing");
+            return;
+        };
+        assert_eq!(app.current.as_ref().map(|c| c.0.id), Some(1100));
+        assert_eq!(
+            drawn_tint(&app),
+            None,
+            "nothing is drawn before the first frame"
+        );
+        // The frame loop calls this before every upload; an event running leaves it alone.
+        app.sync_winged_tint();
+        assert!(!app.events.is_active(), "no event is playing yet");
+        assert_eq!(drawn_tint(&app), Some(winged), "1.2.1 arrival at 1100");
+        for (step, expected) in [(3, Some(winged)), (4, None), (1, None)] {
+            app.state.tracks[app.state.track].step = step;
+            app.sync_winged_tint();
+            assert_eq!(drawn_tint(&app), expected, "step {step} at 1100");
+        }
     }
 }

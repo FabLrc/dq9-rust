@@ -219,6 +219,33 @@ pub const SESSION_HOST_FLAG: u16 = 0x113a;
 /// runtime has no brightness/lid gate, which would always pass here.
 pub const KEY_REFRESH_FLAG: u16 = 0x113e;
 
+/// The palette colour the winged form adds to the hero's models: 5/5/5 `(8, 6, 16)`, the
+/// literal `0x40c8` that `ov_017::021bdb78` (at `0x021bdba4`) stores at `Object3D+0x9c` and
+/// passes to `0218fcf8`, and the colour every scripted winged scene gives native 238
+/// (`238(slot, 8, 6, 16)` in `ev21500`, `ev21507`, `ev21593`, `ev21595`). The operation is mode
+/// 0 (add, clamped at 31) when `Object3D+0x9e` is 0, its value without a fifth argument of 238
+/// **[hypothesis]**: nothing writes it between a script's 238 and the field.
+pub const WINGED_TINT: [i32; 3] = [8, 6, 16];
+
+/// Whether the hero is in his winged (Celestrian) form in the field of `room` at story point
+/// `chapter.step`: the state trigger action `0x97(1)` sets on arrival and `0x97(2)`/`0x97(0)`
+/// clear (`Trig_RunAction` case `0x33`, `0x02061c14`: it starts the task `ov_017::021bdc34`,
+/// which sets bit `0x40` of the leader's `+0x18c` and tints the palettes of his models with
+/// [`WINGED_TINT`]). The rules that set it, all arrival rules (event 3) of `triggerM01.bin`
+/// (`dq9re triggers M01`, `docs/re/mortal-veil.md`):
+///
+/// - `0x97(1)` in the rooms 1100 to 1110 (Angel Falls and its houses) from 1.2 to 1.3;
+/// - `0x97(2)` in the Observatory rooms (4101, 4103 to 4107, 4109) from 1.1 to 1.4, and at the
+///   end of `21593` / `21595` (the story then warps to the Observatory);
+/// - `0x97(0)` on arrival in 1100 at 2.1.
+///
+/// Only a rule of those rooms and ranges changes the state, so it is a function of the room
+/// and the story point: the maps in between (none exist in 1.2 and 1.3) are not read.
+pub fn hero_winged(room: u16, chapter: i32, step: i32) -> bool {
+    let story = chapter * 1000 + step;
+    (1100..=1110).contains(&room) && (1002..=1003).contains(&story)
+}
+
 /// First weapon of a new game: the **copper sword**, item 20004. Character creation writes
 /// it with the opening outfit from the table at `ov_009` `0x0218636c` (overlay file offset
 /// `0x20cc`, u32 ids 20004, 20500, 20403, 20600, 20100; the u16 list at `0x0218ab78` repeats
@@ -504,5 +531,71 @@ mod tests {
         // Index 0 has no compendium entry: `func_0207cc18` skips it.
         assert_eq!(item_obtained_flag(0), None);
         assert_eq!(item_obtained_flag(u16::MAX), None);
+    }
+}
+
+#[cfg(test)]
+mod winged_tests {
+    use super::*;
+
+    /// The boundaries of the gate: the first and last step with the rule, the neighbours
+    /// without it, and the rooms around Angel Falls' own range.
+    #[test]
+    fn the_hero_is_winged_in_angel_falls_from_1_2_to_1_3_only() {
+        for room in 1100..=1110 {
+            assert!(!hero_winged(room, 1, 1), "room {room}: before the stage");
+            assert!(hero_winged(room, 1, 2), "room {room}: arrival at 1.2");
+            assert!(hero_winged(room, 1, 3), "room {room}: still at 1.3");
+            assert!(!hero_winged(room, 1, 4), "room {room}: after the stage");
+            assert!(!hero_winged(room, 2, 1), "room {room}: chapter 2");
+        }
+        // Chapter 2 step 2 and 3 are not 1.2/1.3 (`chapter * 1000 + step`).
+        assert!(!hero_winged(1100, 2, 2) && !hero_winged(1100, 2, 3));
+        assert!(!hero_winged(1099, 1, 2) && !hero_winged(1111, 1, 2));
+        // The Observatory is never winged in the field.
+        for room in [4101, 4103, 4104, 4105, 4106, 4107, 4109] {
+            assert!(!hero_winged(room, 1, 2) && !hero_winged(room, 1, 3));
+        }
+    }
+
+    /// The gate against the game's own rules: every arrival rule of `triggerM01.bin` and
+    /// `triggerX01.bin` with action `0x97`, over its whole story range. `0x97(1)` must give
+    /// the winged form, `0x97(2)` and `0x97(0)` must not. Skipped without the ROM.
+    #[test]
+    fn the_gate_agrees_with_every_arrival_rule_of_action_0x97() {
+        let Some(bytes) = testrom::load() else { return };
+        let rom = nds_rom::Rom::parse(bytes).unwrap();
+        let mut checked = 0;
+        for path in [
+            "data/scenario/triggerM01.bin",
+            "data/scenario/triggerX01.bin",
+        ] {
+            let table = dq9_formats::Table::parse(rom.file_by_path(path).unwrap()).unwrap();
+            for rule in dq9_formats::trigger::parse(&table).unwrap() {
+                let Some(action) = rule.actions.iter().find(|a| a.code == 0x97) else {
+                    continue;
+                };
+                // The two end-of-event rules (event 11, 21593 and 21595) clear the form just
+                // before the warp to the Observatory, whose arrival rules clear it too.
+                if rule.event != 3 {
+                    continue;
+                }
+                let room = u16::try_from(rule.room).unwrap();
+                for story in rule.from.0 * 1000 + rule.from.1..=rule.to.0 * 1000 + rule.to.1 {
+                    let (chapter, step) = (story / 1000, story % 1000);
+                    if !(1..=99).contains(&step) {
+                        continue;
+                    }
+                    assert_eq!(
+                        hero_winged(room, chapter, step),
+                        action.arg == 1,
+                        "{path}: room {room} at {chapter}.{step} after 0x97({})",
+                        action.arg
+                    );
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked >= 20, "the rules were found ({checked})");
     }
 }
