@@ -5,7 +5,8 @@
 //! textures, the single-pixel edge accent and the HUD's glass panels are decided on the CPU and
 //! are not part of that mask.
 
-/// One switch per effect of the enhanced presentation. Every field defaults to on.
+/// One switch per effect of the enhanced presentation. Every field is on in [`Self::DEFAULT`]
+/// except [`Self::contact_shadows`], which is opt-in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnhancedOptions {
     /// Mipmapped, linearly sampled textures instead of the DS's nearest filtering.
@@ -32,12 +33,21 @@ pub struct EnhancedOptions {
 
 impl Default for EnhancedOptions {
     fn default() -> Self {
-        Self::ALL
+        Self::DEFAULT
     }
 }
 
 impl EnhancedOptions {
-    /// Every effect on: the enhanced default.
+    /// The enhanced presentation as it starts: every effect except the contact shadows, which
+    /// the original has no equivalent of (no post-process; its soft dark rim around the
+    /// entities reads as a thick outline next to the DS's single-pixel edge marking). Opt in
+    /// with `--fx contact-shadows` (Web: `?fx=contact-shadows` or the page's checkbox).
+    pub const DEFAULT: Self = Self {
+        contact_shadows: false,
+        ..Self::ALL
+    };
+
+    /// Every effect on: what `--fx all` and `?fx=all` select.
     pub const ALL: Self = Self {
         trilinear: true,
         fxaa: true,
@@ -194,8 +204,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_all_on_and_none_is_everything_off() {
-        assert_eq!(EnhancedOptions::default(), EnhancedOptions::ALL);
+    fn the_default_has_every_effect_except_contact_shadows() {
+        assert_eq!(EnhancedOptions::default(), EnhancedOptions::DEFAULT);
+        let default = EnhancedOptions::DEFAULT;
+        assert!(!default.contact_shadows);
+        let all = EnhancedOptions::ALL;
+        assert!(all.contact_shadows);
+        assert_eq!(
+            default,
+            EnhancedOptions {
+                contact_shadows: false,
+                ..EnhancedOptions::ALL
+            }
+        );
+    }
+
+    #[test]
+    fn all_selects_the_contact_shadows_and_none_is_everything_off() {
+        let all = EnhancedOptions::ALL;
+        assert!(all.contact_shadows);
         assert_eq!(
             EnhancedOptions::ALL.post_mask(),
             PostBits::FXAA.0
@@ -208,6 +235,35 @@ mod tests {
         );
         assert_eq!(EnhancedOptions::NONE.post_mask(), 0);
         assert!(!EnhancedOptions::NONE.post_effects());
+    }
+
+    #[test]
+    fn the_enhanced_default_skips_the_contact_shadows_alone() {
+        let default = EnhancedOptions::default();
+        let mask = default.post_mask();
+        assert_eq!(mask & PostBits::CONTACT_SHADOWS.0, 0);
+        assert_eq!(
+            mask,
+            PostBits::FXAA.0
+                | PostBits::BLOOM.0
+                | PostBits::TONEMAPPING.0
+                | PostBits::GRADING.0
+                | PostBits::VIGNETTE.0
+                | PostBits::DITHERING.0
+        );
+        assert!(default.post_effects());
+    }
+
+    #[test]
+    fn contact_shadows_are_opt_in_and_all_still_selects_them() {
+        let mut options = EnhancedOptions::default();
+        options.apply_list("contact-shadows", true).unwrap();
+        assert_eq!(options, EnhancedOptions::ALL);
+        let mut options = EnhancedOptions::default();
+        options.set("all", true).unwrap();
+        assert_eq!(options, EnhancedOptions::ALL);
+        options.apply_list("contact-shadows", false).unwrap();
+        assert_eq!(options, EnhancedOptions::DEFAULT);
     }
 
     #[test]

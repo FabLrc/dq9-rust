@@ -29,8 +29,9 @@ pub(super) struct Presentation {
     /// because the headless drivers and their tests never draw a frame.
     pub(super) screens: ScreenMode,
     /// The enhanced presentation's switches (`--fx`/`--no-fx`, the page's checkboxes): every
-    /// effect of the 16:9 and reactive layouts, all on by default. Not in [`Options`] because
-    /// the headless drivers never draw a frame.
+    /// effect of the 16:9 and reactive layouts except the opt-in contact shadows
+    /// ([`EnhancedOptions::DEFAULT`]). Not in [`Options`] because the headless drivers never
+    /// draw a frame.
     pub(super) fx: EnhancedOptions,
     /// Placeholder of the bottom DS screen, created with the surface format.
     pub(super) panel: Option<Panel>,
@@ -40,7 +41,7 @@ impl Presentation {
     pub(super) fn new() -> Self {
         Self {
             screens: ScreenMode::default(),
-            fx: EnhancedOptions::ALL,
+            fx: EnhancedOptions::DEFAULT,
             panel: None,
         }
     }

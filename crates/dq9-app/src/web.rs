@@ -203,7 +203,7 @@ type PageOptions = (
 /// replayable) and `play-record=1` (a `.dq9rec` picked in the page is replayed instead of a
 /// session being played).
 fn options() -> PageOptions {
-    let mut fx = EnhancedOptions::ALL;
+    let mut fx = EnhancedOptions::DEFAULT;
     let mut mode = PageMode::default();
     let mut options = Options {
         map: None,
@@ -669,7 +669,8 @@ fn watch_fx_checkboxes(proxy: EventLoopProxy<UserEvent>, initial: EnhancedOption
         error("The page has no <fieldset id=fx> control.");
         return;
     };
-    // The initial state of each switch from the query string (all on by default).
+    // The initial state of each switch from the query string (the enhanced default: every
+    // effect but the opt-in contact shadows).
     if let Ok(list) = container.query_selector_all("input[data-fx]") {
         for i in 0..list.length() {
             let Some(input) = list

@@ -57,16 +57,18 @@ presentation, not a DS reconstruction:
   keeps the game's 15° vertical half-angle, so the widescreen field widens the horizontal
   view instead of cropping it.
 - Every effect is a boolean of one struct (`dq9_render::EnhancedOptions`,
-  `crates/dq9-render/src/enhanced.rs`), all on by default, switched by `--fx LIST` /
+  `crates/dq9-render/src/enhanced.rs`), every one on by default except the contact shadows
+  (`contact-shadows` is opt-in), switched by `--fx LIST` /
   `--no-fx LIST` (names below, comma-separated, also `all` and `none`; `--no-fx` is applied
   after `--fx`) and, on the Web, by the "Effects" row of checkboxes or `?fx=`/`?nofx=`
-  (`?nofx=bloom,vignette`):
+  (`?nofx=bloom,vignette`). `--fx all` and `?fx=all` switch every effect on, contact shadows
+  included; the default is `EnhancedOptions::DEFAULT` (`ALL` without `contact_shadows`).
 
 | Name | Effect |
 |---|---|
 | `trilinear` | mipmapped, linearly sampled textures instead of the DS's nearest filtering with one mip level |
 | `fxaa` | FXAA-lite |
-| `contact-shadows` | screen-space contact shadows read from the depth buffer |
+| `contact-shadows` | screen-space contact shadows read from the depth buffer; **off by default**, `--fx contact-shadows` (or the page's checkbox) turns them on |
 | `bloom` | threshold bloom |
 | `tonemapping` | filmic (ACES) tonemapping mixed with the DS colours |
 | `grading` | cool shadows, warm highlights, saturation and contrast |
@@ -75,6 +77,13 @@ presentation, not a DS reconstruction:
 | `edge-accent` | edge marking as one physical pixel; off draws it at the DS's own width |
 | `glass` | translucent panels behind the HUD and the field's message window |
 
+- The contact shadows are the one opt-in effect, and the only difference between
+  `EnhancedOptions::DEFAULT` and `ALL`. The original field has no post-process: the effect's
+  soft dark rim around every entity (about 4 physical pixels at 1000×782) read as a thick
+  outline on top of the single-pixel edge marking, whereas the DS draws no such halo. Measured
+  at `X01M05`, night, 1000×782, frame 60: 19,859 pixels change by more than 30/765 when it is
+  switched off, and the hero's silhouette goes from a soft black rim to the thin crisp edge
+  (`build/evidence/j4-contact-shadow/`).
 - The post effects travel to `post.wgsl` as a uniform bit mask (`features.x`,
   `PostBits` in the same module), read every frame: switching one rebuilds nothing. With
   every post effect off the field is drawn directly, the DS look (nearest filtering, DS-width

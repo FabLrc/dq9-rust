@@ -67,7 +67,7 @@ struct Cli {
     layout: Layout,
     /// Effects of the enhanced layouts to switch on, comma-separated: `trilinear`, `fxaa`,
     /// `contact-shadows`, `bloom`, `tonemapping`, `grading`, `vignette`, `dithering`,
-    /// `edge-accent`, `glass`, or `all` / `none`. All are on by default.
+    /// `edge-accent`, `glass`, or `all` / `none`. All but `contact-shadows` are on by default.
     #[arg(long, value_name = "LIST")]
     fx: Option<String>,
     /// Effects of the enhanced layouts to switch off, same names as `--fx` (applied after it).
@@ -279,9 +279,10 @@ impl Cli {
         }
     }
 
-    /// The enhanced presentation's switches: `--fx` then `--no-fx` (the off list wins).
+    /// The enhanced presentation's switches: the default, then `--fx`, then `--no-fx` (the off
+    /// list wins).
     fn enhanced(&self) -> Result<EnhancedOptions> {
-        let mut fx = EnhancedOptions::ALL;
+        let mut fx = EnhancedOptions::DEFAULT;
         if let Some(list) = &self.fx {
             fx.apply_list(list, true).map_err(anyhow::Error::msg)?;
         }
