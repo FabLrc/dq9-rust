@@ -402,8 +402,10 @@ the hero of the current slot (first character of the party).
 ### Not done
 
 - **Weapons and shields** are not drawn (`wpnpos.bin`: placements partly
-  inferred, shield absent from the file); nor are the wings (`d_hane`, 21-bone rig from
-  `chara_pd.gp2`).
+  inferred, shield absent from the file). The wings and the halo of the winged form are drawn
+  by the application, not part of `HeroRig` (`re/mortal-veil.md` § 7: `chara_sub/s023n2.chr` on
+  the `chest` bone, `s069.chr` on `head`); the `d_hane` rig named here earlier is not what
+  `ov_017::021bdc34` loads.
 - **Skin tones, eyes, eyebrows**: `data/chara/palette.bin` recolours the face and
   arm palettes (Character-Colours); only the original palettes are used **[unknown]**.
 - Hair colours: the skin ramp of `GetItemSkinShades` (`0x020731f0`, wiki) is not applied.

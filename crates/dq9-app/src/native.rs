@@ -714,6 +714,8 @@ struct Prepared {
     hidden: bool,
     swapped: bool,
     event_environment: Option<Environment>,
+    /// The hero is in his winged form at the map and story point (`dq9_core::state::hero_winged`).
+    winged: bool,
 }
 
 /// Loads the map of a `--screenshot`, places the hero (`--start`), plays `--input`, and logs
@@ -784,6 +786,11 @@ fn prepare(cli: &Cli, rom: &[u8], save: Option<&[u8]>) -> Result<Prepared> {
         }
     );
     println!("{}", loaded.summary());
+    let winged = dq9_core::state::hero_winged(
+        loaded.entry.id,
+        i32::from(story.chapter),
+        i32::from(story.step),
+    );
     Ok(Prepared {
         loaded,
         hero,
@@ -795,6 +802,7 @@ fn prepare(cli: &Cli, rom: &[u8], save: Option<&[u8]>) -> Result<Prepared> {
         hidden: false,
         swapped: false,
         event_environment: None,
+        winged,
     })
 }
 
@@ -817,6 +825,7 @@ fn play_event_or_walk(
         swapped,
         event_environment,
         party: _,
+        winged,
     } = prepared;
     // The same fixed steps as the window: the hero follows the `--walk` script (standing once
     // it has ended, or without one) and plays the motion its speed asks for; an event plays
@@ -888,6 +897,16 @@ fn play_event_or_walk(
             .hero_world(hero.position(), dq9_core::field::angle_of_yaw(hero.yaw()))
     };
     loaded.runtime.scene.instances[loaded.hero_instance].world = world;
+    // The winged form's palette, wings and halo, as the window draws them
+    // (`App::sync_winged`); an event's script owns them.
+    let pose = (!*hidden).then(|| (hero.position(), dq9_core::field::angle_of_yaw(hero.yaw())));
+    App::winged_in_scene(
+        &mut loaded.runtime,
+        loaded.hero_instance,
+        (*winged, event.is_some()),
+        pose,
+        Some(rom),
+    )?;
     if script.is_some() || cli.start.is_some() {
         println!(
             "hero after {} steps: ({:.3}, {:.3}, {:.3}) yaw {:.3}, motion {:?}",

@@ -32,8 +32,11 @@ Faithful to what the game reads:
   placed on the `head` bone, arms and shoes by texture files, merged into one model;
   oriented by heading (`angle_of_yaw`), scale `0x10a × build`; the gait comes from the
   distance covered per step (`Gait::from_speed`: stand if still, run otherwise). Appearance: the first character of the
-  save (`--save`), otherwise a default hero **[hypothesis]**; no weapons, no shields, no
-  wings, no tints from `palette.bin` ([`re/characters.md`](../re/characters.md)).
+  save (`--save`), otherwise a default hero **[hypothesis]**; no weapons, no shields, no tints
+  from `palette.bin` ([`re/characters.md`](../re/characters.md)). In his winged form (Angel Falls,
+  story 1.2 to 1.3) the application adds the pink palette operation and two scripted models hung
+  on his `chest` (wings) and `head` (halo) bones each frame, `--screenshot` included
+  ([`re/mortal-veil.md`](../re/mortal-veil.md) § 7).
 - **NPCs**: cast and placements from `cast::load`, `.spr` sprites decoded once
   (cut-out images), `stand_*` names chosen by `cast::sprite_stand`, billboards facing the
   camera; seated `sleep_*` variants with mirroring. Game scales: sprites `0x8f/4096`
