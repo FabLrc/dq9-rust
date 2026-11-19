@@ -50,6 +50,37 @@ pub(super) fn pad_direction(bits: u8) -> Vec3 {
     direction.normalize_or_zero()
 }
 
+/// The message-window button a key presses, if any. The window's keys are the DS buttons:
+/// `Enter`/`Space`/`Z` (A), `Backspace`/`X` (B) and the arrows or `W`/`S` (the d-pad's
+/// up/down, the prompt's cursor).
+fn talk_button(code: KeyCode) -> Option<Button> {
+    Some(match code {
+        KeyCode::Enter | KeyCode::Space | KeyCode::KeyZ => Button::Confirm,
+        KeyCode::Backspace | KeyCode::KeyX => Button::Cancel,
+        KeyCode::ArrowUp | KeyCode::KeyW => Button::Up,
+        KeyCode::ArrowDown | KeyCode::KeyS => Button::Down,
+        _ => return None,
+    })
+}
+
+/// Whether a key only leaves a message wait: DS X (`C`), L (`Q`), R (`E`) and the left/right
+/// d-pad. A wait-for-key state takes A, B, X, L, R and all four d-pad keys
+/// (`MsgWin_PollWaitKey` `0x020440dc`: mask `0x403`, L/R `0x200`/`0x100` set by
+/// `MsgWin_Show` `0x0204501c`, d-pad `0xf0`); Y, Start and Select do nothing. The DS buttons
+/// absent from the port (Y, Start, Select) map to no key.
+fn talk_advance(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::KeyC
+            | KeyCode::KeyQ
+            | KeyCode::KeyE
+            | KeyCode::ArrowLeft
+            | KeyCode::KeyA
+            | KeyCode::ArrowRight
+            | KeyCode::KeyD
+    )
+}
+
 /// The window's held keys and pointer.
 pub(super) struct Controls {
     pub(super) held: HashSet<KeyCode>,
@@ -123,10 +154,10 @@ impl App {
             return false;
         }
         if self.talk.is_active() {
-            match code {
-                KeyCode::ArrowUp | KeyCode::KeyW => self.talk.press(Button::Up),
-                KeyCode::ArrowDown | KeyCode::KeyS => self.talk.press(Button::Down),
-                _ => {}
+            if let Some(button) = talk_button(code) {
+                self.talk.press(button);
+            } else if talk_advance(code) {
+                self.talk.advance();
             }
         }
         match code {
@@ -191,5 +222,85 @@ impl App {
     pub(super) fn focus_lost(&mut self) {
         self.controls.held.clear();
         self.log_input(Logged::FocusLost);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The keys a message wait accepts, measured on the original.
+    const WAIT_KEYS: [(KeyCode, &str); 16] = [
+        (KeyCode::Enter, "A"),
+        (KeyCode::Space, "A"),
+        (KeyCode::KeyZ, "A"),
+        (KeyCode::Backspace, "B"),
+        (KeyCode::KeyX, "B"),
+        (KeyCode::KeyC, "X"),
+        (KeyCode::KeyQ, "L"),
+        (KeyCode::KeyE, "R"),
+        (KeyCode::ArrowUp, "d-pad up"),
+        (KeyCode::KeyW, "d-pad up"),
+        (KeyCode::ArrowDown, "d-pad down"),
+        (KeyCode::KeyS, "d-pad down"),
+        (KeyCode::ArrowLeft, "d-pad left"),
+        (KeyCode::KeyA, "d-pad left"),
+        (KeyCode::ArrowRight, "d-pad right"),
+        (KeyCode::KeyD, "d-pad right"),
+    ];
+
+    /// DS Y, Start and Select have no key in the port; they must reach nothing.
+    const INERT_KEYS: [(KeyCode, &str); 3] = [
+        (KeyCode::KeyV, "Y"),
+        (KeyCode::F1, "Start"),
+        (KeyCode::F2, "Select"),
+    ];
+
+    /// The keys a message wait accepts: A, B, X, L, R and the four d-pad keys leave a wait;
+    /// Y, Start and Select do nothing (`MsgWin_PollWaitKey` `0x020440dc`: mask `0x403` plus
+    /// `0x200`/`0x100` for L/R and `0xf0` for the d-pad).
+    #[test]
+    fn only_the_measured_keys_leave_a_message_wait() {
+        for (code, name) in WAIT_KEYS {
+            assert!(
+                talk_button(code).is_some() || talk_advance(code),
+                "{name} ({code:?}) leaves a wait"
+            );
+        }
+        // The closed matches cannot add a key silently.
+        for (code, name) in INERT_KEYS {
+            assert!(
+                talk_button(code).is_none() && !talk_advance(code),
+                "{name} ({code:?}) does nothing in a wait"
+            );
+        }
+    }
+
+    /// Prints the key table of `docs/re/dialogue.md` § "Message pacing"
+    /// (`cargo test -p dq9-app print_key_table -- --ignored --nocapture`).
+    #[test]
+    #[ignore = "prints the measured table, asserts nothing"]
+    fn print_key_table() {
+        for (code, name) in WAIT_KEYS.into_iter().chain(INERT_KEYS) {
+            let button = talk_button(code);
+            println!(
+                "{name:<12} {code:?} -> button {button:?}, leaves a wait {}",
+                button.is_some() || talk_advance(code)
+            );
+        }
+    }
+
+    /// The prompt keeps its own keys: A confirms, B answers the second choice and up/down move
+    /// the cursor; the d-pad's left/right and X/L/R only leave a wait.
+    #[test]
+    fn the_prompt_keys_keep_their_meaning() {
+        assert_eq!(talk_button(KeyCode::Enter), Some(Button::Confirm));
+        assert_eq!(talk_button(KeyCode::Backspace), Some(Button::Cancel));
+        assert_eq!(talk_button(KeyCode::ArrowUp), Some(Button::Up));
+        assert_eq!(talk_button(KeyCode::ArrowDown), Some(Button::Down));
+        for code in [KeyCode::ArrowLeft, KeyCode::ArrowRight, KeyCode::KeyC] {
+            assert!(talk_button(code).is_none());
+            assert!(talk_advance(code), "{code:?} only leaves a wait");
+        }
     }
 }

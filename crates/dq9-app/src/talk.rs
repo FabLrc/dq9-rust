@@ -368,12 +368,21 @@ impl Talk {
 
     /// Records a button press for the next step.
     pub fn press(&mut self, button: Button) {
+        // Every key of the message window leaves a wait (`MsgWin_PollWaitKey`); the prompt
+        // alone reads A, B and the d-pad as its own.
+        self.pending.advance = true;
         match button {
             Button::Confirm => self.pending.confirm = true,
             Button::Cancel => self.pending.cancel = true,
             Button::Up => self.pending.up = true,
             Button::Down => self.pending.down = true,
         }
+    }
+
+    /// Records a press of a key that only leaves a wait: DS X, L or R, and the left/right
+    /// d-pad (a prompt reads only A, B and up/down).
+    pub fn advance(&mut self) {
+        self.pending.advance = true;
     }
 
     /// Forgets the pending presses (nothing is listening to them).
@@ -403,10 +412,14 @@ impl Talk {
         dialogue.step(input);
         #[cfg(all(test, windows))]
         {
+            // The probe names wait states 0, 1 and 2 with a cursor "arrow", the class the
+            // message-flow probes were written against; the drawn triangle blinks and also
+            // covers state 3 (`View::arrow`, `docs/re/dialogue.md` § "Message pacing").
+            let probe = dialogue.probe_arrow();
             let view = dialogue.view();
             let state = if view.prompt.is_some() {
                 "prompt"
-            } else if view.arrow {
+            } else if probe {
                 "arrow"
             } else {
                 "-"
@@ -763,6 +776,9 @@ impl Talk {
         if view.arrow {
             let (w, h) = atlas.arrow_size();
             let bounce = (self.ticks / 20 % 2) as i32 * 2;
+            // The arrow sprite and this corner position are still **[hypothesis]** choices of
+            // `dq9-app` (`docs/re/dialogue.md`, § "Message window"): the original draws a
+            // smaller triangle at the window's centre (128, 183) on the bottom screen.
             atlas.arrow(
                 window[0] + window[2] - 8 - w as i32,
                 window[1] + window[3] - 6 - h as i32 + bounce,
@@ -1021,13 +1037,40 @@ impl Talk {
     }
 }
 
-/// The buttons of the message window.
+/// The buttons of the message window. Every one of them leaves a wait on its press edge; A
+/// and B also answer a prompt, and the d-pad moves its cursor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
     Confirm,
     Cancel,
     Up,
     Down,
+}
+
+#[cfg(test)]
+mod wait_key_tests {
+    use super::{Button, Input, Talk};
+
+    /// Every key of the message window leaves a wait on its press edge (`MsgWin_PollWaitKey`
+    /// `0x020440dc`); DS X, L and R do nothing else.
+    #[test]
+    fn every_window_key_sets_the_advance_edge() {
+        for button in [Button::Confirm, Button::Cancel, Button::Up, Button::Down] {
+            let mut talk = Talk::default();
+            talk.press(button);
+            assert!(talk.pending.advance, "{button:?} leaves a wait");
+        }
+        let mut talk = Talk::default();
+        talk.advance();
+        assert_eq!(
+            talk.pending,
+            Input {
+                advance: true,
+                ..Input::default()
+            },
+            "X, L and R press no prompt key"
+        );
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

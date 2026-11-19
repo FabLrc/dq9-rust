@@ -253,8 +253,9 @@ to be corrected from a capture, they are constants of `dq9-app/src/talk.rs`.
 
 `*:` is **not** removed from the stream: it is drawn (glyphs `*` of 7 pixels then `:` of 1
 pixel from the font). `MsgWin_ParseSpeakerName` looks for `//`, `*:` and `*<:>`: with `//`, the name
-and the following space are skipped; with `*:` only byte `+0x912` is set to 3 (arrow
-animation **[unknown]**). The name is read on each page: it appears after `<PAGE>`
+and the following space are skipped; with `*:` only byte `+0x912` is set to 3 (the window's
+arrow counter: 3 draws the wait arrow, 5 hides it, § "Message pacing"). The name is read on
+each page: it appears after `<PAGE>`
 (`//Cap<1>n Max Meddlin//` …).
 
 ### Layout (`MsgWin_WrapLines`)
@@ -276,7 +277,7 @@ once (no smooth scrolling).
 |---|---|
 | `0xFF01` `<END>`, `0xFF02` | state 0: the text stays, the game waits for the button then closes |
 | `0xFF03` `<CLOSE>` | state 0 then immediate close (`func_02043204`, `func_02043124`) |
-| `0xFF0A` `<ADD>` | state 3: the window stays for the scene's next message **and waits for the key** (no arrow, no timer): see § "Message pacing" |
+| `0xFF0A` `<ADD>` | state 3: the window stays for the scene's next message **and waits for the key** (the wait arrow blinks, no timer): see § "Message pacing" |
 | `0xFF0B` `<AUTO=n>` | state 4: `MsgWin_StepAutoPage` counts `n` ticks (`+0x195f`) then the next page starts by itself; **not modelled** (no text of the prologue carries it; the only code that advances without a key) |
 | `0xFF0C` `<PAGE_T=n>` | state 1 (arrow) with `+0x1961 = n`; `MsgWin_PollWaitKey` counts it down by `GetTickCount` and acts as the key at zero (`n` ticks = `n` 60 Hz steps). `Op::Timeout(n)` + `Op::Page` |
 | `0xFF0D` `<PAGE>` | state 1: wait for the button (arrow), then the page is cleared |
@@ -325,8 +326,8 @@ has sent you…?<ADD>" followed by "Then you may pass."):
 
 | Message ends with | Window state `W+0x9a0` | Leaves it when | Then | Read / measured |
 |---|---|---|---|---|
-| `<ADD>` (`0xFF0A`) | 3 | **the key**; no timer | `W+0x19bd` (native 405) = 0 **at once** (case 3); the next 400 types in the same window 2 frames later | `MsgWin_PollWaitKey` case 3. State 3 held for 330 frames without input; key at frame 100: `+0x19bd` 1→0 at 101, next text typing (`+0x9a0` 5, `+0x19bd` 1) at 103. `+0x912` stays 5: **no arrow** (capture `add-wait-f60.png`) |
-| `<END>` / `<END_R_TURN>` or no tag at all (the stream buffer is filled with `0xFF01`, **[hypothesis]** for "no tag") | 0 | the key | `+0x1958 = 5`, minus 2 per update: closes (`0x02043214`, `+0x19bd` = 0) **6 steps** after the key | key 840 → closed 847 (1-frame pulse); key 61 → 67 (`melonds-state.md`). `CLOSE_STEPS` |
+| `<ADD>` (`0xFF0A`) | 3 | **the key**; no timer | `W+0x19bd` (native 405) = 0 **at once** (case 3); the next 400 types in the same window 2 frames later | `MsgWin_PollWaitKey` case 3. State 3 held for 330 frames without input; key at frame 100: `+0x19bd` 1→0 at 101, next text typing (`+0x9a0` 5, `+0x19bd` 1) at 103. Draws the blinking wait arrow (§ below) |
+| `<END>` / `<END_R_TURN>` or no tag at all (the stream buffer is filled with `0xFF01`, **[hypothesis]** for "no tag") | 0 | the key | `+0x1958 = 5`, minus 2 per update: closes (`0x02043214`, `+0x19bd` = 0) **6 steps** after the key | key at frame 61, closed at frame 67: absolute frames of one capture, 6 steps between them; key 840 → 847 (1-frame pulse). `CLOSE_STEPS` |
 | `<CLOSE>` | 0, closed in the same call | nothing | `0x02043214` + `0x02043134` at once | `MsgWin_Update`, code `0xFF03` |
 | `<PAGE>` | 1 | the key | next page types | already modelled |
 | `<PAGE_T=n>` | 1 | the key or `n` ticks | idem | `+0x1961` counted by `GetTickCount` (2 per update): `2n`... already modelled |
@@ -334,11 +335,30 @@ has sent you…?<ADD>" followed by "Then you may pass."):
 | `<AUTO=n>` | 4 | `n` ticks, no key | next page starts | `MsgWin_StepAutoPage`, **not modelled, no text carries it** |
 | `<YESNO>` etc. | 6 | the key (A), or B | the answer callback (`0x020678cc`) jumps to the answer's marker (typing, state 5) | modelled; see below |
 
-The keys `MsgWin_PollWaitKey` accepts are A, B and X (mask `0x0403`), the four d-pad keys
-(`0xf0`) and a recent stylus touch (`object+0x54 != 0 && +0x44 < 20`): any of them leaves a wait
-state. The port only maps the action key (A / Enter / Space / Z) to waits; B cancels a prompt
-only. **[unknown]** whether the original's `TestKeysPressed` is an edge or a level: the
-measurements above used 1-frame pulses and a 4-frame press with the same result.
+**The wait arrow** (`W+0x912`). The down triangle is drawn in wait states **1 (page), 2 (pad)
+and 3 (`<ADD>`)** and not in state 0 (`<END>`) nor 4 (`<AUTO>`): it depends on the state, not on
+the text. In those three states it is hidden for the state's first 10 frames, then drawn 32
+frames and hidden 32 (`+0x912` 3 then 5: visible 10-41, hidden 42-73, visible from 74, frame
+counted from the state's start). The `talk127b` capture at frame 60 read `+0x912 = 5` because it
+fell in an off phase, not because state 3 draws nothing. Measured at about (128, 183) on the
+bottom screen (375 on the stacked two-screen capture; the window's horizontal centre) by
+`j4-message-arrow` (`build/evidence/j4-message-arrow/`, challenger states
+`build/scratch/challenger-msg/run/`, `s3.png`). The port's `View::arrow` follows the states and
+the blink; the sprite (`arrow2.spr`) and the corner position of `dq9-app` stay **[hypothesis]**
+(a bigger triangle at the window's right, where the original's is small and centred). States 0
+and 4 draw none.
+
+The wait-for-key states take A, B, X (mask `0x403`), L and R (`0x200`/`0x100`, written to
+`+0x19bf`/`+0x19cf` by `MsgWin_Show` `0x0204501c`) and the four d-pad keys (`0xf0`); Y, Start and
+Select do nothing. **Touch is not established** (an earlier note fitted the stylus test
+`object+0x54 != 0 && +0x44 < 20`; taps on the bottom screen did not leave a wait). The test is
+an **edge**: `TestKeysPressed` (`0x02012454`) is `cur & m && !(prev & m)`, so a held key
+advances once. The port maps `Enter`/`Space`/`Z` (A), `Backspace`/`X` (B), `C` (X), `Q` (L),
+`E` (R) and the arrows or `W`/`A`/`S`/`D` (d-pad) onto `dq9_core::talk::Input` (`advance` for
+X, L, R and the left/right d-pad; A, B and up/down through their own fields, which also leave a
+wait); A and B also answer a prompt, up/down move its cursor. Caveat for the captures: a
+1-frame press only registers if it lines up with the original's update cadence (the field
+updates every second frame); a key held 4 frames always registers.
 
 A message **advances by itself only** through `<CLOSE>` (closes at once), a timer code
 (`<PAGE_T>`, `<PAD_T>`, `<TIME>`, `<AUTO>`), or the script's own native 401 after its wait loop
@@ -349,27 +369,32 @@ steps + the poll) and the typing of the next. The numbers are exact for the port
 messages of the opening now need one press each; `after-new-game.txt` and `after-event-1160.txt`
 show 5-6 steps from the key to the next message).
 
-**Yes/No answers.** The answer callback calls `0x0206b2d8` with the answer's marker; it
-searches the text (`0x0206aca4`) and, **finding no marker, closes the window at once**
-(`0x02043214`: `+0x9a0` 0, `+0x998` 0, `+0x19bd` 0). Event messages such as Apus Major's
-question (message 210, `<YESNO>` without `<YES>`/`<NO>`: the script reads native 558) therefore
-close with the answer: **one** press. The port held them on an arrow (`hold_at_end`) for a
-second press. A branch that exists but is only `<END>` (NPC 130 of `X01M07`: `<YES><END>`) also
-closed with the answer in melonDS (key at frame 795, `+0x9a0` 6→0 and `+0x998` 1→0 at frame
-797, then event 1600 starts at frame 829; the `<NO>` branch with text goes 6→5, types, waits at
-state 0 and closes 7 frames after its key). **[hypothesis]** for the mechanism of the empty-branch
-close (the same observation fits "END reached on an empty page closes" and "the talk task closes
-the window when the answer starts a trigger"); the port implements the first, limited to a
-branch right after an answer. The check stays on the observed case.
+**Yes/No answers.** The answer callback (`0x020678cc`) calls `0x0206b2d8` with the answer's
+marker: the search (`0x0206aca4`) **finds a `<YES><END>` branch**, moves `+0x54/+0x58` to the
+marker and sets `+0x6c = 4`. The close comes afterwards, in the page-preparation function
+`0x0206aa38` (`func_0206aa28` in the decompiler): it calls `0x02043214` and `0x02043134` when a
+terminator code is reached before any glyph, so **an `<END>` on an empty page closes the
+window** — NPC 130 of `X01M07`: key at frame 795, `+0x9a0` 6→0 and `+0x998` 1→0 at frame 797,
+then event 1600 at frame 829. A branch **with text** types it, needs a **second** key, then
+closes 6 steps after it (the same NPC's `<NO>` branch: 6→5, types, waits at state 0,
+`CLOSE_STEPS`). A question whose text has **no** marker at all (Apus Major's message 210, and
+native 558's cases: ev01160, ev02210 ×2, ev02535, ev02800, ev02940) finds no branch and closes
+on the single press too (`+0x9a0` 6→0, `+0x998` 1→0). The port implements both: a prompt
+without a marker closes at once, and a branch whose first code is `<END>` closes when that code
+is read with no glyph typed.
 
-**Port** (`dq9_core::talk::Dialogue`): `State::WaitAdd` (key, no arrow, no timer, then
-`Closed(Add)`), `State::Closing(CLOSE_STEPS)` after an `<END>` key, a prompt without a marker
-or with an empty branch closes at once. Tests `an_add_message_waits_for_the_action_key_and_the_next_one_follows_it`,
+**Port** (`dq9_core::talk::Dialogue`): `State::WaitAdd` (the key, the blinking arrow, no timer,
+then `Closed(Add)`), `State::Closing(CLOSE_STEPS)` after an `<END>` key, and a prompt without a
+marker or with an empty branch closing at once. Tests
+`an_add_message_waits_for_the_action_key_and_the_next_one_follows_it`,
 `one_press_answers_a_yes_no_question_and_the_scene_goes_on`,
 `one_press_answers_a_conversation_question_whose_branch_is_empty` (real ROM, presses through
 `App::key`; each failed before: the first closed the ADD message by itself 112 steps after
-the show, the others left an arrow after the answer) and the unit tests in `talk/tests.rs`.
-The window is not kept on screen between an `<ADD>` message and the next (the original keeps the
+the show, the others left an arrow after the answer), the unit tests
+`the_wait_arrow_blinks_32_on_32_off_in_states_1_2_and_3`,
+`a_wait_leaves_on_the_advance_edge_and_a_held_key_does_not_touch_the_next_one` in
+`talk/tests.rs`, and the key map in `crates/dq9-app/src/app/input.rs`. The window is not kept
+on screen between an `<ADD>` message and the next (the original keeps the
 text up for the 2 frames of the script's poll; ours shows the box empty for 4-5 steps).
 
 ### Text speed
@@ -456,8 +481,9 @@ played by `Dialogue`.
   wgpu pipeline drawing over the finished 3D image, in the largest 4:3 of the target.
 - `dq9-app/src/talk.rs`: line choice (`<map><letter>0.gp2`, `NNN_en.bin`,
   `dialogue::select` with the trigger state: step, substep, quests, day/night), window,
-  name plate, Yes/No window; inputs `Enter`/`Space`/`Z` (A), `Backspace`/`X` (B),
-  up/down; `--input` for captures.
+  name plate, Yes/No window, the blinking wait arrow; inputs `Enter`/`Space`/`Z` (A),
+  `Backspace`/`X` (B), `C` (X), `Q` (L), `E` (R), the arrows or `W`/`A`/`S`/`D` (d-pad);
+  `--input` for captures.
 
 ## Remaining
 
@@ -465,7 +491,7 @@ played by `Dialogue`.
   `TextConsumeLeadingTags` handle them: the rotation is `func_02033834`, the model object has no
   orientation API in `AnimatedScene`); balloons `<EXC>`/`<QES>`.
 - Services (`<INN=n>`, `<SHOP=n>`…), quests (`<QUEST=n>`), sounds, shake, `<AUTO>`,
-  `<ALL_RECOVER>`; the keys B, X and the d-pad as wait keys (§ "Message pacing").
+  `<ALL_RECOVER>`.
 - The layout constants above to be confirmed on a melonDS capture; the language
   is English (`NNN_en.bin`), the hero's name comes from the save's current slot
   (default "Hero" without a save); `<IF_…>` conditions other than gender/solo take

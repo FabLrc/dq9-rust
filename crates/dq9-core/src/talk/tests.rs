@@ -54,6 +54,7 @@ fn lines(script: &Script) -> Vec<Vec<(u8, i32)>> {
 fn press() -> Input {
     Input {
         confirm: true,
+        advance: true,
         ..Input::default()
     }
 }
@@ -114,7 +115,11 @@ fn typing_is_one_unit_per_step_and_pages_wait() {
     assert_eq!(d.view().lines[0].len(), 2);
     assert!(!d.view().arrow);
     play(&mut d, 1);
-    assert!(d.view().arrow, "the page waits for the action key");
+    assert!(d.waiting(), "the page waits for the action key");
+    assert!(
+        !d.view().arrow,
+        "the arrow is hidden on the wait's first frames"
+    );
     play(&mut d, 5);
     assert_eq!(d.view().lines[0].len(), 2, "nothing moves without input");
     d.step(press());
@@ -122,7 +127,8 @@ fn typing_is_one_unit_per_step_and_pages_wait() {
     play(&mut d, 2);
     assert_eq!(d.view().lines[0].len(), 2);
     play(&mut d, 1);
-    assert!(d.view().arrow);
+    assert!(d.waiting(), "the text ended: it waits for the key");
+    assert!(!d.view().arrow, "state 0 (`<END>`) draws no arrow");
 }
 
 #[test]
@@ -160,7 +166,7 @@ fn spaces_and_line_breaks_cost_a_unit_like_the_original_stream() {
         "glyph, space, glyph, break, glyph"
     );
     d.step(Input::default());
-    assert!(d.view().arrow);
+    assert!(d.waiting(), "the page waits for the key");
 }
 
 #[test]
@@ -229,30 +235,31 @@ fn timed_waits_end_by_themselves() {
     // `<PAGE_T=n>` counts `n` ticks (one per step) while the page waits, then acts as A.
     let mut d = Dialogue::new(script(b"a<PAGE_T=5>b<PAGE>", 100));
     play(&mut d, 2);
-    assert!(d.view().arrow);
+    assert!(d.waiting());
     play(&mut d, 4);
-    assert!(d.view().arrow, "still waiting after 4 steps");
+    assert!(d.waiting(), "still waiting after 4 steps");
     play(&mut d, 1);
     assert!(d.view().lines[0].is_empty(), "the 5th step turned the page");
     // `<PAD_T=n>` counts `n` updates (2 steps each).
     let mut d = Dialogue::new(script(b"a<PAD_T=2>b<PAGE>", 100));
     play(&mut d, 2);
-    assert!(d.view().arrow);
+    assert!(d.waiting());
     play(&mut d, 3);
-    assert!(d.view().arrow);
+    assert!(d.waiting());
     play(&mut d, 1);
-    assert!(!d.view().arrow, "4 steps after the wait began");
+    assert!(!d.waiting(), "4 steps after the wait began");
     // Without the limit a page never turns by itself.
     let mut d = Dialogue::new(script(b"a<PAGE>b<PAGE>", 100));
     play(&mut d, 500);
-    assert!(d.view().arrow);
+    assert!(d.waiting());
 }
 
 #[test]
 fn end_waits_for_the_key_then_closes() {
     let mut d = Dialogue::new(script(b"a", 100));
     play(&mut d, 3);
-    assert!(d.view().arrow);
+    assert!(d.waiting());
+    assert!(!d.view().arrow, "state 0 (`<END>`) draws no arrow");
     assert_eq!(d.outcome(), None);
     // The window closes `CLOSE_STEPS` after the key, no sooner (melonDS: key 61, closed 67).
     d.step(press());
@@ -272,15 +279,46 @@ fn end_waits_for_the_key_then_closes() {
     assert_eq!(d.outcome().map(|o| o.end), Some(EndKind::Close));
 }
 
-/// `<ADD>` is wait state 3 of `MsgWin_PollWaitKey`: only the action key leaves it, however long
-/// the player takes, and it draws no arrow (melonDS: `W+0x9a0` stays 3 and `W+0x912` stays 5).
-/// The key closes the message at once (`W+0x19bd` clears), so the scene's next message follows.
+/// Waits that draw the arrow: page (1), pad (2) and `<ADD>` (3); states 0 (`<END>`) and 4
+/// (`<AUTO>`, not modelled) draw none. The triangle is hidden for the wait's first 10 frames,
+/// then 32 frames on and 32 off (measured: visible on 10-41, hidden 42-73, visible from 74,
+/// frame counted from the state's start; `docs/re/dialogue.md` § "Message pacing").
 #[test]
-fn add_waits_for_the_key_without_an_arrow_and_closes_on_it() {
+fn the_wait_arrow_blinks_32_on_32_off_in_states_1_2_and_3() {
+    // The measured table for frames 0..=80: first visible frame 10, then 32 on / 32 off.
+    let on = |frame: u32| frame >= 10 && (frame - 10) % 64 < 32;
+    for text in [
+        &b"a<ADD>"[..],
+        &b"a<PAGE>b"[..],
+        &b"a<PAD_WAIT>b"[..],
+        &b"a<PAD_WAIT_NOCUR>b"[..],
+    ] {
+        let mut d = Dialogue::for_event(script(text, 100));
+        let mut steps = 0;
+        while !d.waiting() {
+            d.step(Input::default());
+            steps += 1;
+            assert!(steps < 50, "{text:?}: the text never waits");
+        }
+        for frame in 0..=80 {
+            assert_eq!(d.view().arrow, on(frame), "{text:?}: arrow, frame {frame}");
+            d.step(Input::default());
+        }
+        assert!(d.waiting(), "{text:?}: still waiting after 81 frames");
+    }
+}
+
+/// `<ADD>` (state 3) waits for the key however long the player takes, draws the blinking
+/// arrow, keeps its text, and the key closes it at once (`W+0x19bd` clears), so the scene's
+/// next message follows.
+#[test]
+fn add_waits_for_the_key_with_its_arrow_and_closes_on_it() {
     let mut d = Dialogue::for_event(script(b"a<ADD>", 100));
+    while !d.waiting() {
+        d.step(Input::default());
+    }
     play(&mut d, 3_000);
     assert_eq!(d.outcome(), None, "nothing but the key ends it");
-    assert!(!d.view().arrow, "state 3 draws no arrow");
     assert_eq!(d.view().lines[0], [(0, 0)], "the text stays on screen");
     d.step(press());
     assert_eq!(
@@ -290,6 +328,73 @@ fn add_waits_for_the_key_without_an_arrow_and_closes_on_it() {
             answer: None
         })
     );
+}
+
+/// A wait leaves on the `advance` edge only: the application sends it on the step a key goes
+/// down (`TestKeysPressed` `0x02012454`: `cur & m && !(prev & m)`), so a key still held does
+/// not touch the next wait.
+#[test]
+fn a_wait_leaves_on_the_advance_edge_and_a_held_key_does_not_touch_the_next_one() {
+    for text in [
+        &b"a<ADD>"[..],
+        &b"a<PAGE>b"[..],
+        &b"a<PAD_WAIT>b"[..],
+        &b"a<PAD_WAIT_NOCUR>b"[..],
+        &b"a"[..],
+    ] {
+        let mut d = Dialogue::new(script(text, 100));
+        let mut steps = 0;
+        while !d.waiting() {
+            d.step(Input::default());
+            steps += 1;
+            assert!(steps < 50, "{text:?}: the text never waits");
+        }
+        d.step(Input {
+            advance: true,
+            ..Input::default()
+        });
+        assert!(!d.waiting(), "{text:?}: the advance edge leaves the wait");
+    }
+    // The `<PAGE>` turned on its edge; the held key (no edge) types on and the second page
+    // still waits for a new press.
+    let mut d = Dialogue::new(script(b"a<PAGE>b<PAGE>c", 100));
+    while !d.waiting() {
+        d.step(Input::default());
+    }
+    d.step(Input {
+        advance: true,
+        ..Input::default()
+    });
+    play(&mut d, 10);
+    assert!(d.waiting(), "the second page still waits");
+    assert_eq!(d.view().lines[0], [(1, 0)], "only `b` typed");
+}
+
+/// Prints the wait arrow's visibility over a wait's first 81 frames for the states that draw
+/// it and for `<END>`: the table of `docs/re/dialogue.md` § "Message pacing"
+/// (`cargo test -p dq9-core print_arrow_phase -- --ignored --nocapture`).
+#[test]
+#[ignore = "prints the measured table, asserts nothing"]
+fn print_arrow_phase() {
+    for text in [
+        &b"a<ADD>"[..],
+        &b"a<PAGE>b"[..],
+        &b"a<PAD_WAIT>b"[..],
+        &b"a"[..],
+    ] {
+        let mut d = Dialogue::for_event(script(text, 100));
+        while !d.waiting() {
+            d.step(Input::default());
+        }
+        let frames: String = (0..=80)
+            .map(|_| {
+                let shown = d.view().arrow;
+                d.step(Input::default());
+                if shown { '#' } else { '.' }
+            })
+            .collect();
+        println!("{:<16} {frames}", String::from_utf8_lossy(text));
+    }
 }
 
 #[test]
@@ -396,7 +501,11 @@ fn an_empty_answer_branch_closes_with_the_answer() {
         ..Input::default()
     });
     play(&mut d, 3);
-    assert!(d.view().arrow, "No has a text: it waits for its key");
+    assert!(d.waiting(), "No has a text: it waits for its key");
+    assert!(
+        !d.view().arrow,
+        "a typed branch ends on state 0, which draws none"
+    );
     assert_eq!(d.outcome(), None);
 }
 

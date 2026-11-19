@@ -36,7 +36,7 @@ fn a_captured_line_costs_the_units_the_original_spent() {
     let script = prepare(&font, text, &names, 228);
     let mut dialogue = Dialogue::for_event(script);
     let mut steps = 0;
-    while !dialogue.view().arrow {
+    while !dialogue.waiting() {
         dialogue.step(Input::default());
         steps += 1;
         assert!(steps < 1000, "the line never waits");

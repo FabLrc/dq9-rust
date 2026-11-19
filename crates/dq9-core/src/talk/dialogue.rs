@@ -15,21 +15,59 @@ pub const SCROLL_STEPS: u32 = 20;
 /// sets `+0x19d1` and `+0x1958 = 5`, then takes the update's 2 ticks off each call and closes
 /// (`0x02043214`, which clears `+0x19bd`) when the count goes negative: 3 updates, 6 steps.
 /// Measured in melonDS: the key at frame 61 clears `+0x998` and `+0x19bd` at frame 67
-/// (`docs/re/melonds-state.md`, § "State resume"). `<ADD>` has no such delay (case 3 clears
-/// `+0x19bd` at once) and `<CLOSE>` calls the close itself.
+/// (`docs/re/melonds-state.md`, § "State resume"); 61 and 67 are absolute frame numbers of
+/// that capture, the delay between the two is the 6 steps. `<ADD>` has no such delay (case 3
+/// clears `+0x19bd` at once) and `<CLOSE>` calls the close itself.
 pub const CLOSE_STEPS: u32 = 6;
+
+// --- The wait arrow's blink ---
+//
+// Measured on the original (melonDS, `build/evidence/j4-message-arrow/` and the challenger's
+// states of `build/scratch/challenger-msg/`): in wait states 1, 2 and 3 the down triangle of
+// the message window is drawn 32 frames and hidden 32 frames, the first visible frame being
+// the state's frame 10 (`docs/re/dialogue.md` § "Message pacing"). States 0 (`<END>`) and 4
+// (`<AUTO>`) draw none.
+
+/// Frames the wait arrow stays hidden when its wait state starts: the first visible frame.
+const ARROW_BLINK_START: u32 = 10;
+/// Frames the wait arrow is drawn, then hidden (`+0x912` 3 then 5).
+const ARROW_BLINK_ON: u32 = 32;
+const ARROW_BLINK_OFF: u32 = 32;
+
+/// Whether the wait arrow is drawn on `frame` of its wait state: hidden for the first
+/// [`ARROW_BLINK_START`] frames, then on for 32 frames and off for 32.
+fn arrow_visible(frame: u32) -> bool {
+    frame >= ARROW_BLINK_START
+        && (frame - ARROW_BLINK_START) % (ARROW_BLINK_ON + ARROW_BLINK_OFF) < ARROW_BLINK_ON
+}
 
 /// Buttons pressed during one step (edges, not levels).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Input {
-    /// A: advance a wait, answer a prompt. It does nothing while the text types: the
-    /// original ignores the key in that state (`func_020440cc` has no case for state 5;
-    /// measured, `docs/re/dialogue.md` § "Text speed").
+    /// A: answer a prompt. It does nothing while the text types: the original ignores the key
+    /// in that state (`func_020440cc` has no case for state 5; measured, `docs/re/dialogue.md`
+    /// § "Text speed").
     pub confirm: bool,
     /// B: answer "No" to a prompt.
     pub cancel: bool,
     pub up: bool,
     pub down: bool,
+    /// A key that leaves a wait-for-key state on its press edge beyond A, B and up/down: X, L,
+    /// R or the left/right d-pad (`MsgWin_PollWaitKey` `0x020440dc`: mask `0x403`, `0x200`
+    /// and `0x100` for L/R set by `MsgWin_Show`, and `0xf0` for the d-pad). Y, Start and
+    /// Select do not advance, and the test is an edge (`TestKeysPressed` `0x02012454`:
+    /// `cur & m && !(prev & m)`), so a held key acts once. The application maps its keys onto
+    /// this flag; A, B and up/down also leave a wait through their own fields
+    /// ([`Input::leaves_wait`]).
+    pub advance: bool,
+}
+
+impl Input {
+    /// Whether a key that leaves a wait-for-key state was pressed: A, B, X, L, R or any
+    /// d-pad key. A caller that only models A (`confirm`) still leaves a wait.
+    pub fn leaves_wait(self) -> bool {
+        self.advance || self.confirm || self.cancel || self.up || self.down
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,14 +85,26 @@ enum State {
         cursor: u8,
         sound: AnswerSound,
     },
-    /// `<END>`: the text stays until the action key.
+    /// `<END>`: the text stays until the action key. State 0 draws no wait arrow.
     WaitEnd,
     /// The key was pressed on an `<END>`: the window closes when the count ends.
     Closing(u32),
-    /// `<ADD>` (state 3): the text stays, without an arrow, until the action key; the script's
-    /// next message then continues in the same window.
+    /// `<ADD>` (state 3): the text stays until the action key, with the blinking wait arrow;
+    /// the script's next message then continues in the same window.
     WaitAdd,
     Closed(EndKind),
+}
+
+impl State {
+    /// The wait states that draw the wait arrow: page (1), pad (2) and `<ADD>` (3). State 0
+    /// (`<END>`) and state 4 (`<AUTO>`) draw none (melonDS, `docs/re/dialogue.md`
+    /// § "Message pacing").
+    fn draws_arrow(self) -> bool {
+        matches!(
+            self,
+            State::WaitPage | State::WaitPad { .. } | State::WaitAdd
+        )
+    }
 }
 
 /// A prompt on screen.
@@ -71,7 +121,8 @@ pub struct View<'a> {
     pub name: Option<&'a Plate>,
     /// Typed lines: glyph and x offset in the line.
     pub lines: &'a [Vec<(u8, i32)>],
-    /// The wait arrow is shown (page, end, or pad wait with cursor).
+    /// The wait arrow is drawn this frame: states 1 (page), 2 (pad) and 3 (`<ADD>`), hidden
+    /// for the state's first 10 frames then 32 frames on and 32 off (measured).
     pub arrow: bool,
     pub prompt: Option<PromptView>,
     pub tags: &'a LeadingTags,
@@ -107,6 +158,9 @@ pub struct Dialogue {
     limit: Option<u32>,
     /// Steps left before the current wait ends by itself.
     wait_left: Option<u32>,
+    /// Frames spent in the current wait state, for the arrow's blink. Zero on the frame the
+    /// state starts.
+    arrow_frames: u32,
     /// An answer's branch started and has typed nothing yet.
     empty_branch: bool,
 }
@@ -128,6 +182,7 @@ impl Dialogue {
             carry: 0,
             limit: None,
             wait_left: None,
+            arrow_frames: 0,
             empty_branch: false,
         }
     }
@@ -157,15 +212,35 @@ impl Dialogue {
         }
     }
 
-    pub fn view(&self) -> View<'_> {
-        let waiting = matches!(
+    /// The window waits for the player: a page (`<PAGE>`/`<PAGE_T>`), a pad wait, an `<ADD>`,
+    /// an `<END>` or a prompt. Whether it also draws the wait arrow is [`View::arrow`].
+    pub fn waiting(&self) -> bool {
+        matches!(
+            self.state,
+            State::WaitPage
+                | State::WaitPad { .. }
+                | State::WaitEnd
+                | State::WaitAdd
+                | State::Prompt { .. }
+        )
+    }
+
+    /// The waits the application's Windows test probes (`Talk::trace`) log as "window shows:
+    /// arrow": states 0, 1 and 2 with the cursor, the class those probes were written against.
+    /// What the window actually draws is [`View::arrow`] (states 1, 2 and 3, blinking).
+    #[cfg(windows)]
+    pub fn probe_arrow(&self) -> bool {
+        matches!(
             self.state,
             State::WaitPage | State::WaitEnd | State::WaitPad { cursor: true }
-        );
+        )
+    }
+
+    pub fn view(&self) -> View<'_> {
         View {
             name: self.name.as_ref(),
             lines: &self.lines,
-            arrow: waiting,
+            arrow: self.state.draws_arrow() && arrow_visible(self.arrow_frames),
             prompt: match self.state {
                 State::Prompt { kind, cursor, .. } => Some(PromptView { kind, cursor }),
                 _ => None,
@@ -278,9 +353,13 @@ impl Dialogue {
                         .position(|op| *op == Op::Label(*label));
                     self.at = target.unwrap_or(self.at);
                 }
-                // An answer whose branch is only `<END>` (`<YES><END>`) closes the window with
-                // the answer, no key and no wait: melonDS, NPC 130 of `X01M07`, the answer key
-                // at frame 795, `W+0x9a0` 6 to 0 and `W+0x998` 1 to 0 at frame 797, against 6
+                // An answer whose branch is only `<END>` (`<YES><END>`): the marker exists
+                // (`0x0206b2d8` moves `+0x54/+0x58` to it and sets `+0x6c = 4`), then the
+                // page-preparation function (`0x0206aa38`, `func_0206aa28` in the
+                // decompiler) reaches a terminator before any glyph and calls `0x02043214`
+                // and `0x02043134`: an `<END>` on an empty page closes the window with the
+                // answer, no key and no wait. melonDS, NPC 130 of `X01M07`: the answer key at
+                // frame 795, `W+0x9a0` 6 to 0 and `W+0x998` 1 to 0 at frame 797, against 6
                 // steps after the key for a typed `<END>` (`docs/re/dialogue.md`).
                 Op::End(EndKind::Wait) if self.empty_branch => {
                     self.state = State::Closed(EndKind::Wait);
@@ -308,7 +387,16 @@ impl Dialogue {
     /// One 60 Hz step: the text reveals [`TextSpeed::units`] message units (one at the
     /// original's rate), whatever key is pressed.
     pub fn step(&mut self, input: Input) {
+        let before = self.state;
         self.step_state(input);
+        if self.state.draws_arrow() {
+            // Frame 0 is the frame the wait starts on: the arrow's blink is counted from it.
+            self.arrow_frames = if before == self.state {
+                self.arrow_frames.wrapping_add(1)
+            } else {
+                0
+            };
+        }
         // One blip a step at most, however many characters the action key typed.
         if std::mem::take(&mut self.blip) {
             self.sounds.push(Sound::Blip);
@@ -333,13 +421,13 @@ impl Dialogue {
                 }
             }
             State::WaitPage => {
-                if input.confirm | self.wait_expired() {
+                if input.leaves_wait() | self.wait_expired() {
                     self.clear_box();
                     self.state = State::Typing;
                 }
             }
             State::WaitPad { .. } => {
-                if input.confirm | self.wait_expired() {
+                if input.leaves_wait() | self.wait_expired() {
                     self.state = State::Typing;
                 }
             }
@@ -397,7 +485,7 @@ impl Dialogue {
                 }
             }
             State::WaitEnd => {
-                if input.confirm {
+                if input.leaves_wait() {
                     self.state = State::Closing(CLOSE_STEPS);
                 }
             }
@@ -409,7 +497,7 @@ impl Dialogue {
                 };
             }
             State::WaitAdd => {
-                if input.confirm {
+                if input.leaves_wait() {
                     self.state = State::Closed(EndKind::Add);
                 }
             }
