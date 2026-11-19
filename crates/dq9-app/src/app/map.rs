@@ -2,6 +2,7 @@
 //! field's triggers make.
 
 use super::App;
+use super::camera::arrival_camera;
 use super::services::containers::Containers;
 use super::status;
 use crate::lighting;
@@ -15,7 +16,6 @@ use dq9_core::field::MapChange;
 use dq9_core::scenario::Step;
 use dq9_core::state::GameState;
 use dq9_core::trigger::Request;
-use dq9_render::Camera;
 use dq9_render::CameraMode;
 use glam::Vec3;
 use web_time::Instant;
@@ -108,14 +108,10 @@ impl App {
         }
         if frame || self.view.framed.is_none() {
             if self.view.camera.mode == CameraMode::Orbit {
-                self.view.camera = Camera::field(
-                    hero_start,
-                    if loaded.placed {
-                        loaded.hero.yaw()
-                    } else {
-                        0.0
-                    },
-                );
+                // The map load task sets the camera, not the hero's heading
+                // (`ov_017::0219e384`; `docs/re/field-camera.md`).
+                (self.view.camera, self.view.camera_home) =
+                    arrival_camera(rom, hero_start, loaded.entry.byte_c, loaded.entry.id);
             } else {
                 if let Some(bounds) = s.bounds() {
                     self.view.camera.frame(bounds);
@@ -124,12 +120,12 @@ impl App {
                 if loaded.placed {
                     self.view.camera.yaw = loaded.hero.yaw();
                 }
+                self.view.camera_home = self.view.camera.yaw;
             }
             self.view.framed = s.bounds();
         } else {
             self.view.camera.follow_hero(hero_start);
         }
-        self.view.camera_home = self.view.camera.yaw;
         // `ov_017::0219e234`: the map record's kind and flags may forbid the L/R turn.
         self.view.field_camera = FieldCamera::new(loaded.entry.byte_c);
         self.events.map_loaded(&self.view.camera);

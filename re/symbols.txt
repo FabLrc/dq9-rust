@@ -784,6 +784,14 @@ ov_017::0219ca88 Field_CheckWarps      # 0x72 warps: leader inside -> Save_Warp;
 0x020a28b0 FieldCamera_SetFlags            # +0x244 |= mask: bit 1 window/warp lock, bit 3 event camera, bit 4 map lock
 0x020a28c0 FieldCamera_ClearFlags          # +0x244 &= ~mask
 ov_017::0219e234 FieldCamera_ApplyMapLock  # map record +0xc: kind 0 or bit 7 clear -> +0x244 |= 0x10 (no L/R turn), else clear
+0x020a2728 FieldCamera_ResetYaw               # yaw := home (+0x246): Camera_SetOrbit + +0x220; map load, event start, wipe-out revival
+0x020a2754 FieldCamera_RestoreYaw             # yaw := saved yaw (+0x21e); end of an event (EventTask_Update)
+0x020a2798 FieldCamera_SetHomeYaw             # +0x246 = s16; the map load passes Zone3D+0x40 (maplist value 13)
+0x020a27dc FieldCamera_SetFraming0            # +0x224 dy 0x7999, +0x228 dist 0xe000, half fov 15 deg (map record +0xc bits 5-6 = 0)
+0x020a2810 FieldCamera_SetFraming1            # dy 0x6000, dist 0xb000, half fov 15 deg (bits 5-6 = 1)
+0x020a2840 FieldCamera_SetFraming2            # dy 0x8b33, dist 0xe666, half fov 25 deg (bits 5-6 = 2, O00)
+0x020a2878 FieldCamera_SetFraming3            # dy 0xc666, dist dy + 0x2000, half fov 25 deg (bits 5-6 = 3, O01)
+ov_017::0219bcac Warp_ReloadHere              # Save_Warp := current map and protagonist pose, +0xa = 1: the map load leaves the camera as it is
 0x020332bc Character_Update                 # turn, accelerate, advance along model angle, gravity; reached through a vtable
 0x0203349c Character_AdvanceWalk           # speed +0xb2 to max +0xb4 by +0xb6, limited by turn error; pos += (sin,0,cos)*speed
 0x02033720 Character_TurnToFacing          # model angle +0x54 toward facing +0xae by +0xb0 per tick

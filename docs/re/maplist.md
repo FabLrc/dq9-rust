@@ -33,7 +33,7 @@ id; the 139 unshipped maps all have id 0.
 | `+5..+0xb` | 4 (string) | map code, 7 bytes copied, `+0xb` = 0: 6 characters at most |
 | `+0xc` bits 0-3 | 3 | map kind, below |
 | `+0xc` bit 4 | 9 | copied to `func_0208a9b4()+0x9c` by `Zone3D::SwitchZone` [unknown] |
-| `+0xc` bits 5-6, bit 7 | 10, 12 | bits 5-6 [unknown]; bit 7 keeps the field camera's turn together with the kind (`ov_017::0219e234`, below) |
+| `+0xc` bits 5-6, bit 7 | 10, 12 | bits 5-6 pick the field camera's framing on the map load (elevation, distance, half field of view: 4 entries, `ov_017::0219e384`, [`field-camera.md`](field-camera.md)); bit 7 keeps the field camera's turn together with the kind (`ov_017::0219e234`, below) |
 | `+0xd` bits 0-6 | 6 | passed by `0x0209cb00` into a 47-byte table (with cases depending on `LightingManager+0x98`); [hypothesis, wiki Map-List] the music |
 | `+0xd` bit 7 | 16 | [unknown] |
 | `+0xe` bits 0-1 | 17 | space: 1 indoor, 2 outdoor, 0 none (wiki) |
@@ -41,9 +41,11 @@ id; the 139 unshipped maps all have id 0.
 | `+0xe` bits 6, 7 | 19, 20 | [unknown] |
 | `+0xf` | — | never written |
 
-Values 2 (region) and 5 (developer label) are read then discarded; 7, 8, 11, 13,
-14 and 15 are not read here (the wiki ties 14 and 15 to the map's position in the
-world, read elsewhere).
+Values 2 (region) and 5 (developer label) are read then discarded; 7, 8 and 11 are not read here.
+Values 13, 14 and 15 are read by the zone settings (`Zone3D+0x40..+0x48`, `0x0201c60c`, not part
+of the 16-byte record): value 13 is the field camera's **home yaw** (`Zone3D+0x40`,
+`FieldCamera_SetHomeYaw` on every map load; 0 on every map but `M01`, 1228;
+[`field-camera.md`](field-camera.md)); the wiki ties 14 and 15 to the map's position in the world.
 
 **Kind (`+0xc` bits 0-3)**, distributed by the first letter of the code: 0 = 64 terrain
 regions `F` (+ 9 others), 1 = dungeons `D`, castles, towers (157), 2 = towns, houses,
