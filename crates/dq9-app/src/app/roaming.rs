@@ -643,7 +643,7 @@ impl App {
         }
         // The world's generators seed the roamers' draws; a `--seed` therefore reaches the
         // spawns and the companies, not only the battles.
-        if !self.world_seeded {
+        if !self.combat.world_seeded {
             self.ensure_world();
         }
         let (Some(rom), Some((entry, _))) = (self.rom.as_deref(), self.current.as_ref()) else {
@@ -653,7 +653,8 @@ impl App {
         let Some(runtime) = self.runtime.as_mut() else {
             return;
         };
-        self.roaming.enter(rom, map, &code, runtime, &self.world);
+        self.roaming
+            .enter(rom, map, &code, runtime, &self.combat.world);
     }
 
     /// Keeps the roamers across a battle: the field's scene is the same object when it comes
@@ -688,8 +689,8 @@ impl App {
         let contact = self.roaming.step(&input, &self.collision);
         // The field's draws are the live stream: a scripted battle that starts next uses this
         // state, and `settle_roaming` hands it back after the battle.
-        self.roaming.export_generators(&mut self.world);
-        self.world_seeded = true;
+        self.roaming.export_generators(&mut self.combat.world);
+        self.combat.world_seeded = true;
         let added = {
             let (Some(rom), runtime) = (self.rom.as_deref(), self.runtime.as_mut()) else {
                 return contact;
@@ -788,8 +789,8 @@ impl App {
             }
         });
         if let Some(world) = state {
-            self.world = world;
-            self.world_seeded = true;
+            self.combat.world = world;
+            self.combat.world_seeded = true;
         }
         self.roaming.set_pending(contact.roamer);
         let stage = if contact.stage == 0 {
@@ -800,7 +801,7 @@ impl App {
         self.start_encounter(groups, stage, opening);
         // No scene could be built (a missing stage or model): the roamer must not stay stuck
         // in its touched state.
-        if !self.battle_is_active() && self.fight.is_none() {
+        if !self.battle_is_active() && self.combat.fight.is_none() {
             let hero = self
                 .hero
                 .as_ref()
@@ -819,7 +820,7 @@ impl App {
             .as_ref()
             .map_or([0; 3], |hero| field::to_fx(hero.position()));
         self.roaming.settle(result, hero);
-        self.roaming.adopt_generators(&self.world);
+        self.roaming.adopt_generators(&self.combat.world);
     }
 
     /// Roamers on the field, with their slot (tests and diagnostics).
@@ -916,3 +917,6 @@ impl App {
         self.roaming.map
     }
 }
+
+#[cfg(all(test, windows))]
+mod tests;

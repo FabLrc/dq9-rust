@@ -43,18 +43,47 @@ pub struct BattlePlay {
     pub seed: Option<u64>,
 }
 
+/// The fight in play and the generators and results around it.
+pub(super) struct Combat {
+    /// The fight in play (windows and the Web, or `--fight`): the engine, its menus and its
+    /// messages; its end settles the battle.
+    pub(super) fight: Option<Box<Fight>>,
+    /// Pad presses of the window since the last fixed step, for the fight.
+    pub(super) battle_pad: Pad,
+    /// The world's generators the battle draws on (monsters' HP, flight, drops).
+    pub(super) world: World,
+    pub(super) world_seeded: bool,
+    /// How the last fight went.
+    pub(super) last_fight: Option<FightSummary>,
+    /// Where a wiped-out party comes round.
+    pub(super) revival_map: u16,
+}
+
+impl Combat {
+    pub(super) fn new() -> Self {
+        Self {
+            fight: None,
+            battle_pad: Default::default(),
+            world: World::seeded(0),
+            world_seeded: false,
+            last_fight: None,
+            revival_map: NEW_GAME_REVIVAL_MAP,
+        }
+    }
+}
+
 impl App {
     /// Seeds the world's generators at the first battle: `--seed`, else the game's clock and
     /// the fixed-step count at entry.
     pub(super) fn ensure_world(&mut self) {
-        if self.world_seeded {
+        if self.combat.world_seeded {
             return;
         }
         let seed = self.options.play.seed.unwrap_or_else(|| {
             (self.tick << 24) ^ u64::from(self.day.seconds().to_bits()) ^ 0x9e37_79b9
         });
-        self.world = World::seeded(seed);
-        self.world_seeded = true;
+        self.combat.world = World::seeded(seed);
+        self.combat.world_seeded = true;
         status(&format!("battle: world generators seeded with {seed}"));
     }
 
@@ -115,12 +144,12 @@ impl App {
             .members
             .first()
             .and_then(|member| member.equipment.weapon);
-        if let Some(scene) = self.battle.as_mut()
+        if let Some(scene) = self.encounter.battle.as_mut()
             && let Err(e) = scene.set_hero_weapon(rom, weapon)
         {
             status(&format!("battle motion: hero weapon: {e:#}"));
         }
-        match Fight::new(data, &self.party, &setup, &mut self.world) {
+        match Fight::new(data, &self.party, &setup, &mut self.combat.world) {
             Ok(fight) => Some(Box::new(fight)),
             Err(e) => {
                 status(&format!("battle: {e:#}"));
@@ -136,7 +165,7 @@ impl App {
             self.settle_battle(resolved, None);
             return;
         };
-        let outcome = match fight.play_out(&mut self.world) {
+        let outcome = match fight.play_out(&mut self.combat.world) {
             Ok(outcome) => outcome.clone(),
             Err(e) => {
                 status(&format!("battle: {e:#}"));
@@ -144,7 +173,7 @@ impl App {
                 return;
             }
         };
-        self.last_fight = Some(summary(resolved.number, &outcome, fight.log()));
+        self.combat.last_fight = Some(summary(resolved.number, &outcome, fight.log()));
         self.settle_battle(resolved, Some(outcome));
     }
 
@@ -152,14 +181,21 @@ impl App {
     /// outcome once its last window has closed. While the scene presents the previous command
     /// the window does not advance and the pad is ignored (`battle::advance_fight`).
     pub(super) fn drive_fight(&mut self) -> Option<Outcome> {
-        let pad = std::mem::take(&mut self.battle_pad);
-        let fight = self.fight.as_mut()?;
-        let joined = match &mut self.battle {
+        let pad = std::mem::take(&mut self.combat.battle_pad);
+        let fight = self.combat.fight.as_mut()?;
+        let joined = match &mut self.encounter.battle {
             Some(scene) => {
-                battle::advance_fight(fight, scene, &mut self.world, pad, self.rom.as_deref()).1
+                battle::advance_fight(
+                    fight,
+                    scene,
+                    &mut self.combat.world,
+                    pad,
+                    self.rom.as_deref(),
+                )
+                .1
             }
             None => {
-                fight.step(pad, &mut self.world);
+                fight.step(pad, &mut self.combat.world);
                 fight.take_cues();
                 false
             }
@@ -167,15 +203,15 @@ impl App {
         let outcome = if fight.is_done() {
             let outcome = fight.take_outcome();
             if let Some(outcome) = &outcome {
-                self.last_fight = Some(summary(None, outcome, fight.log()));
+                self.combat.last_fight = Some(summary(None, outcome, fight.log()));
             }
             outcome
         } else {
             None
         };
         if outcome.is_some() {
-            self.fight = None;
-            if let Some(scene) = &mut self.battle {
+            self.combat.fight = None;
+            if let Some(scene) = &mut self.encounter.battle {
                 // The fight is over: nothing is left displaced or half-way through a motion.
                 scene.clear_gestures();
             }
@@ -221,7 +257,7 @@ impl App {
         let result = outcome.as_ref().map(|o| o.result);
         match outcome {
             Some(outcome) => {
-                if let Some(last) = &mut self.last_fight {
+                if let Some(last) = &mut self.combat.last_fight {
                     last.number = request.number;
                 }
                 for &item in &outcome.drops {
@@ -314,7 +350,7 @@ impl App {
         self.party.gold /= 2;
         status(&format!(
             "wipe-out: the purse is halved to {}, the party comes round on map {}",
-            self.party.gold, self.revival_map
+            self.party.gold, self.combat.revival_map
         ));
         // A preview (`--battle`) has no field to leave: nothing to load.
         if self.options.battle.is_some() || self.rom.is_none() {
@@ -330,11 +366,11 @@ impl App {
             self.tick,
             Step::MapChange {
                 from,
-                to: self.revival_map,
+                to: self.combat.revival_map,
                 cause: "wipe-out".to_owned(),
             },
         );
-        let map = self.revival_map.to_string();
+        let map = self.combat.revival_map.to_string();
         if self.load_map(&map, true, None, None, true) {
             // `func_ov017_0219bfb4` (mode 2): `chur_messet.bin` then the church's line, on
             // the revival map, before the party gets control.
@@ -360,7 +396,7 @@ impl App {
                 self.party.gold
             ));
         }
-        if let Some(fight) = &self.last_fight {
+        if let Some(fight) = &self.combat.last_fight {
             out.push_str(&format!(
                 "last fight: {:?} in {} rounds, {} experience, {} gold, drops {:?}\n",
                 fight.result, fight.rounds, fight.experience, fight.gold, fight.drops
@@ -381,7 +417,7 @@ impl App {
     /// How the last fight went.
     #[cfg_attr(not(all(test, windows)), allow(dead_code))]
     pub(crate) fn last_fight(&self) -> Option<&FightSummary> {
-        self.last_fight.as_ref()
+        self.combat.last_fight.as_ref()
     }
 }
 
@@ -672,3 +708,6 @@ fn cast_ability(
     }
     anyhow::bail!("the {phase} phase did not come")
 }
+
+#[cfg(all(test, windows))]
+mod tests;

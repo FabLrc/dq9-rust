@@ -53,12 +53,12 @@ impl App {
     /// which loads its own map; what follows is chained by the triggers.
     pub(super) fn start_new_game(&mut self) {
         // A battle preview gives way to the new game.
-        self.battle = None;
-        self.fight = None;
-        self.battle_change = None;
-        self.saved_field = None;
-        self.battle_cover = 0.0;
-        self.last_battle = None;
+        self.encounter.battle = None;
+        self.combat.fight = None;
+        self.encounter.battle_change = None;
+        self.encounter.saved_field = None;
+        self.encounter.battle_cover = 0.0;
+        self.encounter.last_battle = None;
         self.options.battle = None;
         let Some(rom) = self.rom.as_deref() else {
             return;
@@ -66,11 +66,11 @@ impl App {
         let game = GameState::new_game();
         self.party = game.party.clone();
         self.party_ready = false;
-        self.world_seeded = false;
-        self.revival_map = super::fight::NEW_GAME_REVIVAL_MAP;
-        self.fight = None;
-        self.battle_pad = Default::default();
-        self.last_fight = None;
+        self.combat.world_seeded = false;
+        self.combat.revival_map = super::fight::NEW_GAME_REVIVAL_MAP;
+        self.combat.fight = None;
+        self.combat.battle_pad = Default::default();
+        self.combat.last_fight = None;
         let scenario = game.scenario;
         let story = &mut self.options.story;
         (story.chapter, story.step, story.substep) = (
@@ -171,11 +171,15 @@ impl App {
             }
         };
         let chapter = u32::from(self.state.tracks[self.state.track].chapter);
-        let voice = table.voice(self.revival_map, chapter, self.day.phase().is_daytime());
+        let voice = table.voice(
+            self.combat.revival_map,
+            chapter,
+            self.day.phase().is_daytime(),
+        );
         if voice == dq9_core::facility::church::WIPE_OUT_SILENT {
             status(&format!(
                 "wipe-out: map {}'s priest is silent at story major {chapter}",
-                self.revival_map
+                self.combat.revival_map
             ));
             return;
         }

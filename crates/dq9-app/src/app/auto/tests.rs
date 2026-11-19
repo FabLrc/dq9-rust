@@ -10,7 +10,7 @@ fn options(map: &str, story: (u8, u8, u8)) -> crate::app::Options {
         save: None,
         time: None,
         clock: None,
-        layout: crate::app::Layout::default(),
+        layout: crate::screens::Layout::default(),
         mute: true,
         record_sound: false,
         trace_inputs: false,

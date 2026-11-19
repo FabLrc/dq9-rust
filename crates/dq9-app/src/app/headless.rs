@@ -72,7 +72,7 @@ impl App {
     /// One fixed step of a recorded input trace (`--trace-inputs`, replayed): the pad keys and
     /// the action key are fed exactly as recorded, and the journal checkpoints are captured.
     pub(crate) fn replay_step(&mut self, bits: u8, confirm: bool) {
-        self.replay_pad = Some(bits);
+        self.recording.replay_pad = Some(bits);
         if confirm {
             self.talk.press(Button::Confirm);
         }
@@ -212,7 +212,7 @@ impl App {
     pub(crate) fn input_trace_jsonl(&self) -> String {
         use std::fmt::Write as _;
         let mut out = String::new();
-        for (frame, (bits, confirm)) in self.input_trace.iter().enumerate() {
+        for (frame, (bits, confirm)) in self.recording.input_trace.iter().enumerate() {
             let _ = write!(out, "{{\"frame\":{frame},\"pad\":[");
             let mut first = true;
             for (bit, name) in PAD_NAMES {
@@ -263,7 +263,8 @@ impl App {
 
     /// Whether the replayed record has steps left and no digest has differed.
     fn replay_running(&self) -> bool {
-        self.replay
+        self.recording
+            .replay
             .as_ref()
             .is_some_and(|replay| self.steps < replay.end() && replay.failure().is_none())
     }
@@ -277,7 +278,12 @@ impl App {
 
     /// How the replay stands: a mismatch, else the expected event, else the end.
     fn replay_outcome(&self, hit: Option<u16>) -> RecordStop {
-        match self.replay.as_ref().and_then(|replay| replay.failure()) {
+        match self
+            .recording
+            .replay
+            .as_ref()
+            .and_then(|replay| replay.failure())
+        {
             Some(why) => RecordStop::Mismatch(why.to_owned()),
             None => hit.map_or(RecordStop::End, RecordStop::Event),
         }
@@ -292,7 +298,13 @@ impl App {
             }
             self.observe_step();
         }
-        if self.replay_running() || !self.replay.as_mut().is_some_and(|r| r.first_report()) {
+        if self.replay_running()
+            || !self
+                .recording
+                .replay
+                .as_mut()
+                .is_some_and(|r| r.first_report())
+        {
             return;
         }
         self.finish_replay();
@@ -349,7 +361,11 @@ impl App {
         out.push_str(&format!("events played: {:?}\n", self.journal.events()));
         out.push_str(&self.record_stop_line(stop));
         out.push('\n');
-        let checked = self.replay.as_ref().map_or(0, |replay| replay.checked());
+        let checked = self
+            .recording
+            .replay
+            .as_ref()
+            .map_or(0, |replay| replay.checked());
         out.push_str(&format!("digests: {checked} checked\n"));
         out.push_str(&self.party_report());
         out
