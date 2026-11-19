@@ -58,6 +58,12 @@ fn press() -> Input {
     }
 }
 
+/// The action key on a wait for the end, then the steps the window takes to close.
+fn press_and_close(dialogue: &mut Dialogue) {
+    dialogue.step(press());
+    play(dialogue, CLOSE_STEPS as usize);
+}
+
 fn play(dialogue: &mut Dialogue, steps: usize) {
     for _ in 0..steps {
         dialogue.step(Input::default());
@@ -248,7 +254,12 @@ fn end_waits_for_the_key_then_closes() {
     play(&mut d, 3);
     assert!(d.view().arrow);
     assert_eq!(d.outcome(), None);
+    // The window closes `CLOSE_STEPS` after the key, no sooner (melonDS: key 61, closed 67).
     d.step(press());
+    play(&mut d, CLOSE_STEPS as usize - 1);
+    assert_eq!(d.outcome(), None);
+    assert!(!d.view().arrow, "the arrow is gone once the key was taken");
+    play(&mut d, 1);
     assert_eq!(
         d.outcome(),
         Some(Outcome {
@@ -259,6 +270,26 @@ fn end_waits_for_the_key_then_closes() {
     let mut d = Dialogue::new(script(b"a<CLOSE>", 100));
     play(&mut d, 3);
     assert_eq!(d.outcome().map(|o| o.end), Some(EndKind::Close));
+}
+
+/// `<ADD>` is wait state 3 of `MsgWin_PollWaitKey`: only the action key leaves it, however long
+/// the player takes, and it draws no arrow (melonDS: `W+0x9a0` stays 3 and `W+0x912` stays 5).
+/// The key closes the message at once (`W+0x19bd` clears), so the scene's next message follows.
+#[test]
+fn add_waits_for_the_key_without_an_arrow_and_closes_on_it() {
+    let mut d = Dialogue::for_event(script(b"a<ADD>", 100));
+    play(&mut d, 3_000);
+    assert_eq!(d.outcome(), None, "nothing but the key ends it");
+    assert!(!d.view().arrow, "state 3 draws no arrow");
+    assert_eq!(d.view().lines[0], [(0, 0)], "the text stays on screen");
+    d.step(press());
+    assert_eq!(
+        d.outcome(),
+        Some(Outcome {
+            end: EndKind::Add,
+            answer: None
+        })
+    );
 }
 
 #[test]
@@ -293,7 +324,7 @@ fn prompts_jump_to_the_answer_branch() {
         [(2, 0)],
         "the No branch replaces the question"
     );
-    d.step(press());
+    press_and_close(&mut d);
     assert_eq!(d.outcome().and_then(|o| o.answer), Some(1));
 
     // B answers No, and the first answer is Yes.
@@ -312,16 +343,61 @@ fn prompts_jump_to_the_answer_branch() {
     assert_eq!(d.view().lines[0], [(1, 0)]);
 }
 
+/// A question without `<YES>`/`<NO>` markers (the scripts of events read the answer with
+/// native 558): the answer callback (`0x020678cc`) finds no branch (`0x0206b2d8`) and closes the
+/// window at once, so one press answers and the scene goes on. It used to wait on an arrow for a
+/// second press.
 #[test]
-fn a_prompt_without_branches_falls_through_with_its_answer() {
-    let mut d = Dialogue::new(script(b"a<NOYES>", 100));
+fn a_prompt_without_branches_closes_on_its_answer_with_no_second_key() {
+    for hold in [false, true] {
+        let text = b"a<NOYES>";
+        let mut d = if hold {
+            Dialogue::for_event(script(text, 100))
+        } else {
+            Dialogue::new(script(text, 100))
+        };
+        play(&mut d, 2);
+        assert_eq!(d.view().prompt.unwrap().cursor, 1, "NOYES starts on No");
+        d.step(press());
+        assert_eq!(
+            d.outcome(),
+            Some(Outcome {
+                end: EndKind::Wait,
+                answer: Some(1)
+            }),
+            "the answer closed the window, hold_at_end {hold}"
+        );
+    }
+}
+
+/// An answer whose branch is only `<END>` (NPC 130's "Yes" in `X01M07`): the window closes with
+/// the answer instead of waiting on an empty box for a second press. A branch with text still
+/// waits for its key.
+#[test]
+fn an_empty_answer_branch_closes_with_the_answer() {
+    let text = b"a<YESNO><NO>b<END><YES><END>";
+    let mut d = Dialogue::new(script(text, 100));
     play(&mut d, 2);
-    assert_eq!(d.view().prompt.unwrap().cursor, 1, "NOYES starts on No");
     d.step(press());
-    play(&mut d, 1);
-    assert!(d.view().arrow);
-    d.step(press());
-    assert_eq!(d.outcome().and_then(|o| o.answer), Some(1));
+    play(&mut d, 2);
+    assert_eq!(
+        d.outcome(),
+        Some(Outcome {
+            end: EndKind::Wait,
+            answer: Some(0)
+        }),
+        "Yes closed the window"
+    );
+    let mut d = Dialogue::new(script(text, 100));
+    play(&mut d, 2);
+    d.step(Input {
+        down: true,
+        confirm: true,
+        ..Input::default()
+    });
+    play(&mut d, 3);
+    assert!(d.view().arrow, "No has a text: it waits for its key");
+    assert_eq!(d.outcome(), None);
 }
 
 /// Opens `tag` at the start of a message and checks its opening sound was emitted once.
@@ -399,7 +475,7 @@ fn cancel_answers_the_second_choice_silently_and_wins_over_confirm() {
             .is_empty()
         );
         play(&mut d, 1);
-        d.step(press());
+        press_and_close(&mut d);
         assert_eq!(d.outcome().and_then(|o| o.answer), Some(1), "{tag:?}");
 
         // A and B in the same step: B wins and the confirmation effect is not played.
@@ -411,7 +487,7 @@ fn cancel_answers_the_second_choice_silently_and_wins_over_confirm() {
         };
         assert!(answer(&mut d, both).is_empty(), "{tag:?}");
         play(&mut d, 1);
-        d.step(press());
+        press_and_close(&mut d);
         assert_eq!(d.outcome().and_then(|o| o.answer), Some(1), "{tag:?}");
     }
 }
@@ -600,8 +676,9 @@ fn an_answer_without_branch_ends_the_message() {
         cancel: true,
         ..Input::default()
     });
-    play(&mut d, 1);
-    assert!(d.view().arrow, "the message ended");
-    d.step(press());
-    assert_eq!(d.outcome().and_then(|o| o.answer), Some(1));
+    assert_eq!(
+        d.outcome().and_then(|o| o.answer),
+        Some(1),
+        "the message ended with the answer"
+    );
 }

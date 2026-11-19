@@ -276,8 +276,8 @@ once (no smooth scrolling).
 |---|---|
 | `0xFF01` `<END>`, `0xFF02` | state 0: the text stays, the game waits for the button then closes |
 | `0xFF03` `<CLOSE>` | state 0 then immediate close (`func_02043204`, `func_02043124`) |
-| `0xFF0A` `<ADD>` | state 3: the window stays for the scene's next message |
-| `0xFF0B` `<AUTO=n>` | state 4: `MsgWin_StepAutoPage` counts `n` ticks (`+0x195f`) then the next page starts by itself; **not modelled** (no text of the game carries it) |
+| `0xFF0A` `<ADD>` | state 3: the window stays for the scene's next message **and waits for the key** (no arrow, no timer): see § "Message pacing" |
+| `0xFF0B` `<AUTO=n>` | state 4: `MsgWin_StepAutoPage` counts `n` ticks (`+0x195f`) then the next page starts by itself; **not modelled** (no text of the prologue carries it; the only code that advances without a key) |
 | `0xFF0C` `<PAGE_T=n>` | state 1 (arrow) with `+0x1961 = n`; `MsgWin_PollWaitKey` counts it down by `GetTickCount` and acts as the key at zero (`n` ticks = `n` 60 Hz steps). `Op::Timeout(n)` + `Op::Page` |
 | `0xFF0D` `<PAGE>` | state 1: wait for the button (arrow), then the page is cleared |
 | `0xFF1A` `<TIME=n>` | counter `+0x186c + 4 × slot` (added by `func_020457e8`), **decremented once per `MsgWin_Update` call** (33 ms): `n` updates = `2n` steps. 1009 of the 1027 uses are `<TIME=180>` (quest-complete banner: 6 s, not 3 s) |
@@ -302,6 +302,75 @@ an explanation?"). Real test `every_npc_line_plays_to_its_end`: the 37,988 Engli
 lines (all the lines of `<map><letter>0.gp2`) compile, lay out and
 play until closing, answering Yes and No in turn (775 display no
 glyph: `<END>` alone, `<ADD>`…).
+
+### Message pacing (`j4-message-flow`)
+
+Reported: in Aquila's and Apus Major's scenes "some messages wait for A, the others chain by
+themselves", and a Yes/No answer needed two presses. Evidence is local
+(`build/evidence/j4-message-flow/`, sha256 prefixes in the manifest).
+
+**What ended a message in the port, before.** Our run of the new game's opening
+(`print_message_table`, `before-new-game.txt`): of the 22 messages that are not timed captions
+(events 21500, 21507, 21520, 21522, 21596 within 20,000 steps), the **11** ending with `<ADD>`
+(Aquila's "You have come far…", "These wicked creatures…", "Behold… Benevolessence.", Erinn's "don't be so
+melodramatic", the two of 21596…) closed **by themselves 27 to 122 steps after their show**, and the
+next opened 4 to 5 steps later; only `<END>` ones waited for A. 43 of the 112 messages of stage
+1.1 (`dq9re script 1.1`) end with `<ADD>`. Apus Major's welcome (event 1160, `before-event-1160.txt`)
+was eight `<ADD>` messages and a question, each closing 42 to 124 steps after its show.
+
+**What the original does** (read in `MsgWin_PollWaitKey` `0x020440dc` and `MsgWin_Update`
+`0x020659a0`, then measured in melonDS, `scripts/melondsds_host.py --state-in
+build/v01-20261107/oracle/talk127b-state.bin --watch 0x021152f4:0x1a00`, event 1170's "Apus Major
+has sent you…?<ADD>" followed by "Then you may pass."):
+
+| Message ends with | Window state `W+0x9a0` | Leaves it when | Then | Read / measured |
+|---|---|---|---|---|
+| `<ADD>` (`0xFF0A`) | 3 | **the key**; no timer | `W+0x19bd` (native 405) = 0 **at once** (case 3); the next 400 types in the same window 2 frames later | `MsgWin_PollWaitKey` case 3. State 3 held for 330 frames without input; key at frame 100: `+0x19bd` 1→0 at 101, next text typing (`+0x9a0` 5, `+0x19bd` 1) at 103. `+0x912` stays 5: **no arrow** (capture `add-wait-f60.png`) |
+| `<END>` / `<END_R_TURN>` or no tag at all (the stream buffer is filled with `0xFF01`, **[hypothesis]** for "no tag") | 0 | the key | `+0x1958 = 5`, minus 2 per update: closes (`0x02043214`, `+0x19bd` = 0) **6 steps** after the key | key 840 → closed 847 (1-frame pulse); key 61 → 67 (`melonds-state.md`). `CLOSE_STEPS` |
+| `<CLOSE>` | 0, closed in the same call | nothing | `0x02043214` + `0x02043134` at once | `MsgWin_Update`, code `0xFF03` |
+| `<PAGE>` | 1 | the key | next page types | already modelled |
+| `<PAGE_T=n>` | 1 | the key or `n` ticks | idem | `+0x1961` counted by `GetTickCount` (2 per update): `2n`... already modelled |
+| `<PAD_T=n>`, `<TIME=n>` | none / counter | key or counter | idem | already modelled |
+| `<AUTO=n>` | 4 | `n` ticks, no key | next page starts | `MsgWin_StepAutoPage`, **not modelled, no text carries it** |
+| `<YESNO>` etc. | 6 | the key (A), or B | the answer callback (`0x020678cc`) jumps to the answer's marker (typing, state 5) | modelled; see below |
+
+The keys `MsgWin_PollWaitKey` accepts are A, B and X (mask `0x0403`), the four d-pad keys
+(`0xf0`) and a recent stylus touch (`object+0x54 != 0 && +0x44 < 20`): any of them leaves a wait
+state. The port only maps the action key (A / Enter / Space / Z) to waits; B cancels a prompt
+only. **[unknown]** whether the original's `TestKeysPressed` is an edge or a level: the
+measurements above used 1-frame pulses and a 4-frame press with the same result.
+
+A message **advances by itself only** through `<CLOSE>` (closes at once), a timer code
+(`<PAGE_T>`, `<PAD_T>`, `<TIME>`, `<AUTO>`), or the script's own native 401 after its wait loop
+(the `<CEN>` captions: the script counts, 400 → 401 in the same tick, `docs/re/stb.md`).
+Everything else waits for a key. There is **no pause between two consecutive messages** other
+than the key's latency (`<ADD>` 1 frame + the script's poll of 405 every 2nd step; `<END>` 6
+steps + the poll) and the typing of the next. The numbers are exact for the port (the 11 `<ADD>`
+messages of the opening now need one press each; `after-new-game.txt` and `after-event-1160.txt`
+show 5-6 steps from the key to the next message).
+
+**Yes/No answers.** The answer callback calls `0x0206b2d8` with the answer's marker; it
+searches the text (`0x0206aca4`) and, **finding no marker, closes the window at once**
+(`0x02043214`: `+0x9a0` 0, `+0x998` 0, `+0x19bd` 0). Event messages such as Apus Major's
+question (message 210, `<YESNO>` without `<YES>`/`<NO>`: the script reads native 558) therefore
+close with the answer: **one** press. The port held them on an arrow (`hold_at_end`) for a
+second press. A branch that exists but is only `<END>` (NPC 130 of `X01M07`: `<YES><END>`) also
+closed with the answer in melonDS (key at frame 795, `+0x9a0` 6→0 and `+0x998` 1→0 at frame
+797, then event 1600 starts at frame 829; the `<NO>` branch with text goes 6→5, types, waits at
+state 0 and closes 7 frames after its key). **[hypothesis]** for the mechanism of the empty-branch
+close (the same observation fits "END reached on an empty page closes" and "the talk task closes
+the window when the answer starts a trigger"); the port implements the first, limited to a
+branch right after an answer. The check stays on the observed case.
+
+**Port** (`dq9_core::talk::Dialogue`): `State::WaitAdd` (key, no arrow, no timer, then
+`Closed(Add)`), `State::Closing(CLOSE_STEPS)` after an `<END>` key, a prompt without a marker
+or with an empty branch closes at once. Tests `an_add_message_waits_for_the_action_key_and_the_next_one_follows_it`,
+`one_press_answers_a_yes_no_question_and_the_scene_goes_on`,
+`one_press_answers_a_conversation_question_whose_branch_is_empty` (real ROM, presses through
+`App::key`; each failed before: the first closed the ADD message by itself 112 steps after
+the show, the others left an arrow after the answer) and the unit tests in `talk/tests.rs`.
+The window is not kept on screen between an `<ADD>` message and the next (the original keeps the
+text up for the 2 frames of the script's poll; ours shows the box empty for 4-5 steps).
 
 ### Text speed
 
@@ -396,7 +465,7 @@ played by `Dialogue`.
   `TextConsumeLeadingTags` handle them: the rotation is `func_02033834`, the model object has no
   orientation API in `AnimatedScene`); balloons `<EXC>`/`<QES>`.
 - Services (`<INN=n>`, `<SHOP=n>`…), quests (`<QUEST=n>`), sounds, shake, `<AUTO>`,
-  `<PAGE_T>` (waits for the button here), `<ALL_RECOVER>`.
+  `<ALL_RECOVER>`; the keys B, X and the d-pad as wait keys (§ "Message pacing").
 - The layout constants above to be confirmed on a melonDS capture; the language
   is English (`NNN_en.bin`), the hero's name comes from the save's current slot
   (default "Hero" without a save); `<IF_…>` conditions other than gender/solo take

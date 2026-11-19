@@ -270,6 +270,12 @@ pub struct Talk {
     ended: Option<Ended>,
     fade: Option<[f32; 4]>,
     sounds: Vec<talk::Sound>,
+    /// What the window did, one `(step, what)` per change (the probes of `docs/re/dialogue.md`
+    /// § "Message pacing").
+    #[cfg(all(test, windows))]
+    pub(crate) trace: Vec<(u32, String)>,
+    #[cfg(all(test, windows))]
+    traced_state: &'static str,
 }
 
 impl Talk {
@@ -395,6 +401,22 @@ impl Talk {
             return;
         };
         dialogue.step(input);
+        #[cfg(all(test, windows))]
+        {
+            let view = dialogue.view();
+            let state = if view.prompt.is_some() {
+                "prompt"
+            } else if view.arrow {
+                "arrow"
+            } else {
+                "-"
+            };
+            if state != self.traced_state {
+                self.traced_state = state;
+                self.trace
+                    .push((self.ticks, format!("window shows: {state}")));
+            }
+        }
         let sounds = dialogue.take_sounds();
         // Native 413: `W+0x19b2 = 0` stops `MsgWin_PlayTextBlip` (`02045608`).
         if self.silent_caption {
@@ -407,6 +429,14 @@ impl Talk {
             self.sounds.extend(sounds);
         }
         if let Some(outcome) = dialogue.outcome() {
+            #[cfg(all(test, windows))]
+            self.trace.push((
+                self.ticks,
+                format!(
+                    "window closed ({:?}, answer {:?})",
+                    outcome.end, outcome.answer
+                ),
+            ));
             if self.event_message {
                 // The script of the event polls the message (native 405).
                 self.event_message = false;
@@ -474,6 +504,14 @@ impl Talk {
         let font = assets.font()?;
         let script = talk::prepare(&font, text, &self.names, TEXT_WIDTH);
         self.active = Some(self.dialogue(Dialogue::for_event(script)));
+        #[cfg(all(test, windows))]
+        self.trace.push((
+            self.ticks,
+            format!(
+                "show {}",
+                String::from_utf8_lossy(text).replace('\n', "\\n")
+            ),
+        ));
         self.event_message = true;
         self.frameless = false;
         self.caption_alpha = None;
@@ -520,6 +558,9 @@ impl Talk {
 
     /// Native 401: closes the event message without reporting it as read.
     pub fn close_event(&mut self) {
+        #[cfg(all(test, windows))]
+        self.trace
+            .push((self.ticks, "close_event (native 401)".into()));
         if self.event_message {
             self.active = None;
             self.event_message = false;

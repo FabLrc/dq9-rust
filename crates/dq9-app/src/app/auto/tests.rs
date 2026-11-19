@@ -704,15 +704,21 @@ fn a_shown_battle_leaves_the_game_in_the_state_an_instant_one_does() {
 /// by `j4-parity-regress` after the original message pacing (`d068809`, `f516d79`): the same
 /// 972 checkpoints with **every non-tick field identical** and the game time at 3627.8 s
 /// instead of 3035.5 s (`build/evidence/j4-parity-regress/route-2750-checkpoints.jsonl`,
-/// 970 of the 972 lines differ only in `tick`/`seconds`/`vblank`).
+/// 970 of the 972 lines differ only in `tick`/`seconds`/`vblank`), and re-pinned again by
+/// `j4-message-flow` after `<ADD>` waits for the key and a Yes/No answer closes the window
+/// (`docs/re/dialogue.md` § "Message pacing"): the same 972 checkpoints, story 2.6.5, the same
+/// five fights, 966 lines differing only in `tick`/`seconds`/`vblank` and 6 in the hero's
+/// position (the walk is timed by the pilot's presses), the game time 3686.9 s instead of
+/// 3627.8 s (+59.1 s, +3546 ticks: the pilot presses every 20th step, so every `<ADD>` now
+/// costs it up to 20 steps and every answer six fewer). `build/evidence/j4-message-flow/route-2750-checkpoints-after.jsonl`.
 const ROUTE_CHECKPOINTS_SHA256: &str =
-    "3d27e89d9737c61f7596cf99714002ea5038fe6c97f6bf1351ab0249a8c5c02a";
+    "f33a42d42a95795d2815500efe5ee5c618e43cf64487a49120510c600d1ae9d7";
 
 /// The prologue and chapter 2 played by the pilot with the real battle engine, from a new
 /// game to event 2750 (`--new-game --pilot --fight --route 2750 --seed 7 --headless`): the
 /// Hexagoon is lost at Lv 4, 5, 6 and 7 and won at Lv 8, the story ends at 2.6.5, and the
-/// checkpoints are the acceptance run's 972 lines, digest and all, at 3627.8 s of game time
-/// (the original message pacing; 3057.2 s in the acceptance run). The digest is the whole
+/// checkpoints are the acceptance run's 972 lines, digest and all, at 3686.9 s of game time
+/// (the original message pacing and `<ADD>` waits; 3057.2 s in the acceptance run). The digest is the whole
 /// game state the run went through, so a changed draw, step, flag or map fails it.
 ///
 /// `#[ignore = "long: ~17 min in release"]`: `cargo test` stays fast; `scripts/verify.ps1
@@ -743,6 +749,10 @@ fn the_route_reaches_event_2750_with_the_pinned_checkpoints() {
         .collect();
     let jsonl = app.checkpoints_jsonl();
     let digest = sha256_hex(jsonl.as_bytes());
+    // `DQ9_ROUTE_DUMP=<file>` keeps the run's checkpoints for a comparison or a re-pin.
+    if let Some(path) = std::env::var_os("DQ9_ROUTE_DUMP") {
+        std::fs::write(&path, &jsonl).expect("writing DQ9_ROUTE_DUMP");
+    }
     eprintln!(
         "route 2750: {stop:?} in {:.1} s of wall time, story {}.{}.{}, {} checkpoints, \
          sha256 {digest}",
@@ -993,4 +1003,251 @@ fn the_checkpoint_digest_matches_the_fips_vectors() {
         sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
         "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
     );
+}
+
+/// A scene of the opening played by hand: the player's presses go through `App::key` like the
+/// window's, and the message window's changes are read back from the talk trace with the step
+/// each happened at.
+struct Scene {
+    app: App,
+    seen: usize,
+    pressed: bool,
+    log: Vec<(u64, String)>,
+}
+
+impl Scene {
+    /// `event` on `map` at 1.1.1, the event started as soon as the map is loaded.
+    fn new(rom: &[u8], map: &str, event: u16) -> Self {
+        let mut options = options(map, (1, 1, 1));
+        options.event = Some(event);
+        Self::with(App::new_headless(options, Some(rom.to_vec())))
+    }
+
+    fn with(app: App) -> Self {
+        Self {
+            app,
+            seen: 0,
+            pressed: false,
+            log: Vec::new(),
+        }
+    }
+
+    /// One fixed step; `key` presses the action key (Enter) before it and releases it after.
+    fn step(&mut self, key: bool) {
+        if key {
+            self.app.key(winit::keyboard::KeyCode::Enter, true);
+        }
+        self.app.run_steps(1);
+        if self.pressed || key {
+            self.app.key(winit::keyboard::KeyCode::Enter, false);
+        }
+        self.pressed = key;
+        let now = self.app.tick;
+        for (_, what) in &self.app.talk.trace[self.seen..] {
+            self.log.push((now, what.clone()));
+        }
+        self.seen = self.app.talk.trace.len();
+    }
+
+    /// Steps without a key until the log has an entry starting with `what`; the step it
+    /// appeared at.
+    fn until(&mut self, what: &str, limit: u64) -> u64 {
+        let from = self.log.len();
+        for _ in 0..limit {
+            if let Some((at, _)) = self.log[from..].iter().find(|(_, w)| w.starts_with(what)) {
+                return *at;
+            }
+            self.step(false);
+        }
+        let found = self.log[from..].iter().find(|(_, w)| w.starts_with(what));
+        found.map(|(at, _)| *at).unwrap_or_else(|| {
+            panic!(
+                "`{what}` never came in {limit} steps: {:?}",
+                &self.log[from..]
+            )
+        })
+    }
+
+    /// The log entries from `from` on that start with `what`.
+    fn count(&self, from: usize, what: &str) -> usize {
+        self.log[from..]
+            .iter()
+            .filter(|(_, w)| w.starts_with(what))
+            .count()
+    }
+}
+
+/// Apus Major's welcome (event 1160, `X01M07`): the first three messages end with `<ADD>`. On
+/// the DS the window then sits in wait state 3 until the action key (`MsgWin_PollWaitKey`,
+/// `0x020440dc`, case 3; melonDS: `W+0x9a0` stays 3 and `W+0x19bd` stays 1 for 330 frames,
+/// then the key sets `W+0x19bd` to 0 one frame later; `docs/re/dialogue.md` § "Message pacing").
+/// The port closed such a message by itself some 40 steps after typing it and chained the next
+/// one 4 steps later.
+#[test]
+fn an_add_message_waits_for_the_action_key_and_the_next_one_follows_it() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let mut scene = Scene::new(rom, "X01M07", 1160);
+    scene.until("show *: Welcome back", 400);
+    // Typed in well under 300 steps; nothing may close it however long nobody presses.
+    for _ in 0..900 {
+        scene.step(false);
+    }
+    assert_eq!(
+        scene.count(0, "show"),
+        1,
+        "no second message by itself: {:?}",
+        scene.log
+    );
+    assert_eq!(scene.count(0, "window closed"), 0, "{:?}", scene.log);
+    assert_eq!(
+        scene.count(0, "window shows: arrow"),
+        0,
+        "state 3 draws no arrow"
+    );
+    // One press closes it, and the next message opens within a few steps (the script polls
+    // native 405 every second step).
+    scene.step(true);
+    let pressed = scene.app.tick;
+    let shown = scene.until("show //Apus Major// My congratulations", 30);
+    assert!(
+        shown - pressed <= 8,
+        "the next message follows the key by {} steps",
+        shown - pressed
+    );
+}
+
+/// The same scene's Yes/No question (message 210, no `<YES>`/`<NO>` marker: the script reads the
+/// answer with native 558). On the DS the answer callback (`0x020678cc`) searches the text for
+/// the answer's marker and, finding none, closes the window (`0x0206b2d8`: `func_02043204`):
+/// one press answers and the script goes on. The port held the box open on an arrow for a
+/// second press.
+#[test]
+fn one_press_answers_a_yes_no_question_and_the_scene_goes_on() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let mut scene = Scene::new(rom, "X01M07", 1160);
+    // The player reads the three `<ADD>` messages, one press each, long after they typed.
+    let mut waited = 0;
+    while scene.count(0, "window shows: prompt") == 0 {
+        waited += 1;
+        assert!(waited < 3_000, "the question never came: {:?}", scene.log);
+        scene.step(waited % 150 == 0);
+    }
+    let from = scene.log.len();
+    scene.step(true);
+    let pressed = scene.app.tick;
+    let shown = scene.until("show //Apus Major// Ho ho ho", 40);
+    assert!(
+        shown - pressed <= 12,
+        "the scene goes on {} steps after the answer",
+        shown - pressed
+    );
+    assert_eq!(
+        scene.count(from, "window shows: arrow"),
+        0,
+        "no second wait: {:?}",
+        scene.log
+    );
+    let closed = scene.log[from..]
+        .iter()
+        .find(|(_, w)| w.starts_with("window closed"));
+    assert_eq!(
+        closed.map(|(_, w)| w.as_str()),
+        Some("window closed (Wait, answer Some(0))")
+    );
+}
+
+/// The Observatory's NPC 130 (`X01M07`, 1.1.1) asks for the crystal with a Yes/No whose "Yes"
+/// branch is only `<END>`. In melonDS the answer key at frame 795 closes the window at frame 797
+/// (`W+0x9a0` 6 to 0, `W+0x998` 1 to 0) and the talk ends with the answer, which starts event
+/// 1600; the port showed an empty box on an arrow and wanted a second press.
+#[test]
+fn one_press_answers_a_conversation_question_whose_branch_is_empty() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let mut app = App::new_headless(options("X01M07", (1, 1, 1)), Some(rom.to_vec()));
+    app.talk
+        .start(rom, "X01M07", &mut app.state, 130, 0)
+        .unwrap();
+    let mut scene = Scene::with(app);
+    // The first page waits on its arrow; the player turns it, then reaches the question.
+    scene.until("window shows: arrow", 400);
+    scene.step(true);
+    scene.until("window shows: prompt", 400);
+    let from = scene.log.len();
+    scene.step(true);
+    scene.step(false);
+    scene.step(false);
+    assert_eq!(
+        scene.count(from, "window shows: arrow"),
+        0,
+        "{:?}",
+        scene.log
+    );
+    let closed = scene.log[from..]
+        .iter()
+        .find(|(_, w)| w.starts_with("window closed"));
+    assert_eq!(
+        closed.map(|(_, w)| w.as_str()),
+        Some("window closed (Wait, answer Some(0))")
+    );
+    assert!(
+        scene.app.events.pending_start() == Some(1600)
+            || scene.app.events.started().contains(&1600),
+        "the answer starts the Observatory scene"
+    );
+}
+
+/// Prints the message table of a scene played by a player who presses the action key 20 steps
+/// after the window shows a wait arrow or a prompt, or 180 steps after a message that draws none
+/// (`docs/re/dialogue.md` § "Message pacing", evidence of `j4-message-flow`). `PROBE_EVENT` and
+/// `PROBE_MAP` choose an event on a map at 1.1.1; without them it is a new game's opening.
+/// `cargo test -p dq9-app --release print_message_table -- --ignored --nocapture`.
+#[test]
+#[ignore = "prints a table, asserts nothing"]
+fn print_message_table() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let steps: u64 = std::env::var("PROBE_STEPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20_000);
+    let mut scene = match std::env::var("PROBE_EVENT") {
+        Ok(event) => Scene::new(
+            rom,
+            &std::env::var("PROBE_MAP").unwrap(),
+            event.parse().unwrap(),
+        ),
+        Err(_) => Scene::with(App::new_headless(route_options(), Some(rom.to_vec()))),
+    };
+    let mut printed = 0;
+    let mut started = 0usize;
+    let mut arrow_at: Option<u64> = None;
+    for _ in 0..steps {
+        let press = arrow_at.is_some_and(|at| scene.app.tick >= at + 20);
+        if press {
+            arrow_at = None;
+            println!("{:>6} PRESS A", scene.app.tick);
+        }
+        scene.step(press);
+        for id in &scene.app.events.started()[started..] {
+            println!("{:>6} EVENT {id} starts", scene.app.tick);
+        }
+        started = scene.app.events.started().len();
+        for (at, what) in &scene.log[printed..] {
+            println!("{at:>6}   {what}");
+            if what == "window shows: arrow" || what == "window shows: prompt" {
+                arrow_at = Some(*at);
+            } else if what.starts_with("show ") {
+                // An `<ADD>` message draws no arrow: the player reads for 3 seconds.
+                arrow_at = Some(*at + 160);
+            }
+        }
+        printed = scene.log.len();
+    }
 }

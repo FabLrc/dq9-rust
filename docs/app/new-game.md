@@ -47,6 +47,12 @@ post — the mashing trace did exactly that after native 560 was implemented
 pilot's trace replayed through `replay_step` must land on the pilot's own checkpoints, the first
 control point included.
 
+Batch `j4-message-flow` moved the route's timeline once more: `<ADD>` messages now wait for the
+action key, a Yes/No answer closes its window with the press, and an `<END>` closes 6 steps after its
+key (`docs/re/dialogue.md` § "Message pacing"). The pilot's route keeps its 972 checkpoints, story
+2.6.5 and the five Hexagoon fights; 966 lines differ only in `tick`/`seconds`/`vblank`, 6 in the hero's
+position, and the game time at event 2750 is **3686.9 s** (was 3627.8 s), sha256 `f33a42d42a95`.
+
 On the Web: the page's "New game" button (or `?newgame=1`), after choosing the ROM.
 
 **Start.** `GameState::new_game` gives progress 1.1.1, the start of the day and a running

@@ -10,6 +10,15 @@ use super::speed::{STEPS_PER_UPDATE, TextSpeed};
 /// 10 updates of 2 ticks).
 pub const SCROLL_STEPS: u32 = 20;
 
+/// Steps between the key that ends an `<END>` message and the window closing: `MsgWin_Update`
+/// (`0x020659a0`) sees the key through `MsgWin_PollWaitKey` (`0x020440dc`, state 0 returns 1),
+/// sets `+0x19d1` and `+0x1958 = 5`, then takes the update's 2 ticks off each call and closes
+/// (`0x02043214`, which clears `+0x19bd`) when the count goes negative: 3 updates, 6 steps.
+/// Measured in melonDS: the key at frame 61 clears `+0x998` and `+0x19bd` at frame 67
+/// (`docs/re/melonds-state.md`, § "State resume"). `<ADD>` has no such delay (case 3 clears
+/// `+0x19bd` at once) and `<CLOSE>` calls the close itself.
+pub const CLOSE_STEPS: u32 = 6;
+
 /// Buttons pressed during one step (edges, not levels).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Input {
@@ -38,7 +47,13 @@ enum State {
         cursor: u8,
         sound: AnswerSound,
     },
+    /// `<END>`: the text stays until the action key.
     WaitEnd,
+    /// The key was pressed on an `<END>`: the window closes when the count ends.
+    Closing(u32),
+    /// `<ADD>` (state 3): the text stays, without an arrow, until the action key; the script's
+    /// next message then continues in the same window.
+    WaitAdd,
     Closed(EndKind),
 }
 
@@ -92,6 +107,8 @@ pub struct Dialogue {
     limit: Option<u32>,
     /// Steps left before the current wait ends by itself.
     wait_left: Option<u32>,
+    /// An answer's branch started and has typed nothing yet.
+    empty_branch: bool,
 }
 
 impl Dialogue {
@@ -111,6 +128,7 @@ impl Dialogue {
             carry: 0,
             limit: None,
             wait_left: None,
+            empty_branch: false,
         }
     }
 
@@ -205,6 +223,7 @@ impl Dialogue {
             };
             match op {
                 Op::Glyph { glyph, x } => {
+                    self.empty_branch = false;
                     if let Some(line) = self.lines.last_mut() {
                         line.push((*glyph, *x));
                     }
@@ -259,9 +278,22 @@ impl Dialogue {
                         .position(|op| *op == Op::Label(*label));
                     self.at = target.unwrap_or(self.at);
                 }
+                // An answer whose branch is only `<END>` (`<YES><END>`) closes the window with
+                // the answer, no key and no wait: melonDS, NPC 130 of `X01M07`, the answer key
+                // at frame 795, `W+0x9a0` 6 to 0 and `W+0x998` 1 to 0 at frame 797, against 6
+                // steps after the key for a typed `<END>` (`docs/re/dialogue.md`).
+                Op::End(EndKind::Wait) if self.empty_branch => {
+                    self.state = State::Closed(EndKind::Wait);
+                    return;
+                }
                 Op::End(EndKind::Wait) => {
                     self.at += 1;
                     self.state = State::WaitEnd;
+                    return;
+                }
+                Op::End(EndKind::Add) => {
+                    self.at += 1;
+                    self.state = State::WaitAdd;
                     return;
                 }
                 Op::End(end) => {
@@ -350,23 +382,35 @@ impl Dialogue {
                     let found = self.script.ops[self.at..]
                         .iter()
                         .position(|op| *op == Op::Marker(marker));
-                    self.at = match found {
+                    match found {
                         Some(i) => {
                             self.clear_box();
-                            self.at + i + 1
+                            self.at += i + 1;
+                            self.empty_branch = true;
+                            self.state = State::Typing;
                         }
-                        // An answer without branch ends the message **[hypothesis]**.
-                        None => self.script.ops[self.at..]
-                            .iter()
-                            .position(|op| matches!(op, Op::End(_)))
-                            .map_or(self.script.ops.len(), |i| self.at + i),
-                    };
-                    self.state = State::Typing;
+                        // No marker for this answer: the callback (`0x020678cc`) asks
+                        // `0x0206b2d8` for the branch, finds none and closes the window
+                        // (`0x02043214`) at once, with no key of its own.
+                        None => self.state = State::Closed(EndKind::Wait),
+                    }
                 }
             }
             State::WaitEnd => {
                 if input.confirm {
-                    self.state = State::Closed(EndKind::Wait);
+                    self.state = State::Closing(CLOSE_STEPS);
+                }
+            }
+            State::Closing(left) => {
+                self.state = if left > 1 {
+                    State::Closing(left - 1)
+                } else {
+                    State::Closed(EndKind::Wait)
+                };
+            }
+            State::WaitAdd => {
+                if input.confirm {
+                    self.state = State::Closed(EndKind::Add);
                 }
             }
         }
