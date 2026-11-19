@@ -128,6 +128,26 @@ struct GpuModel {
     instances: Range<u32>,
 }
 
+/// Height of a DS screen in pixels: one DS pixel is the 3D screen's height over this.
+const DS_SCREEN_HEIGHT: f32 = 192.0;
+
+/// Share of the edge colour left on a marked pixel when the DS's anti-aliasing is on
+/// (`DISP3DCNT` bit 4, set in every melonDS state of the game): the edge pass sets the pixel's
+/// coverage to `0x10`, and the anti-aliasing pass blends it as `(top * 17 + under * 15) >> 5`
+/// over the colour it covered (melonDS `ScanlineFinalPass`; GBATEK: "making the edges of
+/// Edge-Marked polygons translucent"). Measured on the original: `docs/re/lighting.md`.
+const EDGE_AA_COVERAGE: f32 = 17.0 / 32.0;
+
+/// Uniform of the edge pass (`Edge` of `edge.wgsl`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct EdgeUniform {
+    /// rgb: edge colour; w: size of one DS pixel in target pixels.
+    color: [f32; 4],
+    /// x: opacity of the edge colour over the marked pixel.
+    params: [f32; 4],
+}
+
 /// Format of the polygon id buffer edge marking reads.
 const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
 
@@ -188,8 +208,9 @@ pub struct Renderer {
     cover_pipeline: wgpu::RenderPipeline,
     /// The zone's lighting, fog and background, applied at the next [`render`](Self::render).
     pub environment: Environment,
-    /// Width of the edge marking in target pixels; `None`: one DS pixel (the viewport height
-    /// over 192), as the DS draws it when its 256×192 screen is scaled up.
+    /// Width of the edge marking in target pixels; `None`: one DS pixel (the 3D screen's height
+    /// over 192), as the DS draws it when its 256×192 screen is scaled up. Fractional scales
+    /// keep that width on average (the last pixel of the band is partly covered).
     pub edge_pixels: Option<u32>,
 }
 
@@ -393,7 +414,7 @@ fn edge_pipeline(
     });
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("edge"),
-        size: 16,
+        size: std::mem::size_of::<EdgeUniform>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -405,7 +426,7 @@ fn edge_pipeline(
         None,
         &[Some(wgpu::ColorTargetState {
             format: color_format,
-            blend: None,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
             write_mask: wgpu::ColorWrites::ALL,
         })],
     );
@@ -1275,14 +1296,17 @@ impl Renderer {
         drop(pass);
         if let Some(color) = self.environment.edge {
             // Edge marking of the 3D engine, one DS pixel wide; the enhanced presentation's
-            // edge accent keeps a single physical pixel instead (and the DS width when the
-            // accent is off).
-            let step = if self.enhanced.is_some_and(|o| o.edge_accent) {
-                1.0
+            // edge accent keeps a single solid physical pixel instead (and the DS width when
+            // the accent is off).
+            let (scale, opacity) = if self.enhanced.is_some_and(|o| o.edge_accent) {
+                (1.0, 1.0)
             } else {
-                self.edge_pixels.map_or(
-                    (draw_viewport.height as f32 / 192.0).round().max(1.0),
-                    |w| w.max(1) as f32,
+                (
+                    self.edge_pixels
+                        .map_or(draw_viewport.height as f32 / DS_SCREEN_HEIGHT, |w| {
+                            w.max(1) as f32
+                        }),
+                    EDGE_AA_COVERAGE,
                 )
             };
             let wide = color.map(|c| {
@@ -1295,7 +1319,10 @@ impl Renderer {
             queue.write_buffer(
                 &self.edge_buffer,
                 0,
-                bytemuck::bytes_of(&[wide[0], wide[1], wide[2], step]),
+                bytemuck::bytes_of(&EdgeUniform {
+                    color: [wide[0], wide[1], wide[2], scale.max(1.0)],
+                    params: [opacity, 0.0, 0.0, 0.0],
+                }),
             );
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("edge"),

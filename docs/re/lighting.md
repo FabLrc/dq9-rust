@@ -217,8 +217,92 @@ Implementation: `dq9_render::lighting` (`Environment`), `shader.wgsl`, `backgrou
 | sprite and character diffuse | `spriteDiffuseColor_`, `modelDiffuseColor_` | multiplies their color; basic map color read from `.bats` |
 | background | `DrawBackgroundGradient` | gradient applied; **not compared** (the `C01M09` camera does not see the background) |
 | fog | `func_020c54a4`, `FOG_COLOR`, `FOG_TABLE`, melonDS equation | **validated against melonDS** on density (below), alpha-only mode not validated |
-| edge marking | `DISP3DCNT` bit 5, `EDGE_COLOR` | applied (`edge.wgsl`, melonDS rule: neighbor with a different and farther polygon ID), validated by eye only on `C01M09`; on `M01` it outlines ground patches with IDs 1 to 6, unstable outline because of coplanar decals (DS behavior not verified). Width: one DS pixel (3D screen height / 192) |
+| edge marking | `DISP3DCNT` bit 5, `EDGE_COLOR` | applied (`edge.wgsl`): the nearer pixel of a boundary between two polygon ids, **one DS pixel wide at any scale** and with the DS's anti-aliased 17/32 opacity ([§ Edge marking](#edge-marking-rule-width-side-opacity)); not fogged; on `M01` it outlines ground patches with IDs 1 to 6, unstable outline because of coplanar decals (DS behavior not verified) |
 | toon, highlight, anti-aliasing | bits 1 and 4 of `DISP3DCNT` | toon/highlight: bit 1 at 0, so unneeded; anti-aliasing not done |
+
+### Edge marking: rule, width, side, opacity
+
+Batch `j4-outline-width` (the user reported the outline around characters, monsters, animals and
+NPCs as far thicker than the original's). Evidence under `build/evidence/j4-outline-width/`
+(`measurements.txt`, before/after captures at 256×192, 384×288 and 1024×768 of `X01M05`, `M01`,
+`C01M09`; sha256 in the batch manifest).
+
+**The DS rule.** GBATEK ("DS 3D Toon, Edge, Fog, Alpha-Blending, Anti-Aliasing"): "the polygon edges
+are drawn at the edge color, but only if the old ID value in the Attribute Buffer is different than
+the Polygon ID of the new polygon"; "Edge Marking is applied ONLY to opaque polygons (including
+wire-frames)"; the marked pixels are "flagged as possible-edges" while a polygon is rasterised, and
+get the colour if "at least one of the four surrounding pixels (up, down, left, right) must have
+different polygon_id than the edge, and, the edge depth must be LESS than the depth of that
+surrounding pixel"; the colour is `EDGE_COLOR[id >> 3]`. melonDS (`GPU3D_Soft.cpp`
+`ScanlineFinalPass`, GPL: read to understand, nothing copied) does exactly that on the 256×192
+grid, at distance **1**, only on pixels carrying a polygon edge flag, replaces the colour with the
+6-bit-widened edge colour and then, "to break antialiasing coverage", gives the pixel coverage
+`0x10`: with anti-aliasing on (`DISP3DCNT` bit 4) the anti-aliasing pass blends it as
+`(edge * 17 + under * 15) >> 5` over the colour it covered. GBATEK: "Anti-Aliasing is (accidently)
+making the edges of Edge-Marked polygons translucent (with alpha=16 or so?)".
+
+- **Which polygons.** There is **no per-polygon edge bit**: `POLYGON_ATTR` holds light enables (0-3),
+  mode (4-5), faces (6-7), translucent depth update (11), far-plane (12), 1-dot (13), depth equal (14),
+  fog (15), alpha (16-20) and the polygon id (24-29). Edge marking is a frame switch (`DISP3DCNT`
+  bit 5, set in every melonDS state: `0x1b9`/`0x1bd`); a polygon's own inputs are its id and its alpha
+  (31 = opaque). So a polygon is edge-marked wherever it borders another id and lies nearer.
+- **Sprites.** `.spr` quads are ordinary polygons: `SPRSprite::DrawTexturePiece`
+  (`SPRSprite.cpp:242`, USA decompilation) submits `0x80c0 | polygonID_ << 24 | alpha`, and
+  `polygonID_` is 0 from the constructor (line 63; no other writer in the decompilation). The sky
+  gradient is id 0 too (`LightingManager::DrawBackgroundGradient`, `LightingManager.cpp:1038`:
+  `(0x1f << 16) | (1 << 7) | (1 << 6)`), so **a sprite has no edge against the sky** and has one
+  against any surface with another id. Models take their id from the material under its mask
+  (`RenderCommands.cpp:296`: `(polygonAttrArg & ~mask) | (material & mask)`, which `MaterialLight`
+  reproduces) unless the game forces one with `NSBXX_Model_SetPolygonID` (EU `0x020b72fc`; callers
+  in the corpus: `0x02046cd8` and `0x02046e80` with id `0x3d`, `ov_017::021923e0`,
+  `ov_001::021539d8`, `ov_001::0215ce4c`) or `RenderConfig::SetPolygonAttributes`
+  (`0x020b3934`; `AtmosphericEffect.cpp:549`, ids from 55). The polygon RAM of `field-pro11.ml1`
+  (`GP3D` section, melonDS `GPU3D::DoSavestate` layout, bank 0, 1081 polygons) holds the ids
+  0 (183 polygons), 8 (317), 9 (140), 11 (168), 15 (49), 25, 27, 28 (4 each), 29 (40), 30 (80),
+  31 (92); its last two polygons are the sky's full-screen quads (id 0, alpha 31, far plane),
+  submitted after the models. Which id each of our characters and map parts carries was **not
+  compared** with those polygons **[unknown]**.
+- **Side.** The nearer polygon's own boundary pixel (depth less than the neighbour's), never the
+  farther one; `edge.wgsl` writes the same side.
+
+**Measured, in DS pixels (1/192 of the 3D screen height).**
+
+| | band | opacity of the edge colour |
+|---|---|---|
+| original, `field-pro11.png` (melonDS 256×192, hero hair top): 49 columns | 1 pixel (43 of 49 columns; the others sit on texture detail) | mean 0.52, median 0.57 over the pixel above (17/32 = 0.531): e.g. column 149 shows `(69,73,16)` over `(101,130,28)` with the edge colour `(53,28,12)` |
+| ours before, DS look (`--layout top`), 256×192 / 1024×768 | 1.00 / 1.00 | 1.0 (hard colour) |
+| ours before, DS look at 384×288 (1.5×, `round(1.5) = 2` pixels) | **1.33** | 1.0 |
+| ours before, enhanced default (`edge-accent`) at 992×558 | 0.34 (one physical pixel) | 1.0 |
+| ours after, DS look at 256×192, 384×288, 1024×768 (test `edge_rom.rs`) | 1.00 ± 0.05 at each | 0.531 |
+| ours after, enhanced `edge-accent` | unchanged: one solid physical pixel | 1.0 |
+
+So the band was never wider than one DS pixel at integer scales, and thinner than one in the
+enhanced default; it was **wider at fractional scales** (`round(s)` pixels: up to 1.33 DS pixels at
+1.5×, 1.2 at 2.5×) and **solid where the original blends 17/32 over what is under it**, which is
+what makes ours look heavier at the same size. The pass now covers the band by distance, not by
+one neighbour at `round(s)`: a pixel `t - 1` pixels inside the silhouette gets
+`clamp(s + 1 - t, 0, 1)` of the band, so the ink is exactly `s` pixels at any `s`, and the edge
+colour is blended by alpha at 17/32 (`EDGE_AA_COVERAGE`, `renderer.rs`). The marked set is
+identical at 256×192 (124, 111 and 242 pixels on `X01M05`, `M01`, `C01M09`, all changed, none
+left hard); at 1024×768 it gains 342, 189 and 17 pixels (+17 %, +11 %, +0.4 %) that sit in thin
+features (hair spikes, leaves, rings), where the neighbour at exactly `k` pixels used to skip
+past the boundary. Total ink drops to about 0.55–0.6 of before. Edge marking still appears on
+`C01M09` (242 pixels at 256×192, 3,847 at 1024×768).
+
+**What the enhanced default adds around entities.** `post.wgsl`'s contact shadows (`occlusion()`:
+eight depth taps at 3-4 physical pixels) darken a halo of about four physical pixels around every
+entity that stands out in depth: on `X01M05` at night, 1000×782, switching them off changes
+88,132 pixels, 19,825 of them by more than 30/765. At 992 px that is about one DS pixel, but it is
+fixed in physical pixels and stacks on the edge accent; it is the likely remainder of a "thick
+outline" in the default presentation and lives outside this batch's files (`post.wgsl`,
+`enhanced.rs`) **[hypothesis: the user's capture was not re-rendered]**.
+
+**Not done.** The DS applies fog after edge marking (`ScanlineFinalPass` runs the fog pass on the
+edge pixels of fogged polygons): ours leaves the edge colour unfogged, so a distant entity keeps
+full contrast. The blend is with the marked pixel's own colour, not the colour beneath it. The DS
+also edge-marks against the rear plane's id at the screen borders, and only pixels on a polygon's
+own boundary; for coplanar polygons of different ids the float depth keeps its noise (the
+unstable outline noted above) where the DS compares 24-bit integers.
 
 Fog equation (melonDS `CalculateFogDensity`, verified on hardware by its authors):
 `z` = 24-bit depth of the Z buffer (`((z_clip * 0x4000) / w + 0x3fff) * 0x200`); if

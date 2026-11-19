@@ -77,6 +77,17 @@ absent from the files read here),
 environment mapping (`TEXIMAGE_PARAM` generation 2 and 3), lighting,
 COLLADA/glTF export, animation selection by the game.
 
+## Polygon attributes and edge marking
+
+`POLYGON_ATTR` (and the material's mask of the bits it sets, `maskPOLYGON_ATTR_`) has **no edge
+bit**: lights (0-3), mode (4-5), faces (6-7), translucent depth update (11), far plane (12), 1-dot
+(13), depth equal (14), fog (15), alpha (16-20), polygon id (24-29). Edge marking is a frame switch
+(`DISP3DCNT` bit 5) and works on polygon ids: the nearer opaque pixel next to another id takes
+`EDGE_COLOR[id >> 3]`, one DS pixel wide, blended 17/32 over what it covers when anti-aliasing
+is on ([`lighting.md`](lighting.md) § "Edge marking: rule, width, side, opacity"). A model's id comes from its
+materials (`Material::polygon_attr` under `polygon_attr_mask`, as `MaterialLight::from_material`
+reads them) unless the game forces one (`NSBXX_Model_SetPolygonID`, EU `0x020b72fc`).
+
 ## `up_scale`
 
 `posScale` (`up_scale`) is only applied by render command `0x0b` (`ScaleUp`), which
