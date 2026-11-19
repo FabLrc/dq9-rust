@@ -442,6 +442,65 @@ others. Evidence (Ghidra EU, `ov_001`/`ov_017`):
 - **[unknown]**: the guest's other places (field walking, battles) and what `Guest_LoadTask`
   does with record fields 3 onwards (`+0x10` bits 0–2 go into byte `+0x56b` of the character).
 
+## A model a script loads: default motion and the map's copy (Ivor, event 21592)
+
+**Symptom** (user report, Angel Falls arrival): Ivor first shows in a T-pose, then there are two
+of him, one playing the conversation. Reproduced on `--event 21592` (story 1.2, `M01`):
+`build/evidence/j4-angel-falls-cast/ivor-before-sheet.png` (frames 900 and 1100 T-pose, 1500 on
+two heads) against `ivor-after-sheet.png`.
+
+- **T-pose.** `21592` loads `chara_sub/s017.chr` with native 200 and plays nothing on it until
+  `okr_in` at tick 1500; the actor was drawn at tick 60 with no clip, which is the
+  model's bind pose. The game does not do that: `StbNat_LoadCharacterModel`
+  (`ov_001::0215b72c`) ends each load with `Object3D::MaybeSetBCFGAnimation(obj, 0, 0)`
+  (`0x020370b0`: record 0 of the first animation package, `BCFG::GetAnimationRecord`
+  `0x020347c4`, and native 229 `0215bb3c` and the scene's 567 loads, `ov_001::021539d8`, do the
+  same). `LoadFromCHRArchive` appends further packages at the tail
+  (`AnimationPackageListInsert`, `0x02037814`), so record 0 stays the model's own: `stand` for
+  `s017` and `s064` (`dq9re chr`). `EventPlayer::prepare` now starts it
+  (`AnimatedScene::play_default_motion`).
+- **Duplicate.** Not the party guest (it is added at the end of `2210`, the scene is `21592` at
+  1.2). The scene loads its own Ivor at `(5.24, -1.05, 1.83)` while the map's NPC 7 (`s017`,
+  `(5.47, -1.05, 1.74)`, `stand`) is in the cast at 1.2.1..1.2.2 (`dq9re cast M01 --chapter 1
+  --step 2`); the record's flags are 0 so the cast is not set aside
+  (`event_records_say_which_scenes_keep_the_cast_aside`), and no trigger or native of the scene
+  hides NPC 7. Falsified alternatives: the guest (absent at 1.2), natives 574/575 (the scene moves
+  placements 31 and 24, which are scenery `M01M0004`/`M01M0001`), native 568 (`4|16|32` of this
+  scene: bit 0x4 hides the party members 0 to 3 outside the cast, `021539d8` lines 116–129, not
+  NPCs; 0x20 sets `NpcTable+0x98` bit 1, read only by the shadow loop `0203de84`).
+- **Fix.** The scene's copy replaces the field's: while a script-loaded model is drawn, the map
+  NPCs drawn with the same model data are not (`AnimatedScene::npcs_drawn_like_actor`,
+  `EventPlayer::stand_in`), and are back when the copy is hidden and at the end of the event.
+  **[hypothesis]**: the original hides NPC 7 some way this note did not find (the original's
+  mechanism is unread; the scene placing its Ivor 0.25 unit from NPC 7 shows the authors meant
+  one). Test `the_arrival_scene_of_angel_falls_draws_one_ivor_standing_from_his_first_frame`
+  (before: `tick 6: 2 Ivors are drawn`).
+- **Not covered [hypothesis]**: the same scene stands its `s064` model (`(6.46, -1.05, 2.25)`)
+  0.24 unit from the sprite NPC 8 (`n001a`); the sprite and the model share no model data, so
+  the rule above does not hide it.
+
+**Open: effect models and billboards (the benevolessence, user report "almost invisible, does not
+face the camera").** Not fixed; the next batch starts here.
+- **Fact:** `AnimatedScene::add_actor` (`dq9-render/src/animation/actor.rs`) builds every scripted
+  model with `Builder::model`, which drops the billboard render commands (`0x07`/`0x08`,
+  `docs/re/g3d.md` § Billboards). The effect archives the scenes load carry them: file ids 2855
+  (`ev010000010`, 1), 2860 (`ev010000300`, 4), 2861 (`ev010000310`, 12), 2879 (`ev010100400`, 1),
+  2880 (`ev010100500`, 17), 2884 (`ev014200000`, 13), 3166 (`ev180003410`, 12), 3202
+  (`ev999990100`, 8). Map models get them applied by `Scene::face_billboards`; actors never do.
+- **Experiment:** building the actor with `Builder::model_with_billboards` and registering the
+  result in `Scene::billboards` changes the `--event 21510` captures (frames 300, 900, 1200: a
+  larger four-point star; `build/scratch/e21510-f*.png` before, `a21510-f*.png` after, local,
+  not registered evidence). A native test (`effect/ev010100400.chr` at a set world, eight camera
+  yaws, the billboard's first three vertices against the eye direction) still failed: the quad
+  stayed edge-on (normal·eye = 0.00) after `face_billboards`, with or without the default motion
+  and `AnimatedScene::step`. **[unknown]** why: **[hypothesis]** the quad lies in the XZ plane of
+  the command's local frame, or `rebase` (`animation.rs`) re-captures offsets against the rest
+  rotation after an animated pose. The change and the test were reverted; nothing is committed.
+- **[unknown]** which scene shows the benevolessence itself (22159): 21510's sparkle
+  (`ev010100400`), the halo-like `ev010000310` (attached to the hero bone in 21510), or the
+  effects of 1330, 1340, 21595. Needs the user's answer before a test can assert size, alpha and
+  facing.
+
 ## Faces hung on a bone (Aquila, event 21507)
 
 **Symptom** (user report: Aquila "runs toward the monsters" and "her head is duplicated"): in the

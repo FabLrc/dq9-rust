@@ -708,3 +708,100 @@ fn a_face_on_the_head_bone_is_placed_with_the_pose_drawn_in_the_same_tick() {
         "the head never moved fast enough to show a one-tick lag: {fastest}"
     );
 }
+
+/// The arrival cutscene of Angel Falls (`21592`, story 1.2) loads its own copy of Ivor
+/// (`chara_sub/s017.chr`, native 200) where the map already stands his NPC 7 (`s017`, 0.25 unit
+/// away). User report: Ivor first shows in a T-pose, then there are two of him. The scene
+/// draws one Ivor per frame, in the pose the game starts a loaded model with (record 0 of its
+/// motion table, `stand`: `StbNat_LoadCharacterModel`), and the map's Ivor is back at the end.
+#[test]
+fn the_arrival_scene_of_angel_falls_draws_one_ivor_standing_from_his_first_frame() {
+    let Some(rom) = testrom::load() else {
+        return;
+    };
+    let story = Story {
+        chapter: 1,
+        step: 2,
+        substep: 1,
+        daytime: false,
+        ..Story::default()
+    };
+    let state = initial_state(&story);
+    let place = crate::event::place(rom, 21592).expect("event record");
+    let mut loaded = load::load(
+        rom,
+        &place.map.to_string(),
+        0,
+        &story,
+        crate::event::spawn(&place),
+        None,
+        &HeroLook::new_game(),
+    )
+    .expect("map of the event");
+    let mut camera = Camera::default();
+    let mut talk = Talk::default();
+    talk.set_rom(rom);
+    let mut hero = loaded.hero;
+    let mut player = EventPlayer::new();
+    player.queue(21592);
+    let npc = loaded.runtime.npc_instance(7).expect("Ivor, NPC 7 of M01");
+    let drawn = |runtime: &dq9_render::AnimatedScene, instance: usize| {
+        runtime.scene.instances[instance].drawn()
+    };
+    assert!(
+        drawn(&loaded.runtime, npc),
+        "the map's Ivor stands in the village"
+    );
+    let mut first_seen = None;
+    let mut most = 0;
+    for tick in 0..3_000 {
+        frame(
+            rom,
+            &mut player,
+            &mut loaded,
+            &mut hero,
+            &mut camera,
+            &mut talk,
+            &state,
+            tick % 120 == 0,
+        );
+        let actors: Vec<usize> = player
+            .bindings
+            .actors
+            .iter()
+            .filter(|((_, path), _)| path == "chara_sub/s017.chr")
+            .map(|(_, &actor)| actor)
+            .collect();
+        if actors.is_empty() && !player.is_active() && player.pending_start().is_none() {
+            break;
+        }
+        assert_eq!(actors.len(), 1, "the scene loads one Ivor");
+        let own = loaded
+            .runtime
+            .actor_instance(actors[0])
+            .expect("a drawn model");
+        let ivors =
+            usize::from(drawn(&loaded.runtime, npc)) + usize::from(drawn(&loaded.runtime, own));
+        most = most.max(ivors);
+        assert!(ivors <= 1, "tick {tick}: {ivors} Ivors are drawn");
+        if first_seen.is_none() && drawn(&loaded.runtime, own) {
+            first_seen = Some(tick);
+            let motion = loaded.runtime.actor_animation(actors[0]);
+            assert_eq!(
+                motion.map(|(name, _)| name),
+                Some("stand"),
+                "the scene's Ivor shows in the bind pose on his first drawn frame"
+            );
+        }
+        if !player.is_active() && player.pending_start().is_none() {
+            break;
+        }
+    }
+    assert!(first_seen.is_some(), "the scene never drew its Ivor");
+    assert_eq!(most, 1);
+    assert!(!player.is_active(), "event 21592 did not end");
+    assert!(
+        drawn(&loaded.runtime, npc),
+        "the map's Ivor is back when the scene is over"
+    );
+}

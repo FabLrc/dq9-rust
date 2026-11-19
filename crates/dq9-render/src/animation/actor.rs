@@ -144,6 +144,11 @@ pub(crate) struct ActorRig {
     /// The motion last started, for the tests and the reports: the clips alone do not say
     /// which name they came from.
     playing: Option<String>,
+    /// The motion the game starts when it loads the model: record 0 of the archive's own
+    /// motion table (`Object3D::MaybeSetBCFGAnimation(obj, 0, 0)` after
+    /// `LoadFromCHRArchive`, `StbNat_LoadCharacterModel` `ov_001::0215b72c`, native 229
+    /// `0215bb3c`, `docs/re/characters.md` § Default motion).
+    default_motion: Option<String>,
 }
 
 impl ActorRig {
@@ -178,6 +183,7 @@ impl AnimatedScene {
             .model_data()?
             .ok_or(Error::Malformed("actor archive without model"))?;
         let mut motions = collect_motions(&own)?;
+        let default_motion = motions.first().map(|m| m.name.clone());
         for package in packages {
             motions.extend(collect_motions(&Chr::parse(package)?)?);
         }
@@ -208,6 +214,7 @@ impl AnimatedScene {
                 }),
                 motions,
                 playing: None,
+                default_motion: None,
             });
             return Ok(self.actors.len() - 1);
         }
@@ -237,8 +244,45 @@ impl AnimatedScene {
             ghost: None,
             motions,
             playing: None,
+            default_motion,
         });
         Ok(self.actors.len() - 1)
+    }
+
+    /// Starts the motion the game starts on a model it has just loaded: record 0 of the
+    /// archive's own motion table, looping. Without it a freshly added actor stays in the
+    /// model's bind pose (a T-pose for a character) until the script plays something.
+    /// Returns whether the actor has one.
+    pub fn play_default_motion(&mut self, actor: usize) -> bool {
+        let Some(name) = self
+            .actors
+            .get(actor)
+            .and_then(|a| a.default_motion.clone())
+        else {
+            return false;
+        };
+        self.play_actor(actor, &name, false, 1.0)
+    }
+
+    /// The map NPCs drawn with the very model of an actor (same model data): the characters a
+    /// script that loads its own copy of a character stands in for.
+    pub fn npcs_drawn_like_actor(&self, actor: usize) -> Vec<u16> {
+        let Some(bytes) = self
+            .actors
+            .get(actor)
+            .and_then(|a| match (&a.drawn, &a.ghost) {
+                (Some((_, anim)), _) => Some(&self.models[*anim].bytes),
+                (None, Some(ghost)) => Some(&ghost.bytes),
+                (None, None) => None,
+            })
+        else {
+            return Vec::new();
+        };
+        self.npc_rigs
+            .iter()
+            .filter(|r| r.bytes[..] == bytes[..])
+            .map(|r| r.id)
+            .collect()
     }
 
     /// The scene instance of an actor; `None` for a model without polygons.

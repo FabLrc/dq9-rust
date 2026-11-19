@@ -153,6 +153,16 @@ outside the v0.2 target.)
   `attnpc.gp2`) is a cast member of the scenes where he walks with the hero; his motions are
   `stand`, `talk`… of the script's package. `EventPlayer` keeps who the guest is and replays
   the trigger rules that add or dismiss him at the end of each event.
+- **A model the script loads (native 200).** It starts in record 0 of its motion table
+  (`stand`), as the game does, not in the bind pose; the map NPCs drawn with the same model
+  are hidden while it is shown (`21592`: one Ivor, [`re/characters.md`](../re/characters.md)
+  § A model a script loads).
+- **Open (effect models).** Scripted effect models (sparkles, glows of 21510, 1330, 1340) lose
+  their billboard commands in `AnimatedScene::add_actor`, so they never face the camera; a fix
+  attempt did not make the quad face the eye and is not committed; the scene that shows the
+  benevolessence is unconfirmed ([`re/characters.md`](../re/characters.md) § Open: effect models
+  and billboards). Ivor's duplicate case 2 (sprite NPC 8 `n001a` against the scene's `s064`) is
+  also open.
 - **Doors by 540, show/hide of a sprite (223), placement scale (577).** 540 opens the doorway
   `(block entry, identifier)` like 584; 223 shows or hides a script sprite; 577 scales a map
   placement's drawn instance (not its collision).

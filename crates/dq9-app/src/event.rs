@@ -126,6 +126,9 @@ impl Coverage {
 struct Bindings {
     /// Scene actor of each scripted model.
     actors: HashMap<(Target, String), usize>,
+    /// Map NPCs each scripted actor stands in for (drawn with the same model), by actor: the
+    /// scene's own copy of a character replaces the field's while it is shown.
+    stand_ins: HashMap<usize, Vec<u16>>,
     /// Instances of the actors, hidden again when the event is over.
     instances: Vec<usize>,
     /// Instance and world matrix of each map NPC before the event moved it.
@@ -559,6 +562,7 @@ impl EventPlayer {
             }
         }
         self.bindings.actors.clear();
+        self.bindings.stand_ins.clear();
         // The hero and the map's NPCs keep their palettes until the script resets them; the
         // models of the previous event are gone.
         self.bindings
@@ -652,6 +656,14 @@ impl EventPlayer {
                 Ok(actor) => {
                     if let Some(instance) = stage.scene.actor_instance(actor) {
                         self.bindings.instances.push(instance);
+                    }
+                    // The game starts record 0 of the model's motion table when it loads it
+                    // (native 200, `ov_001::0215b72c`): a model the script has not animated yet
+                    // stands, it is not in its bind pose.
+                    stage.scene.play_default_motion(actor);
+                    let stand_ins = stage.scene.npcs_drawn_like_actor(actor);
+                    if !stand_ins.is_empty() {
+                        self.bindings.stand_ins.insert(actor, stand_ins);
                     }
                     self.bindings
                         .actors
@@ -912,6 +924,7 @@ impl EventPlayer {
             }
         }
         self.bindings.actors.clear();
+        self.bindings.stand_ins.clear();
         // The field draws the hero and the map's NPCs with their own colours again.
         for (target, applied) in std::mem::take(&mut self.bindings.tinted) {
             if applied.is_none() {
@@ -942,6 +955,33 @@ impl EventPlayer {
             self.coverage.missing,
             self.unimplemented()
         ));
+    }
+
+    /// The map NPCs a scripted model stands in for (the scene loaded its own copy of the
+    /// character, native 200) are not drawn while the copy is: the field's instance would
+    /// be a second one of the same person beside it. They come back with the copy hidden
+    /// and at the end of the event (`restore_npcs`).
+    fn stand_in(&mut self, stage: &mut Stage, actor: usize, shown: bool) {
+        let Some(ids) = self.bindings.stand_ins.get(&actor).cloned() else {
+            return;
+        };
+        for id in ids {
+            if self.removed_npcs.contains(&id) {
+                continue;
+            }
+            let Some(instance) = stage.scene.npc_instance(id) else {
+                continue;
+            };
+            let world = if shown {
+                Mat4::from_scale(Vec3::ZERO)
+            } else {
+                match self.bindings.homes.iter().find(|(i, _)| *i == instance) {
+                    Some(&(_, home)) => home,
+                    None => continue,
+                }
+            };
+            self.set_world(stage.scene, instance, world);
+        }
     }
 
     fn set_world(&mut self, scene: &mut AnimatedScene, instance: usize, world: Mat4) {
@@ -1139,6 +1179,15 @@ impl EventPlayer {
                         ),
                     };
                     self.set_world(stage.scene, instance, world);
+                    if let Some(actor) = actor {
+                        let shown = stage
+                            .scene
+                            .scene
+                            .instances
+                            .get(instance)
+                            .is_some_and(|i| i.drawn());
+                        self.stand_in(stage, actor, shown);
+                    }
                 }
                 Target::Detached(_) => {}
             }
