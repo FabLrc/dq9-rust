@@ -715,6 +715,16 @@ fn chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve() {
         }
     }
 
+    // No chapter-2 monster is metal: the route's checkpoints cannot move with the metal rules
+    // (`docs/re/battle.md`, "The metal body").
+    for (&number, places) in &monsters {
+        let setup = BattleSetup::set_battle(&tables, &[(number, 1)]).unwrap();
+        assert!(
+            !setup.monsters[0].fighter.metal_body,
+            "monster {number} is metal ({places:?})"
+        );
+    }
+
     let hero = hero();
     let mut by_action: BTreeMap<u16, (Skill, BTreeSet<u16>, BTreeSet<String>)> = BTreeMap::new();
     for (&number, places) in &monsters {
@@ -860,4 +870,173 @@ fn the_grudge_bit_and_the_enrage_triggers_count_on_the_rom() {
         (0, 0),
         "the Hexagoon carries no trigger kind: a chapter-2 fight never enrages"
     );
+}
+
+/// The metal body on the ROM's own records (`docs/re/battle.md`, "The metal body"): monster 3
+/// (metal slime, `mon_data` `+0x0A` bit 12) takes 0 or 1 from the plain Attack and its 8 from a
+/// critical, while slime 1 takes the blow; Frizz, which carries no `+0x10` bit 24, misses it;
+/// the exempt actions keep their damage; and the records of Metal Slash, Needle Shot and
+/// Quadraslash are still refused, by the handler or the rider that is not modelled.
+#[test]
+fn the_metal_body_rules_read_the_rom_records() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+
+    // The two records, by the name table's own metal flag.
+    let metal = tables.names.find_name(b"metal slime").unwrap();
+    assert_eq!(metal.number, 3);
+    assert!(metal.metal, "mon_data +0x0A bit 12");
+    let plain = tables.names.find_name(b"slime").unwrap();
+    assert_eq!(plain.number, 1);
+    assert!(!plain.metal);
+
+    let hero = hero();
+    let attack = tables.actions.skill(1).unwrap().action.unwrap();
+    assert!(
+        attack.works_on_metal && attack.aims_at_opponents,
+        "the plain Attack carries +0x10 bit 24 and aims at the opponents"
+    );
+
+    let metal_target = BattleSetup::set_battle(&tables, &[(3, 1)])
+        .unwrap()
+        .monsters[0]
+        .fighter
+        .clone();
+    assert!(metal_target.metal_body);
+    let slime_target = BattleSetup::set_battle(&tables, &[(1, 1)])
+        .unwrap()
+        .monsters[0]
+        .fighter
+        .clone();
+    assert!(!slime_target.metal_body);
+
+    let mut seen = [false; 2];
+    let mut criticals = 0;
+    for seed in 0..40u64 {
+        let outcome = resolve_action(
+            &mut Random::new(seed),
+            &hero.fighter,
+            &attack,
+            std::slice::from_ref(&metal_target),
+            0,
+        )
+        .unwrap();
+        let got = &outcome.targets[0];
+        if got.critical {
+            criticals += 1;
+            assert!(got.amount > 1, "seed {seed}: a critical is not zeroed");
+        } else {
+            assert!((0..=1).contains(&got.amount), "seed {seed}: {}", got.amount);
+            seen[got.amount as usize] = true;
+        }
+    }
+    assert_eq!(seen, [true; 2], "the coin leaves 0 and 1");
+    assert!(criticals > 0, "the hero's critical rate shows at some seed");
+
+    let mut over_one = false;
+    for seed in 0..40u64 {
+        let outcome = resolve_action(
+            &mut Random::new(seed),
+            &hero.fighter,
+            &attack,
+            std::slice::from_ref(&slime_target),
+            0,
+        )
+        .unwrap();
+        over_one |= outcome.targets[0].amount > 1;
+    }
+    assert!(over_one, "a body that is not metal is not zeroed");
+
+    // Frizz (9) aims at the opponents and carries no `+0x10` bit 24: it misses the metal body.
+    let frizz = tables.actions.skill(9).unwrap().action.unwrap();
+    assert!(frizz.aims_at_opponents && !frizz.works_on_metal);
+    assert!(
+        validate(&hero.fighter, &frizz, std::slice::from_ref(&metal_target)).is_ok(),
+        "Frizz is a modelled action"
+    );
+    let missed = resolve_action(
+        &mut Random::new(2),
+        &hero.fighter,
+        &frizz,
+        std::slice::from_ref(&metal_target),
+        0,
+    )
+    .unwrap();
+    assert!(!missed.targets[0].landed, "the metal body's early miss");
+    assert_eq!(missed.targets[0].amount, 0);
+    let landed = resolve_action(
+        &mut Random::new(2),
+        &hero.fighter,
+        &frizz,
+        std::slice::from_ref(&slime_target),
+        0,
+    )
+    .unwrap();
+    assert!(
+        landed.targets[0].landed,
+        "the same cast on a body that is not metal"
+    );
+
+    // The exemptions: Quadraslash keeps its damage and is refused on its damage handler alone;
+    // Needle Shot on its rider; Metal Slash and Metalicker on theirs.
+    let quadraslash = tables.actions.skill(0x205).unwrap().action.unwrap();
+    assert!(quadraslash.works_on_metal && quadraslash.aims_at_opponents);
+    assert_eq!(
+        validate(
+            &hero.fighter,
+            &quadraslash,
+            std::slice::from_ref(&metal_target)
+        ),
+        Err(Unsupported::DamageHandler(66))
+    );
+    let needle_shot = tables.actions.skill(0x82).unwrap().action.unwrap();
+    assert_eq!(
+        validate(
+            &hero.fighter,
+            &needle_shot,
+            std::slice::from_ref(&metal_target)
+        ),
+        Err(Unsupported::Rider(20))
+    );
+    for number in [0x40u16, 0x7E] {
+        let slasher = tables.actions.skill(number).unwrap().action.unwrap();
+        assert_eq!(
+            validate(&hero.fighter, &slasher, std::slice::from_ref(&metal_target)),
+            Err(Unsupported::DamageHandler(2)),
+            "{number:#x}"
+        );
+    }
+    // Action 0x150 is not refused by number, but it carries no bit 24: the metal body misses it
+    // too (`RollAccuracy`'s `!= 0x150` guard covers only the two status early misses).
+    let other = tables.actions.skill(0x150).unwrap().action.unwrap();
+    assert!(!other.works_on_metal);
+    assert!(validate(&hero.fighter, &other, std::slice::from_ref(&metal_target)).is_ok());
+    let missed = resolve_action(
+        &mut Random::new(2),
+        &hero.fighter,
+        &other,
+        std::slice::from_ref(&metal_target),
+        0,
+    )
+    .unwrap();
+    assert!(!missed.targets[0].landed);
+
+    // The two weapon flags the metal rules read are the item table's bits 4 and 10: the metal
+    // family's seven weapons, and the poison needle alone.
+    let params = dq9_formats::battle::equipment::BattleParams::parse(
+        rom.file_by_path("data/prm/itembtlprm.nat").unwrap(),
+    )
+    .unwrap();
+    let ids = |bit: u32| -> Vec<i16> {
+        params
+            .items
+            .iter()
+            .filter(|p| p.flags >> bit & 1 != 0)
+            .map(|p| p.id)
+            .collect()
+    };
+    assert_eq!(ids(4), [20021, 20022, 20023, 20119, 20517, 20518, 20519]);
+    assert_eq!(ids(10), [19057]);
 }

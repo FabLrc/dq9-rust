@@ -400,6 +400,225 @@ fn the_cap_holds_damage_and_a_heal_is_held_to_the_maximum() {
     assert_eq!(outcome.targets[0].hp_after, 100, "held to the maximum");
 }
 
+/// A metal body: a monster record's `+0x0A` bit 12 (`func_ov000_02156068`).
+fn metal_monster() -> Fighter {
+    let mut f = monster();
+    f.metal_body = true;
+    f
+}
+
+/// The plain Attack as the kernel reads it against a metal body: `+0x10` bit 24 and an aim at
+/// the opponents; no critical, so that only the metal rule decides.
+fn metal_blow() -> Action {
+    let mut a = blow();
+    a.critical_percent = 0;
+    a.works_on_metal = true;
+    a.aims_at_opponents = true;
+    a
+}
+
+/// `RollAccuracy`'s metal miss (`ov_000::02156648`): an action without `+0x10` bit 24 lands
+/// nothing and spends no accuracy die.
+#[test]
+fn a_blow_that_does_not_work_on_metal_misses_the_metal_body_before_the_accuracy_die() {
+    let mut plain = blow();
+    plain.critical_percent = 0;
+    let mut rng = Random::new(11);
+    let outcome = resolve_action(&mut rng, &party(), &plain, &[metal_monster()], 0).unwrap();
+    assert!(!outcome.targets[0].landed);
+    assert_eq!(outcome.targets[0].amount, 0);
+    assert_eq!(
+        outcome.draws, 4,
+        "die, critical, evasion, block: no accuracy die, no amount"
+    );
+    // The same blow on a body that is not metal lands and deals its damage.
+    let outcome = resolve_action(&mut Random::new(11), &party(), &plain, &[monster()], 0).unwrap();
+    assert!(outcome.targets[0].landed);
+    assert!(outcome.targets[0].amount >= 30, "{outcome:?}");
+    // Action 0x150, whose `!= 0x150` guard covers only the two status early misses of
+    // `RollAccuracy` and not the metal branch: it carries no bit 24, so it misses too.
+    let mut unnamed = plain.clone();
+    unnamed.number = 0x150;
+    let outcome = resolve_action(
+        &mut Random::new(11),
+        &party(),
+        &unnamed,
+        &[metal_monster()],
+        0,
+    )
+    .unwrap();
+    assert!(!outcome.targets[0].landed);
+    assert_eq!(outcome.draws, 4);
+}
+
+/// `CalculateFinalDamage`'s metal zeroing (`0x021e77a4`): an action that works on metal still has
+/// its damage set to 0, and the coin leaves 0 or 1 — the site's "the others deal 0 or 1".
+#[test]
+fn a_blow_that_works_on_metal_is_zeroed_and_the_coin_leaves_zero_or_one() {
+    let action = metal_blow();
+    let mut seen = [false; 2];
+    for seed in 0..100u64 {
+        let metal = resolve_action(
+            &mut Random::new(seed),
+            &party(),
+            &action,
+            &[metal_monster()],
+            0,
+        )
+        .unwrap();
+        let got = &metal.targets[0];
+        assert!(got.landed && !got.critical, "seed {seed}");
+        assert!((0..=1).contains(&got.amount), "seed {seed}: {}", got.amount);
+        seen[got.amount as usize] = true;
+        // The same action on a body that is not metal takes the blow: the coin is the only draw
+        // the metal body adds.
+        let plain =
+            resolve_action(&mut Random::new(seed), &party(), &action, &[monster()], 0).unwrap();
+        assert!(plain.targets[0].amount >= 30, "seed {seed}");
+        assert_eq!(metal.draws, plain.draws + 1, "seed {seed}: the coin");
+    }
+    assert_eq!(seen, [true; 2], "0 and 1 both come out");
+}
+
+/// A critical is not zeroed (`0x021e6d1c`): the blow is the attack power's, on a metal body or
+/// not.
+#[test]
+fn a_critical_is_not_zeroed_against_a_metal_body() {
+    let mut action = metal_blow();
+    action.always_critical = true;
+    let metal = resolve_action(
+        &mut Random::new(4),
+        &party(),
+        &action,
+        &[metal_monster()],
+        0,
+    )
+    .unwrap();
+    let plain = resolve_action(&mut Random::new(4), &party(), &action, &[monster()], 0).unwrap();
+    assert!(metal.targets[0].critical);
+    assert_eq!(metal.targets[0].amount, plain.targets[0].amount);
+    assert!((95..=105).contains(&metal.targets[0].amount));
+}
+
+/// The two actions the zeroing spares — Quadraslash `0x205` and Needle Shot `0x82` — and the two
+/// that deal `1 + random(2)`, Metal Slash `0x40` and Metalicker `0x7E`.
+#[test]
+fn quadraslash_and_needle_shot_are_spared_and_metal_slash_deals_one_or_two() {
+    for number in [0x205, 0x82] {
+        let mut action = metal_blow();
+        action.number = number;
+        let outcome = resolve_action(
+            &mut Random::new(13),
+            &party(),
+            &action,
+            &[metal_monster()],
+            0,
+        )
+        .unwrap();
+        assert!(
+            outcome.targets[0].amount >= 30,
+            "{number:#x}: {:?}",
+            outcome.targets[0]
+        );
+    }
+    for number in [0x40, 0x7E] {
+        let mut action = metal_blow();
+        action.number = number;
+        let mut seen = [false; 3];
+        for seed in 0..100u64 {
+            let outcome = resolve_action(
+                &mut Random::new(seed),
+                &party(),
+                &action,
+                &[metal_monster()],
+                0,
+            )
+            .unwrap();
+            let amount = outcome.targets[0].amount;
+            assert!(
+                (1..=2).contains(&amount),
+                "{number:#x} seed {seed}: {amount}"
+            );
+            seen[amount as usize] = true;
+        }
+        assert_eq!(seen, [false, true, true], "{number:#x}");
+    }
+}
+
+/// The zeroing is for an action that aims at the opponents (`+0x08` bits 8–9 at 1): an action
+/// aimed at its own side leaves a metal body's damage alone.
+#[test]
+fn the_metal_zeroing_needs_an_action_that_aims_at_the_opponents() {
+    let mut action = metal_blow();
+    action.aims_at_opponents = false;
+    let outcome = resolve_action(
+        &mut Random::new(13),
+        &party(),
+        &action,
+        &[metal_monster()],
+        0,
+    )
+    .unwrap();
+    assert!(outcome.targets[0].amount >= 30, "{outcome:?}");
+}
+
+/// The two weapon flags: the "+1 against metal" weapon (`func_02085128`) and the poison needle
+/// (`func_020851d8`), both read on a party blow carrying `+0x10` bit 18.
+#[test]
+fn the_plus_one_weapon_makes_one_and_the_poison_needle_deals_exactly_one() {
+    let mut action = metal_blow();
+    action.weapon_element = true;
+    let mut armed = party();
+    armed.metal_bonus = true;
+    // The coin still leaves 0 or 1 (`0x021e77a4`), then the weapon adds 1.0: the metal family's
+    // weapons deal 1 or 2, never the blow.
+    let mut seen = [false; 3];
+    for seed in 0..40u64 {
+        let outcome = resolve_action(
+            &mut Random::new(seed),
+            &armed,
+            &action,
+            &[metal_monster()],
+            0,
+        )
+        .unwrap();
+        let amount = outcome.targets[0].amount;
+        assert!((1..=2).contains(&amount), "seed {seed}: {amount}");
+        seen[amount as usize] = true;
+    }
+    assert_eq!(seen, [false, true, true]);
+    // The bonus is the metal body's: a body that is not metal takes the same blow as before.
+    let with = resolve_action(&mut Random::new(5), &armed, &action, &[monster()], 0).unwrap();
+    let without = resolve_action(&mut Random::new(5), &party(), &action, &[monster()], 0).unwrap();
+    assert_eq!(with.targets[0].amount, without.targets[0].amount);
+
+    // The needle: exactly 1, and the dodge and the block it caused are cleared.
+    let mut needle = party();
+    needle.poison_needle = true;
+    let mut dodging = metal_monster();
+    dodging.evasion_rate = 100.0;
+    let outcome = resolve_action(&mut Random::new(5), &needle, &action, &[dodging], 0).unwrap();
+    assert!(!outcome.targets[0].dodged, "the needle is not dodged");
+    assert_eq!(outcome.targets[0].amount, 1);
+    let outcome = resolve_action(&mut Random::new(5), &needle, &action, &[monster()], 0).unwrap();
+    assert_eq!(
+        outcome.targets[0].amount, 1,
+        "and on a body that is not metal"
+    );
+    // Without the weapon's `+0x10` bit 18 the flag is not read.
+    let mut unarmed = action.clone();
+    unarmed.weapon_element = false;
+    let outcome = resolve_action(
+        &mut Random::new(5),
+        &needle,
+        &unarmed,
+        &[metal_monster()],
+        0,
+    )
+    .unwrap();
+    assert!((0..=1).contains(&outcome.targets[0].amount));
+}
+
 #[test]
 fn a_party_range_without_a_scaling_number_draws_twice() {
     // The medicinal herb: 35 to 35 then the spread's 5.
@@ -483,9 +702,6 @@ fn unsupported_rules_are_refused_before_any_draw() {
         refuse(&claws, &blow(), &monster()),
         Unsupported::MultiHitWeapon
     );
-    let mut metal = monster();
-    metal.metal_body = true;
-    assert_eq!(refuse(&party(), &blow(), &metal), Unsupported::MetalBody);
     let mut tense = party();
     tense.tension_level = 2;
     assert_eq!(refuse(&tense, &blow(), &monster()), Unsupported::Tension);

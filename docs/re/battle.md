@@ -27,9 +27,10 @@ in the cited function (`external-resources.md`).
 Audited 2026-11-17 in [`encyclopedia-audit.md`](encyclopedia-audit.md), function by function. The
 verdicts that touch this note: the multiplication order **agrees** except the cap's place in the
 page's list — `ov_024::021e6a90` truncates once and clamps `+0x1C` bits 0–13 last, as this note
-already read. The metal rules, the coup-de-grâce thresholds, the enrage triggers (`ov_024::021eb08c`),
-the companion tactics and the family bonus are **not implemented** (refused or absent), so nothing
-diverges silently. The rules the audit found **differing** are now modelled: the two buff wear-off
+already read. The coup-de-grâce thresholds, the enrage triggers (`ov_024::021eb08c`), the
+companion tactics and the family bonus are **not implemented** (refused or absent), so nothing
+diverges silently; the metal rules **agree** and are modelled (`v4-metal-rules`, below, "The metal
+body"). The rules the audit found **differing** are now modelled: the two buff wear-off
 chance arrays — `ov_000::0215858c` reads one for dazzle (`0x02158d6c`) and one for defence and
 agility (`0x02158d68`, four bytes earlier), indexed by the decremented count (`j4-audit-fixes`,
 `ed0974b`; below, "Statuses' run-down") — and the grudge weights (`j4-grudge-enrage`, `4e0a0ed`;
@@ -48,11 +49,12 @@ backup (kind 12), a kind-0 action and the monsters' Flee `0xE1`. The accuracy ro
 action whose accuracy stands at 100 and a monster's scaling accuracy with the dazzle die of
 eight, the guard level and the dazzle flag. Everything else is **refused before any draw** with
 `Unsupported`: damage handlers 1..66, riders, a party member's scaling accuracy, tension, a guard
-level above 3, metal bodies, a trait `0x11d` critical, an elemental weapon, a weapon that strikes
-several, the multi-target falloff against several targets, the accuracy die of four, and the
-actions the code singles out by number (`0x1B`, `0x40`, `0x48`, `0x70`, `0x7E`, `0xAF`, `0x79`,
-`0x395`, `0x1FF`, `0x200`, `0x20B`, `0x20C`, `0x82`, `0x205`). The chapter 2 actions and handlers
-are below.
+level above 3, a trait `0x11d` critical, an elemental weapon, a weapon that strikes several, the
+multi-target falloff against several targets, the accuracy die of four, and the actions the code
+singles out by number (`0x1B`, `0x48`, `0x70`, `0xAF`, `0x79`, `0x395`, `0x1FF`, `0x200`, `0x20B`,
+`0x20C`). A metal body is not refused any more: its rules are below, and the four actions they
+single out (`0x40`, `0x7E`, `0x82`, `0x205`) are now refused by the handler or the rider they
+carry. The chapter 2 actions and handlers are below.
 
 ## Generators
 
@@ -143,13 +145,15 @@ party member's come from equipment, and a monster's from its record grade (`0, 2
 
 ### Final damage (`ov_024::021e6a90`), EU decompilation read
 
-Order read in `build/evidence/j4-battle-kernel/ghidra-final-damage.txt`: tension multiply at the
-head (not modelled) → critical → `× GetResistance(element)` (`_fmul`, line 182, float) → block
-and dodge zero it → **coin** `NextRandomMax(2)` (line 529) when the damage is not above 0, the
-target was not blocked or dodged, the action is not `0x1B`/`0x48`/`0x70` and the target's
-resistances to the action's both elements are above 0 → metal slash adder (not modelled) → guard
-(not modelled) → combo table (`0x021fe778`, `1.0 1.2 1.5 2.0`, counter held to 3, line 574–587)
-→ `_ffix` **once** (line 594) → cap `+0x1C` bits 0–13 (0 = none).
+Order read in `build/evidence/j4-battle-kernel/ghidra-final-damage.txt` and re-read on the EU
+decompilation for this batch (`build/evidence/v4-metal-rules/final-damage.c`): tension multiply
+at the head (not modelled) → critical → `× GetResistance(element)` (`_fmul`, line 182, float) →
+block and dodge zero it → the poison needle's `1.0` → **the metal body's zeroing** → **coin**
+`NextRandomMax(2)` (line 529) when the damage is not above 0, the target was not blocked or
+dodged, the action is not `0x1B`/`0x48`/`0x70` and the target's resistances to the action's both
+elements are above 0 → **Metal Slash's `1 + random(2)`** → **the `+1` weapon** → guard (not
+modelled) → combo table (`0x021fe778`, `1.0 1.2 1.5 2.0`, counter held to 3, line 574–587) →
+`_ffix` **once** (line 594) → cap `+0x1C` bits 0–13 (0 = none).
 
 - **Critical**: the greatest of `1.2 × damage` and `CalculateCriticalDamage` (`func_02074838`, EU
   `0x02074848`); for action 1 (and `0xDB`, `0x1F9`) the latter is the attacker's attack power ×
@@ -180,6 +184,75 @@ resistances to the action's both elements are above 0 → metal slash adder (not
   (`smoke.log`, `2d4fc32e2122`). It was removed after the run; this is not a continuous
   chapter-route or interactive UI claim. No new function is marked ported: the handler's
   other state/message work is still partial.
+
+### The metal body (`ov_000::02156648`, `ov_024::021e6a90`)
+
+The monster's metal flag is `mon_data_` record `+0x0A` bit 12, read by
+`func_ov000_02156068(battle, index, 0, 1)` — the same accessor that answers bit 11 (a refused
+fall) and bits 7–10 (the family); a party index never answers it. Facts, all read on the EU
+decompilation and its disassembly (evidence `build/evidence/v4-metal-rules/accuracy.c`,
+`final-damage.c`, `resolve-action.c`, `accuracy.asm`, `final-damage.asm`, `notes.md`):
+
+1. **The miss, before any draw.** `RollAccuracy` (`ov_000::02156648`) leaves with 0 when the
+   target is metal and the action does **not** carry `+0x10` bit 24 (`0x100_0000`). The miss
+   comes before the accuracy's own `NextRandomMax(100)`, so such a blow costs its die, critical,
+   evasion and block draws and then nothing: no accuracy die, no amount, no coin. The `!= 0x150`
+   guard at the head of the function covers only its two **status** early misses (target `+0x18`
+   bits `0x800`/`0x40`), not the metal branch — read in the assembly
+   (`build/evidence/v4-metal-rules/accuracy.asm`: `cmp r1,#0x150; beq` jumps over the status
+   blocks to `0x02156714`, and the metal test is the later `bl 0x02156068` at `0x021567ac`).
+2. **The zeroing.** With `+0x10` bit 24 set and an action aimed at the opponents (`+0x08` bits
+   8–9 at 1, else `0xDB`), a blow that is **not** a critical has its damage set to exactly 0
+   unless the action is Quadraslash `0x205` or Needle Shot `0x82`. The coin that follows then
+   makes it **0 or 1** — the encyclopedia's "the others deal 0 or 1" — and it is the only draw a
+   metal body adds to an ordinary blow. The gate at `0x021e77a4`–`0x021e7820` in
+   `final-damage.asm` is `IsMetalBody` → bit 24 → aim 1 or `0xDB` → not critical → number not
+   `0x205`/`0x82` → not the needle → **damage = 0**; the coin is
+   `damage <= 0 && !dodged && !blocked && number != 0x70/0x48/0x1B && both resistances > 0 && !(metal
+   with bit 24 clear)`. Ghidra's decompilation of the same coin renders a `0x47 < number` bound
+   that the assembly does not contain (there is only `cmp r0,#0x48` for the equality): the bound
+   is a decompiler artefact, and the pinned action-1 data would read a plain Attack as 0 if it
+   were real. `uRam021e7ba0` is read from the overlay at `0x021e7ba0` = **`0x205`**.
+3. **A critical is not zeroed.** The staging byte's bit 7 (`[battle + 0xC] + 0x1C`, set by
+   `ResolveAction` on a successful `RollCritical`) is the gate; the blow keeps
+   `CalculateCriticalDamage`'s amount.
+4. **Metal Slash `0x40` and Metalicker `0x7E`**, not critical, on a metal body: `1.0f +
+   NextRandomMax(2)`, **after** the coin, so they spend the coin's draw and then their own — 1 or
+   2.
+5. **The `+1 against metal` weapon** (`func_02085128`, the character record's `+0x2F4` bits 4–5)
+   adds `1.0` to a metal body's damage on a party blow carrying `+0x10` bit 18: with the coin it
+   is 1 or 2. The item table's flag behind it is `itembtlprm` `+0x00` bit 4 (**[hypothesis]**:
+   the wiki reads bits 4 and 10 as "asked about a metal body by the AI"; the seven records that
+   carry it are the metal family's weapons, ids 20021–20023, 20119, 20517–20519).
+6. **The poison needle** (`func_020851d8`, `+0x2F4` bits 10–11; `itembtlprm` `+0x00` bit 10, the
+   one record 19057): on a party blow carrying `+0x10` bit 18 the damage is exactly `1.0`, and the
+   dodge and block flags it caused are cleared — S5's "always deals 1 and cannot be dodged or
+   blocked". Needle Shot `0x82` sets `1.0` the same way, before the metal rules, and is exempt
+   from the zeroing. The needle's `1.0` and the zeroing's `0` are both overwritten by nothing
+   that follows, except the combo table.
+7. **What stays refused or absent.** The records of Metal Slash (64), Needle Shot (130),
+   Metalicker (126) and Quadraslash (517) carry damage handler 2 / rider 20 / handler 66: they are
+   refused by **those** rules now (`Unsupported::DamageHandler`, `Unsupported::Rider`), not by
+   number. The metal rules themselves are modelled, and the "+x against metal" and needle flags
+   are the `Fighter` inputs `metal_bonus` and `poison_needle` (a reader of the worn weapon's record
+   sets them; `party.rs`'s adapter does not, yet). Still absent, named: action `0xDB`'s zeroing
+   without the aim gate (its reach 8 is refused anyway); action `0x61`'s second blow, which
+   bypasses the whole accuracy roll (`ResolveAction`'s `param_7`, so it would hit a metal body at
+   full damage); Needle Shot's `1.0` when the target's guard level is not 3 (its rider is refused
+   first); the combo gate's second bit (`+0x2C` bit 26 as well as 27); and the metal-only
+   re-multiply by a weapon's element on a metal body, which tension alone reaches (refused).
+
+Tests: `battle/tests.rs` (the miss, the 0/1 the coin leaves, the critical, the two exemptions,
+`1 + random(2)`, the aim gate, the two weapon flags) and
+`tests/battle_rom.rs::the_metal_body_rules_read_the_rom_records` (monster 3 the metal slime and
+monster 1 the slime, Frizz's miss, the four refusals by name, action `0x150`'s miss, the item
+flags). The assembly of the two functions and the constants they compare against are kept with
+the dumps (`accuracy.asm`, `final-damage.asm`); the decompiler's `0x47 < number` reading of the
+coin was refuted there by a separate challenger pass and by the disassembly. The chapter 2 route
+is unchanged: `verify.ps1 -Only long` re-ran the pilot to event 2750 with the pinned digest
+`d721c11fd0d2…`, 964 checkpoints (`build/evidence/v4-metal-rules/route-2750.jsonl`), and
+`chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve` now asserts that no chapter-2
+monster is metal and that action `0x150` is not one of its ways.
 
 ### Action fields (EU action tables, read with `cargo dq9re gp2 data/prm/actdt_b.gp2`)
 
@@ -874,9 +947,11 @@ most eight, so a ninth is unmodelled.
   and cannot check it.
 - **[unknown]** `GetAttackBaseDamage`'s blow multiplier (`Amount::Blow::multiplier`, 1.0 for the
   plain Attack): which field of the action holds it.
-- **[unknown]** the accuracy roll's remaining statuses and traits (the party trait's die of 4)
-  and the metal-body early miss: refused rather than modelled. Dazzle's die of 8 and a monster's
-  scaling accuracy are modelled.
+- **[unknown]** the accuracy roll's remaining statuses and traits (the party trait's die of 4).
+  The metal-body early miss is modelled now ("The metal body"); what `+0x18` bits `0x800` and
+  `0x40` mean — the two other early misses of `RollAccuracy`, which no chapter-2 fight sets — is
+  not: `func_02089174` sets `0x800` with a counter at `+0x7c`, and who calls it is not read.
+  Dazzle's die of 8 and a monster's scaling accuracy are modelled.
 - **[hypothesis]** Defend's absence of a turn record and of draws: the stance is taken up as the
   round begins (the wiki's reading of the command), but the command code was not read.
 - **[hypothesis]** a call for backup's new HP is drawn from the world's generator by

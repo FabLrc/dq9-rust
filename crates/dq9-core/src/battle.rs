@@ -5,9 +5,10 @@
 //! The kernel ([`resolve`]) resolves one action exactly as the game does, for the plain Attack
 //! of a party member or a monster, the damage and healing spells met in chapter 2 and the
 //! chapter 2 statuses (Buff, Accelerate, Dazzle, Weird Dance), a call for backup, a kind-0 action
-//! and the monsters' Flee `0xE1` — against any number of targets, with the guard level and the
-//! dazzle flag, but with no tension, no rider and no metal body. Everything else the original does
-//! inside `ResolveAction` is refused with [`Unsupported`] rather than guessed.
+//! and the monsters' Flee `0xE1` — against any number of targets, with the guard level, the
+//! dazzle flag and a metal body's rules (a miss, 0 or 1, the critical and the weapon exemptions),
+//! but with no tension and no rider. Everything else the original does inside `ResolveAction` is
+//! refused with [`Unsupported`] rather than guessed.
 //!
 //! On top of it (batch `j4-battle-flow`) [`Battle`] plays a whole battle headless: it is built
 //! from ROM records ([`setup`]), runs round after round ([`round`], [`ai`]) and ends with a

@@ -22,8 +22,16 @@
 //! Attack and the damage and healing spells only, with no status.
 
 use super::damage::{base_amount, critical_rate, critical_threshold};
-use super::model::{Action, Fighter, Unsupported, validate};
+use super::model::{Action, Fighter, Side, Unsupported, validate};
 use super::random::{FloatDraw, Random};
+
+/// Metal Slash `0x40` and Metalicker `0x7E`: `1 + random(2)` against a metal body when the blow
+/// is not a critical (`ov_024::021e6a90`).
+const METAL_SLASHERS: [u16; 2] = [0x40, 0x7E];
+
+/// The actions whose damage a metal body does not zero: Quadraslash `0x205` and Needle Shot
+/// `0x82` (`ov_024::021e6a90`). A critical is exempt too.
+const METAL_ZEROING_EXEMPT: [u16; 2] = [0x205, 0x82];
 
 /// The multipliers of the combo table (`0x021fe778`), indexed by the counter held to 3.
 const COMBO_TABLE: [f32; 4] = [1.0, 1.2, 1.5, 2.0];
@@ -120,16 +128,21 @@ fn roll_block(rng: &mut Counted<'_>, target: &Fighter) -> bool {
     (rng.next_max(100) as f32) < target.block_rate
 }
 
-/// `RollAccuracy` (`ov_000::02156648`): `NextRandomMax(100)` first, whatever the accuracy; then a
-/// scaling accuracy (a monster's `+0x14` bits 0–6 chance × the target's resistance to the action's
-/// landing element + 0.5, truncated); then, for an action spoilt by a status (`+0x10` bit 3) on a
-/// dazzled attacker, a die of eight that misses on 0 to 4; it lands under the accuracy.
+/// `RollAccuracy` (`ov_000::02156648`): a metal body is missed outright by an action that does not
+/// work on one (`+0x10` bit 24) — before the die, so the miss costs the action's own accuracy
+/// draw; then `NextRandomMax(100)` whatever the accuracy; then a scaling accuracy (a monster's
+/// `+0x14` bits 0–6 chance × the target's resistance to the action's landing element + 0.5,
+/// truncated); then, for an action spoilt by a status (`+0x10` bit 3) on a dazzled attacker, a die
+/// of eight that misses on 0 to 4; it lands under the accuracy.
 fn roll_accuracy(
     rng: &mut Counted<'_>,
     actor: &Fighter,
     action: &Action,
     target: &Fighter,
 ) -> bool {
+    if target.metal_body && !action.works_on_metal {
+        return false;
+    }
     let die = rng.next_max(100);
     let accuracy = if action.scales_accuracy {
         let scaled = f32::from(action.accuracy_monster) * target.resistance(action.landing_element);
@@ -144,13 +157,15 @@ fn roll_accuracy(
 }
 
 /// `CalculateFinalDamage` (`ov_024::021e6a90`) for the steps modelled, in the game's order:
-/// critical, resistance, block / dodge zero, the coin, the combo, truncation, the cap.
+/// critical, resistance, block / dodge zero, the poison needle, the metal body's zeroing, the
+/// coin, Metal Slash's `1 + random(2)`, the `+1` weapon, the combo, truncation, the cap.
 fn final_amount(
     rng: &mut Counted<'_>,
     strike: &Strike<'_>,
     base: i32,
     critical: bool,
     nullified: bool,
+    needle: bool,
 ) -> i32 {
     let Strike {
         actor,
@@ -182,10 +197,40 @@ fn final_amount(
     if action.halved_by_defending && target.guard_level > 0 {
         damage *= GUARD_MULTIPLIERS[usize::from(target.guard_level.min(3))];
     }
+    // The poison needle (`func_020851d8`, the worn weapon's `+0x2F4` bits 10–11): a party blow
+    // carrying `+0x10` bit 18 deals exactly 1; the dodge and the block were cleared before the
+    // roll's outcome, so this step only overwrites the amount.
+    if needle {
+        damage = 1.0;
+    }
+    // The metal body (`0x021e77a4`, read through `func_ov000_02156068(battle, target, 0, 1)`): an
+    // action that aims at the opponents and works on metal has its damage set to exactly 0 unless
+    // the blow is a critical or the action is `0x205` / `0x82`. The coin below then makes it 0 or
+    // 1 — the site's "the others deal 0 or 1".
+    if target.metal_body
+        && action.aims_at_opponents
+        && action.works_on_metal
+        && !critical
+        && !needle
+        && !METAL_ZEROING_EXEMPT.contains(&action.number)
+    {
+        damage = 0.0;
+    }
     let takes_both =
         target.resistance(action.element) > 0.0 && target.resistance(action.landing_element) > 0.0;
     if damage <= 0.0 && !nullified && takes_both {
         damage = rng.next_max(2) as f32;
+    }
+    // Metal Slash and Metalicker on a metal body, not critical: `1.0f + NextRandomMax(2)`, after
+    // the coin, so they draw again on top of it.
+    if target.metal_body && !critical && METAL_SLASHERS.contains(&action.number) {
+        damage = 1.0 + rng.next_max(2) as f32;
+    }
+    // The "+1 against metal" weapon (`func_02085128`) adds 1.0 to a metal body's damage, on a
+    // party blow carrying `+0x10` bit 18.
+    if target.metal_body && actor.side == Side::Party && action.weapon_element && actor.metal_bonus
+    {
+        damage += 1.0;
     }
     if action.chains_combo && damage >= 1.0 {
         damage *= COMBO_TABLE[usize::from(combo_count.min(3))];
@@ -228,8 +273,15 @@ pub fn resolve_action(
             Some(critical) => critical,
             None => roll_critical(&mut rng, actor, action),
         };
-        let dodged = action.dodgeable && roll_evasion(&mut rng, target);
-        let blocked = action.blockable && !dodged && roll_block(&mut rng, target);
+        let mut dodged = action.dodgeable && roll_evasion(&mut rng, target);
+        let mut blocked = action.blockable && !dodged && roll_block(&mut rng, target);
+        // The poison needle's blow cannot be dodged or blocked: `CalculateFinalDamage` clears the
+        // staging flags (`0x021e6e40`), so the hit is reported as a normal one.
+        let needle = actor.side == Side::Party && action.weapon_element && actor.poison_needle;
+        if needle {
+            dodged = false;
+            blocked = false;
+        }
         let landed = roll_accuracy(&mut rng, actor, action, target);
         let mut amount = 0;
         if landed {
@@ -242,7 +294,7 @@ pub fn resolve_action(
             // Every kind computes its amount in the game: the kind handler is handed it and
             // ignores it where the kind changes no number (`docs/re/battle.md`).
             let base = base_amount(actor, target, action, &mut rng);
-            amount = final_amount(&mut rng, &strike, base, critical, dodged || blocked);
+            amount = final_amount(&mut rng, &strike, base, critical, dodged || blocked, needle);
             if action.wakes_target && action.kind == 1 && amount > 0 {
                 // The wake roll (`func_ov000_02157288`, `0x02157340`): drawn even when nothing
                 // is asleep.

@@ -80,7 +80,9 @@ pub struct Fighter {
     /// member's sum over what they wear (status `+0x3E + element − 1`). Element 8 is the plain
     /// Attack's.
     pub resistances: [u8; ELEMENTS],
-    /// Metal body (monster data `+0x0A` bit 12): refused ([`Unsupported::MetalBody`]).
+    /// Metal body (monster data `+0x0A` bit 12, `func_ov000_02156068(battle, index, 0, 1)`; never a
+    /// party member). An action that does not work on one misses it, and the actions that do deal
+    /// 0 or 1 (`docs/re/battle.md`, "The metal body").
     pub metal_body: bool,
     /// Guard level, 0 to 3 (`[status + 0x138] + 0x21`): the party's Defend command sets 1
     /// (`func_ov024_021e57c0`), the round's end clears it (`func_ov000_0215e6e8`). An action
@@ -105,6 +107,15 @@ pub struct Fighter {
     /// equipment, USA reading). The plain Attack then rolls its critical once for the whole
     /// action and divides its rate by the hits: refused ([`Unsupported::MultiHitWeapon`]).
     pub weapon_strikes_several: bool,
+    /// The worn weapon's "+1 against metal" (`func_02085128` on the character record
+    /// `+0x150`: that word's `+0x2F4` bits 4–5, the item flags' bit 4 per the wiki's
+    /// [hypothesis]). `CalculateFinalDamage` adds 1.0 to a metal body's damage when the action
+    /// carries `+0x10` bit 18.
+    pub metal_bonus: bool,
+    /// The worn weapon that forces the damage to exactly 1 and cancels the target's dodge and
+    /// block (`func_020851d8`: the record's `+0x2F4` bits 10–11; the item flags' bit 10, the
+    /// poison needle). Read only for a party attacker on an action carrying `+0x10` bit 18.
+    pub poison_needle: bool,
 }
 
 impl Fighter {
@@ -134,6 +145,8 @@ impl Fighter {
             weapon_element: 0,
             accuracy_die_trait: false,
             weapon_strikes_several: false,
+            metal_bonus: false,
+            poison_needle: false,
         }
     }
 
@@ -286,6 +299,15 @@ pub struct Action {
     /// `+0x10` bit 16: a party member with a certain trait throws a die of four in the accuracy
     /// roll (the plain Attack carries it). See [`Fighter::accuracy_die_trait`].
     pub trait_accuracy_die: bool,
+    /// `+0x10` bit 24 (`0x100_0000`): the action works on a metal body. Without it,
+    /// `RollAccuracy` misses a metal body before any draw (`ov_000::02156648`); with it,
+    /// `CalculateFinalDamage` zeroes the blow unless it is a critical or the number is `0x205`
+    /// or `0x82`.
+    pub works_on_metal: bool,
+    /// `+0x08` bits 8–9 at 1: the action aims at the opponents (`func_ov000_02154a04`; 2 aims at
+    /// its own side). The formats crate names this field `metal`: it is the aim, not a metal
+    /// flag. The metal body's zeroing tests it.
+    pub aims_at_opponents: bool,
 }
 
 impl Action {
@@ -317,6 +339,8 @@ impl Action {
             multi_target_falloff: false,
             weapon_element: false,
             trait_accuracy_die: false,
+            works_on_metal: false,
+            aims_at_opponents: false,
         }
     }
 
@@ -363,8 +387,6 @@ pub enum Unsupported {
     MpCost(u8),
     /// A critical trait whose condition is not established.
     CriticalTrait,
-    /// A metal-bodied target.
-    MetalBody,
     /// A fighter with tension.
     Tension,
     /// A fighter with a guard level.
@@ -413,7 +435,6 @@ impl fmt::Display for Unsupported {
             }
             Self::MpCost(c) => write!(f, "an MP cost of {c} is not modelled"),
             Self::CriticalTrait => write!(f, "trait 0x11d's critical rate is not established"),
-            Self::MetalBody => write!(f, "a metal body is not modelled"),
             Self::Tension => write!(f, "tension is not modelled"),
             Self::Guard => write!(f, "a guard level above 3 is not modelled"),
             Self::Range => write!(f, "inconsistent amount range"),
@@ -432,12 +453,16 @@ impl fmt::Display for Unsupported {
 
 impl Error for Unsupported {}
 
-/// Actions the code singles out by number whose rules are not modelled: Kamikazee `0x1B`, Metal
-/// Slash `0x40`, Thunder Thrust `0x48`, Hatchet Man `0x70`, Metalicker `0x7E`, Double-Edged Slash
-/// `0xAF`, `0x79` (four fifths), `0x395` (the monsters' second flight), the four that draw before
-/// any target (`0x1FF`, `0x200`, `0x20B`, `0x20C`) and `0x82`, `0x205` (metal bodies).
-const SPECIAL_ACTIONS: [u16; 14] = [
-    0x1B, 0x40, 0x48, 0x70, 0x7E, 0xAF, 0x79, 0x395, 0x1FF, 0x200, 0x20B, 0x20C, 0x82, 0x205,
+/// Actions the code singles out by number whose rules are not modelled: Kamikazee `0x1B`, Thunder
+/// Thrust `0x48`, Hatchet Man `0x70`, Double-Edged Slash `0xAF`, `0x79` (four fifths), `0x395`
+/// (the monsters' second flight) and the four that draw before any target (`0x1FF`, `0x200`,
+/// `0x20B`, `0x20C`).
+///
+/// Metal Slash `0x40`, Metalicker `0x7E`, Needle Shot `0x82` and Quadraslash `0x205` left this
+/// list with the metal rules (`docs/re/battle.md`): their records are still refused, by name, on
+/// the damage handler they carry (`2` on 64 and 126, `66` on 517) or their rider (`20` on 130).
+const SPECIAL_ACTIONS: [u16; 10] = [
+    0x1B, 0x48, 0x70, 0xAF, 0x79, 0x395, 0x1FF, 0x200, 0x20B, 0x20C,
 ];
 
 /// The kinds the resolver and the battle apply: 0 nothing (and the monsters' flight), 1 damage,
@@ -497,9 +522,6 @@ pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result
         if fighter.guard_level > 3 {
             return Err(Unsupported::Guard);
         }
-    }
-    if targets.iter().any(|t| t.metal_body) {
-        return Err(Unsupported::MetalBody);
     }
     Ok(())
 }

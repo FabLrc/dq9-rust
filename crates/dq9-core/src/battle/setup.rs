@@ -204,6 +204,8 @@ fn skill(r: &ActionRecord<'_>, ranges: &Ranges) -> Skill {
         a.multi_target_falloff = r.weakens;
         a.weapon_element = r.weapon_element;
         a.trait_accuracy_die = r.party_trait;
+        a.works_on_metal = r.works_on_metal;
+        a.aims_at_opponents = (r.word_08 >> 8) & 3 == 1;
         Ok(a)
     })();
     Skill {
