@@ -114,7 +114,7 @@ outside the route.
 | S2 | Whips and boomerangs hit a group or everyone with ×1, ×0.8, ×0.6, ×0.4, ×0.2 by rank. | none cited | `battle/model.rs:281` (the flag) and `:470` (refused) | **not implemented** | none |
 | S3 | The falcon blade (and two other items) strike the same target twice at full power. | none cited | `battle/model.rs:107` (`weapon_strikes_several`), refused by `Unsupported::MultiHitWeapon` | **not implemented** (refused) | none |
 | S4 | The miracle sword and hero spear give back a quarter of the damage as HP. | none cited | absent | **not implemented** | none |
-| S5 | The metal slime swords do +1 against metal; the poison needle always deals 1 and cannot be dodged or blocked. | `ov_024::021e6a90` (weapon `+0x10` bit 18 and the `+1`, `func_02085128`; the needle's `1.0` and cleared flags, `func_020851d8`) | `battle/resolve.rs::final_amount` (`metal_bonus` adds 1.0 after the coin; `poison_needle` forces 1.0 and clears the dodge and the block in `resolve_action`) | **agrees** on the code; the item record behind each flag is **[hypothesis]**: `itembtlprm` `+0x00` bits 4 and 10, seven metal-family weapon ids and the needle alone (19057) | `the_plus_one_weapon_makes_one_and_the_poison_needle_deals_exactly_one`; `the_metal_body_rules_read_the_rom_records` (the two flag sets on the ROM) |
+| S5 | The metal slime swords do +1 against metal; the poison needle always deals 1 and cannot be dodged or blocked. | `ov_024::021e6a90` (weapon `+0x10` bit 18 and the `+1`, `func_02085128`; the needle's `1.0` and cleared flags, `func_020851d8`); the record they read, `func_ov017_021b3780` (`itembtlprm` `+0x00` bits 4 and 10, `0x2F4` of the character) | `battle/resolve.rs::final_amount` (`metal_bonus` adds 1.0 after the coin; `poison_needle` forces 1.0 and clears the dodge and the block in `resolve_action`); `party.rs::Character::fighter` fills both from the equipped weapon's record | **agrees**, since `v4-metal-equipment`: the item record is settled — bit 4 of the `itembtlprm` `+0x00` word is the "+1 against metal" on exactly seven weapon records (20021–20023, 20119, 20517–20519), bit 10 the poison needle on exactly one (19057), counted over the table's 1,423 records (`build/evidence/v4-metal-equipment/item-flags.txt`, `6f15e467da33`) | `the_plus_one_weapon_makes_one_and_the_poison_needle_deals_exactly_one`; `tests/battle_rom.rs::the_equipped_weapon_sets_the_metal_and_needle_flags` (the ids over the ROM, the adapter's two flags, the needle's exactly-1 blow) |
 | S6 | The rusty sword, Hela's hammer and the oh-no bow miss one time in four. | none cited | absent | **not implemented** | none |
 | S7 | Some armour restores a flat 25 HP at the end of every turn, and does not stack. | none cited | absent (no end-of-turn effect) | **not implemented** | none |
 | S8 | Some armour returns a fifth of a blow half the time, reflects spells one time in four, or is cursed (a lost turn one time in four). | none cited | absent | **not implemented** | none |
@@ -204,7 +204,9 @@ Each item names the work, the evidence and its status: done, decided or still op
 8. **Metal rules** (B14, S5) — **done** (`v4-metal-rules`): the miss, the zeroing and its two
    exemptions, the critical, `1 + random(2)`, the "+1 against metal" weapon and the poison needle
    are modelled (`docs/re/battle.md`, "The metal body"). Metal Slash, Metalicker, Needle Shot and
-   Quadraslash are now refused by the damage handler or the rider they carry, not by number. No
+   Quadraslash are now refused by the damage handler or the rider they carry, not by number.
+   `v4-metal-equipment` settles their source: the worn weapon's `itembtlprm` `+0x00` bit 4 (seven
+   records) and bit 10 (19057), which `Character::fighter` now reads. No
    chapter-2 monster is metal, so the route cannot exercise them: the unit and real-ROM tests are
    the only proof.
 9. **Not for v0.2**: tension (B12–B13), the multi-target falloff (B11), family bonuses (B9),

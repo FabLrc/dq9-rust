@@ -499,6 +499,14 @@ impl Character {
                     // 8 is the plain Attack's element, i.e. no elemental weapon.
                     let element = param.weapon_element();
                     fighter.weapon_element = if element == 8 { 0 } else { element };
+                    // `func_ov017_021b3780` copies the worn `itembtlprm` records into the
+                    // character (`+0x2F4`, 44 bytes a slot) in the order `08 00 09 07 05 01 06
+                    // 0A`: its record 0 is live slot 8, the weapon. `func_02085128` reads that
+                    // record's `+0x00` bit 4 (the "+1 against metal") and `func_020851d8` its
+                    // bit 10 (the poison needle); both also require a positive weapon id
+                    // (`+0x2AC`, the item record slot 8's id).
+                    fighter.metal_bonus = (param.flags >> 4) & 1 != 0;
+                    fighter.poison_needle = (param.flags >> 10) & 1 != 0;
                 }
             }
         }

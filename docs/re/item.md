@@ -87,6 +87,35 @@ sorcerer's ring 15 magical might. Attack, defence, deftness, agility and might a
 INFERRED from those descriptions and the guide; the three rate fields are read in the
 code. No established field carries magical mending.
 
+## The weapon words (`itembtlprm` `+0x00`)
+
+`func_ov017_021b3780` (`0x021b3780`) copies each worn item's `itembtlprm` record — 44 bytes,
+[`battle-data.md`](battle-data.md) — into the character at `+0x2F4` of its `+0x150` word, one
+record every `0x2C` bytes, in the order of the 8-byte live slot list the literal at `0x021b38C4`
+points at (`0x021d6B20`: `08 00 09 07 05 01 06 0A`). Record 0 is therefore live slot 8, the
+**weapon**: `func_02083738` maps the item record's category (low nibble of `+0x08`) 0 to live
+slot 8, 1 to 9, 2 to 0, 3 to 1, 4 to 7, 5 to 5, 6 to 6 and 7 to 10, and the accessors behind
+the copied records gate on `+0x2AC`, slot 8's id at `0x194 + 8 × 0x20 + 0x18`. Every reader of
+the copies thus tests the weapon's `itembtlprm` `+0x00` word bit for bit.
+
+Two of its bits are read in the final damage (`ov_024::021e6a90`):
+
+| bit | reader | meaning | records (EU, of 1,423) |
+|---:|---|---|---|
+| 4 | `func_02085128` (`(word & 0x1F) >> 4`) | "+1 against metal": the damage gains `1.0` on a metal body | 20021, 20022, 20023, 20119, 20517, 20518, 20519 |
+| 10 | `func_020851d8` (`(word & 0x7FF) >> 10`) | the poison needle: the damage becomes exactly `1.0` and the dodge and the block are cleared | 19057 |
+
+Both accessors first require the weapon slot's id to be positive (`*(s16 *)(character + 0x2AC)
+< 1` returns false), which the copy of an empty slot — a zeroed record with `0xFFFF` at
+`+0x2A` — never satisfies; `func_ov017_021b3780` writes exactly that for a worn slot whose id is
+not positive. The seven bit-4 records are all weapons, all with element 8 (none); 20119 carries
+bits 4 to 7 and 19057 bits 5, 10 and 24 — the other bits' meanings are not established here. The
+counts are over the whole table (`build/evidence/v4-metal-equipment/item-flags.txt`,
+`6f15e467da33`), and
+`crates/dq9-core/tests/battle_rom.rs::the_equipped_weapon_sets_the_metal_and_needle_flags` pins
+them: the party's adapter (`Character::fighter`) fills `Fighter::metal_bonus` and
+`Fighter::poison_needle` from the equipped weapon alone.
+
 ## "Item obtained" flag
 
 `func_0207cc18` (`0x0207cc28`, called by `Items_Give`, bag additions and

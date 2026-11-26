@@ -219,36 +219,52 @@ decompilation and its disassembly (evidence `build/evidence/v4-metal-rules/accur
 4. **Metal Slash `0x40` and Metalicker `0x7E`**, not critical, on a metal body: `1.0f +
    NextRandomMax(2)`, **after** the coin, so they spend the coin's draw and then their own — 1 or
    2.
-5. **The `+1 against metal` weapon** (`func_02085128`, the character record's `+0x2F4` bits 4–5)
-   adds `1.0` to a metal body's damage on a party blow carrying `+0x10` bit 18: with the coin it
-   is 1 or 2. The item table's flag behind it is `itembtlprm` `+0x00` bit 4 (**[hypothesis]**:
-   the wiki reads bits 4 and 10 as "asked about a metal body by the AI"; the seven records that
-   carry it are the metal family's weapons, ids 20021–20023, 20119, 20517–20519).
-6. **The poison needle** (`func_020851d8`, `+0x2F4` bits 10–11; `itembtlprm` `+0x00` bit 10, the
-   one record 19057): on a party blow carrying `+0x10` bit 18 the damage is exactly `1.0`, and the
-   dodge and block flags it caused are cleared — S5's "always deals 1 and cannot be dodged or
-   blocked". Needle Shot `0x82` sets `1.0` the same way, before the metal rules, and is exempt
-   from the zeroing. The needle's `1.0` and the zeroing's `0` are both overwritten by nothing
-   that follows, except the combo table.
+5. **The `+1 against metal` weapon**: `func_02085128` tests **bit 4** of the `itembtlprm`
+   `+0x00` word of the worn weapon — the record `func_ov017_021b3780` copies to the character's
+   `+0x2F4` (`docs/re/item.md`, "The weapon words") — and adds `1.0` to a metal body's damage on
+   a party blow carrying `+0x10` bit 18: with the coin it is 1 or 2. Seven of the table's 1,423
+   records carry the bit: ids 20021–20023, 20119 and 20517–20519, all weapons, all element 8
+   (`build/evidence/v4-metal-equipment/item-flags.txt`, `6f15e467da33`). The other
+   accessors of the same record read bits 5 to 7; their meaning is not established here.
+6. **The poison needle**: `func_020851d8` tests **bit 10** of the same copied record (19057 is
+   the one record of 1,423 that carries it, and it also holds bits 5 and 24; the accessor of bit
+   5, `func_02085154`, clears bit 2 of the staging byte on an action carrying `+0x10` bit 19).
+   On a party blow carrying `+0x10` bit 18 the damage is exactly `1.0`, and the dodge and block
+   flags it caused are cleared — S5's "always deals 1 and cannot be dodged or blocked". Needle
+   Shot `0x82` sets `1.0` the same way, before the metal rules, and is exempt from the zeroing.
+   The needle's `1.0` and the zeroing's `0` are both overwritten by nothing that follows, except
+   the combo table.
 7. **What stays refused or absent.** The records of Metal Slash (64), Needle Shot (130),
    Metalicker (126) and Quadraslash (517) carry damage handler 2 / rider 20 / handler 66: they are
    refused by **those** rules now (`Unsupported::DamageHandler`, `Unsupported::Rider`), not by
    number. The metal rules themselves are modelled, and the "+x against metal" and needle flags
-   are the `Fighter` inputs `metal_bonus` and `poison_needle` (a reader of the worn weapon's record
-   sets them; `party.rs`'s adapter does not, yet). Still absent, named: action `0xDB`'s zeroing
+   are the `Fighter` inputs `metal_bonus` and `poison_needle`, filled from the equipped weapon's
+   record by `Character::fighter` (`party.rs`, `func_ov017_021b3780` + `func_02085128` /
+   `func_020851d8`). Still absent, named: action `0xDB`'s zeroing
    without the aim gate (its reach 8 is refused anyway); action `0x61`'s second blow, which
    bypasses the whole accuracy roll (`ResolveAction`'s `param_7`, so it would hit a metal body at
    full damage); Needle Shot's `1.0` when the target's guard level is not 3 (its rider is refused
    first); the combo gate's second bit (`+0x2C` bit 26 as well as 27); and the metal-only
    re-multiply by a weapon's element on a metal body, which tension alone reaches (refused).
+   Also absent, found by this batch's challenger pass: the needle's **accuracy auto-hit** —
+   `RollAccuracy` returns 1 for a needle blow after its die of 100 and before the dazzle's die of
+   eight, so a dazzled needle user's `+0x10` bit-3 action never misses; `roll_accuracy` does not
+   model it, and the standing accuracy of 100 leaves only that window
+   (`build/evidence/v4-metal-equipment/challenger.md`).
 
 Tests: `battle/tests.rs` (the miss, the 0/1 the coin leaves, the critical, the two exemptions,
-`1 + random(2)`, the aim gate, the two weapon flags) and
+`1 + random(2)`, the aim gate, the two weapon flags),
 `tests/battle_rom.rs::the_metal_body_rules_read_the_rom_records` (monster 3 the metal slime and
-monster 1 the slime, Frizz's miss, the four refusals by name, action `0x150`'s miss, the item
-flags). The assembly of the two functions and the constants they compare against are kept with
-the dumps (`accuracy.asm`, `final-damage.asm`); the decompiler's `0x47 < number` reading of the
-coin was refuted there by a separate challenger pass and by the disassembly. The chapter 2 route
+monster 1 the slime, Frizz's miss, the four refusals by name, action `0x150`'s miss) and
+`tests/battle_rom.rs::the_equipped_weapon_sets_the_metal_and_needle_flags` (the seven bit-4 ids
+and 19057 over the 1,423 records, the copper sword's two false flags, the metal weapon's and the
+needle's, and the needle's exactly-1 blow through the party's adapter). The assembly of the two
+functions and the constants they compare against are kept with the dumps
+(`accuracy.asm`, `final-damage.asm`); the decompiler's `0x47 < number` reading of the
+coin was refuted there by a separate challenger pass and by the disassembly. The item record
+behind the two flags was attacked by a separate challenger pass too (verdict confirmed; the ROM
+relocation of the slot table, the two category switches and the table's raw bytes,
+`build/evidence/v4-metal-equipment/challenger.md`). The chapter 2 route
 is unchanged: `verify.ps1 -Only long` re-ran the pilot to event 2750 with the pinned digest
 `d721c11fd0d2…`, 964 checkpoints (`build/evidence/v4-metal-rules/route-2750.jsonl`), and
 `chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve` now asserts that no chapter-2

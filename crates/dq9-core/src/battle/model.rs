@@ -107,14 +107,16 @@ pub struct Fighter {
     /// equipment, USA reading). The plain Attack then rolls its critical once for the whole
     /// action and divides its rate by the hits: refused ([`Unsupported::MultiHitWeapon`]).
     pub weapon_strikes_several: bool,
-    /// The worn weapon's "+1 against metal" (`func_02085128` on the character record
-    /// `+0x150`: that word's `+0x2F4` bits 4–5, the item flags' bit 4 per the wiki's
-    /// [hypothesis]). `CalculateFinalDamage` adds 1.0 to a metal body's damage when the action
-    /// carries `+0x10` bit 18.
+    /// The worn weapon's "+1 against metal": `func_02085128` tests bit 4 of the `itembtlprm`
+    /// record `func_ov017_021b3780` copies into the character object (its `+0x150` word, the
+    /// records at `+0x2F4`; the weapon's is the first), and `CalculateFinalDamage` adds 1.0 to a
+    /// metal body's damage when the action carries `+0x10` bit 18. Filled from the equipped
+    /// weapon by [`Character::fighter`](crate::party::Character::fighter).
     pub metal_bonus: bool,
     /// The worn weapon that forces the damage to exactly 1 and cancels the target's dodge and
-    /// block (`func_020851d8`: the record's `+0x2F4` bits 10–11; the item flags' bit 10, the
-    /// poison needle). Read only for a party attacker on an action carrying `+0x10` bit 18.
+    /// block: `func_020851d8` tests bit 10 of the same copied `itembtlprm` record
+    /// (`docs/re/item.md`, "The weapon words"). Read only for a party attacker on an action
+    /// carrying `+0x10` bit 18.
     pub poison_needle: bool,
 }
 

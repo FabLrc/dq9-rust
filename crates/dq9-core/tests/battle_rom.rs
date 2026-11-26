@@ -12,10 +12,13 @@ use dq9_core::battle::{
     PartyMember, Random, RoundReport, Side, Skill, Surprise, Tables, Target, Unsupported, Who,
     resolve_action, validate,
 };
+use dq9_core::party::Character;
 use dq9_core::scenario;
 use dq9_formats::Gpc2;
 use dq9_formats::battle::encounter;
+use dq9_formats::battle::equipment::BattleParams;
 use dq9_formats::battle::monster::{BattleData, Names};
+use dq9_formats::item::ItemStats;
 use nds_rom::Rom;
 
 fn member<'a>(rom: &Rom<'a>, path: &str, name: &str) -> Cow<'a, [u8]> {
@@ -1022,13 +1025,19 @@ fn the_metal_body_rules_read_the_rom_records() {
     )
     .unwrap();
     assert!(!missed.targets[0].landed);
+}
 
-    // The two weapon flags the metal rules read are the item table's bits 4 and 10: the metal
-    // family's seven weapons, and the poison needle alone.
-    let params = dq9_formats::battle::equipment::BattleParams::parse(
-        rom.file_by_path("data/prm/itembtlprm.nat").unwrap(),
-    )
-    .unwrap();
+/// The weapon behind the two metal flags. `func_02085128` (the "+1 against metal") tests bit 4 of
+/// the `itembtlprm` `+0x00` word `func_ov017_021b3780` copies to the character's `+0x2F4`, and
+/// `func_020851d8` (the poison needle) bit 10; the copy puts the weapon first (live slot 8, the
+/// table `08 00 09 07 05 01 06 0A`), which is the record both accessors read. Counted over the
+/// ROM's 268 weapons: seven carry bit 4 and one bit 10, and the party's adapter reads them from
+/// the equipped weapon alone.
+#[test]
+fn the_equipped_weapon_sets_the_metal_and_needle_flags() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let params = BattleParams::parse(rom.file_by_path("data/prm/itembtlprm.nat").unwrap()).unwrap();
     let ids = |bit: u32| -> Vec<i16> {
         params
             .items
@@ -1039,4 +1048,44 @@ fn the_metal_body_rules_read_the_rom_records() {
     };
     assert_eq!(ids(4), [20021, 20022, 20023, 20119, 20517, 20518, 20519]);
     assert_eq!(ids(10), [19057]);
+
+    let weapons = member(&rom, "data/prm/itemdt_w.gp2", "itemdt_w_en.nat");
+    let items = ItemStats::from_members(&[&weapons]).unwrap();
+    let fighter = |weapon: u16| {
+        let mut character = Character::hero();
+        character.equipment.weapon = Some(weapon);
+        character.fighter(&items, &params)
+    };
+
+    // The creation copper sword 20004 carries neither flag.
+    let plain = fighter(20004);
+    assert!(
+        !plain.metal_bonus && !plain.poison_needle,
+        "the copper sword"
+    );
+    let metal = fighter(20021);
+    assert!(metal.metal_bonus && !metal.poison_needle);
+    let needle = fighter(19057);
+    assert!(!needle.metal_bonus && needle.poison_needle);
+
+    // The needle's blow through the adapter: exactly 1 and neither dodged nor blocked, on a body
+    // that is not metal and at rates no roll clears.
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let attack = tables.actions.skill(1).unwrap().action.unwrap();
+    assert!(
+        attack.weapon_element,
+        "the plain Attack carries +0x10 bit 18"
+    );
+    let mut slime = BattleSetup::set_battle(&tables, &[(1, 1)])
+        .unwrap()
+        .monsters[0]
+        .fighter
+        .clone();
+    slime.evasion_rate = 100.0;
+    slime.block_rate = 100.0;
+    let outcome = resolve_action(&mut Random::new(5), &needle, &attack, &[slime], 0).unwrap();
+    assert!(!outcome.targets[0].dodged, "the needle is not dodged");
+    assert!(!outcome.targets[0].blocked, "the needle is not blocked");
+    assert_eq!(outcome.targets[0].amount, 1);
 }
