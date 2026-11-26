@@ -473,6 +473,9 @@ impl App {
                 self.talk.discard_input();
             }
             self.talk.step();
+            if let Some(runtime) = &mut self.runtime {
+                self.talk.face_partner(runtime, self.hero.as_ref());
+            }
             // A line that names a facility opens its screen; the conversation's end waits
             // until that screen is over (`Talk::finish_service`).
             if let Some(tag) = self.talk.take_service()

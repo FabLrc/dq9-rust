@@ -15,8 +15,8 @@ use dq9_core::trigger::{Request, State};
 use dq9_formats::dialogue::{self, Session, TalkState};
 use dq9_formats::spr::Sprite;
 use dq9_formats::{Font, FontId, Gpc2, Table};
-use dq9_render::Viewport;
 use dq9_render::ui::{Atlas, Image, Quad, Ui};
+use dq9_render::{AnimatedScene, Viewport};
 use nds_rom::Rom;
 
 use crate::app::status;
@@ -213,6 +213,18 @@ pub fn service_tag(text: &[u8]) -> Option<ServiceTag> {
     })
 }
 
+/// Whether the line closes the window with `<END_R_TURN>` (`0xFF02`): the game then gives the
+/// speaker back the angle `TalkTask_Update` saved (`MsgWin_Update` case 0 compares the code
+/// with `iRam02044424`), while a plain `<END>` keeps the heading the message turned it to.
+///
+/// `dq9_formats::message` maps both ends to the same code, so the raw text decides, as
+/// [`service_tag`] reads `<INN=n>`; a tag of a branch the answer did not take is not told
+/// apart.
+fn ends_with_restore(text: &[u8]) -> bool {
+    const TAG: &[u8] = b"<END_R_TURN>";
+    text.windows(TAG.len()).any(|w| w.eq_ignore_ascii_case(TAG))
+}
+
 /// A closed conversation, as trigger event 1 sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ended {
@@ -258,6 +270,10 @@ pub struct Talk {
     caption_frozen: bool,
     /// The NPC and context of the open conversation (not an event message).
     conversation: Option<(u16, u16)>,
+    /// The partner a conversation holds still and turns to the hero ([`Talk::face_partner`]).
+    facing: Option<u16>,
+    /// The open line ends with `<END_R_TURN>`: closing it gives the partner its heading back.
+    turn_back: bool,
     /// The service tag of the open talk line, if any (`<INN=n>`…): the facility opens when
     /// the window closes.
     service: Option<ServiceTag>,
@@ -343,6 +359,8 @@ impl Talk {
         self.npcs = npcs;
         counts.enter_map();
         self.active = None;
+        self.facing = None;
+        self.turn_back = false;
         self.abort_service();
     }
 
@@ -359,6 +377,55 @@ impl Talk {
 
     pub fn is_active(&self) -> bool {
         self.active.is_some()
+    }
+
+    /// The partner the open conversation holds: `None` for an event message and once the
+    /// window closes.
+    fn talking_to(&self) -> Option<u16> {
+        self.active.as_ref()?;
+        self.conversation.map(|(npc, _)| npc)
+    }
+
+    /// Holds the partner still and turns it to the hero while the window is open.
+    ///
+    /// At the start of every message `Msg_ConsumeLeadingTags` (`0x0206a3d0`) gives the speaker
+    /// the angle from it to the addressee and sets its turn flag `+0x19b6`, and
+    /// `func_020656f4` hands that angle to the character (`func_02040af0`) while it turns at
+    /// the field rate (`Character_SetFacing` `0x02033844` for the target,
+    /// `Character_TurnToFacing` `0x02033720` for the step). `<N_TURN>` sets the saved angle
+    /// `+0x183c` back and clears the flag: the message does not turn the speaker at all.
+    /// `TalkTask_Update` (`ov_017::021b8e8c`) saves that angle with the partner's character id
+    /// when the conversation opens, and the window gives it back when the message ends with
+    /// `<END_R_TURN>` (`0xFF02`) or restores it with `<R_TURN>` (`0xFF2C`); a plain `<END>`
+    /// leaves the partner where the turn put it.
+    ///
+    /// Call once per step, after [`Talk::step`], with the field's scene and the hero; nothing
+    /// happens without a window, and a script that moves the NPC
+    /// ([`AnimatedScene::set_npc_angle`]) takes it back from the pivot.
+    pub fn face_partner(&mut self, scene: &mut AnimatedScene, hero: Option<&Hero>) {
+        let id = self.talking_to();
+        if id.is_none() {
+            if let Some(previous) = self.facing.take()
+                && self.turn_back
+            {
+                scene.release_npc(previous);
+            }
+            self.turn_back = false;
+            return;
+        }
+        if self.facing.is_some() {
+            return;
+        }
+        let no_turn = self
+            .active
+            .as_ref()
+            .is_some_and(|dialogue| dialogue.view().tags.no_turn);
+        let (Some(id), Some(hero), false) = (id, hero, no_turn) else {
+            return;
+        };
+        if scene.turn_npc_toward(id, hero.position()) {
+            self.facing = Some(id);
+        }
     }
 
     /// Whether the action key was pressed since the last step.
@@ -706,6 +773,7 @@ impl Talk {
         ));
         state.talk_counts.record(npc);
         self.conversation = Some((npc, context));
+        self.turn_back = ends_with_restore(text);
         self.service = service_tag(text);
         self.active = Some(self.dialogue(Dialogue::new(script)));
         self.caption_alpha = None;
@@ -1195,6 +1263,10 @@ mod script {
                 bail!("the script leaves the map");
             }
             talk.step();
+            // The preview path has no fixed `AnimatedScene::step`: the partner's turn is
+            // stepped here, between the script's frames (`AnimatedScene::step_turns`).
+            talk.face_partner(&mut loaded.runtime, Some(&loaded.hero));
+            loaded.runtime.step_turns();
             Ok(())
         };
         for step in steps {

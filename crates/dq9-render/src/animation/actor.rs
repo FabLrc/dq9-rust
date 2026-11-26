@@ -379,7 +379,12 @@ impl AnimatedScene {
     /// Turns a sprite NPC (`id` as in [`AnimatedScene::npc_instance`]) towards the game's
     /// object `angle` (radians): the sprite shows the side that faces the camera from there
     /// (`NpcSprite_FaceCamera`, `0x0203cbe8`). Models turn with their instance matrix.
+    ///
+    /// A script (`StbNat_TurnActorTowardsActor`, `ov_001::0215c5fc`) takes the NPC back from
+    /// a conversation's pivot: the held heading is dropped and the NPC keeps the angle given
+    /// here.
     pub fn set_npc_angle(&mut self, id: u16, angle: f32) {
+        self.pivots.retain(|pivot| pivot.id != id);
         if let Some(instance) = self.npc_instance(id) {
             self.set_sprite_angle(instance, angle);
         }

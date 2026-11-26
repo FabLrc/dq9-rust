@@ -239,6 +239,35 @@ fn seated_frame(right: Vec3, up: Vec3, forward: Vec3, relative: f32) -> (Vec3, V
 }
 
 impl SpriteAnimation {
+    /// A two-frame standing sheet facing `angle` (4096ths of a radian), for the tests of the
+    /// scene's NPC heading (`super::facing`): no sheet is read from the ROM there.
+    #[cfg(test)]
+    pub(super) fn test_sheet(angle: i32) -> Self {
+        use dq9_formats::spr::Step as SpriteStep;
+        let step = |frame| SpriteStep {
+            next: 0,
+            duration: 8,
+            frame,
+        };
+        Self {
+            model: 0,
+            angle,
+            frames: vec![(0, 16.0, 32.0), (1, 16.0, 32.0)],
+            animations: vec![
+                (b"stand_up".to_vec(), vec![step(0)]),
+                (b"stand_down".to_vec(), vec![step(1)]),
+            ],
+            animation: 1,
+            step: 0,
+            elapsed: 3,
+            duration: 8,
+            seated: false,
+            walking: false,
+            flip_y: false,
+            fixed: false,
+        }
+    }
+
     pub(super) fn advance(&mut self) -> Result<()> {
         let Some((_, steps)) = self.animations.get(self.animation) else {
             return Ok(());

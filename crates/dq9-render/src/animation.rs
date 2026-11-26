@@ -12,6 +12,7 @@ use nds_rom::g3d::{Fx12, G3dFile, Geometry, Name};
 use nds_rom::{Error, Narc, Result};
 
 mod actor;
+mod facing;
 #[cfg(test)]
 mod seated_rom;
 mod sprite;
@@ -121,6 +122,10 @@ pub struct AnimatedScene {
     actors: Vec<actor::ActorRig>,
     /// The model NPCs of the cast and the motions an event can make them play.
     npc_rigs: Vec<actor::NpcRig>,
+    /// The headings a conversation holds (see [`facing`]).
+    pivots: Vec<facing::Pivot>,
+    /// Parity of [`step`](Self::step): the model pivots run on the field's 30 Hz update.
+    pivot_phase: bool,
     /// Scene instances of the map's cast (`<area>.npc`), replaced by
     /// [`AnimatedScene::rebuild_cast`].
     cast: Vec<usize>,
@@ -199,6 +204,8 @@ impl AnimatedScene {
             actors: Vec::new(),
             frame: 0,
             npc_rigs: Vec::new(),
+            pivots: Vec::new(),
+            pivot_phase: false,
             cast: Vec::new(),
             billboards_dirty: false,
         };
@@ -297,6 +304,8 @@ impl AnimatedScene {
             instance.instance = usize::MAX;
         }
         self.npc_rigs.clear();
+        // The headings held for the old cast name NPCs that are about to be built again.
+        self.pivots.clear();
         self.sprites.retain(|sprite| !old.contains(&sprite.model));
         self.models.retain(|model| !old.contains(&model.model));
         self.add_cast(map_id, code, story, &file)?;
@@ -702,6 +711,7 @@ impl AnimatedScene {
         if let Some(hero) = &mut self.hero {
             hero.step(&mut self.scene)?;
         }
+        self.step_pivots();
         self.evaluate()
     }
 

@@ -225,6 +225,136 @@ context). `dq9_core::field::Field::talk` returns `NoTrigger`, `Fired(events)` or
 `Request::Talk` of the NPC, and forwards the other events (map change, requests
 unsupported before the `.stb` interpreter).
 
+### Turned to the hero (`<N_TURN>`, `<END_R_TURN>`, `<R_TURN>`) and the balloons
+
+Re-read on the European ROM (`0x0206a3d0`, `0x020656f4`, `0x02040b00`, `0x0203c828`,
+`0x02041388`, `0x02033844`, `0x02033720`, `0x0206760c`; the corpus addresses are the USA ones
+of the decompilation, EU = USA + `0x10`).
+
+Two different turns hide behind the same tag family, and the batch's original wording
+("`func_02033834` turns the partner") conflated them: `Character_SetFacing` turns the **hero**
+once at the open, the message window turns the **partner** at every message, and each
+representation the partner can be drawn with steps at its own rate.
+
+**Opening the conversation** — `TalkTask_Update` (`ov_017::021b8e8c`), state 0:
+
+- the leader is `GameState+0x397c` (`GetUnknownGameObject`, `map-archive.md`); its walk speed
+  `+0xb2` is zeroed and `func_020397cc(obj, 1)` runs on it;
+- the partner's character is looked up (`func_0203cf4c` = character table,
+  `func_0203df78(table, npc)`, position `func_020406f8`), the angle from the leader to it is
+  `fix32ReduceAngle0To2Pi(FX_Atan2(dx, dz))`, and `Character_SetFacing`
+  (`0x02033844`) turns the **leader** to the partner;
+- the message window keeps the partner's character id (`+0x1838 =
+  func_0203dfdc(table, npc)`) and its current angle (`+0x183c = func_02040a90(chara)`).
+
+Nothing here touches the partner's own motion: only the leader's speed is cleared, so a cast
+member that wanders is not stopped by the talk task **[fact from the code; the visible
+stillness of a wandering NPC during a conversation is not observed]**.
+
+**At the start of a message** — `Msg_ConsumeLeadingTags` (`0x0206a3d0`), before the text is
+compiled:
+
+| Tag | Effect |
+|---|---|
+| (none) | `+0x1844 = ReduceAngle(FX_Atan2(leader.x − npc.x, leader.z − npc.z))` — the angle **from the partner to the hero** — and `+0x19b6 = 1` |
+| `<N_TURN>` (`0xFF2B`) | `+0x1844 = +0x183c` (the angle saved at the open) and `+0x19b6 = 0`: this message does not turn the speaker at all |
+
+The tags are consumed per message, so each page's own leading tags decide. English text:
+6,638 `<N_TURN>`, all leading (the table also counts 312 `<EXC>` and 51 `<QES>`, of which only
+2 and 0 are leading: the others are mid-message codes of the interpreter).
+
+**Per window update** — `func_020656f4` (`0x020656f4`): while `+0x19b6` is set it gives the
+partner `+0x1844` as its **requested** angle (`func_02040af0(chara, angle)`) and compares the
+two angles `func_020409e0` and `func_02040a20` read back (`+0xb0`/`+0x2d4` against `+0x54` for
+a model, `+0x64` against `+0x60` for a sheet), returning 1 while they differ and clearing
+`+0x19b6` on arrival. `func_02040af0` (`0x02040b00`) writes the representation's request, not
+a shared field: `+0x64` of the 2D sheet (chara `+0x14`, `func_0203cdd8`), `+0xb0` of the
+Object3D (chara `+0x18`), `+0x2d4` of the game object (chara `+0x1c`).
+
+**The steps**, one per representation (`func_02040c2c` dispatches on the chara, called from the
+NPC update `func_0203dd20` at the field's 30 Hz cadence, `docs/architecture.md`):
+
+| Drawn as | Step | Code |
+|---|---|---|
+| 2D sheet (`NpcSprite`, chara `+0x14`) | `+0x60` towards `+0x64` by `+0x68 = 0x324` × `GetTickCount()` (2 on the field) = `0x648` per update, 0.39 rad | `func_0203c818` (`0x0203c828`), rate stored by `func_0203c794` (`0x0203c7a4`) |
+| model (chara `+0x18`) | `+0x54` towards `+0xb0` by the constant `iRam0204147c = 0x333` per update, **not** multiplied by the tick count, 0.20 rad | `func_02041378` (`0x02041388`) |
+
+Both stop exactly on the request and wrap with `fix32ReduceAngle0To2Pi` (`0x6488` = 2π, 4096
+per radian). A model therefore turns at about **half** the sheet's rate: a half turn takes 8
+sheet updates (0.27 s) or 16 model updates (0.53 s).
+
+`Character_SetFacing` (`0x02033844`) / `Character_TurnToFacing` (`0x02033720`) are the
+**hero's** path, used by `TalkTask_Update` at the open and by `Character_Update`
+(`0x020332bc`, `dq9_core::movement`): `+0xae = ReduceAngle(angle)` (kinds 3 and 4 also snap
+`+0x54`, `func_02033874`), then `+0x54` towards `+0xae` by `*(short *)(obj + 0xb0) ×
+GetTickCount()`, `Character_Init` (`0x02032e68`) leaving `+0xb0 = 0x324` — the same rate as a
+sheet. Kinds 4 and 6 skip the step; on arrival with bit `0x8000` of `+0xc4` set, kind 0 and
+the model name `uRam02033840`, animation 0 starts (`func_02033b88`).
+
+**Closing**: the heading is given back only when the line asks for it.
+`MsgWin_Update` (`0x020659a0`), state 0, compares the current control code with `0xFF02` and
+then calls `func_02040af0(chara(+0x1838), +0x183c)`; `0xFF02` is `<END_R_TURN>`, and
+`<R_TURN>` (`0xFF2C`) does the same through the code-runner. A plain `<END>` (`0xFF01`)
+restores nothing: the partner keeps the heading the turn left it at. English text:
+5,903 `<END_R_TURN>` against 30,625 `<END>`; 1,016 `<R_TURN>`.
+
+**Port.** `AnimatedScene::turn_npc` / `turn_npc_toward` / `release_npc` / `npc_angle`
+(`crates/dq9-render/src/animation/facing.rs`) keep one pivot per NPC id: a sheet turns
+`0x324` per 60 Hz step, a model `0x333` every second step (the field's 30 Hz update), the
+short way round `0x6488`, stopped on the target and held, with the heading the pivot found
+kept for `release_npc` (which turns back smoothly, like `func_02040af0`). A pivot re-requested
+after a plain `<END>` close re-saves that conversation's opening heading, as
+`TalkTask_Update` re-saves `+0x183c` at every open. A script
+writing the heading (`set_npc_angle`, the event natives) ends the pivot. `Talk::face_partner`
+(`crates/dq9-app/src/talk.rs`) requests it each step for the open partner, does not request it
+when the page carries `<N_TURN>`, and releases at the close when the line carries
+`<END_R_TURN>` (the port's compiler maps `0xFF01` and `0xFF02` to one end, so the raw text
+decides, as for `<INN=n>`). `<R_TURN>` is **[unknown]** in the port: it restores the heading in
+the middle of a message, which the port does not report; no prologue conversation depends on it
+**[hypothesis]**. The `--screenshot` preview steps the same pivots
+(`AnimatedScene::step_turns`), so a capture shows the turn.
+
+Captures (`build/evidence/v3-dialogue-cast/`, M01, story 1.2.1, hero at `(-25.0, 3.72)`, horse
+NPC 4 at `(-23.68, 3.72)` facing `+x`): `m01-horse-before.png` (`959101d22f1f`) the horse facing
+`+x` with no window; `m01-horse-after.png` (`680b4cbdc433`) the first window of "Neigh!"
+(`004_en.bin`, record 0, `<END>`), the horse turned round to the hero and holding;
+`m01-horse-closed.png` (`d52afcffb35f`) after the close: it keeps that heading, since the line
+ends with a plain `<END>`. No NPC of M01's story-1.2.1 cast carries `<END_R_TURN>` (M01 has
+two elsewhere, NPC 102 `M01A0/102_en.bin` and NPC 108 `M01A0/108_en.bin`, one a sheet and one
+a model), so the return is unit-tested instead
+(`a_release_turns_back_and_a_script_takes_the_npc_over`,
+`a_new_conversation_saves_the_heading_it_finds`).
+
+**Balloons** — the two tags are control codes pushed into the stream and handled by the
+window, not by the leading-tag consumer:
+
+| Tag | Leading form (`Msg_ConsumeLeadingTags`, `0x0206a3d0`) |
+|---|---|
+| `<EXC>` (`0xFF2E`) | `+0x1959 = 0x3c` (60 ticks), `+0x19b7 = 1`, `+0x195c = 0`, sound 6 |
+| `<QES>` (`0xFF2F`) | same, `+0x195c = 1`, sound 0x1c |
+
+Inside a message the same codes reach the interpreter (`MsgWin_Update` `0x020659a0`), which
+raises the same 60-tick timer (`docs/re/sdat.md`). Counts: 312 `<EXC>` and 51 `<QES>` in the
+English text, 2 and 0 of them leading.
+
+`func_02065758` counts `+0x1959` down by the tick delta and clears `+0x19b7` at zero. The draw
+is `func_020675fc` (`0x0206760c`):
+
+- the partner's character (`+0x1838`) must exist and `+0x19b7` be set;
+- its position (`func_020406f8`) goes through the field projection `func_0202ec84`, then the
+  sprite is placed at `(−12, −62)` pixels from it;
+- the sprite index is the byte `*(u8 *)(0x020e7e18 + kind)`: `0x0d` for `<EXC>`, `0x0e` for
+  `<QES>` — the two entries of the field sprite bank at `gameres + 0x2b90` (stride `0x88`,
+  `SPRSprite`), loaded by `ov_017::0219b624` from `data/bin/icon.nsarc` through the table at
+  `0x021d656c` (`{"ARC:%s", …}`): **13 `ev_mark.spr` (the "!"), 14 `field_qu.spr` (the "?")**;
+- `SPRSprite::DrawAnimatedNoRotation(sprite, 1)`.
+
+The port does not draw them yet **[unknown: no capture, and the balloon needs the speaker's
+screen projection]**: the request is not kept by `dq9-core` (the codes only play their sound,
+`Sound::Exclamation`/`Question`) and `Talk` has no camera to project the speaker. The sheets
+are already known to the event layer (`field_sprite`, natives 541/542/561,
+`docs/re/stb-natives.md`).
+
 ## Message window
 
 Sources: `MsgWin_Show` (`0x0204501c`), `MsgWin_Update` (`0x020659a0`, the interpreter of
@@ -487,9 +617,13 @@ played by `Dialogue`.
 
 ## Remaining
 
-- NPCs still and turned towards the hero during the conversation (`<N_TURN>` and
-  `TextConsumeLeadingTags` handle them: the rotation is `func_02033834`, the model object has no
-  orientation API in `AnimatedScene`); balloons `<EXC>`/`<QES>`.
+- Balloons `<EXC>`/`<QES>`: the rule, the 60-tick wait, the sheets (`ev_mark.spr`,
+  `field_qu.spr` of `data/bin/icon.nsarc`) and the draw (`func_020675fc`) are read (§ "Turned to
+  the hero"); the port neither keeps the request nor projects the speaker, so nothing is drawn.
+- `<R_TURN>` (`0xFF2C`) mid-message: restores the saved heading in the game, not reported by the
+  port's dialogue.
+- The heading a conversation leaves behind is **not** restored by a plain `<END>` (§ "Turned to
+  the hero"): the partner keeps facing the hero until a script or a cast rebuild moves it.
 - Services (`<INN=n>`, `<SHOP=n>`…), quests (`<QUEST=n>`), sounds, shake, `<AUTO>`,
   `<ALL_RECOVER>`.
 - The layout constants above to be confirmed on a melonDS capture; the language

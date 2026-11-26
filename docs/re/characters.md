@@ -576,7 +576,8 @@ scene hid.
 
 A second defect of the same reset: the scene's node for a **sprite** NPC started at angle 0 (a
 sprite's instance matrix is a translation; the angle it faces lives in its sheet,
-`set_npc_angle`) and `present` wrote that angle back every tick, so after any scene every NPC
+`set_npc_angle` — a conversation holds it through `turn_npc`/`release_npc`,
+`docs/re/dialogue.md` § "Turned to the hero") and `present` wrote that angle back every tick, so after any scene every NPC
 it left alone faced down (`1170`: NPCs 143, 141, 140 and 126 to 123 went from 1.57 or 4.71 to
 0; `tests-before-fix.txt`). `seed` now starts the node at the sheet's angle. Test
 `the_sprite_npcs_a_scene_leaves_alone_keep_the_angle_they_face`.
@@ -592,7 +593,9 @@ it left alone faced down (`1170`: NPCs 143, 141, 140 and 126 to 123 went from 1.
   `ov_017::021b1564` set `NpcTable+0x98 |= 1` around the tasks that take the screen (draw
   only the flagged entries and the sprites' texture staging stops), role **[unknown]**.
 - The conversation list (`Talk`) keeps the placement's position of an NPC a scene moved:
-  `Talk_NearestNpc` reads the object's position for an NPC without a zone (`dialogue.md`).
+  `Talk_NearestNpc` reads the object's position for an NPC without a zone (`dialogue.md`). The
+  conversation's turn is not affected: `AnimatedScene::turn_npc_toward` aims from the position
+  the scene draws the NPC at, like `func_020338d4`.
 - The palette a script gives a map NPC (native 238) is reset when the scene ends; whether the
   object keeps it is **[unknown]**.
 - A hidden NPC's pose is lost (a null scale has no position): a later scene cannot show it
