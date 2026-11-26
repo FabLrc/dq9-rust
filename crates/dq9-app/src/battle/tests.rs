@@ -1668,15 +1668,15 @@ fn the_row_party_turns_by_the_roms_table() {
 }
 
 /// The monsters' row: side by side at `z` −2.5 on the gap of `func_ov000_02167b5c`, with the
-/// five kinds of `func_ov000_021681f8` (`0xbd`, `0xbe`, `0xbf`, `0x110`, `0x155`) narrowed to
-/// `0xb33`/4096 = 0.7 once more than one fights.
+/// five wide monster numbers of `func_ov000_021681f8` (`0xbd`, `0xbe`, `0xbf`, `0x110`,
+/// `0x155`) narrowed to `0xb33`/4096 = 0.7 once more than one fights.
 #[test]
-fn the_row_monsters_narrow_the_five_kinds() {
-    use super::{NARROWED_KINDS, row_monster};
+fn the_row_monsters_narrow_the_five_numbers() {
+    use super::{NARROWED_NUMBERS, row_monster};
 
     let plain = [Some(1), Some(1), Some(1)];
     let places: Vec<_> = (0..3)
-        .map(|index| row_monster(&[1.0; 3], &plain, index))
+        .map(|index| row_monster(&[1.0; 3], &plain, index).unwrap())
         .collect();
     let xs: Vec<f32> = places.iter().map(|(placed, _)| placed.x).collect();
     // The gap fills the target 4 + 2 × 0x199/4096 = 4.1997 with three widths of 1: 0.5999.
@@ -1689,31 +1689,352 @@ fn the_row_monsters_narrow_the_five_kinds() {
         assert_eq!(*heading, 0.0);
     }
 
-    for kind in NARROWED_KINDS {
-        let kinds = [Some(kind), Some(kind), Some(kind)];
+    for number in NARROWED_NUMBERS {
+        let numbers = [Some(number), Some(number), Some(number)];
         let narrowed: Vec<f32> = (0..3)
-            .map(|index| row_monster(&[1.0; 3], &kinds, index).0.x)
+            .map(|index| row_monster(&[1.0; 3], &numbers, index).unwrap().0.x)
             .collect();
         assert!(
             narrowed[0] > xs[0] + 0.19 && narrowed[2] < xs[2] - 0.19,
-            "kind {kind:#x} narrowed to 0.7: {narrowed:?} against {xs:?}"
+            "number {number:#x} narrowed to 0.7: {narrowed:?} against {xs:?}"
         );
         assert!(
             (narrowed[2] - narrowed[0] - 2.7993).abs() < 1e-3,
-            "kind {kind:#x}: {narrowed:?}"
+            "number {number:#x}: {narrowed:?}"
         );
     }
-    // A kind outside the five keeps its width, and one monster is never narrowed.
-    for kind in [1u16, 2, 0xbc, 0x111, 0x156] {
-        let kinds = [Some(kind), Some(kind), Some(kind)];
+    // A number outside the five keeps its width, and one monster is never narrowed.
+    for number in [1u16, 2, 0xbc, 0x111, 0x156] {
+        let numbers = [Some(number), Some(number), Some(number)];
         let kept: Vec<f32> = (0..3)
-            .map(|index| row_monster(&[1.0; 3], &kinds, index).0.x)
+            .map(|index| row_monster(&[1.0; 3], &numbers, index).unwrap().0.x)
             .collect();
-        assert_eq!(kept, xs, "kind {kind:#x} is not narrowed");
+        assert_eq!(kept, xs, "number {number:#x} is not narrowed");
     }
-    for kind in NARROWED_KINDS {
-        let (placed, _) = row_monster(&[1.0], &[Some(kind)], 0);
+    for number in NARROWED_NUMBERS {
+        let Some((placed, _)) = row_monster(&[1.0], &[Some(number)], 0) else {
+            panic!("one monster stands in the row");
+        };
         assert_eq!(placed.x, 0.0, "one monster stands on the middle");
         assert_eq!(placed.z, -2.5);
     }
+}
+
+/// The opening's approach, update by update (`func_ov000_0216f0d0` read on the EU ROM): each
+/// difference moves by `(difference × 0xcd + 0x800) >> 12` — the framing keeps `0xf33`/4096 of
+/// it, `0.95` a 30 Hz update — and the step snaps once every difference is under `0x28`.
+#[test]
+fn the_opening_eases_into_the_side_shot_by_five_percent_a_step() {
+    use super::{Approach, Framing, INTRO_GAIN, approach_step, fix_mul};
+
+    let target = glam::Vec3::new(0.0, 0.5, 0.0);
+    let settle = Framing {
+        yaw: 0x800,
+        pitch: 0x800,
+        distance: 0x4000,
+    };
+    let mut approach = Approach {
+        current: Framing {
+            yaw: 0x1000,
+            pitch: 0x1000,
+            distance: 0x7000,
+        },
+        target: settle,
+    };
+    // One step: yaw −(0x800 × 0xcd)>>12 = −102, pitch the same, distance −615.
+    let (eye, settled) = approach_step(&mut approach, target);
+    assert!(!settled, "one step does not reach the side shot");
+    assert_eq!(INTRO_GAIN, 0xcd);
+    assert_eq!(fix_mul(-0x800, INTRO_GAIN), -0x66);
+    assert_eq!(approach.current.yaw, 0x1000 - 0x66);
+    assert_eq!(approach.current.pitch, 0x1000 - 0x66);
+    assert_eq!(approach.current.distance, 0x7000 - 0x267);
+    // The eye is the framing's: the horizontal reach turned by the yaw, `y` the height above
+    // the target.
+    let pitch = 0x1000 - 0x66;
+    let distance = 0x7000 - 0x267;
+    let flat = f64::from(distance * distance - pitch * pitch).sqrt() / 4096.0;
+    let reach = f64::from(eye.x).hypot(f64::from(eye.z));
+    assert!((reach - flat).abs() < 1e-3, "{eye:?}");
+    assert!(
+        (f64::from(eye.y) - (0.5 + f64::from(pitch) / 4096.0)).abs() < 1e-3,
+        "{eye:?}"
+    );
+    let yaw = f64::from(approach.current.yaw) / 4096.0;
+    assert!(
+        (f64::from(eye.x) - yaw.sin() * flat).abs() < 1e-3,
+        "{eye:?}"
+    );
+    assert!(
+        (f64::from(eye.z) - yaw.cos() * flat).abs() < 1e-3,
+        "{eye:?}"
+    );
+
+    // Every step keeps about 95% of each difference: the easing is geometric, not linear.
+    let mut previous = distance - settle.distance;
+    for _ in 0..10 {
+        let (_, settled) = approach_step(&mut approach, target);
+        assert!(!settled);
+        let remaining = approach.current.distance - settle.distance;
+        assert!(remaining > 0 && remaining < previous);
+        let ratio = f64::from(remaining) / f64::from(previous);
+        assert!(
+            (0.9499..0.9502).contains(&ratio),
+            "kept {ratio} of the distance"
+        );
+        previous = remaining;
+    }
+
+    // The snap: 0x28 on every parameter, taken at the 114th step of this opening.
+    let mut approach = Approach {
+        current: Framing {
+            yaw: 0x1000,
+            pitch: 0x1000,
+            distance: 0x7000,
+        },
+        target: settle,
+    };
+    let mut steps = 0;
+    loop {
+        steps += 1;
+        let (_, settled) = approach_step(&mut approach, target);
+        if settled {
+            break;
+        }
+        assert!(steps < 1000, "the easing never settles");
+    }
+    assert_eq!(steps, 114, "the 0x95 retention settles at the 114th step");
+    assert_eq!(approach.current, settle);
+}
+
+/// The fixed shots of the big monster kinds (`data_ov026_021de87c`, `ov_026::021d8aac`): the
+/// Hexagoon (300 = `0x12c`) has its own eye and target, a named kind earlier in the table wins
+/// when several stand, and an ordinary slime has none.
+#[test]
+fn the_shot_table_holds_the_big_monster_kinds() {
+    use super::shots;
+
+    assert_eq!(
+        shots::kind_shot(&[300]),
+        Some(([0, 5816, 16588], [0, 7495, 0])),
+        "the Hexagoon's record"
+    );
+    assert_eq!(
+        shots::kind_shot(&[300, 258]),
+        Some(([-1105, 5570, 9666], [-1105, 5611, 0])),
+        "0x102 stands before 0x12c in the table"
+    );
+    assert_eq!(shots::kind_shot(&[1]), None, "a slime has no record");
+    assert_eq!(
+        shots::kind_shot(&[0]),
+        None,
+        "the 0 record needs the battle type"
+    );
+    // The five narrow row kinds are not all shot kinds, and a variant record still answers.
+    assert_eq!(
+        shots::kind_shot(&[0x115]),
+        Some(([0, 3604, 11059], [0, 6062, 0])),
+        "0x115's first variant"
+    );
+    assert!(
+        shots::kind_shot(&[0xbd]).is_none(),
+        "0xbd is a row number only"
+    );
+    // The table is keyed by kind, not number: 300 is the Hexagoon's number, 0x101 its kind.
+    assert_eq!(
+        shots::kind_shot(&[0x101]),
+        Some(([0, 4341, 9297], [0, 4423, 0])),
+        "kind 0x101"
+    );
+}
+
+/// The opening on the real Hexagoon: the table is keyed by the monster's **kind** (`+0x10`,
+/// `func_ov000_0215fc8c`), and the Hexagoon is kind `0x101` — the table's first record — not
+/// number 300 (`0x12c` is Estark's). The eye starts pulled back by 0.5 and 3.0 from that shot
+/// (`func_ov000_0216118c`, `func_0202e5d8`) and eases back into it at one step per 30 Hz
+/// update (`func_ov000_0216f0d0`), at the wide 22°.
+#[test]
+fn the_opening_approaches_the_hexagoon_shot_and_settles() {
+    use super::Shot;
+
+    let Some(rom) = testrom::load() else { return };
+    let mut scene = battle_scene(rom, vec![(300, 1)]);
+    assert_eq!(scene.shot(), Shot::Opening);
+    assert_eq!(
+        scene.fighter(super::Fighter::monster(0)).unwrap().kind,
+        Some(0x101),
+        "the Hexagoon's kind"
+    );
+    let target = scene.camera().target;
+    // Kind 0x101's shot: eye (0, 4341, 9297), target (0, 4423, 0), fx12.
+    assert!((target.y - 4423.0 / 4096.0).abs() < 1e-3, "{target:?}");
+    let eye = scene.camera().eye();
+    // Pulled back by 3.0 along the eye-target distance and up by 0.5 from the record's own eye
+    // (`func_ov000_0216118c`: y + 0x800 on the record's 4423 − 4341 = 82, distance + 0x3000).
+    assert!(eye.z > 5.2 && eye.z < 5.4, "pulled back 3.0: {eye:?}");
+    let settle_y = 4341.0 / 4096.0;
+    assert!(
+        (eye.y - (settle_y + 0.5)).abs() < 0.01,
+        "pulled up 0.5 from {settle_y}: {eye:?}"
+    );
+    assert!((scene.camera().fovy.to_degrees() - 44.0).abs() < 1e-3);
+
+    // The game's update is 30 Hz: the first eased frame is the second fixed step, and the
+    // settle is the record's own eye.
+    scene.step().unwrap();
+    assert_eq!(scene.camera().eye(), eye, "the first tick spends no update");
+    scene.step().unwrap();
+    let one_step = scene.camera().eye();
+    assert!(
+        one_step.z < eye.z && one_step.z > 9297.0 / 4096.0,
+        "{one_step:?}"
+    );
+    for _ in 0..400 {
+        scene.step().unwrap();
+    }
+    let settled = scene.camera().eye();
+    assert!((settled.z - 9297.0 / 4096.0).abs() < 1e-3, "{settled:?}");
+    assert!((settled.y - 4341.0 / 4096.0).abs() < 1e-3, "{settled:?}");
+    assert!(settled.x.abs() < 1e-3, "{settled:?}");
+    // Once settled, the camera stays put however many steps pass.
+    scene.step().unwrap();
+    assert_eq!(scene.camera().eye(), settled);
+}
+
+/// The battle's places stop at its tables: the party's four rows (`0x02183108`) and the
+/// monsters' eight (`0x02183118`, `func_ov000_0215eb1c`'s cap). A ninth monster has no grid
+/// slot and no row place — the original has none for it — and the row it does not join is the
+/// eight-monster row.
+#[test]
+fn a_set_past_eight_has_no_place() {
+    use super::{MONSTER_SLOTS, monster_slots, party_slots, row_monster};
+
+    assert_eq!(MONSTER_SLOTS, 8);
+    assert_eq!(monster_slots(8).len(), 8);
+    assert_eq!(monster_slots(9), monster_slots(8), "no ninth row");
+    assert_eq!(monster_slots(9), vec![19, 10, 11, 12, 13, 14, 15, 25]);
+    assert_eq!(party_slots(4).len(), 4);
+    assert_eq!(party_slots(5), party_slots(4), "no fifth party slot");
+
+    let widths = [3.2; 9];
+    let kinds = [Some(1u16); 9];
+    assert_eq!(row_monster(&widths, &kinds, 8), None, "no ninth place");
+    assert_eq!(
+        row_monster(&widths, &kinds, 7),
+        row_monster(&widths[..8], &kinds[..8], 7),
+        "the eighth of nine stands where the eighth of eight does"
+    );
+
+    // A request for nine builds the eight the game's slots hold, and nothing at a ninth place.
+    let Some(rom) = testrom::load() else { return };
+    let scene = battle_scene(rom, vec![(1, 9)]);
+    assert_eq!(scene.fighters().len(), 1 + MONSTER_SLOTS);
+}
+
+/// The opening at three ticks and the row of a nine-monster set, rendered offscreen on the real
+/// stage. With `DQ9_EVIDENCE_DIR` set, `opening-tick00/60/240-hexagoon.png` (the Hexagoon's
+/// kind 0x101 shot of `data_ov026_021de87c`, pulled back at tick 0 and settled by 240 — 114
+/// 30 Hz updates) and `row-nine-monsters.png` (the eight places `0x02183118` has; the ninth has
+/// none) are written there.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_opening_camera_and_the_nine_monster_row_are_captured() {
+    use dq9_render::{Renderer, Viewport};
+
+    use super::{Formation, Shot, Side};
+
+    let Some(rom) = testrom::load() else { return };
+    let (device, queue) = pollster::block_on(async {
+        let instance = crate::gpu::instance().await;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .expect("a GPU adapter for the battle camera capture");
+        crate::gpu::device(&adapter).await.unwrap()
+    });
+    let viewport = Viewport {
+        x: 0,
+        y: 0,
+        width: 256,
+        height: 192,
+    };
+    let evidence = std::env::var_os("DQ9_EVIDENCE_DIR").map(std::path::PathBuf::from);
+    let mut scene = battle_scene(rom, vec![(300, 1)]);
+    let mut renderer = Renderer::new(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &scene.runtime().scene,
+    );
+    renderer.environment = scene.environment.clone();
+    let capture = |scene: &mut BattleScene, renderer: &mut Renderer, name: &str| {
+        scene.upload(renderer, &device, &queue).unwrap();
+        let camera = *scene.camera();
+        let frame = renderer
+            .render_to_rgba_with(&device, &queue, (256, 192), viewport, &camera, |_, _| {})
+            .unwrap();
+        if let Some(dir) = &evidence {
+            std::fs::create_dir_all(dir).unwrap();
+            let file = std::fs::File::create(dir.join(name)).unwrap();
+            let mut encoder = png::Encoder::new(file, 256, 192);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&frame)
+                .unwrap();
+        }
+        frame
+    };
+    let start = capture(&mut scene, &mut renderer, "opening-tick00-hexagoon.png");
+    for _ in 0..60 {
+        scene.step().unwrap();
+    }
+    let tick60 = capture(&mut scene, &mut renderer, "opening-tick60-hexagoon.png");
+    for _ in 0..180 {
+        scene.step().unwrap();
+    }
+    let tick240 = capture(&mut scene, &mut renderer, "opening-tick240-hexagoon.png");
+    let differing = |a: &[u8], b: &[u8]| {
+        a.as_chunks::<4>()
+            .0
+            .iter()
+            .zip(b.as_chunks::<4>().0)
+            .filter(|(a, b)| a != b)
+            .count()
+    };
+    assert!(
+        differing(&start, &tick60) > 1_000 && differing(&tick60, &tick240) > 200,
+        "the eye moves between the three ticks"
+    );
+    assert!(
+        differing(
+            &tick240,
+            &capture(&mut scene, &mut renderer, "opening-tick241-hexagoon.png")
+        ) < 500,
+        "the opening has settled by tick 240"
+    );
+
+    // The row of nine: eight monsters side by side (`0x02183118`), the ninth without a place.
+    let mut row = battle_scene(rom, vec![(1, 9)]);
+    row.set_formation(Formation::Row);
+    row.set_shot(Shot::Side(Side::Monsters));
+    assert_eq!(row.fighters().len(), 1 + super::MONSTER_SLOTS);
+    let placed: Vec<f32> = row
+        .fighters()
+        .iter()
+        .filter(|f| f.fighter.side == Side::Monsters)
+        .map(|f| f.position.x)
+        .collect();
+    assert_eq!(placed.len(), 8, "the ninth monster has no model");
+    let mut row_renderer = Renderer::new(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &row.runtime().scene,
+    );
+    row_renderer.environment = row.environment.clone();
+    let frame = capture(&mut row, &mut row_renderer, "row-nine-monsters.png");
+    assert!(frame.as_chunks::<4>().0.iter().any(|p| p[..3] != [0, 0, 0]));
 }

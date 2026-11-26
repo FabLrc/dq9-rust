@@ -68,27 +68,29 @@ fn a_three_slime_battle_places_the_fighters_on_the_grid() {
     }
     assert_eq!(scene.fighters().len(), 4);
 
-    // The eye never reaches further than 17 nor higher than 5; the wide opening frames from
-    // 22°, so the clamp bites on the normal side shot (15°).
+    // The opening is the wide 22° shot of `func_ov000_0216118c`, from the party's side
+    // (`z` +), pulled back by 0.5 and 3.0 until its easing settles; the eye stays within 17
+    // and under 5 (`func_ov000_0216f2b8`).
     let eye = scene.camera().eye();
     let offset = eye - scene.camera().target;
     let reach = glam::Vec2::new(offset.x, offset.z).length();
     assert!(reach <= 17.0 + 1e-3, "the eye reaches {reach}");
     assert!(eye.y <= 5.0 + 1e-3, "the eye is {:.3} high", eye.y);
+    assert!(eye.z > 0.0, "the opening looks from the party's side");
     assert!(
         (scene.camera().fovy.to_degrees() - 44.0).abs() < 1e-3,
         "the opening is the wide shot"
     );
-    // The normal side shot and the monsters' side turn the framing round.
+    // `Shot::Side` names the side looked at; the eye stands opposite. The normal 15° shot of
+    // the monsters is the game's side 1 (`func_ov000_0216d600` `param_2 == 1`).
     scene.set_shot(Shot::Side(Side::Monsters));
     let offset = scene.camera().eye() - scene.camera().target;
     let reach = glam::Vec2::new(offset.x, offset.z).length();
-    assert!(
-        (reach - 17.0).abs() < 1e-3,
-        "the eye is clamped at 17: {reach}"
-    );
-    assert!(scene.camera().eye().z < 0.0);
+    assert!(reach <= 17.0 + 1e-3, "the eye reaches {reach}");
+    assert!(scene.camera().eye().z > 0.0);
     assert!((scene.camera().fovy.to_degrees() - 30.0).abs() < 1e-3);
+    scene.set_shot(Shot::Side(Side::Party));
+    assert!(scene.camera().eye().z < 0.0, "looking at the party");
 
     // The idle of a slime is `stand`; the defeat fade hides it and takes its screen position.
     assert!(scene.play(Fighter::monster(0), "stand"));

@@ -8,12 +8,16 @@
 //! and starts everyone on the grid (`ov_000::02164d74`; the row is only used by a few action
 //! scripts, so it is asked for explicitly).
 //!
-//! What is faithful: the grid slot formula (`ov_000::0216f74c`), the row's places and turns
-//! (`ov_000::021675a0`, `ov_000::021677fc`, `0x02183158`, `0x02167b5c`), the side framing of the
-//! battle camera (`ov_000::0216d600`) and the eye clamp applied after every command
-//! (`ov_000::0216f2b8`). What is a **[hypothesis]**: which of the two sides the opening
-//! (`ov_000::0216118c`, "side 1") is, the eased approach of the opening, and the fallback slot
-//! of a formation larger than eight.
+//! What is faithful: the grid slot formula (`ov_000::0216f74c`) and the party's and monsters'
+//! slot tables (`0x02183108` four rows, `0x02183118` eight), the
+//! row's places and turns (`ov_000::021675a0`, `ov_000::021677fc`, `0x02183158`,
+//! `0x02167b5c`), the camera's extents from that row, the side framing of the battle camera
+//! (`ov_000::0216d600`), the opening's pulled-back start and its eased approach into that
+//! framing (`ov_000::0216118c`, `ov_000::0216f0d0`), the fixed shots of the big monster kinds
+//! (`data_ov026_021de87c`, `ov_026::021d8aac`) and the eye clamp applied after every command
+//! (`ov_000::0216f2b8`). What is a **[hypothesis]**: the body widths the row and the extents
+//! use (`mon_data` radius ×4 where the original reads `Object3D_GetRadius`), the `0x115`
+//! record's variant and the `kind 0` default of the shot table.
 //!
 //! The scene owns its runtime: the application swaps it in for the field's scene and gives
 //! the field back when the battle is over (`App::enter_battle`, `App::restore_field`).
@@ -46,6 +50,7 @@ pub mod entry;
 pub mod fight;
 pub mod motion;
 pub mod narrate;
+mod shots;
 #[cfg(test)]
 mod tests;
 pub mod transition;
@@ -76,12 +81,52 @@ const EYE_HEIGHT: f32 = 5.0;
 const HALF_ANGLE: f32 = 15.0;
 const WIDE_HALF_ANGLE: f32 = 22.0;
 
+/// The sine and cosine of both half-angles on the game's fx12 grid, as `func_ov000_0216d600`
+/// carries them: `0x424`/`0x424 + 0xb50` = sin/cos 15° at `iRam0216d8f4`, `0x5fe`/`0xed6` at
+/// `iRam0216d8f8`/`iRam0216d8fc` (read on the EU ROM, `build/evidence/v4-battle-intro/
+/// camera-tables.txt`).
+const SIN_NARROW: i32 = 0x424;
+const COS_NARROW: i32 = 0x424 + 0xb50;
+const SIN_WIDE: i32 = 0x5fe;
+const COS_WIDE: i32 = 0xed6;
+
+/// The opening's approach: the side shot's own spherical framing is kept at `0xf33` (3891/4096
+/// = 0.95) and the rest moved **per 30 Hz update** (`uRam02161260`, `func_ov000_0216f0d0`; the
+/// battle scene iterates at 30 Hz, `ov_017::0218b688`'s `CalculateDeltaTime` giving 2 VBlanks
+/// per update); one eased frame is therefore every second 60 Hz fixed step
+/// (`transition::UPDATE_TICKS`). The step gives up once every difference is under `0x28`.
+const INTRO_GAIN: i32 = 0x1000 - 0xf33;
+const INTRO_SNAP: i32 = 0x28;
+
+/// The opening pulls the eye back by these from the side shot's framing (`func_ov000_0216118c`:
+/// `local_24 = y + 0x800`, `local_20 = z + 0x3000`, the camera's own spherical height and
+/// distance in fx12).
+const INTRO_PITCH: i32 = 0x800;
+const INTRO_DISTANCE: i32 = 0x3000;
+
+/// The game's angle unit: fx12 radians, a full turn `0x6488` (2π × 4096) and a half turn
+/// `0x3244` (ROM `0x02030d30`/`0x02030ce0`, `fix32SignedAngleDistance`).
+const ANGLE_HALF_TURN: i32 = 0x3244;
+const ANGLE_TURN: i32 = 0x6488;
+
 /// Which side the party is on (`+z`) and which the monsters are on (`−z`).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {
     Party,
     Monsters,
+}
+
+impl Side {
+    /// The sign the camera's `z` takes when it looks at this side (`func_ov000_0216d600`:
+    /// side 0 is its `param_2 == 0` branch, which negates both `z`, and its extents are the
+    /// party's at `+0x228`; side 1 is the monsters', at `+0x230`).
+    const fn camera_sign(self) -> f32 {
+        match self {
+            Side::Monsters => 1.0,
+            Side::Party => -1.0,
+        }
+    }
 }
 
 /// One fighter of the scene, by side and rank in it (`Fighter::party(0)` is the hero).
@@ -204,6 +249,9 @@ pub struct PlacedFighter {
     pub fighter: Fighter,
     /// Monster number (`mon_data`), `None` for the hero.
     pub number: Option<u16>,
+    /// The monster's kind (`mon_data +0x10`, shared by its story versions), `None` for the
+    /// hero: the fixed shots of `data_ov026_021de87c` are keyed by it (`func_ov000_0215fc8c`).
+    pub kind: Option<u16>,
     pub position: Vec3,
     /// Game angle (0 faces `+z`).
     pub heading: f32,
@@ -211,15 +259,36 @@ pub struct PlacedFighter {
     pub alive: bool,
 }
 
-/// How the battle camera frames a side (`func_ov000_0216d600`). The action scripts pick a
-/// side with their camera commands, so the variant is the next wave's.
+/// How the battle camera frames a side (`func_ov000_0216d600`). `side` is the side **looked
+/// at**: the eye stands on the opposite one, so `Side::Monsters` places it on the party's `+z`
+/// (the game's side 1, `param_2 == 1`, extents at `+0x230`, no `z` negation).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shot {
-    /// The opening: the wide side shot on the party's side (`func_ov000_0216118c`).
+    /// The opening (`func_ov000_0216118c`): the wide 22° shot on the monsters, pulled back by
+    /// 0.5 and 3.0 and eased into that framing at `0.95` a 30 Hz update.
     Opening,
-    /// The normal side shot (15° half-angle), from `side`.
+    /// The normal side shot (15° half-angle), looking at `side`.
     Side(Side),
+}
+
+/// A framing in the game's spherical parameters (`camera +0x70`/`+0x74`/`+0x78`, written by
+/// `func_0202eab8` and interpolated by `func_ov000_0216f0d0`): the yaw in fx12 radians, the
+/// eye's height above the target in fx12 world units, and the eye's distance from the target
+/// in fx12 world units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Framing {
+    yaw: i32,
+    pitch: i32,
+    distance: i32,
+}
+
+/// The opening's easing (`func_ov000_0216f0d0`): where the eye is and the side shot's framing
+/// it eases toward, both around the same target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Approach {
+    current: Framing,
+    target: Framing,
 }
 
 /// The battle: the stage's scene, its lighting kept as the battle was asked for, the fighters
@@ -235,13 +304,21 @@ pub struct BattleScene {
     camera: Camera,
     formation: Formation,
     shot: Shot,
+    /// The opening's easing while it runs (`None` once it settled, or for any other shot).
+    approach: Option<Approach>,
+    /// Which 60 Hz step of the 30 Hz update the running opening is on (the easing moves on
+    /// every second one).
+    approach_phase: bool,
     fighters: Vec<PlacedFighter>,
     /// Scene instance and actor of each fighter, in [`fighters`](Self::fighters) order.
     instances: Vec<usize>,
     actors: Vec<Option<usize>>,
     /// Drawn height of each fighter's body, for the screen position.
     heights: Vec<f32>,
-    /// Row width of each fighter (`mon_data` radius ×4 for a monster, 1 for the hero).
+    /// The body radius each fighter's row place and lunge use (`mon_data +0x0C` in 1024ths for
+    /// a monster — the object's own radius, `Object3D_SetRadius(record[+0x0C] << 2)` at
+    /// `arm9 0x020377d4`, set by `func_020484f8`/`func_02048850`; 0.25 for the hero, whose
+    /// model radius is not read).
     widths: Vec<f32>,
     /// The length of each fighter's motions, from its model archives, aligned with
     /// [`fighters`](Self::fighters).
@@ -352,6 +429,7 @@ impl BattleScene {
         fighters.push(PlacedFighter {
             fighter: Fighter::party(0),
             number: None,
+            kind: None,
             position,
             heading,
             alive: true,
@@ -359,16 +437,20 @@ impl BattleScene {
         instances.push(loaded.hero_instance);
         actors.push(None);
         heights.push(1.5);
-        widths.push(1.0);
+        // The hero's battle body radius: the ROM's objects take it from the model
+        // (`Object3D_SetRadius`), and the port has no hero record to read it from; 0.25 is the
+        // model's radius the scene used before the monsters' came from `mon_data`
+        // **[hypothesis]**.
+        widths.push(0.25);
         spans.push(hero_spans);
         bacts.push(None);
         timelines.push(None);
 
         let flat = flatten(&resolved.monsters);
-        if flat.len() > 8 {
+        if flat.len() > MONSTER_SLOTS {
             crate::app::status(&format!(
-                "battle: {} monsters, the game's grid holds eight; the rest use free slots \
-                 [hypothesis]",
+                "battle: {} monsters, the battle's slots hold {MONSTER_SLOTS}; the rest have \
+                 no place (`0x02183118`, `func_ov000_0215eb1c`)",
                 flat.len()
             ));
         }
@@ -412,6 +494,7 @@ impl BattleScene {
             fighters.push(PlacedFighter {
                 fighter: Fighter::monster(rank),
                 number: Some(number),
+                kind: Some(record.kind),
                 position,
                 heading,
                 alive: true,
@@ -420,7 +503,7 @@ impl BattleScene {
             actors.push(Some(actor));
             heights.push((f32::from(record.height) / 4096.0).max(0.5));
             // The row's width: the body's radius ×4 (`+0x0C`, 1024ths).
-            widths.push((f32::from(record.radius) / 1024.0 * 4.0).max(0.5));
+            widths.push((f32::from(record.radius) / 1024.0).max(0.05));
             spans.push(motion::motion_spans(&archives));
             bacts.push(
                 bact.as_deref()
@@ -455,6 +538,8 @@ impl BattleScene {
             camera: Camera::default(),
             formation: Formation::Grid,
             shot: Shot::Opening,
+            approach: None,
+            approach_phase: false,
             fighters,
             instances,
             actors,
@@ -542,8 +627,10 @@ impl BattleScene {
         Ok(())
     }
 
-    /// One fixed step of the scene's animations at the battle camera.
+    /// One fixed step of the scene's animations at the battle camera, and of the opening's
+    /// eased approach while it runs (`func_ov000_0216d464`).
     pub fn step(&mut self) -> Result<()> {
+        self.step_camera();
         self.runtime
             .step(&self.camera)
             .context("advancing the battle animations")?;
@@ -642,6 +729,7 @@ impl BattleScene {
         self.fighters.push(PlacedFighter {
             fighter: Fighter::monster(rank),
             number: Some(number),
+            kind: Some(record.kind),
             position: Vec3::ZERO,
             heading: 0.0,
             alive: true,
@@ -651,14 +739,18 @@ impl BattleScene {
         self.heights
             .push((f32::from(record.height) / 4096.0).max(0.5));
         self.widths
-            .push((f32::from(record.radius) / 1024.0 * 4.0).max(0.5));
+            .push((f32::from(record.radius) / 1024.0).max(0.05));
         let archives = [chr.as_slice(), cmot.as_deref().unwrap_or(&[])];
         self.spans.push(motion::motion_spans(&archives));
         self.bacts
             .push(bact.as_deref().and_then(|bytes| Script::parse(bytes).ok()));
         self.timelines.push(None);
         self.place();
-        self.set_shot(self.shot);
+        if self.approach.is_some() {
+            self.refresh_approach();
+        } else {
+            self.set_shot(self.shot);
+        }
         Ok(())
     }
 
@@ -710,8 +802,8 @@ impl BattleScene {
             .find_map(|target| self.index_of(*target));
         let (target, radius, gap) = match first {
             Some(target) => {
-                let width = self.widths[index] / 4.0;
-                let reach = self.widths[target] / 4.0;
+                let width = self.widths[index];
+                let reach = self.widths[target];
                 let distance = (self.fighters[target].position - self.fighters[index].position)
                     .xz()
                     .length();
@@ -787,7 +879,7 @@ impl BattleScene {
             ticks,
             self.fighters[index].position,
             heading,
-            self.widths[index] / 4.0,
+            self.widths[index],
             target,
             radius,
         );
@@ -1085,28 +1177,119 @@ impl BattleScene {
         }
     }
 
-    /// Frames `shot` and clamps the eye (`ov_000::0216d600`, `ov_000::0216f2b8`).
+    /// Frames `shot` and clamps the eye (`ov_000::0216d600`, `ov_000::0216f2b8`), starting the
+    /// opening's eased approach on [`Shot::Opening`] (`ov_000::0216118c`).
     pub fn set_shot(&mut self, shot: Shot) {
         self.shot = shot;
-        let (side, wide) = match shot {
-            Shot::Opening => (Side::Party, true),
-            Shot::Side(side) => (side, false),
-        };
-        let half = if wide { WIDE_HALF_ANGLE } else { HALF_ANGLE };
-        let (width, depth) = self.extents();
-        let (sin, cos) = half.to_radians().sin_cos();
-        let mut distance = (width * cos / (sin * 2.2)).max(depth * cos / (sin * 1.5)) - 2.5;
-        distance = distance.max(if wide { 3.0 } else { 6.5 });
-        // "the eye at most 2" high, and half the depth at least 1.2.
-        let height = (depth * 0.5).clamp(1.2, 2.0);
-        let sign = match side {
-            Side::Party => 1.0,
-            Side::Monsters => -1.0,
-        };
-        let target = Vec3::new(0.0, height, 0.0);
-        let eye = clamp_eye(target, Vec3::new(0.0, height, sign * distance));
+        let (eye, target, half) = self.shot_placement(shot);
         self.camera.look_at(eye, target);
         self.camera.fovy = 2.0 * half.to_radians();
+        self.approach = None;
+        if shot == Shot::Opening {
+            self.start_opening();
+        } else {
+            self.clamp_camera();
+        }
+    }
+
+    /// The eye, target and half-angle `func_ov000_0216d600` computes for `shot`, before its
+    /// eye clamp: the framed side's extents, the 2.2/1.5 divisions, the 2.5 less and the floor,
+    /// the target's height `depth/2` (at least 1.2) with the eye held to 2, and the kind's own
+    /// shot when the table has one.
+    fn shot_placement(&self, shot: Shot) -> (Vec3, Vec3, f32) {
+        let (framed, wide) = match shot {
+            Shot::Opening => (Side::Monsters, true),
+            Shot::Side(side) => (side, false),
+        };
+        let (half, sin, cos) = if wide {
+            (WIDE_HALF_ANGLE, SIN_WIDE, COS_WIDE)
+        } else {
+            (HALF_ANGLE, SIN_NARROW, COS_NARROW)
+        };
+        let (width, depth) = self.side_extents(framed);
+        let distance = shot_distance(width, depth, sin, cos, wide);
+        let height = (depth / 2).max(0x1333);
+        let target = Vec3::new(0.0, fx12(height), 0.0);
+        let eye = Vec3::new(0.0, fx12(height.min(0x2000)), fx12(distance));
+        let sign = framed.camera_sign();
+        // A monster kind with a shot of its own (`data_ov026_021de87c` through
+        // `func_ov026_021d8aac`, applied by `param_8` of `func_ov000_0216d600`): the table
+        // gives the eye and the target outright, in the side-1 convention the sign flips. Only
+        // the opening passes `param_8` (the camera commands of `ov_025::021e3c80` pass 0).
+        let kind = if shot == Shot::Opening {
+            self.kind_shot()
+        } else {
+            None
+        };
+        if let Some((kind_eye, kind_target)) = kind {
+            let target = Vec3::new(kind_target.x, kind_target.y, kind_target.z * sign);
+            let eye = Vec3::new(kind_eye.x, kind_eye.y, kind_eye.z * sign);
+            (eye, target, half)
+        } else {
+            (Vec3::new(eye.x, eye.y, eye.z * sign), target, half)
+        }
+    }
+
+    /// Re-frames a running opening after the set changed (a call for backup widens the row and
+    /// raises the camera's extents, `ov_000::021677fc`), without restarting its easing.
+    fn refresh_approach(&mut self) {
+        let (eye, target, _) = self.shot_placement(self.shot);
+        if let Some(approach) = &mut self.approach {
+            approach.target = framing(target, eye);
+        }
+    }
+
+    /// The opening's first frame (`func_ov000_0216118c`): the side shot is framed, then the eye
+    /// is read off the clamped camera as spherical parameters, pulled back by
+    /// [`INTRO_PITCH`]/[`INTRO_DISTANCE`], and eased back over the following steps
+    /// (`func_ov000_0216f0d0`, gain [`INTRO_GAIN`] per step, [`INTRO_SNAP`] to settle).
+    fn start_opening(&mut self) {
+        let target = self.camera.target;
+        let settle = framing(target, self.camera.eye());
+        let mut pulled = settle;
+        pulled.pitch += INTRO_PITCH;
+        pulled.distance += INTRO_DISTANCE;
+        let eye = place(target, pulled);
+        // `func_ov000_0216f2b8` runs on the same frame as the set-up and clamps the eye.
+        let eye = clamp_eye(eye);
+        self.camera.look_at(eye, target);
+        self.approach = Some(Approach {
+            current: framing(target, eye),
+            target: settle,
+        });
+    }
+
+    /// One fixed step of the opening's easing (`func_ov000_0216f0d0` then
+    /// `func_ov000_0216f2b8`, in that order in `func_ov000_0216d464`), on the battle's 30 Hz
+    /// update: the ease moves on every second 60 Hz fixed step.
+    fn step_camera(&mut self) {
+        if self.approach.is_none() {
+            return;
+        }
+        self.approach_phase = !self.approach_phase;
+        if self.approach_phase {
+            return;
+        }
+        let Some(mut approach) = self.approach else {
+            return;
+        };
+        let target = self.camera.target;
+        let (mut eye, settled) = approach_step(&mut approach, target);
+        let clamped = clamp_eye(eye);
+        if clamped != eye {
+            // `func_0202eab8` rewrites the spherical parameters from the clamped eye.
+            approach.current = framing(target, clamped);
+            eye = clamped;
+        }
+        self.camera.look_at(eye, target);
+        self.approach = (!settled).then_some(approach);
+    }
+
+    /// The camera's own clamp after a command (`func_ov000_0216f2b8`): 17 from the stage's
+    /// centre in the ground plane, 5 above it.
+    fn clamp_camera(&mut self) {
+        let eye = clamp_eye(self.camera.eye());
+        self.camera.look_at(eye, self.camera.target);
     }
 
     /// Asks for the row formation (`ov_000::02167e6c`), or for the grid the battle starts on
@@ -1119,10 +1302,17 @@ impl BattleScene {
         }
         self.formation = formation;
         self.place();
-        self.set_shot(self.shot);
+        if self.approach.is_some() {
+            self.refresh_approach();
+        } else {
+            self.set_shot(self.shot);
+        }
     }
 
-    /// Puts the fighters where the formation says and refreshes their drawn transforms.
+    /// Puts the fighters where the formation says and refreshes their drawn transforms. A
+    /// fighter the game's tables have no place for (a ninth monster, a fifth party member)
+    /// keeps the position the scene built it at: the original's tables hold four and eight
+    /// (`0x02183108`, `0x02183118`) and its loops stop there.
     #[allow(dead_code)]
     fn place(&mut self) {
         let party_count = self
@@ -1140,13 +1330,18 @@ impl BattleScene {
             .collect();
         for index in 0..self.fighters.len() {
             let fighter = self.fighters[index].fighter;
-            let (position, heading) = match (self.formation, fighter.side) {
-                (Formation::Grid, Side::Party) => (grid_position(party_slots[fighter.index]), PI),
-                (Formation::Grid, Side::Monsters) => {
-                    (grid_position(monster_slots[fighter.index]), 0.0)
-                }
-                (Formation::Row, Side::Party) => row_party(fighter.index, party_count),
+            let placed = match (self.formation, fighter.side) {
+                (Formation::Grid, Side::Party) => party_slots
+                    .get(fighter.index)
+                    .map(|slot| (grid_position(*slot), PI)),
+                (Formation::Grid, Side::Monsters) => monster_slots
+                    .get(fighter.index)
+                    .map(|slot| (grid_position(*slot), 0.0)),
+                (Formation::Row, Side::Party) => Some(row_party(fighter.index, party_count)),
                 (Formation::Row, Side::Monsters) => row_monster(&widths, &kinds, fighter.index),
+            };
+            let Some((position, heading)) = placed else {
+                continue;
             };
             let position = position + Vec3::Y * FIGHTER_HEIGHT;
             self.fighters[index].position = position;
@@ -1167,25 +1362,87 @@ impl BattleScene {
         }
     }
 
-    /// Width and depth of the fighters' formation, from the drawn places.
-    fn extents(&self) -> (f32, f32) {
-        let mut lo = Vec2::splat(f32::MAX);
-        let mut hi = Vec2::splat(f32::MIN);
-        for placed in &self.fighters {
-            lo = lo.min(placed.position.xz());
-            hi = hi.max(placed.position.xz());
+    /// The width and depth of one side, on the fx12 grid, as `func_ov000::021675a0` (party) and
+    /// `func_ov000::021677fc` (monsters) store them at `camera +0x228`/`+0x22c` and
+    /// `+0x230`/`+0x234`: the party's row width `0x1000` plus `0x1800` per extra member and a
+    /// depth of `0x1800`; the monsters' row width (each body's radius, narrowed for the five
+    /// kinds when more than one fights) and the tallest body plus `0x800`.
+    ///
+    /// The original computes these from the row even when the battle stands on the grid
+    /// (`ov_000::02164d74` calls `021677fc` before `02167cd4`), so the framing does not follow
+    /// the drawn places.
+    fn side_extents(&self, side: Side) -> (i32, i32) {
+        match side {
+            Side::Party => {
+                let count = self
+                    .fighters
+                    .iter()
+                    .filter(|f| f.fighter.side == Side::Party)
+                    .count()
+                    .clamp(1, 4);
+                #[allow(clippy::cast_possible_wrap)]
+                let width = 0x1000 + (count as i32 - 1) * 0x1800;
+                (width, 0x1800)
+            }
+            Side::Monsters => {
+                let count = self
+                    .fighters
+                    .iter()
+                    .filter(|f| f.fighter.side == Side::Monsters)
+                    .count()
+                    .min(MONSTER_SLOTS);
+                if count == 0 {
+                    // The camera object's own defaults (`func_ov000_0216d2d0`).
+                    return (0x1000, 0x1000);
+                }
+                let party = self.fighters.len()
+                    - self
+                        .fighters
+                        .iter()
+                        .filter(|f| f.fighter.side == Side::Monsters)
+                        .count();
+                let mut total = 0;
+                let mut tallest = 0;
+                for index in 0..count {
+                    let number = self.fighters[party + index].number;
+                    let body = to_fx12(self.widths[party + index]);
+                    total += (body * narrow_factor(number, count) + 0x800) >> 12;
+                    tallest = tallest.max(to_fx12(self.heights[party + index]));
+                }
+                // `func_ov000_021677fc` adds the row's gap once per interval to the width it
+                // stores at `+0x230` (the camera frames the row, gaps included).
+                (
+                    total + row_gap(total, count) * (count as i32 - 1),
+                    tallest + 0x800,
+                )
+            }
         }
-        if self.fighters.is_empty() {
-            return (2.0, 2.0);
-        }
-        // The bodies' widths widen the formation beyond the places alone; the tallest body is
-        // the monster row's height (`ov_000::0216d600`).
-        let body = self.widths.iter().copied().fold(0.0f32, f32::max);
-        let tallest = self.heights.iter().copied().fold(0.0f32, f32::max).max(1.5);
-        (
-            (hi.x - lo.x + body.max(1.0)).max(2.0),
-            (hi.y - lo.y + 1.5).max(tallest + 0.5).max(2.0),
-        )
+    }
+
+    /// The shot of the first monster kind the table at `data_ov026_021de87c` names
+    /// (`func_ov026_021d8aac`: the records in order, the first kind present wins). `None`
+    /// without a named kind: the framing is then the calculated side shot.
+    ///
+    /// The table's `0x115` record has three variants chosen by `func_ov026_021d8aac`'s second
+    /// argument (`battle +0x8e20` modulo three, a battle counter the port does not carry): the
+    /// first is taken. Its other default, the `kind 0` record applied when
+    /// `func_ov000_0215fc60(battle)` answers 2, needs the battle record's own type and is not
+    /// modelled.
+    fn kind_shot(&self) -> Option<(Vec3, Vec3)> {
+        let mut kinds: Vec<u16> = self
+            .fighters
+            .iter()
+            .filter(|f| f.fighter.side == Side::Monsters)
+            .filter_map(|f| f.kind)
+            .collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        shots::kind_shot(&kinds).map(|(eye, target)| {
+            (
+                Vec3::new(fx12(eye[0]), fx12(eye[1]), fx12(eye[2])),
+                Vec3::new(fx12(target[0]), fx12(target[1]), fx12(target[2])),
+            )
+        })
     }
 
     fn index_of(&self, fighter: Fighter) -> Option<usize> {
@@ -1262,19 +1519,112 @@ pub fn apply_cue(scene: &mut BattleScene, cue: narrate::Cue, rom: Option<&[u8]>)
     false
 }
 
-/// Keeps the eye where `ov_000::0216f2b8` does: at most [`EYE_REACH`] from the target in the
-/// ground plane, and at most [`EYE_HEIGHT`] above the stage.
-fn clamp_eye(target: Vec3, eye: Vec3) -> Vec3 {
-    let mut offset = eye - target;
-    offset.y = offset.y.min(EYE_HEIGHT);
-    let flat = Vec2::new(offset.x, offset.z);
+/// One step of the opening's easing (`func_ov000_0216f0d0`): the framing keeps `0xf33` of each
+/// difference (moves `0xcd` of it, rounded on the fx12 grid) and snaps to the target once every
+/// difference is under [`INTRO_SNAP`]. Returns the eye it places and whether it settled.
+fn approach_step(approach: &mut Approach, target: Vec3) -> (Vec3, bool) {
+    let d_yaw = signed_angle(approach.current.yaw, approach.target.yaw);
+    let d_pitch = approach.target.pitch - approach.current.pitch;
+    let d_distance = approach.target.distance - approach.current.distance;
+    let settled =
+        d_yaw.abs() < INTRO_SNAP && d_pitch.abs() < INTRO_SNAP && d_distance.abs() < INTRO_SNAP;
+    if settled {
+        approach.current = approach.target;
+    } else {
+        approach.current.yaw = reduce_angle(approach.current.yaw + fix_mul(d_yaw, INTRO_GAIN));
+        approach.current.pitch += fix_mul(d_pitch, INTRO_GAIN);
+        approach.current.distance += fix_mul(d_distance, INTRO_GAIN);
+    }
+    (place(target, approach.current), settled)
+}
+
+/// The camera's eye clamp (`ov_000::0216f2b8`): at most [`EYE_REACH`] from the stage's centre in
+/// the ground plane (the original normalises `(eye.x, 0, eye.z)`, so the origin, not the
+/// target), and at most [`EYE_HEIGHT`] above the stage.
+fn clamp_eye(eye: Vec3) -> Vec3 {
+    let mut eye = eye;
+    let flat = Vec2::new(eye.x, eye.z);
     let reach = flat.length();
     if reach > EYE_REACH {
         let scale = EYE_REACH / reach;
-        offset.x *= scale;
-        offset.z *= scale;
+        eye.x *= scale;
+        eye.z *= scale;
     }
-    target + offset
+    eye.y = eye.y.min(EYE_HEIGHT);
+    eye
+}
+
+/// An fx12 value as world units.
+fn fx12(value: i32) -> f32 {
+    value as f32 / 4096.0
+}
+
+/// A world length on the game's fx12 grid, rounded (`func_ov000_021677fc`'s `+ 0x800 >> 12`).
+fn to_fx12(value: f32) -> i32 {
+    (value * 4096.0).round() as i32
+}
+
+/// `(a × b + 0x800) >> 12`: the original's fx12 multiply-and-round
+/// (`func_ov000_0216f0d0`, `func_ov000_021677fc`).
+fn fix_mul(a: i32, b: i32) -> i32 {
+    ((i64::from(a) * i64::from(b) + 0x800) >> 12) as i32
+}
+
+/// The angle from `from` to `to` on the short way round, in fx12 (`fix32SignedAngleDistance`).
+fn signed_angle(from: i32, to: i32) -> i32 {
+    let mut difference = (to - from) % ANGLE_TURN;
+    if difference > ANGLE_HALF_TURN {
+        difference -= ANGLE_TURN;
+    } else if difference < -ANGLE_HALF_TURN {
+        difference += ANGLE_TURN;
+    }
+    difference
+}
+
+/// An angle reduced to `0..2π` in fx12 (`fix32ReduceAngle0To2Pi`).
+fn reduce_angle(angle: i32) -> i32 {
+    ((angle % ANGLE_TURN) + ANGLE_TURN) % ANGLE_TURN
+}
+
+/// The camera's spherical parameters of `eye` around `target` (`func_0202eab8`): the yaw, the
+/// eye's height above the target, and its distance, both on the fx12 grid.
+fn framing(target: Vec3, eye: Vec3) -> Framing {
+    let offset = eye - target;
+    let yaw = reduce_angle(to_fx12(offset.x.atan2(offset.z)));
+    Framing {
+        yaw,
+        pitch: to_fx12(offset.y),
+        distance: to_fx12(offset.length()),
+    }
+}
+
+/// The eye a framing places around `target` (`func_0202e5d8`): `target` plus the horizontal
+/// reach `√(distance² − pitch²)` turned by the yaw.
+fn place(target: Vec3, framing: Framing) -> Vec3 {
+    let pitch = i64::from(framing.pitch);
+    let distance = i64::from(framing.distance);
+    let flat = ((distance * distance - pitch * pitch).max(0) as f64).sqrt();
+    let yaw = fx12(framing.yaw);
+    Vec3::new(
+        target.x + yaw.sin() * flat as f32 / 4096.0,
+        target.y + fx12(framing.pitch),
+        target.z + yaw.cos() * flat as f32 / 4096.0,
+    )
+}
+
+/// The camera's distance for one side (`func_ov000_0216d600`): the larger of the width's and
+/// the depth's fx12 divisions by `2.2 sin` and `1.5 sin`, less 2.5, floored at 3.0 (wide) or
+/// 6.5. `sin`/`cos` are the half-angle's, on the fx12 grid, and the divisors are
+/// `_ffix(2.2 × sin)`/`_ffix(1.5 × sin)` as the original converts them.
+fn shot_distance(width: i32, depth: i32, sin: i32, cos: i32, wide: bool) -> i32 {
+    #[allow(clippy::cast_possible_truncation)]
+    let divisor_width = (2.2 * f64::from(sin)) as i32;
+    #[allow(clippy::cast_possible_truncation)]
+    let divisor_depth = (1.5 * f64::from(sin)) as i32;
+    let by_width = (i64::from((width * cos + 0x800) >> 12) << 12) / i64::from(divisor_width);
+    let by_depth = (i64::from((depth * cos + 0x800) >> 12) << 12) / i64::from(divisor_depth);
+    let distance = by_width.max(by_depth) as i32 - 0x2800;
+    distance.max(if wide { 0x3000 } else { 0x6800 })
 }
 
 /// A grid slot's place (`ov_000::0216f74c`): column `slot mod 9`, row `slot div 9`;
@@ -1288,17 +1638,26 @@ pub fn grid_position(slot: usize) -> Vec3 {
     Vec3::new(2.598 * column - 10.392 + stagger, 0.0, 2.25 * row - 9.0)
 }
 
+/// The monster grid table's own size: eight rows of eight bytes at `0x02183118`, and the
+/// battle's combatant slots past it (`0x8de0 + slot × 4`) hold eight too
+/// (`func_ov000_0215eb1c(battle, slots, 8, 0)`). There is no ninth place.
+pub const MONSTER_SLOTS: usize = 8;
+
 /// The party's grid slots by its size, from the table at `0x02183108` (wiki *Battle-Stages*).
+/// The table is four byte rows; a fifth member has no place (the party holds four).
+///
+/// `func_ov000_021675a0` forces the count to one when `func_ov000_0215fc60(battle)` answers
+/// (the battle's own creature at `+0x81fe` is 800 or 801), a battle type the port does not
+/// carry: the party's width always takes the real member count.
 pub fn party_slots(count: usize) -> Vec<usize> {
     const TABLE: [&[usize]; 4] = [&[58], &[57, 59], &[48, 58, 50], &[56, 66, 67, 60]];
-    match TABLE.get(count.saturating_sub(1)) {
-        Some(slots) => slots.to_vec(),
-        // The party holds four: a fifth would be a scripting error; give it the grid's middle.
-        None => (0..count).map(|i| 58 + i).collect(),
-    }
+    let count = count.clamp(1, TABLE.len());
+    TABLE[count - 1].to_vec()
 }
 
-/// The monsters' grid slots by their size, from the table at `0x02183118`.
+/// The monsters' grid slots by their size, from the table at `0x02183118`: eight byte rows of
+/// eight (`func_ov000_02167cd4` reads `0x02183118 + (count - 1) × 8`, its count capped at 8).
+/// A set with more than eight gets the eight rows: the game has no place for a ninth.
 pub fn monster_slots(count: usize) -> Vec<usize> {
     const TABLE: [&[usize]; 8] = [
         &[22],
@@ -1310,21 +1669,8 @@ pub fn monster_slots(count: usize) -> Vec<usize> {
         &[20, 11, 12, 22, 13, 14, 24],
         &[19, 10, 11, 12, 13, 14, 15, 25],
     ];
-    if let Some(slots) = TABLE.get(count.saturating_sub(1)) {
-        return slots.to_vec();
-    }
-    // More than eight: the table's eight, then the free slots nearest the monsters' middle
-    // **[hypothesis]**; the game's battles never ask for more (`eventbattle.bin`, counts up
-    // to 8).
-    let mut slots = TABLE[7].to_vec();
-    let mut candidate = 0;
-    while slots.len() < count {
-        if !slots.contains(&candidate) {
-            slots.push(candidate);
-        }
-        candidate += 1;
-    }
-    slots
+    let count = count.clamp(1, TABLE.len());
+    TABLE[count - 1].to_vec()
 }
 
 /// The turn of each party member in the row, in fx12 radians: `func_ov000_021675a0` reads the
@@ -1343,24 +1689,53 @@ const ROW_SPACING: f32 = 0x1800 as f32 / 4096.0;
 const ROW_PARTY_Z: f32 = 0x2800 as f32 / 4096.0;
 const ROW_MONSTER_Z: f32 = -0x2800 as f32 / 4096.0;
 
-/// The five monster kinds the row narrows when more than one fights (`func_ov000_021681f8`):
-/// `0xbd`, `0xbe`, `0xbf`, `0x110` and the literal it compares a kind against (`0x155`). Every
-/// other kind keeps its full width (`0x1000`).
-const NARROWED_KINDS: [u16; 5] = [0xbd, 0xbe, 0xbf, 0x110, 0x155];
+/// The five monster numbers the row narrows when more than one fights
+/// (`func_ov000_021681f8`, whose `param_1` is the combatant's number at `+2`): `0xbd`, `0xbe`,
+/// `0xbf`, `0x110` and the literal it compares against (`0x155`) — the drackals and Rover, the
+/// wide bodies. Every other number keeps its full width (`0x1000`).
+const NARROWED_NUMBERS: [u16; 5] = [0xbd, 0xbe, 0xbf, 0x110, 0x155];
 
 /// The narrowed width, `0xb33`/`0x1000` (`func_ov000_021681f8`'s own return).
-const NARROWED_WIDTH: f32 = 0xb33 as f32 / 4096.0;
+const NARROWED_WIDTH: i32 = 0xb33;
 
 /// The row's gap (`func_ov000_02167b5c`): at least `0x199` and at most `0xb33` fx12, chosen so
 /// that the row spans `0x4000` plus one minimum gap per interval when it fits.
-const ROW_GAP_MIN: f32 = 0x199 as f32 / 4096.0;
-const ROW_GAP_MAX: f32 = 0xb33 as f32 / 4096.0;
-const ROW_TARGET: f32 = 0x4000 as f32 / 4096.0;
+const ROW_GAP_MIN: i32 = 0x199;
+const ROW_GAP_MAX: i32 = 0xb33;
+const ROW_TARGET: i32 = 0x4000;
 
-/// A width on the game's fx12 grid, rounded as `func_ov000_021677fc` does
-/// (`(radius * factor + 0x800) >> 12`).
-fn row_width(width: f32) -> f32 {
-    (width * 4096.0).round().max(0.0) / 4096.0
+/// The factor `func_ov000_021681f8` gives a body of monster `number` in a row of `count`
+/// monsters, in fx12: `0xb33` for the five wide numbers, `0x1000` otherwise, and `0x1000` for
+/// every one of them when it fights alone.
+fn narrow_factor(number: Option<u16>, count: usize) -> i32 {
+    if count > 1 && number.is_some_and(|number| NARROWED_NUMBERS.contains(&number)) {
+        NARROWED_WIDTH
+    } else {
+        0x1000
+    }
+}
+
+/// A body's fx12 row width: `(radius × factor + 0x800) >> 12` (`func_ov000_021677fc`).
+fn row_width(width: f32, number: Option<u16>, count: usize) -> i32 {
+    let radius = to_fx12(width).max(0);
+    (radius * narrow_factor(number, count) + 0x800) >> 12
+}
+
+/// The row's gap, `func_ov000_02167b5c`: `0x4000` plus `0x199` per interval, spread over the
+/// intervals when the bodies leave room, else `0x199` or `0xb33`.
+fn row_gap(total: i32, count: usize) -> i32 {
+    let intervals = count as i32 - 1;
+    if intervals < 1 {
+        return 0;
+    }
+    let target = intervals * ROW_GAP_MIN + ROW_TARGET;
+    if target > intervals * ROW_GAP_MAX + total {
+        ROW_GAP_MAX
+    } else if target < total {
+        ROW_GAP_MIN
+    } else {
+        (target - total) / intervals
+    }
 }
 
 /// The row the party stands in: `z` +2.5, [`ROW_SPACING`] apart and centred, turned by
@@ -1368,79 +1743,46 @@ fn row_width(width: f32) -> f32 {
 ///
 /// The original walks the party from `+(count−1)·0x1800/2` down by `0x1800` and reads the turn
 /// table forward, so member 0 (the hero) is the **+x** end and takes the row's first turn (for
-/// four members `0x3570` = π + 0x333/4096): both ends turn inward.
+/// four members `0x3570` = π + 0x333/4096): both ends turn inward. The party holds four; a
+/// fifth has no turn in the table and keeps a straight heading.
 fn row_party(index: usize, count: usize) -> (Vec3, f32) {
     let x = (count.saturating_sub(1) as f32) * ROW_SPACING * 0.5 - index as f32 * ROW_SPACING;
     let turn = PARTY_ROW_TURNS
         .get(count.saturating_sub(1))
         .and_then(|row| row.get(index))
-        .map_or_else(
-            || {
-                // The party holds four (`func_ov000_021675a0` reads four combatants); a fifth
-                // would be a scripting error: spread it evenly at ±0.2 **[hypothesis]**.
-                if count > 1 {
-                    0.2 * (1.0 - 2.0 * index as f32 / (count - 1) as f32)
-                } else {
-                    0.0
-                }
-            },
-            |angle| *angle as f32 / 4096.0,
-        );
+        .map_or(0.0, |angle| *angle as f32 / 4096.0);
     (Vec3::new(x, 0.0, ROW_PARTY_Z), turn)
 }
 
-/// The row the monsters stand in: `z` −2.5, facing 0, side by side by their widths (the narrow
-/// kinds at [`NARROWED_WIDTH`]), with the gap of `func_ov000_02167b5c`. `kinds` is each
-/// monster's number, in `widths` order (`func_ov000_021677fc`, which reads the combatant's own
-/// kind at `+2`).
-fn row_monster(widths: &[f32], kinds: &[Option<u16>], index: usize) -> (Vec3, f32) {
-    let count = widths.len();
-    if count == 0 {
-        return (Vec3::new(0.0, 0.0, ROW_MONSTER_Z), 0.0);
+/// The row the monsters stand in: `z` −2.5, facing 0, side by side by their radii (the five
+/// wide numbers at [`NARROWED_WIDTH`]), with the gap of `func_ov000_02167b5c`. `numbers` is
+/// each monster's number, in `widths` order (`func_ov000_021677fc`, which reads the
+/// combatant's own number at `+2`). The original walks the battle's eight combatant slots, so
+/// a ninth monster has no place and gets `None`.
+fn row_monster(widths: &[f32], numbers: &[Option<u16>], index: usize) -> Option<(Vec3, f32)> {
+    let count = widths.len().min(MONSTER_SLOTS);
+    if index >= count {
+        return None;
     }
-    let narrowed = |i: usize| {
-        if count > 1
-            && kinds
-                .get(i)
-                .copied()
-                .flatten()
-                .is_some_and(|kind| NARROWED_KINDS.contains(&kind))
-        {
-            NARROWED_WIDTH
-        } else {
-            1.0
-        }
-    };
-    let widths: Vec<f32> = widths
+    let widths: Vec<i32> = widths[..count]
         .iter()
         .enumerate()
-        .map(|(i, width)| row_width(width * narrowed(i)))
+        .map(|(i, width)| row_width(*width, numbers.get(i).copied().flatten(), count))
         .collect();
-    let total: f32 = widths.iter().sum();
-    let intervals = count as f32 - 1.0;
-    let gap = if count > 1 {
-        let target = intervals * ROW_GAP_MIN + ROW_TARGET;
-        if target > intervals * ROW_GAP_MAX + total {
-            ROW_GAP_MAX
-        } else if target < total {
-            ROW_GAP_MIN
-        } else {
-            (target - total) / intervals
-        }
-    } else {
-        0.0
-    };
-    let mut x = -(total + gap * intervals) * 0.5;
+    let total: i32 = widths.iter().sum();
+    let intervals = count as i32 - 1;
+    let gap = row_gap(total, count);
+    let mut x = -(total + gap * intervals) / 2;
     for (i, width) in widths.iter().enumerate() {
         // The half the original places with is the integer half of the fx12 width.
-        let half = ((width * 4096.0).round() as i32 / 2) as f32 / 4096.0;
+        let half = width / 2;
         x += half;
         if i == index {
-            return (Vec3::new(x, 0.0, ROW_MONSTER_Z), 0.0);
+            return Some((Vec3::new(fx12(x), 0.0, ROW_MONSTER_Z), 0.0));
         }
         x += half + gap;
     }
-    (Vec3::new(0.0, 0.0, ROW_MONSTER_Z), 0.0)
+    None
 }
 
 fn monster_world(position: Vec3, heading: f32) -> Mat4 {

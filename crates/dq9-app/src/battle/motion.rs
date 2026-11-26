@@ -334,9 +334,8 @@ impl Timeline {
     /// A blow of `blow` lasting `ticks` from `base` towards `target`.
     ///
     /// The lunge ends `gap` plus the two bodies' radii from the target's middle: the script's
-    /// gap is edge to edge, and a body's radius is its `mon_data` radius (the width the scene
-    /// stores is four radii). The hit is at its point of the motion; a blow that cannot step
-    /// in keeps its place.
+    /// gap is edge to edge, and a body's radius is its `mon_data` radius (the scene's width).
+    /// The hit is at its point of the motion; a blow that cannot step in keeps its place.
     pub fn blow(
         blow: &Blow,
         ticks: u32,

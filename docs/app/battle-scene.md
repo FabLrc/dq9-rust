@@ -28,27 +28,38 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
   once and never blended. The slot the record carries is not in `eventbattle.bin` (**[unknown]**).
 - **Grid.** Slot *s* → column *s* mod 9, row *s* div 9; x = 2.598 × column − 10.392 (+1.299 on
   an odd row), z = 2.25 × row − 9 (`ov_000::0216f74c`). The slots by side size come from the
-  tables at `0x02183108` (party) and `0x02183118` (monsters): one hero → 58 (0, 4.5), three
-  monsters → 29, 22, 32 (−3.897, −2.25), (0, −4.5), (3.897, −2.25). Every fighter stands
-  `0xcc` (0.05) above the stage. A set with more than eight monsters (the tables stop at
-  eight; the ROM's records ask at most eight) gets free slots after them **[hypothesis]**.
+  tables at `0x02183108` (party: four byte rows of four) and `0x02183118` (monsters: eight byte
+  rows of eight): one hero → 58 (0, 4.5), three monsters → 29, 22, 32 (−3.897, −2.25),
+  (0, −4.5), (3.897, −2.25). Every fighter stands `0xcc` (0.05) above the stage. **The tables
+  stop at four and eight** (`func_ov000::0215e9fc`/`0215eb1c` cap their counts at 4 and 8, and
+  `func_ov000::02167cd4`/`021676a8` index `base + (count − 1) × size`): a ninth monster has no
+  grid place and no row place, and the port builds the eight the battle's slots hold
+  (`--battle-stage … --monsters 1x9` logs it).
 - **Formation.** A battle starts on the grid (`ov_000::02164d74` places everyone on it and sets
   the flag to 2, `ov_000::02167dd8`); a few action scripts ask for the row
   (`ov_000::02167e6c` sets it to 1), so `set_formation(Formation::Row)` asks for it. The row's
   places are the ROM's: the party at z 2.5, 1.5 apart and centred, each turned by the table at
   `0x02183158` (`ov_000::021675a0`; one hero `0x323d` = the ROM's π, a four-hero row
   `0x3570 … 0x2f0a` = π ± 0x333/4096 = ±0.2, paired from +x down so both ends turn inward);
-  the monsters at z −2.5, side by side by their
-  widths ×0.7 for the five kinds of `ov_000::021681f8` (`0xbd`, `0xbe`, `0xbf`, `0x110`,
-  `0x155`, once more than one fights) and by `ov_000::02167b5c`'s gap (0x199–0xb33 fx12, filled
-  to 4.0 + one minimum gap per interval). Every width is rounded on the game's fx12 grid as
-  `func_ov000_021677fc` does. A monster that joins recomputes the row (`ov_025::021d8c30`
-  calls `0x021677fc`), which the port does not do yet (**[hypothesis]** that a backup call also
-  switches the flag to the row: `0x02167e6c` has no caller in the corpus). The layout is proved
-  by `app/encounter/tests.rs::the_row_formation_places_one_hero_and_three_monsters` and the
-  `battle/tests.rs` row cases (the table's values and pairing, the gap's arithmetic, the five
-  kinds); `--screenshot` cannot ask for the row yet (that flag lives in `native.rs`), so printing
-  a row battle from the CLI is an open diagnostic, not a claim.
+  the monsters at z −2.5, side by side by their **body radius** ×0.7 for the five wide
+  monster numbers of `ov_000::021681f8` (`0xbd`, `0xbe`, `0xbf`, `0x110`, `0x155` — the
+  drackals and Rover, once more than one fights) and
+  by `ov_000::02167b5c`'s gap (0x199–0xb33 fx12, filled to 4.0 + one minimum gap per
+  interval). The radius is the object's own, which the battle sets from `mon_data` `+0x0C` in
+  1024ths (`Object3D_SetRadius(record[+0x0C] << 2)`, `func_020484f8`/`func_02048850`): a
+  slime's 819 is 0.8,
+  so three slimes stand at −1.5, 0 and +1.5. `func_ov000_021677fc` does the arithmetic on the
+  fx12 grid — `(radius × factor + 0x800) >> 12`, the total and the gap summed, the first place
+  at `−(total + gap × (n−1)) / 2`, each step `half = width / 2` — which the port mirrors in
+  integers. A monster that joins recomputes the row (`ov_025::021d8c30` calls `0x021677fc`),
+  and the port re-places the set and re-frames a running opening (**[hypothesis]** that a
+  backup call also switches the flag to the row: `0x02167e6c` has no caller in the corpus).
+  The layout is proved by `app/encounter/tests.rs::
+  the_row_formation_places_one_hero_and_three_monsters` and the `battle/tests.rs` row cases
+  (the table's values and pairing, the gap's arithmetic, the five numbers, the
+  eight-monster limit); the row of nine is captured by
+  `battle/tests.rs::the_opening_camera_and_the_nine_monster_row_are_captured`, since
+  `--screenshot` cannot ask for the row (that flag lives in `native.rs`).
 - **Models and motions.** The party is the hero model (`AnimatedScene::add_hero`); monsters
   load their `.cchr` bodies and separate `.cmot` motions from `<code>.mon` in
   `data/pack_lv5/enemy.gp2` (`LoadMonsterCharacter`, native 233). ROM `.bact` action sections
@@ -56,14 +67,41 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
   `mp02NNbe` set. Damage reacts at the script's hit percentage; death/flight play once then
   hide the model. The original alpha fade and camera close-up size remain unmodelled.
   Timing, dispatch and limits: [`re/battle-data.md`](../re/battle-data.md#action-scripts-and-battle-motions).
-- **Camera.** `Shot::Opening` is the opening (`func_ov000_0216118c`): the wide side shot
-  (22° half-angle), from the party's side; `Shot::Side(side)` is the 15° framing of
-  `func_ov000_0216d600`. Distance is the larger of width × cos ÷ (sin × 2.2) and
-  depth × cos ÷ (sin × 1.5), less 2.5 (at least 6.5, 3 wide), looking at (0, depth/2 clamped
-  1.2–2, 0). `func_ov000_0216f2b8` then keeps the eye at most 17 from the target and at most 5
-  high. Which sign "side 1" is, the opening's eased approach (0.95 a frame) and the fixed
-  per-monster-kind shots of `data_ov026_021de87c` are **[unknown]/[hypothesis]**: the first
-  is taken as the party's side.
+- **Camera.** `func_ov000_0216d600(camera, side, wide, …)` frames **the side looked at**: side 1
+  is the monsters (`+0x230`) from the party's `+z`; side 0 the party (`+0x228`) from `−z` (both
+  `z` negated). Its extents are the **row's**, computed even when the battle stands on the grid
+  (`ov_000::02164d74` calls `021677fc` before `02167cd4`): the party `0x1000 + 0x1800 ×
+  (members − 1)` wide and `0x1800` deep (`ov_000::021675a0`), the monsters the sum of their
+  radii plus one row gap per interval (the same `0x199`–`0xb33` as the row) and the tallest
+  body + 0x800 (`ov_000::021677fc`). The party's count is forced to one for the battle types
+  `func_ov000_0215fc60` answers (800/801), which the port does not carry. Half-angles 15°
+  (`0x424`/`0x424 + 0xb50`) and 22° (`0x5fe`/`0xed6`), fx12 sin/cos at
+  `0x0216d8f4`/`0x0216d8f8`; distance =
+  max(width·cos ÷ (2.2·sin), depth·cos ÷ (1.5·sin)) − 2.5, floored at 6.5 (3.0 wide), with
+  `FX_Div` and the `_ffix` of each divisor as the original does; look at (0, depth/2 at least
+  1.2, 0) with the eye held at most 2 high. `func_ov000_0216f2b8` then keeps the eye at most 17
+  from the stage's centre and at most 5 high.
+- **Opening.** `func_ov000_0216118c(…, 1)` runs once per battle (`ov_026::021d8ba0` state 3,
+  only if the camera's easing is idle): it asks the wide 22° side shot, then reads the eye's
+  spherical parameters (`yaw`, `pitch`, `distance`, `func_0202eab8`) and sets the eye pulled back
+  by `pitch + 0x800` and `distance + 0x3000` (`func_0202e5d8`). `func_ov000_0216f0d0` then eases
+  the yaw (the short way, on a full turn of `0x6488` = 2π × 4096), the pitch and the distance
+  back to that shot: each keeps `0xf33` of its difference (`(difference × 0xcd + 0x800) >> 12`,
+  so 0.95 an update, `uRam02161260`) and the step snaps once every difference is under 0x28.
+  The battle scene runs at **30 Hz** (`ov_017::0218b688`'s `CalculateDeltaTime` gives 2 VBlanks
+  an update), so the ease moves on every second 60 Hz fixed step; the Hexagoon's opening
+  settles at the 114th update (the 228th fixed step). The half-angle stays 22° throughout, and
+  `ov_000::0216f2b8` clamps the eye on every step (a pulled-back eye may start beyond 17 and is
+  cut to it).
+- **Kind shots.** `data_ov026_021de87c` (overlay 026, 47 records of seven fx12 `int`s: kind, eye,
+  target, then `−1`) gives the big monsters fixed shots: `func_ov026_021d8aac` takes the first
+  record whose **kind** stands (`func_ov000_0215fc8c` compares `mon_data +0x10`, not the
+  monster's number) and `func_ov000_0216d600`'s `param_8` applies it instead of the calculated
+  eye and target. Read whole in `battle/shots.rs` (`0x101`…`0x133`): the Hexagoon (number 300)
+  is kind `0x101`, the table's first record, eye (0, 1.060, 2.270) and target (0, 1.080, 0);
+  `0x12c` is Estark's. Two details are not modelled: `0x115`'s three variants (picked by
+  `battle +0x8e20` modulo 3, a battle counter) and the `kind 0` record (a battle type,
+  `func_ov000_0215fc60` = 2); the first variant and no default are taken (**[hypothesis]**).
 - **API**: `act(actor, action, targets, damaged)` starts the ROM-backed gesture;
   `presenting()` gates windows/input until it finishes. `kill`/`flee` hide at motion end;
   `remove` hides immediately. `upload` transfers geometry and every fighter world matrix,
@@ -98,7 +136,8 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
     state 5): 140 steps in all.
   Frames, the intro camera and the measurements: [`re/battle-transition.md`](../re/battle-transition.md).
   The port spends 144 steps from a contact to the first fade step against the original's 149
-  (the five set-up frames before the freeze are not spent); the intro camera stays unmodelled.
+  (the five set-up frames before the freeze are not spent); the opening camera runs on the
+  scene's own clock once it is built.
 - **Headless** (`--headless`, `--auto`, `--replay`, tests): the scene is built and checked,
   then the battle is settled in the **same fixed step** (`App::last_battle` records its stage
   and fighter count). No step is spent on a presentation: the headless timeline is the
@@ -115,7 +154,15 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
   waits for it, like the game's task order.
 
 `--screenshot` prints each fighter's placed position and heading, and the camera it used
-(`camera: eye … target … half-angle …`). Captures (`build/evidence/j4-battle-scene/`):
+(`camera: eye … target … half-angle …`); `--frame N` steps the scene N fixed steps first, which
+is how the opening is captured. `build/evidence/v4-battle-intro/captures/` holds it at ticks
+0/60/240 of the Hexagoon's set battle (`opening-tick00-hexagoon.png` `eec1ec966add`,
+`opening-tick60-hexagoon.png` `76326cdb173f`, `opening-tick240-hexagoon.png` `0630c6829616`,
+its 241st step identical) and the row of nine slimes the game cannot hold
+(`row-nine-monsters.png` `3ba5770d03c9`: eight places, no ninth). The camera's constants and
+the whole kind table are in `build/evidence/v4-battle-intro/camera-tables.txt`
+(`3533e89ea211`). Older captures
+(`build/evidence/j4-battle-scene/`):
 `hexagoon.png` (`dd025965b166`: the Hexagoon on `B02M15`, the hero facing it),
 `slimes-f01.png` (`3e1ba9308ed1`: three slimes on `B01M16`, the middle one hidden behind the
 hero), `battle26.png` (`c7ed26e23bcb`: battle 26's record, monsters 290/292/290) and
