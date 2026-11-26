@@ -89,8 +89,12 @@ impl PromptKind {
 /// How a message ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndKind {
-    /// `<END>`, `<END_R_TURN>`: the text stays until the action key closes the window.
+    /// `<END>`: the text stays until the action key closes the window.
     Wait,
+    /// `<END_R_TURN>` (`0xFF02`): like [`EndKind::Wait`], and the key that closes the window
+    /// gives the partner the heading the conversation found (`func_020440cc` case 0,
+    /// [`Dialogue::take_turn_release`](super::Dialogue::take_turn_release)).
+    Turn,
     /// `<CLOSE>`: the window closes at once.
     Close,
     /// `<ADD>`: the message ends and the window stays for the next message of the scene.
@@ -190,6 +194,11 @@ pub enum Op {
     Label(u16),
     /// `<JP_x>`: continue after the label `0xFFD0 + n` (the code kept is the label's).
     Jump(u16),
+    /// `<R_TURN>` (`0xFF2C`): the partner is given the heading the conversation found while the
+    /// rest of the page still shows (`0x020659a0`, the code runner: the requested angle
+    /// `+0x1844` becomes the saved `+0x183c` and `+0x19b6` keeps handing it over). Reported by
+    /// [`Dialogue::take_turn_release`](super::Dialogue::take_turn_release).
+    ReleaseTurn,
     End(EndKind),
 }
 
@@ -302,9 +311,11 @@ pub fn layout(tokens: &[Token], tags: LeadingTags, font: &Font, max_width: i32) 
                     _ => {}
                 }
                 let op = match *code {
-                    0xFF01 | 0xFF02 => Some(Op::End(EndKind::Wait)),
+                    0xFF01 => Some(Op::End(EndKind::Wait)),
+                    0xFF02 => Some(Op::End(EndKind::Turn)),
                     0xFF03 => Some(Op::End(EndKind::Close)),
                     0xFF0A => Some(Op::End(EndKind::Add)),
+                    0xFF2C => Some(Op::ReleaseTurn),
                     0xFF0C | 0xFF0D => Some(Op::Page),
                     0xFF1D | 0xFF1E => Some(Op::Wait { cursor: true }),
                     0xFF2E => Some(Op::Sound(Sound::Exclamation)),

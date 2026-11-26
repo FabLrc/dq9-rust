@@ -85,10 +85,17 @@ enum State {
         cursor: u8,
         sound: AnswerSound,
     },
-    /// `<END>`: the text stays until the action key. State 0 draws no wait arrow.
-    WaitEnd,
+    /// `<END>`/`<END_R_TURN>`: the text stays until the action key. State 0 draws no wait
+    /// arrow. `turn` is set by `<END_R_TURN>` (`0xFF02`): the key that leaves the wait also
+    /// gives the partner its heading back.
+    WaitEnd {
+        turn: bool,
+    },
     /// The key was pressed on an `<END>`: the window closes when the count ends.
-    Closing(u32),
+    Closing {
+        left: u32,
+        end: EndKind,
+    },
     /// `<ADD>` (state 3): the text stays until the action key, with the blinking wait arrow;
     /// the script's next message then continues in the same window.
     WaitAdd,
@@ -163,6 +170,9 @@ pub struct Dialogue {
     arrow_frames: u32,
     /// An answer's branch started and has typed nothing yet.
     empty_branch: bool,
+    /// The conversation gave the partner its heading back since the last
+    /// [`Dialogue::take_turn_release`].
+    released: bool,
 }
 
 impl Dialogue {
@@ -184,6 +194,7 @@ impl Dialogue {
             wait_left: None,
             arrow_frames: 0,
             empty_branch: false,
+            released: false,
         }
     }
 
@@ -219,7 +230,7 @@ impl Dialogue {
             self.state,
             State::WaitPage
                 | State::WaitPad { .. }
-                | State::WaitEnd
+                | State::WaitEnd { .. }
                 | State::WaitAdd
                 | State::Prompt { .. }
         )
@@ -231,7 +242,7 @@ impl Dialogue {
     pub fn probe_arrow(&self) -> bool {
         matches!(
             self.state,
-            State::WaitPage | State::WaitEnd | State::WaitPad { cursor: true }
+            State::WaitPage | State::WaitEnd { .. } | State::WaitPad { cursor: true }
         )
     }
 
@@ -251,6 +262,20 @@ impl Dialogue {
     /// The sounds the window made since the last call, for the application to play.
     pub fn take_sounds(&mut self) -> Vec<Sound> {
         std::mem::take(&mut self.sounds)
+    }
+
+    /// Whether the open conversation gave the partner its heading back since the last call
+    /// (it then turns back to the heading the conversation found, `func_02040af0(chara,
+    /// +0x183c)`):
+    ///
+    /// - `<R_TURN>` (`0xFF2C`, [`Op::ReleaseTurn`]) met in the text: the rest of the page still
+    ///   shows after it;
+    /// - the action key that leaves an `<END_R_TURN>` (`0xFF02`, [`EndKind::Turn`]) line, at the
+    ///   close (`func_020440cc` case 0 compares the end code with `0xFF02`).
+    ///
+    /// A plain `<END>` never reports: the partner keeps the heading the turn left it at.
+    pub fn take_turn_release(&mut self) -> bool {
+        std::mem::take(&mut self.released)
     }
 
     fn clear_box(&mut self) {
@@ -289,7 +314,7 @@ impl Dialogue {
             let Some(op) = self.script.ops.get(self.at) else {
                 // An event's message stays until the action key (or the script) closes it.
                 self.state = if self.hold_at_end {
-                    State::WaitEnd
+                    State::WaitEnd { turn: false }
                 } else {
                     State::Closed(EndKind::Wait)
                 };
@@ -344,6 +369,13 @@ impl Dialogue {
                     self.spend(&mut budget);
                 }
                 Op::Marker(_) | Op::Label(_) => self.spend(&mut budget),
+                // `<R_TURN>`: the partner is given the saved heading and the rest of the page
+                // types on after it (`0x020659a0` sets `+0x1844 = +0x183c`, `+0x19b6 = 1` and
+                // returns). One unit, like any code that does not stop the window.
+                Op::ReleaseTurn => {
+                    self.released = true;
+                    self.spend(&mut budget);
+                }
                 Op::Jump(label) => {
                     let target = self
                         .script
@@ -360,13 +392,15 @@ impl Dialogue {
                 // answer, no key and no wait. melonDS, NPC 130 of `X01M07`: the answer key at
                 // frame 795, `W+0x9a0` 6 to 0 and `W+0x998` 1 to 0 at frame 797, against 6
                 // steps after the key for a typed `<END>` (`docs/re/dialogue.md`).
-                Op::End(EndKind::Wait) if self.empty_branch => {
-                    self.state = State::Closed(EndKind::Wait);
+                Op::End(end @ (EndKind::Wait | EndKind::Turn)) if self.empty_branch => {
+                    self.state = State::Closed(*end);
                     return;
                 }
-                Op::End(EndKind::Wait) => {
+                Op::End(end @ (EndKind::Wait | EndKind::Turn)) => {
                     self.at += 1;
-                    self.state = State::WaitEnd;
+                    self.state = State::WaitEnd {
+                        turn: *end == EndKind::Turn,
+                    };
                     return;
                 }
                 Op::End(EndKind::Add) => {
@@ -483,16 +517,26 @@ impl Dialogue {
                     }
                 }
             }
-            State::WaitEnd => {
+            State::WaitEnd { turn } => {
                 if input.leaves_wait() {
-                    self.state = State::Closing(CLOSE_STEPS);
+                    // `func_020440cc` case 0: the key that leaves the end wait compares the
+                    // end code with `iRam02044424` (`0xFF02`, `<END_R_TURN>`) and gives the
+                    // saved heading back before the window closes; a plain `<END>` does not.
+                    self.released |= turn;
+                    self.state = State::Closing {
+                        left: CLOSE_STEPS,
+                        end: if turn { EndKind::Turn } else { EndKind::Wait },
+                    };
                 }
             }
-            State::Closing(left) => {
+            State::Closing { left, end } => {
                 self.state = if left > 1 {
-                    State::Closing(left - 1)
+                    State::Closing {
+                        left: left - 1,
+                        end,
+                    }
                 } else {
-                    State::Closed(EndKind::Wait)
+                    State::Closed(end)
                 };
             }
             State::WaitAdd => {

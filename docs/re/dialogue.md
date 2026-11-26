@@ -291,12 +291,21 @@ GetTickCount()`, `Character_Init` (`0x02032e68`) leaving `+0xb0 = 0x324` — the
 sheet. Kinds 4 and 6 skip the step; on arrival with bit `0x8000` of `+0xc4` set, kind 0 and
 the model name `uRam02033840`, animation 0 starts (`func_02033b88`).
 
-**Closing**: the heading is given back only when the line asks for it.
-`MsgWin_Update` (`0x020659a0`), state 0, compares the current control code with `0xFF02` and
-then calls `func_02040af0(chara(+0x1838), +0x183c)`; `0xFF02` is `<END_R_TURN>`, and
-`<R_TURN>` (`0xFF2C`) does the same through the code-runner. A plain `<END>` (`0xFF01`)
-restores nothing: the partner keeps the heading the turn left it at. English text:
-5,903 `<END_R_TURN>` against 30,625 `<END>`; 1,016 `<R_TURN>`.
+**Closing**: the heading is given back only when the line asks for it. `<END_R_TURN>`
+(`0xFF02`) enters state 0 like `<END>`; the restore sits in the **key handler**
+`func_020440cc` (`0x020440cc`), case 0: it compares the current control code
+(`func_020656d0`) with the `0xFF02` of its own literal pool and calls
+`func_02040af0(chara(+0x1838), +0x183c)` before reporting the key, so the partner turns back
+during the six steps the window takes to close. A plain `<END>` (`0xFF01`) restores nothing:
+the partner keeps the heading the turn left it at. `<R_TURN>` (`0xFF2C`) is **not** an end
+code: the stream's code runner inside `MsgWin_Update` (`0x020659a0`) handles it (the base
+constant is `0xFF4B`, as `0xFF4B − 0x40 = 0xFF0B` `AUTO`, `− 0x48 = 0xFF03` `CLOSE` and
+`− 0x4a = 0xFF01` `END` are the function's other branches), setting `+0x1844 = +0x183c` and
+`+0x19b6 = 1`, moving the index on and returning. The window keeps handing the saved heading
+to the character (`func_020656f4`) while the rest of the page types on. English text
+(`dq9re text --lang en`, 51,089 strings in 1,441 files; counts in
+`build/evidence/v3-dialogue-rturn/text-counts.txt`, `4642587c8ebc`): 5,903 `<END_R_TURN>` and
+30,590 `<END>`, and 2,724 `<R_TURN>` on 2,698 lines, every one of them in `data/scenario`.
 
 **Port.** `AnimatedScene::turn_npc` / `turn_npc_toward` / `release_npc` / `npc_angle`
 (`crates/dq9-render/src/animation/facing.rs`) keep one pivot per NPC id: a sheet turns
@@ -306,13 +315,17 @@ kept for `release_npc` (which turns back smoothly, like `func_02040af0`). A pivo
 after a plain `<END>` close re-saves that conversation's opening heading, as
 `TalkTask_Update` re-saves `+0x183c` at every open. A script
 writing the heading (`set_npc_angle`, the event natives) ends the pivot. `Talk::face_partner`
-(`crates/dq9-app/src/talk.rs`) requests it each step for the open partner, does not request it
-when the page carries `<N_TURN>`, and releases at the close when the line carries
-`<END_R_TURN>` (the port's compiler maps `0xFF01` and `0xFF02` to one end, so the raw text
-decides, as for `<INN=n>`). `<R_TURN>` is **[unknown]** in the port: it restores the heading in
-the middle of a message, which the port does not report; no prologue conversation depends on it
-**[hypothesis]**. The `--screenshot` preview steps the same pivots
-(`AnimatedScene::step_turns`), so a capture shows the turn.
+(`crates/dq9-app/src/talk.rs`) requests it each step for the open partner and does not request
+it when the page carries `<N_TURN>`. The two giving-back tags are compiled, not sniffed out of
+the raw text: `<END_R_TURN>` is `dq9_core::talk::EndKind::Turn` (a wait that reports at the key)
+and `<R_TURN>` is `Op::ReleaseTurn`, executed mid-page. `Dialogue::take_turn_release` reports
+the tick, the application releases the pivot there and latches the conversation
+(`Talk::turn_back`), so no new request is made while it runs — a tag of a branch the answer did
+not take cannot release it, unlike the earlier raw-text scan. A plain `<END>` never reports.
+The `--screenshot` preview steps the same pivots (`AnimatedScene::step_turns`), so a capture
+shows the turn; the tags themselves are unit-tested on synthetic lines and on two real ones
+(`M12J0/108_en.bin` record 13, `<R_TURN>` in the middle of its second page; `M01A0/108_en.bin`
+record 0, `<END_R_TURN>` at its end).
 
 Captures (`build/evidence/v3-dialogue-cast/`, M01, story 1.2.1, hero at `(-25.0, 3.72)`, horse
 NPC 4 at `(-23.68, 3.72)` facing `+x`): `m01-horse-before.png` (`959101d22f1f`) the horse facing
@@ -620,8 +633,11 @@ played by `Dialogue`.
 - Balloons `<EXC>`/`<QES>`: the rule, the 60-tick wait, the sheets (`ev_mark.spr`,
   `field_qu.spr` of `data/bin/icon.nsarc`) and the draw (`func_020675fc`) are read (§ "Turned to
   the hero"); the port neither keeps the request nor projects the speaker, so nothing is drawn.
-- `<R_TURN>` (`0xFF2C`) mid-message: restores the saved heading in the game, not reported by the
-  port's dialogue.
+- The turn tags are executed (`<N_TURN>`, `<R_TURN>`, `<END_R_TURN>`: `dq9_core`'s dialogue
+  reports the tick, `Talk::face_partner` releases the pivot), but no capture shows the partner
+  turning back: the two real lines that carry the tags (`M12J0/108_en.bin` record 13,
+  `M01A0/108_en.bin` record 0) are only unit-tested, and a model NPC's slower path is still
+  read from the code rather than observed.
 - The heading a conversation leaves behind is **not** restored by a plain `<END>` (§ "Turned to
   the hero"): the partner keeps facing the hero until a script or a cast rebuild moves it.
 - Services (`<INN=n>`, `<SHOP=n>`…), quests (`<QUEST=n>`), sounds, shake, `<AUTO>`,

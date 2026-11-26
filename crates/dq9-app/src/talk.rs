@@ -213,18 +213,6 @@ pub fn service_tag(text: &[u8]) -> Option<ServiceTag> {
     })
 }
 
-/// Whether the line closes the window with `<END_R_TURN>` (`0xFF02`): the game then gives the
-/// speaker back the angle `TalkTask_Update` saved (`MsgWin_Update` case 0 compares the code
-/// with `iRam02044424`), while a plain `<END>` keeps the heading the message turned it to.
-///
-/// `dq9_formats::message` maps both ends to the same code, so the raw text decides, as
-/// [`service_tag`] reads `<INN=n>`; a tag of a branch the answer did not take is not told
-/// apart.
-fn ends_with_restore(text: &[u8]) -> bool {
-    const TAG: &[u8] = b"<END_R_TURN>";
-    text.windows(TAG.len()).any(|w| w.eq_ignore_ascii_case(TAG))
-}
-
 /// A closed conversation, as trigger event 1 sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ended {
@@ -272,7 +260,9 @@ pub struct Talk {
     conversation: Option<(u16, u16)>,
     /// The partner a conversation holds still and turns to the hero ([`Talk::face_partner`]).
     facing: Option<u16>,
-    /// The open line ends with `<END_R_TURN>`: closing it gives the partner its heading back.
+    /// The open conversation gave the partner its heading back (`<R_TURN>` mid-message or the
+    /// key on `<END_R_TURN>`): the pivot turns back and is not requested again while that
+    /// conversation runs.
     turn_back: bool,
     /// The service tag of the open talk line, if any (`<INN=n>`…): the facility opens when
     /// the window closes.
@@ -395,9 +385,11 @@ impl Talk {
     /// `Character_TurnToFacing` `0x02033720` for the step). `<N_TURN>` sets the saved angle
     /// `+0x183c` back and clears the flag: the message does not turn the speaker at all.
     /// `TalkTask_Update` (`ov_017::021b8e8c`) saves that angle with the partner's character id
-    /// when the conversation opens, and the window gives it back when the message ends with
-    /// `<END_R_TURN>` (`0xFF02`) or restores it with `<R_TURN>` (`0xFF2C`); a plain `<END>`
-    /// leaves the partner where the turn put it.
+    /// when the conversation opens. The window reports when the partner is given it back
+    /// ([`Dialogue::take_turn_release`]): with `<R_TURN>` (`0xFF2C`) the requested angle
+    /// becomes the saved one **in the middle of the message**, the rest of the page still
+    /// typing, and with `<END_R_TURN>` (`0xFF02`) on the key that closes the line; a plain
+    /// `<END>` gives nothing back, so the partner keeps the heading the turn left it at.
     ///
     /// Call once per step, after [`Talk::step`], with the field's scene and the hero; nothing
     /// happens without a window, and a script that moves the NPC
@@ -411,6 +403,14 @@ impl Talk {
                 scene.release_npc(previous);
             }
             self.turn_back = false;
+            return;
+        }
+        // The conversation gave the heading back: the pivot turns back and no request is made
+        // for the rest of it (`+0x19b6` no longer hands the hero's angle over).
+        if self.turn_back {
+            if let Some(previous) = self.facing.take() {
+                scene.release_npc(previous);
+            }
             return;
         }
         if self.facing.is_some() {
@@ -477,6 +477,14 @@ impl Talk {
             return;
         };
         dialogue.step(input);
+        // `<R_TURN>` met in the text or the key on an `<END_R_TURN>` line: the partner is given
+        // the heading the conversation found, from the step the window reports it.
+        if dialogue.take_turn_release() {
+            self.turn_back = true;
+            #[cfg(test)]
+            self.trace
+                .push((self.ticks, "partner turns back".to_string()));
+        }
         #[cfg(test)]
         {
             // The probe names wait states 0, 1 and 2 with a cursor "arrow", the class the
@@ -773,7 +781,10 @@ impl Talk {
         ));
         state.talk_counts.record(npc);
         self.conversation = Some((npc, context));
-        self.turn_back = ends_with_restore(text);
+        // The heading is only given back when the window reports it (`<R_TURN>`,
+        // `<END_R_TURN>`); the compiled script decides, so a tag of a branch the answer did
+        // not take cannot release it.
+        self.turn_back = false;
         self.service = service_tag(text);
         self.active = Some(self.dialogue(Dialogue::new(script)));
         self.caption_alpha = None;
@@ -1138,6 +1149,105 @@ mod wait_key_tests {
             },
             "X, L and R press no prompt key"
         );
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use dq9_core::talk::{self, Script};
+    use dq9_formats::font::{Font, FontId};
+
+    use super::{Button, Dialogue, Names, Talk};
+
+    /// Font of four 4-pixel glyphs `a b c d` (indices 0 to 3), advance 5, spaces 4: the same
+    /// shape the dialogue's own tests lay out (`crates/dq9-core/src/talk/tests.rs`).
+    fn font_files() -> (Vec<u8>, Vec<u8>) {
+        let glyphs: [&[u8]; 4] = [b"a", b"b", b"c", b"d"];
+        let table = 0x18;
+        let strings = table + glyphs.len() * 8;
+        let mut info = b"1.1\0".to_vec();
+        for v in [glyphs.len(), 0, table, table, strings] {
+            info.extend((v as u32).to_le_bytes());
+        }
+        let mut pool: Vec<u8> = Vec::new();
+        for text in glyphs {
+            info.extend(((strings + pool.len()) as u32).to_le_bytes());
+            info.extend([4, text.len() as u8, 0, 0]);
+            pool.extend(text);
+        }
+        info.extend(pool);
+        let mut data = b"1.0\0".to_vec();
+        for v in [8u16, 1] {
+            data.extend(v.to_le_bytes());
+        }
+        data.extend(1u32.to_le_bytes());
+        data.extend(16u32.to_le_bytes());
+        data.push(0);
+        (info, data)
+    }
+
+    fn script(text: &[u8]) -> Script {
+        let (info, data) = font_files();
+        let font = Font::parse(&info, &data, FontId::Message).unwrap();
+        talk::prepare(&font, text, &Names::default(), 228)
+    }
+
+    /// A window open on NPC 7, its line compiled from `text`: no map, no assets.
+    fn window(text: &[u8]) -> Talk {
+        Talk {
+            conversation: Some((7, 0)),
+            active: Some(Dialogue::new(script(text))),
+            ..Talk::default()
+        }
+    }
+
+    fn play(talk: &mut Talk, steps: usize) {
+        for _ in 0..steps {
+            talk.step();
+        }
+    }
+
+    /// `<R_TURN>` mid-line: the application takes the report on the step the window gives it,
+    /// keeps the window open (the rest of the page still types) and latches the conversation,
+    /// so [`Talk::face_partner`] makes no new request for it.
+    #[test]
+    fn a_mid_message_release_is_taken_while_the_window_keeps_showing() {
+        let mut talk = window(b"ab<R_TURN>cd<END>");
+        play(&mut talk, 2);
+        assert!(!talk.turn_back, "nothing before the code");
+        play(&mut talk, 1);
+        assert!(talk.turn_back, "the code's step reports the release");
+        assert!(talk.is_active(), "the window stays open");
+        play(&mut talk, 2);
+        assert_eq!(
+            talk.active.as_ref().unwrap().view().lines[0].len(),
+            4,
+            "the rest of the page typed on after the release"
+        );
+        assert!(talk.turn_back, "the latch holds for the conversation");
+    }
+
+    /// `<END_R_TURN>`: nothing while the text stays; the action key that closes the line
+    /// reports it, then the window closes as an `<END_R_TURN>` end.
+    #[test]
+    fn an_end_r_turn_releases_at_the_key_and_a_plain_end_never_does() {
+        let mut talk = window(b"ab<END_R_TURN>");
+        play(&mut talk, 20);
+        assert!(talk.is_active());
+        assert!(!talk.turn_back, "nothing gives back while the text stays");
+        talk.press(Button::Confirm);
+        talk.step();
+        assert!(talk.turn_back, "the key reports the release");
+        play(&mut talk, dq9_core::talk::CLOSE_STEPS as usize);
+        assert!(!talk.is_active(), "the window closed");
+
+        let mut talk = window(b"ab<END>");
+        play(&mut talk, 20);
+        talk.press(Button::Confirm);
+        talk.step();
+        play(&mut talk, dq9_core::talk::CLOSE_STEPS as usize);
+        assert!(!talk.is_active());
+        assert!(!talk.turn_back, "a plain `<END>` keeps the heading");
     }
 }
 

@@ -279,6 +279,92 @@ fn end_waits_for_the_key_then_closes() {
     assert_eq!(d.outcome().map(|o| o.end), Some(EndKind::Close));
 }
 
+/// `dq9_formats::message` compiles the two ends apart: `<END>` waits and keeps the heading,
+/// `<END_R_TURN>` waits and gives it back, and `<R_TURN>` is a code of its own in the text.
+#[test]
+fn the_turn_tags_compile_to_their_own_ops() {
+    // `Msg_Compile` appends an `<END>` to every message; the tag's own end comes first and
+    // is the one the window reaches.
+    let s = script(b"a<END_R_TURN>", 100);
+    let first_end = s.ops.iter().find(|op| matches!(op, Op::End(_)));
+    assert_eq!(first_end, Some(&Op::End(EndKind::Turn)));
+    let s = script(b"a<R_TURN>b<END>", 100);
+    assert!(s.ops.contains(&Op::ReleaseTurn));
+    let first_end = s.ops.iter().find(|op| matches!(op, Op::End(_)));
+    assert_eq!(first_end, Some(&Op::End(EndKind::Wait)));
+}
+
+/// `<R_TURN>` (`0xFF2C`) gives the partner the conversation's saved heading back **mid-line**:
+/// the report comes on the step the code is met, the page still shows, the rest of the text
+/// types on, and the `<END>` that follows keeps that heading (`0x020659a0` sets
+/// `+0x1844 = +0x183c` and `+0x19b6 = 1`, then goes on).
+#[test]
+fn r_turn_releases_the_heading_while_the_page_still_shows() {
+    let mut d = Dialogue::new(script(b"ab<R_TURN>cd<END>", 100));
+    for _ in 0..2 {
+        d.step(Input::default());
+        assert!(!d.take_turn_release(), "nothing before the code");
+    }
+    assert_eq!(d.view().lines[0].len(), 2);
+    d.step(Input::default());
+    assert!(d.take_turn_release(), "the code reports on its own step");
+    assert!(!d.take_turn_release(), "the report is taken once");
+    assert_eq!(d.outcome(), None, "the window stays open");
+    play(&mut d, 2);
+    assert_eq!(d.view().lines[0].len(), 4, "the rest of the page typed on");
+    play(&mut d, 1);
+    assert!(d.waiting(), "the line reaches its `<END>`");
+    d.step(press());
+    assert!(!d.take_turn_release(), "a plain `<END>` gives nothing back");
+    play(&mut d, CLOSE_STEPS as usize);
+    assert_eq!(
+        d.outcome(),
+        Some(Outcome {
+            end: EndKind::Wait,
+            answer: None
+        })
+    );
+    assert!(!d.take_turn_release());
+}
+
+/// `<END_R_TURN>` (`0xFF02`) gives the heading back at the close: nothing while the text
+/// stays, the report on the key that leaves the end wait (`func_020440cc` case 0 compares the
+/// code with `0xFF02`), then the window closes `CLOSE_STEPS` later.
+#[test]
+fn end_r_turn_releases_at_the_key_and_a_plain_end_keeps_the_heading() {
+    let mut d = Dialogue::new(script(b"ab<END_R_TURN>", 100));
+    play(&mut d, 20);
+    assert!(d.waiting());
+    assert!(
+        !d.take_turn_release(),
+        "nothing gives back while the text stays"
+    );
+    d.step(press());
+    assert!(
+        d.take_turn_release(),
+        "the key that leaves the wait reports"
+    );
+    assert!(!d.take_turn_release());
+    play(&mut d, CLOSE_STEPS as usize - 1);
+    assert_eq!(d.outcome(), None);
+    play(&mut d, 1);
+    assert_eq!(
+        d.outcome(),
+        Some(Outcome {
+            end: EndKind::Turn,
+            answer: None
+        })
+    );
+
+    let mut d = Dialogue::new(script(b"ab<END>", 100));
+    play(&mut d, 20);
+    d.step(press());
+    assert!(!d.take_turn_release(), "a plain `<END>` keeps the heading");
+    play(&mut d, CLOSE_STEPS as usize);
+    assert_eq!(d.outcome().map(|o| o.end), Some(EndKind::Wait));
+    assert!(!d.take_turn_release());
+}
+
 /// Waits that draw the arrow: page (1), pad (2) and `<ADD>` (3); states 0 (`<END>`) and 4
 /// (`<AUTO>`, not modelled) draw none. The triangle is hidden for the wait's first 10 frames,
 /// then 32 frames on and 32 off (measured: visible on 10-41, hidden 42-73, visible from 74,
