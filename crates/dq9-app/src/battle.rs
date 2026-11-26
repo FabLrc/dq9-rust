@@ -8,11 +8,12 @@
 //! and starts everyone on the grid (`ov_000::02164d74`; the row is only used by a few action
 //! scripts, so it is asked for explicitly).
 //!
-//! What is faithful: the grid slot formula (`ov_000::0216f74c`), the side framing of the
+//! What is faithful: the grid slot formula (`ov_000::0216f74c`), the row's places and turns
+//! (`ov_000::021675a0`, `ov_000::021677fc`, `0x02183158`, `0x02167b5c`), the side framing of the
 //! battle camera (`ov_000::0216d600`) and the eye clamp applied after every command
 //! (`ov_000::0216f2b8`). What is a **[hypothesis]**: which of the two sides the opening
-//! (`ov_000::0216118c`, "side 1") is, the eased approach of the opening, the row's spacing
-//! and turn at the ends, and the fallback slot of a formation larger than eight.
+//! (`ov_000::0216118c`, "side 1") is, the eased approach of the opening, and the fallback slot
+//! of a formation larger than eight.
 //!
 //! The scene owns its runtime: the application swaps it in for the field's scene and gives
 //! the field back when the battle is over (`App::enter_battle`, `App::restore_field`).
@@ -41,6 +42,7 @@ use crate::load::{self, MapEntry};
 use motion::{End, Script, Scripts, Timeline};
 
 pub mod data;
+pub mod entry;
 pub mod fight;
 pub mod motion;
 pub mod narrate;
@@ -105,17 +107,20 @@ impl Fighter {
     }
 }
 
-/// Where the fighters stand (`ov_000::02167dd8` for the grid, `0x02167e6c` for the row).
+/// Where the fighters stand (`ov_000::02167dd8` for the grid, `ov_000::02167e6c` for the row).
 ///
-/// The row is only asked for by action scripts (calling for help, some special attacks), which
-/// this batch does not play; `BattleScene::set_formation` is the entry the next wave uses.
+/// The battle's set-up places everyone on the grid (`ov_000::02164d74`); the row places are
+/// computed with it (`ov_000::021675a0`, `ov_000::021677fc`) and a few action scripts ask for
+/// them (`ov_000::02167e6c` sets the flag). `BattleScene::set_formation` is the entry the next
+/// wave's scripts use.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Formation {
     /// The 9 by 9 staggered grid every battle starts on.
     #[default]
     Grid,
-    /// The row an action script asks for.
+    /// The row an action script asks for: the party turned at its ends, the monsters side by
+    /// side by their widths (the five narrow kinds at 0.7).
     Row,
 }
 
@@ -1104,8 +1109,8 @@ impl BattleScene {
         self.camera.fovy = 2.0 * half.to_radians();
     }
 
-    /// Asks for the row formation (`0x02167e6c`), or for the grid the battle starts on
-    /// (`0x02167dd8`). The charge's scripts are the only callers in the game; no action is
+    /// Asks for the row formation (`ov_000::02167e6c`), or for the grid the battle starts on
+    /// (`ov_000::02167dd8`). A few action scripts are its callers in the game; no action is
     /// played in this batch, so it is the next wave's entry point.
     #[allow(dead_code)]
     pub fn set_formation(&mut self, formation: Formation) {
@@ -1129,6 +1134,10 @@ impl BattleScene {
         let party_slots = party_slots(party_count);
         let monster_slots = monster_slots(monster_count);
         let widths: Vec<f32> = self.widths[party_count..].to_vec();
+        let kinds: Vec<Option<u16>> = self.fighters[party_count..]
+            .iter()
+            .map(|placed| placed.number)
+            .collect();
         for index in 0..self.fighters.len() {
             let fighter = self.fighters[index].fighter;
             let (position, heading) = match (self.formation, fighter.side) {
@@ -1137,7 +1146,7 @@ impl BattleScene {
                     (grid_position(monster_slots[fighter.index]), 0.0)
                 }
                 (Formation::Row, Side::Party) => row_party(fighter.index, party_count),
-                (Formation::Row, Side::Monsters) => row_monster(&widths, fighter.index),
+                (Formation::Row, Side::Monsters) => row_monster(&widths, &kinds, fighter.index),
             };
             let position = position + Vec3::Y * FIGHTER_HEIGHT;
             self.fighters[index].position = position;
@@ -1318,42 +1327,120 @@ pub fn monster_slots(count: usize) -> Vec<usize> {
     slots
 }
 
-/// The row the party stands in: `z` +2.5, 1.5 apart and centred, turned in at the ends
-/// (`0x021675a0`, `0x021677fc`; the turns are read as ±0.2 **[hypothesis]**).
-#[allow(dead_code)]
-fn row_party(index: usize, count: usize) -> (Vec3, f32) {
-    let x = index as f32 * 1.5 - (count.saturating_sub(1) as f32) * 0.75;
-    let turn = if count > 1 {
-        0.2 * (2.0 * index as f32 / (count - 1) as f32 - 1.0)
-    } else {
-        0.0
-    };
-    (Vec3::new(x, 0.0, 2.5), PI + turn)
+/// The turn of each party member in the row, in fx12 radians: `func_ov000_021675a0` reads the
+/// row of `iRam0216769c + (count - 1) * 0x10` at `0x02183158` (four `int`s per party size). A
+/// one-hero party turns to `0x323d` (the ROM's own π, 0.0017 rad below a float π); the ends of
+/// a larger row reach ±`0x333`/4096 = ±0.2 (`0x02183158`, read on the EU ROM).
+const PARTY_ROW_TURNS: [&[i32]; 4] = [
+    &[0x323d],
+    &[0x335c, 0x311e],
+    &[0x3570, 0x323d, 0x2f0a],
+    &[0x3570, 0x335c, 0x311e, 0x2f0a],
+];
+
+/// The row's `x` spacing (`(count - 1) * 0x1800` fx12) and its `z` (`0x2800`, +2.5).
+const ROW_SPACING: f32 = 0x1800 as f32 / 4096.0;
+const ROW_PARTY_Z: f32 = 0x2800 as f32 / 4096.0;
+const ROW_MONSTER_Z: f32 = -0x2800 as f32 / 4096.0;
+
+/// The five monster kinds the row narrows when more than one fights (`func_ov000_021681f8`):
+/// `0xbd`, `0xbe`, `0xbf`, `0x110` and the literal it compares a kind against (`0x155`). Every
+/// other kind keeps its full width (`0x1000`).
+const NARROWED_KINDS: [u16; 5] = [0xbd, 0xbe, 0xbf, 0x110, 0x155];
+
+/// The narrowed width, `0xb33`/`0x1000` (`func_ov000_021681f8`'s own return).
+const NARROWED_WIDTH: f32 = 0xb33 as f32 / 4096.0;
+
+/// The row's gap (`func_ov000_02167b5c`): at least `0x199` and at most `0xb33` fx12, chosen so
+/// that the row spans `0x4000` plus one minimum gap per interval when it fits.
+const ROW_GAP_MIN: f32 = 0x199 as f32 / 4096.0;
+const ROW_GAP_MAX: f32 = 0xb33 as f32 / 4096.0;
+const ROW_TARGET: f32 = 0x4000 as f32 / 4096.0;
+
+/// A width on the game's fx12 grid, rounded as `func_ov000_021677fc` does
+/// (`(radius * factor + 0x800) >> 12`).
+fn row_width(width: f32) -> f32 {
+    (width * 4096.0).round().max(0.0) / 4096.0
 }
 
-/// The row the monsters stand in: `z` −2.5, facing 0, side by side by their widths (radius ×4,
-/// gap 0.7, narrowed to keep the row within 4 + 0.1(n − 1), down to 0.1; `0x02167b5c`).
-#[allow(dead_code)]
-fn row_monster(widths: &[f32], index: usize) -> (Vec3, f32) {
+/// The row the party stands in: `z` +2.5, [`ROW_SPACING`] apart and centred, turned by
+/// [`PARTY_ROW_TURNS`] (`func_ov000_021675a0`).
+///
+/// The original walks the party from `+(count−1)·0x1800/2` down by `0x1800` and reads the turn
+/// table forward, so member 0 (the hero) is the **+x** end and takes the row's first turn (for
+/// four members `0x3570` = π + 0x333/4096): both ends turn inward.
+fn row_party(index: usize, count: usize) -> (Vec3, f32) {
+    let x = (count.saturating_sub(1) as f32) * ROW_SPACING * 0.5 - index as f32 * ROW_SPACING;
+    let turn = PARTY_ROW_TURNS
+        .get(count.saturating_sub(1))
+        .and_then(|row| row.get(index))
+        .map_or_else(
+            || {
+                // The party holds four (`func_ov000_021675a0` reads four combatants); a fifth
+                // would be a scripting error: spread it evenly at ±0.2 **[hypothesis]**.
+                if count > 1 {
+                    0.2 * (1.0 - 2.0 * index as f32 / (count - 1) as f32)
+                } else {
+                    0.0
+                }
+            },
+            |angle| *angle as f32 / 4096.0,
+        );
+    (Vec3::new(x, 0.0, ROW_PARTY_Z), turn)
+}
+
+/// The row the monsters stand in: `z` −2.5, facing 0, side by side by their widths (the narrow
+/// kinds at [`NARROWED_WIDTH`]), with the gap of `func_ov000_02167b5c`. `kinds` is each
+/// monster's number, in `widths` order (`func_ov000_021677fc`, which reads the combatant's own
+/// kind at `+2`).
+fn row_monster(widths: &[f32], kinds: &[Option<u16>], index: usize) -> (Vec3, f32) {
     let count = widths.len();
     if count == 0 {
-        return (Vec3::new(0.0, 0.0, -2.5), 0.0);
+        return (Vec3::new(0.0, 0.0, ROW_MONSTER_Z), 0.0);
     }
+    let narrowed = |i: usize| {
+        if count > 1
+            && kinds
+                .get(i)
+                .copied()
+                .flatten()
+                .is_some_and(|kind| NARROWED_KINDS.contains(&kind))
+        {
+            NARROWED_WIDTH
+        } else {
+            1.0
+        }
+    };
+    let widths: Vec<f32> = widths
+        .iter()
+        .enumerate()
+        .map(|(i, width)| row_width(width * narrowed(i)))
+        .collect();
     let total: f32 = widths.iter().sum();
+    let intervals = count as f32 - 1.0;
     let gap = if count > 1 {
-        let limit = 4.0 + 0.1 * (count as f32 - 1.0);
-        ((limit - total) / (count as f32 - 1.0)).clamp(0.1, 0.7)
+        let target = intervals * ROW_GAP_MIN + ROW_TARGET;
+        if target > intervals * ROW_GAP_MAX + total {
+            ROW_GAP_MAX
+        } else if target < total {
+            ROW_GAP_MIN
+        } else {
+            (target - total) / intervals
+        }
     } else {
         0.0
     };
-    let mut x = -(total + gap * (count as f32 - 1.0)) * 0.5;
+    let mut x = -(total + gap * intervals) * 0.5;
     for (i, width) in widths.iter().enumerate() {
+        // The half the original places with is the integer half of the fx12 width.
+        let half = ((width * 4096.0).round() as i32 / 2) as f32 / 4096.0;
+        x += half;
         if i == index {
-            return (Vec3::new(x + width * 0.5, 0.0, -2.5), 0.0);
+            return (Vec3::new(x, 0.0, ROW_MONSTER_Z), 0.0);
         }
-        x += width + gap;
+        x += half + gap;
     }
-    (Vec3::new(0.0, 0.0, -2.5), 0.0)
+    (Vec3::new(0.0, 0.0, ROW_MONSTER_Z), 0.0)
 }
 
 fn monster_world(position: Vec3, heading: f32) -> Mat4 {

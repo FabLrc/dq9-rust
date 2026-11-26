@@ -5,6 +5,7 @@ use super::App;
 use super::status;
 use crate::battle;
 use crate::battle::BattleScene;
+use crate::battle::entry::{self, Lead};
 use crate::battle::fight::Outcome as FightOutcome;
 use crate::battle::transition;
 use crate::battle::transition::Swirl;
@@ -27,23 +28,39 @@ const BATTLE_HOLD: u32 = 90;
 /// Steps the scripted transition holds black when no battle follows it.
 const BATTLE_TRANSITION_HOLD: u32 = 90;
 
-/// Steps from the black to the field coming back (state 4, `SetMainBrightness(0, 30)` is the
-/// field's own; the fade is 15 here) and the total of the leave.
-const BATTLE_LEAVE_AT: u32 = 15;
+/// Steps from the black to the field coming back: both screens fade out over
+/// [`entry::FADE_OUT_STEPS`], stay black while the field reloads ([`entry::RETURN_BLACK_STEPS`]
+/// frames measured) and fade up over [`entry::RETURN_FADE_STEPS`] (`SetMainBrightness(0, 30)`,
+/// state 5). The totals are [`entry::leave_steps`].
+const BATTLE_LEAVE_AT: u32 = entry::FADE_OUT_STEPS;
 
-const BATTLE_LEAVE_DONE: u32 = 45;
-
-/// A battle phase (`docs/app/battle-scene.md`, § "Battle scene"): native 547's transition,
-/// the scene, and the way back to the field.
+/// A battle phase (`docs/app/battle-scene.md`, § "Transition"): the lead-in a contact or a set
+/// battle spends, native 547's transition, the swirl, the load black, the scene, and the way
+/// back to the field.
 #[derive(Debug)]
 pub(super) enum BattleChange {
     /// Native 547 with no battle asked for (yet): the swirl rolls and narrows the field, both
     /// screens go to black, the battle track on. `ticks` counts the black hold that follows.
     Transition { swirl: Swirl, ticks: u32 },
+    /// The picture is frozen after a roamer's contact, or the swirl task waits a set battle's
+    /// 15 updates (`battle/entry.rs`): no field step, no swirl, no camera change.
+    Preparing {
+        lead: Lead,
+        ticks: u32,
+        request: battle::Resolved,
+        auto_leave: bool,
+    },
     /// The swirl runs while the field is still drawn; the scene is built when its clock is
     /// done and both screens are black.
     Entering {
         swirl: Swirl,
+        request: battle::Resolved,
+        auto_leave: bool,
+    },
+    /// Both screens black while the battle stage loads, the scene already built behind them
+    /// (94 frames measured, `battle/entry.rs`).
+    Loading {
+        ticks: u32,
         request: battle::Resolved,
         auto_leave: bool,
     },
@@ -53,7 +70,7 @@ pub(super) enum BattleChange {
         request: battle::Resolved,
         auto_leave: bool,
     },
-    /// Both screens to black, the field back, then up; the fight's outcome settles the
+    /// Both screens to black, the field back and up again; the fight's outcome settles the
     /// story when the field is back.
     Leaving {
         ticks: u32,
@@ -107,6 +124,10 @@ pub(super) struct Encounter {
     pub(super) swirl: Option<dq9_render::swirl::Swirl>,
     /// The last battle a headless run built and settled at once ([`ShownBattle`]).
     pub(super) last_battle: Option<ShownBattle>,
+    /// The lead-in the current entry spends, and whether it holds the load black after the
+    /// swirl (`battle/entry.rs`). A preview skips both; a direct `BattleChange::Entering` (the
+    /// tests' shortcut) has no lead-in either.
+    pub(super) entry_lead: Lead,
 }
 
 impl Encounter {
@@ -118,6 +139,7 @@ impl Encounter {
             battle_cover: 0.0,
             swirl: None,
             last_battle: None,
+            entry_lead: Lead::Preview,
         }
     }
 }
@@ -219,21 +241,36 @@ impl App {
             }
             return;
         }
-        // A preview (`--battle`, `?battle=`) has no field to fade from: its clock starts at the
-        // end of the swirl, so the first step builds the scene as before.
-        let swirl = if immediate {
+        // The lead-in (`battle/entry.rs`): a preview has no field to fade from and no stage to
+        // load, so its clock starts at the end of the swirl and the first step builds the
+        // scene as before; a roamer's contact freezes the picture while the battle's data
+        // loads, and a set battle waits the swirl task's 15 updates.
+        let lead = if immediate {
+            Lead::Preview
+        } else if resolved.number.is_some_and(|number| number >= 1) {
+            Lead::SetBattle
+        } else {
+            Lead::Contact
+        };
+        self.encounter.entry_lead = lead;
+        self.encounter.battle_change = Some(if lead == Lead::Preview {
             let mut swirl = Swirl::new();
             for _ in 0..transition::entry_ticks() {
                 swirl.step();
             }
-            swirl
+            BattleChange::Entering {
+                swirl,
+                request: resolved,
+                auto_leave,
+            }
         } else {
-            Swirl::new()
-        };
-        self.encounter.battle_change = Some(BattleChange::Entering {
-            swirl,
-            request: resolved,
-            auto_leave,
+            status(&format!("battle entry: {} steps of lead-in", lead.steps()));
+            BattleChange::Preparing {
+                lead,
+                ticks: 0,
+                request: resolved,
+                auto_leave,
+            }
         });
     }
 
@@ -259,6 +296,25 @@ impl App {
                     finished = true;
                 }
             }
+            BattleChange::Preparing {
+                lead,
+                ticks,
+                request,
+                auto_leave,
+            } => {
+                // No field step, no swirl, no camera change: the picture is frozen (a roamer's
+                // blocking load) or the swirl task waits its delay.
+                *ticks += 1;
+                if *ticks >= lead.steps() {
+                    let request = request.clone();
+                    let auto_leave = *auto_leave;
+                    change = BattleChange::Entering {
+                        swirl: Swirl::new(),
+                        request,
+                        auto_leave,
+                    };
+                }
+            }
             BattleChange::Entering {
                 swirl,
                 request,
@@ -278,10 +334,20 @@ impl App {
                         self.combat.fight = self.make_fight(&request);
                         self.combat.battle_pad = Default::default();
                         self.talk.discard_input();
-                        change = BattleChange::Fighting {
-                            ticks: 0,
-                            request,
-                            auto_leave,
+                        change = if self.encounter.entry_lead.holds_black() {
+                            // The stage loaded after the swirl: both screens stay black for
+                            // the measured 94 frames before the scene comes up.
+                            BattleChange::Loading {
+                                ticks: 0,
+                                request,
+                                auto_leave,
+                            }
+                        } else {
+                            BattleChange::Fighting {
+                                ticks: 0,
+                                request,
+                                auto_leave,
+                            }
                         };
                     } else {
                         // No scene: the story does not stop on it (the stand-in of J4).
@@ -291,6 +357,23 @@ impl App {
                     }
                 } else {
                     self.drive_swirl(swirl);
+                }
+            }
+            BattleChange::Loading {
+                ticks,
+                request,
+                auto_leave,
+            } => {
+                *ticks += 1;
+                self.set_battle_cover(1.0);
+                if *ticks >= entry::LOAD_BLACK_STEPS {
+                    let request = request.clone();
+                    let auto_leave = *auto_leave;
+                    change = BattleChange::Fighting {
+                        ticks: 0,
+                        request,
+                        auto_leave,
+                    };
                 }
             }
             BattleChange::Fighting {
@@ -303,9 +386,10 @@ impl App {
                 {
                     status(&format!("battle animation: {e:#}"));
                 }
-                // The screens come up over 15 frames (`0x021d9d18`).
-                let alpha = (1.0 - *ticks as f32 / 15.0).max(0.0);
+                // The screens come up over 15 frames (`0x021d9d18`): the first step of the
+                // scene already takes one tick off the black.
                 *ticks += 1;
+                let alpha = (1.0 - *ticks as f32 / entry::SCENE_FADE_STEPS as f32).max(0.0);
                 self.set_battle_cover(alpha);
                 if self.combat.fight.is_some() {
                     if let Some(outcome) = self.drive_fight() {
@@ -339,15 +423,19 @@ impl App {
                     self.set_battle_cover(*ticks as f32 / BATTLE_LEAVE_AT as f32);
                 } else {
                     if !*restored {
+                        // The field reloads behind the black (95 frames measured).
                         self.restore_field();
                         *restored = true;
                     }
-                    let alpha = 1.0
-                        - (*ticks - BATTLE_LEAVE_AT) as f32
-                            / (BATTLE_LEAVE_DONE - BATTLE_LEAVE_AT) as f32;
-                    self.set_battle_cover(alpha.max(0.0));
+                    let up = entry::FADE_OUT_STEPS + entry::RETURN_BLACK_STEPS;
+                    if *ticks < up {
+                        self.set_battle_cover(1.0);
+                    } else {
+                        let alpha = 1.0 - (*ticks - up) as f32 / entry::RETURN_FADE_STEPS as f32;
+                        self.set_battle_cover(alpha.max(0.0));
+                    }
                 }
-                if *ticks >= BATTLE_LEAVE_DONE {
+                if *ticks >= entry::leave_steps() {
                     self.set_battle_cover(0.0);
                     let request = request.clone();
                     let outcome = outcome.take();
@@ -387,7 +475,7 @@ impl App {
     pub(super) fn swirl_clock(&self) -> Option<Swirl> {
         match &self.encounter.battle_change {
             Some(BattleChange::Entering { swirl, .. } | BattleChange::Transition { swirl, .. })
-                if !(swirl.done() && swirl.cover() >= 1.0) =>
+                if swirl.started() && !(swirl.done() && swirl.cover() >= 1.0) =>
             {
                 Some(*swirl)
             }

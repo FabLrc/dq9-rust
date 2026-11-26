@@ -1620,3 +1620,100 @@ fn the_swirl_rolls_zooms_and_blacks_out_the_field() {
         "the rings cover a good part of the picture at tick 19 ({visible} pixels differ)"
     );
 }
+
+/// The party's row: `z` +2.5, 1.5 apart and centred, turned by the table `func_ov000_021675a0`
+/// reads at `0x02183158` — a one-hero party to the ROM's own π (`0x323d`), a four-hero one from
+/// `0x3570` to `0x2f0a` (π ± 0x333/4096 = ±0.2).
+#[test]
+fn the_row_party_turns_by_the_roms_table() {
+    use super::row_party;
+
+    let (position, heading) = row_party(0, 1);
+    assert_eq!(position, glam::Vec3::new(0.0, 0.0, 2.5));
+    assert!(
+        (heading - std::f32::consts::PI).abs() < 2e-3,
+        "0.0017 below π"
+    );
+    assert!((heading - 0x323d as f32 / 4096.0).abs() < 1e-6);
+
+    let places: Vec<_> = (0..4).map(|index| row_party(index, 4)).collect();
+    let xs: Vec<f32> = places.iter().map(|(placed, _)| placed.x).collect();
+    // `func_ov000_021675a0` starts at +(count−1)·0x1800/2 and walks down: member 0 is the +x
+    // end and takes the row's first turn.
+    assert!(
+        (xs[0] - 2.25).abs() < 1e-6 && (xs[1] - 0.75).abs() < 1e-6,
+        "1.5 apart and centred, member 0 at +x: {xs:?}"
+    );
+    assert!((xs[3] + 2.25).abs() < 1e-6, "the last member at −x: {xs:?}");
+    let pi = 0x323d as f32 / 4096.0;
+    for (index, (_, heading)) in places.iter().enumerate() {
+        let fx = [0x3570, 0x335c, 0x311e, 0x2f0a][index];
+        assert!(
+            (heading - fx as f32 / 4096.0).abs() < 1e-6,
+            "member {index}: {heading}"
+        );
+    }
+    // Heading 0 faces +z and (sin, cos) is the direction: the +x end turns toward −x and the
+    // −x end toward +x, so both ends turn inward.
+    assert!(
+        ((places[0].1 - pi) - 0.2).abs() < 1e-3 && places[0].1.sin() < 0.0,
+        "the +x end turns +0.2, inward: {}",
+        places[0].1
+    );
+    assert!(
+        ((places[3].1 - pi) + 0.2).abs() < 1e-3 && places[3].1.sin() > 0.0,
+        "the −x end turns −0.2, inward: {}",
+        places[3].1
+    );
+}
+
+/// The monsters' row: side by side at `z` −2.5 on the gap of `func_ov000_02167b5c`, with the
+/// five kinds of `func_ov000_021681f8` (`0xbd`, `0xbe`, `0xbf`, `0x110`, `0x155`) narrowed to
+/// `0xb33`/4096 = 0.7 once more than one fights.
+#[test]
+fn the_row_monsters_narrow_the_five_kinds() {
+    use super::{NARROWED_KINDS, row_monster};
+
+    let plain = [Some(1), Some(1), Some(1)];
+    let places: Vec<_> = (0..3)
+        .map(|index| row_monster(&[1.0; 3], &plain, index))
+        .collect();
+    let xs: Vec<f32> = places.iter().map(|(placed, _)| placed.x).collect();
+    // The gap fills the target 4 + 2 × 0x199/4096 = 4.1997 with three widths of 1: 0.5999.
+    assert!(
+        (xs[0] + 1.59985).abs() < 1e-3 && xs[1].abs() < 1e-4 && (xs[2] - 1.59985).abs() < 1e-3,
+        "{xs:?}"
+    );
+    for (index, (placed, heading)) in places.iter().enumerate() {
+        assert!((placed.z + 2.5).abs() < 1e-6, "monster {index} on −z");
+        assert_eq!(*heading, 0.0);
+    }
+
+    for kind in NARROWED_KINDS {
+        let kinds = [Some(kind), Some(kind), Some(kind)];
+        let narrowed: Vec<f32> = (0..3)
+            .map(|index| row_monster(&[1.0; 3], &kinds, index).0.x)
+            .collect();
+        assert!(
+            narrowed[0] > xs[0] + 0.19 && narrowed[2] < xs[2] - 0.19,
+            "kind {kind:#x} narrowed to 0.7: {narrowed:?} against {xs:?}"
+        );
+        assert!(
+            (narrowed[2] - narrowed[0] - 2.7993).abs() < 1e-3,
+            "kind {kind:#x}: {narrowed:?}"
+        );
+    }
+    // A kind outside the five keeps its width, and one monster is never narrowed.
+    for kind in [1u16, 2, 0xbc, 0x111, 0x156] {
+        let kinds = [Some(kind), Some(kind), Some(kind)];
+        let kept: Vec<f32> = (0..3)
+            .map(|index| row_monster(&[1.0; 3], &kinds, index).0.x)
+            .collect();
+        assert_eq!(kept, xs, "kind {kind:#x} is not narrowed");
+    }
+    for kind in NARROWED_KINDS {
+        let (placed, _) = row_monster(&[1.0], &[Some(kind)], 0);
+        assert_eq!(placed.x, 0.0, "one monster stands on the middle");
+        assert_eq!(placed.z, -2.5);
+    }
+}

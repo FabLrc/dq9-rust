@@ -17,7 +17,9 @@
 /// Ticks of the first update (`GetTickCount` capped at 3 after the long frame the contact's
 /// loading leaves) and of every later one.
 const FIRST_UPDATE_TICKS: u32 = 3;
-const UPDATE_TICKS: u32 = 2;
+/// Frames between two task updates (`GetTickCount`'s 2: the game's 30 Hz loop); a set battle's
+/// 15-update delay is counted in them (`battle/entry.rs`).
+pub const UPDATE_TICKS: u32 = 2;
 /// Roll added per update, degrees (`[2] -= 8.0`; wraps past ±180 as the original's accumulator).
 const ROLL_STEP: f32 = 8.0;
 /// Half field of view at the start and what each update takes off, degrees
@@ -97,6 +99,12 @@ impl Swirl {
     /// Whether the swirl has ended: the counter is past 35.
     pub const fn done(&self) -> bool {
         self.counter > DONE_AFTER
+    }
+
+    /// Whether its first update has run: a task created this step draws nothing yet (the lead-in
+    /// hands the clock over at the end of its last frozen frame).
+    pub const fn started(&self) -> bool {
+        self.ticks > 0
     }
 
     /// The field camera's roll in degrees, as `Camera+0x7c` holds it (negative: the view turns

@@ -32,11 +32,23 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
   monsters → 29, 22, 32 (−3.897, −2.25), (0, −4.5), (3.897, −2.25). Every fighter stands
   `0xcc` (0.05) above the stage. A set with more than eight monsters (the tables stop at
   eight; the ROM's records ask at most eight) gets free slots after them **[hypothesis]**.
-- **Formation.** A battle starts on the grid; the row (`0x02167e6c`) is only used by a few
-  action scripts, so `set_formation(Formation::Row)` asks for it: party at z 2.5, 1.5 apart and
-  centred; monsters at z −2.5 by their width (radius ×4, gap 0.7, narrowed as `0x02167b5c`
-  does). The turn of the party's ends (±0.2) and the five narrowed monster kinds are
-  **[hypothesis]**: the angle table and the kind list were not read.
+- **Formation.** A battle starts on the grid (`ov_000::02164d74` places everyone on it and sets
+  the flag to 2, `ov_000::02167dd8`); a few action scripts ask for the row
+  (`ov_000::02167e6c` sets it to 1), so `set_formation(Formation::Row)` asks for it. The row's
+  places are the ROM's: the party at z 2.5, 1.5 apart and centred, each turned by the table at
+  `0x02183158` (`ov_000::021675a0`; one hero `0x323d` = the ROM's π, a four-hero row
+  `0x3570 … 0x2f0a` = π ± 0x333/4096 = ±0.2, paired from +x down so both ends turn inward);
+  the monsters at z −2.5, side by side by their
+  widths ×0.7 for the five kinds of `ov_000::021681f8` (`0xbd`, `0xbe`, `0xbf`, `0x110`,
+  `0x155`, once more than one fights) and by `ov_000::02167b5c`'s gap (0x199–0xb33 fx12, filled
+  to 4.0 + one minimum gap per interval). Every width is rounded on the game's fx12 grid as
+  `func_ov000_021677fc` does. A monster that joins recomputes the row (`ov_025::021d8c30`
+  calls `0x021677fc`), which the port does not do yet (**[hypothesis]** that a backup call also
+  switches the flag to the row: `0x02167e6c` has no caller in the corpus). The layout is proved
+  by `app/encounter/tests.rs::the_row_formation_places_one_hero_and_three_monsters` and the
+  `battle/tests.rs` row cases (the table's values and pairing, the gap's arithmetic, the five
+  kinds); `--screenshot` cannot ask for the row yet (that flag lives in `native.rs`), so printing
+  a row battle from the CLI is an open diagnostic, not a claim.
 - **Models and motions.** The party is the hero model (`AnimatedScene::add_hero`); monsters
   load their `.cchr` bodies and separate `.cmot` motions from `<code>.mon` in
   `data/pack_lv5/enemy.gp2` (`LoadMonsterCharacter`, native 233). ROM `.bact` action sections
@@ -72,10 +84,21 @@ cargo run -p dq9-app --release -- --battle-stage 30116 --monsters 1x3 `
   comes up over 15 (`0x021d9d18`). The fight is played on it (§ [Battle](battle.md)), then the screens go
   to black again over 15, the field comes back and trigger event 15 or 16 fires. When no
   fight can be built, the stand-in holds the scene 90 steps and settles it as won. 547 without
-  a following battle gives the field back after 110 steps. Frames, the load-bound black
-  periods (94 and 95 frames) and the intro camera: [`re/battle-transition.md`](../re/battle-transition.md);
-  the load blacks, the 12-frame freeze after contact and the 15-update delay of a set battle
-  are not modelled.
+  a following battle gives the field back after 110 steps.
+  The phases and their ticks are `battle/entry.rs` (`BattleChange` runs them in order):
+  - a **roamer's contact** freezes the picture 12 steps (its blocking load, measured) before
+    the swirl's first update; a **set battle** (`Request::Battle`, number ≥ 1) spends the swirl
+    task's 15 updates (30 steps) instead (`SwirlTask_Init`/`_Update`, `+0xfd`); a preview
+    (`--battle`, `?battle=`) spends neither;
+  - after the swirl's 38 steps the scene is built on the black, which then holds **94 frames**
+    while the stage loads (measured), before the 15-step fade-in (`0x021d9d18`; the brightness
+    log changes over ~13 frames, so the 15 is the chosen count, not a measured one);
+  - the way back is 15 steps to black, **95 frames** black while the field reloads (measured,
+    native 844's placements already restored) and 30 steps up (`SetMainBrightness(0, 30)`,
+    state 5): 140 steps in all.
+  Frames, the intro camera and the measurements: [`re/battle-transition.md`](../re/battle-transition.md).
+  The port spends 144 steps from a contact to the first fade step against the original's 149
+  (the five set-up frames before the freeze are not spent); the intro camera stays unmodelled.
 - **Headless** (`--headless`, `--auto`, `--replay`, tests): the scene is built and checked,
   then the battle is settled in the **same fixed step** (`App::last_battle` records its stage
   and fighter count). No step is spent on a presentation: the headless timeline is the

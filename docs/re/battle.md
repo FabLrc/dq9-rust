@@ -728,6 +728,72 @@ one array keyed one index late (rolls 75/88/100/100, dazzle reusing the defence 
 holds `WEAR_OFF_CHANCE` and `DAZZLE_WEAR_OFF_CHANCE`, both read on the ROM (above), indexed by the
 decremented count.
 
+## The transition's phases (batch `v4-battle-presentation`, read)
+
+The swirl task's states and the delay, re-read on the European ROM to turn the measured frames
+of [`battle-transition.md`](battle-transition.md) into explicit ticks (`battle/entry.rs`):
+
+- `SwirlTask_Init` (`ov_017::021b621c`) writes `+0xfd` = 15 and `+0xfd` stays 0 when native 547
+  creates the task with an object; `SwirlTask_Update` (`ov_017::021b6290`) **state 0** zeroes it
+  when the battle number `+0xfe` is below 1 (a roamer's contact: `+0xfe` = `-1`), **state 2**
+  starts the battle track and the swirl only once the delay is spent. The task is updated once
+  per two frames (`GetTickCount` returns 2: the game's 30 Hz loop), so 15 updates = **30 fixed
+  steps**; the delay therefore belongs to a set battle (`Request::Battle`, number ≥ 1) and no
+  roamer, and it runs while the chr loads (state 1), so it is a wait, not a black.
+- **state 2** starts the swirl when the main brightness is not already full black
+  (`GetBrightness` 0 is `-0x10`), else it calls `SetMainBrightness(-16, 0)` and
+  `SetSubBrightness(-16, 15)` and goes to **state 4** (the camera restore); **state 3** runs
+  `SwirlEffect_Update` (`0x0204701c`) each update; **state 4** waits
+  `IsBrightnessTransitionActive` and then restores the camera and ends the task.
+- The **12-frame freeze** and the two load blacks are measured, not read: the freeze is the
+  battle task's blocking zone load (`ov_017::021b790c` state 0 runs `func_02015438` in a loop
+  while the zone's lock is held) **[hypothesis]**; the blacks are the stage's and the field's
+  load times. The port spends them as ticks (`battle/entry.rs`: 12, 94, 95) because on the
+  original the picture does not move during them. The scene's fade-in is the one count that is
+  not exact: the brightness log changes over frames 149-161 (~13 frames, 7 levels at the 30 Hz
+  pairing) while the port spends `SCENE_FADE_STEPS` = 15 fixed steps; the brightness call's
+  count (`0x021d9d18`, not a function in the corpus) was not read.
+
+## The row formation (`ov_000::02167dd8`/`02167e6c`, read)
+
+Batch `v4-battle-presentation`. The battle's set-up (`ov_000::02164d74`) computes both sets of
+places and then applies the grid: `ov_000::021675a0` (party row), `ov_000::021677fc` (monster
+row), `ov_000::02167cd4` (grid places from the slot table at `iRam02167dd0`), and
+`ov_000::02167dd8` writes the low two bits of `+0x5951` to 2. `ov_000::02167e6c` writes them to
+1 (the row) and re-applies each combatant's row place. The port's `Formation::Row` is that
+layout; the tables, read on the EU ROM (`build/evidence/v4-battle-presentation/row-tables.txt`):
+
+| data | address (EU) | fact |
+|---|---|---|
+| party row turns | `0x02183158` (reached through `iRam0216769c` = `0x02183158`), 16 bytes per party size | one hero `0x323d`; two `0x335c`, `0x311e`; three `0x3570`, `0x323d`, `0x2f0a`; four `0x3570`, `0x335c`, `0x311e`, `0x2f0a` (fx12 radians) |
+| party row place | `0x021830e4` (y `0xcc`, z `0x2800`), `0x021830b4` (rotation, y `0x3244`) | y 0.05, z +2.5; the heading is the table's, not a π plus a turn |
+| row gap | `ov_000::02167b5c`, literals `0x02167bac` = `0x199`, `0x02167bb0` = `0xb33` | gap = clamp((0x4000 + (n−1)·0x199 − total)/(n−1), 0x199, 0xb33) |
+| narrowing | `ov_000::021681f8`, literals `0x02168228` = `0x155`, `0x0216822c` = `0xb33` | kinds `0xbd`, `0xbe`, `0xbf`, `0x110` and `0x155` get `0xb33`/0x1000 = 0.7 of their width, and only when more than one monster fights; every other kind keeps `0x1000` |
+| widths | `ov_000::021677fc` | each width is `(radius · factor + 0x800) >> 12` (rounded fx12); the x walk adds half a width, places, then adds the other half plus the gap; the row is centred on `-(total + gap·(n−1))/2` |
+
+Facts: `func_ov000_021675a0` walks the party **from +x down** (`iVar3` starts at
+`(count−1)·0x1800/2` and loses `0x1800` per member) while it reads the turn table forward, so
+member 0 (the hero) is the **+x** end and takes the row's first turn; with heading 0 facing +z,
+`0x3570` (π + 0x333/4096) at the +x end faces back toward the middle and `0x2f0a` (π − 0x333) at
+the −x end likewise: **both ends turn inward** (pinned by
+`battle::tests::the_row_party_turns_by_the_roms_table`, which reads the headings' sine against
+the pairing). The one-hero turn is `0x323d`/4096 = 3.13989 rad,
+0.0017 rad below a float π (the ROM's own approximation: `0x021830b4`'s rotation y is `0x3244` =
+12868, so the table's π is its own).
+The ends of a four-hero row are `0x333`/4096 = 0.19995 rad from its middle, hence the "±0.2".
+The gap's target is 4.0 + one minimum gap per interval, which the old **[hypothesis]** had right;
+what it lacked was the five-kind narrowing and the integer fx12 rounding (a width of 1.0 becomes
+2867/4096 with the narrow factor, half of it 1433/4096: the row is asymmetric by 1/4096 per
+member, as the original's).
+
+**[unknown]**: which scripts call `ov_000::02167e6c` (none in the corpus's `calls.txt`); whether a
+call for backup switches the flag to the row (`ov_025::021d8c30` recomputes the row's places
+through `0x021677fc` when a monster joins, but the flag write was not found); the reinforcement
+table at `+0x81b1` that `0x021677fc` reads before the placement (it builds the monster list from
+the `.bact` groups); and `func_ov000_0215fc60`, which forces a one-member party row. The port's
+monster row has no eight-monster cap (`0x021677fc` walks eight slots): the ROM's records ask at
+most eight, so a ninth is unmodelled.
+
 ## Open points
 
 - **[hypothesis]** the two draws BattleEmulator spends before every action are `func_ov000_0215fbe0`
