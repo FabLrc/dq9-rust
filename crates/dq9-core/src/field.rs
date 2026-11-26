@@ -307,6 +307,71 @@ pub struct MapChange {
     pub cause: Cause,
 }
 
+/// Fade-out ticks of the map entry (`ov_017::0219e384` state 0: `SetBrightness(-16, 15)`).
+/// Brightness transitions run on every VBlank (60 Hz), so this is 15 fixed steps.
+pub const DOOR_FADE_OUT_TICKS: u16 = 15;
+/// Fade-in ticks after the destination map is loaded: `ov_017::0219e384` state 9 fades the
+/// **main** engine only (`SetMainBrightness(0, 15)`); the capture
+/// `build/evidence/v2-door-task/door-phases.jsonl` shows 20 frames from -16 to 0, the sub
+/// engine returning separately (map/bottom-screen transition). A timing model, not a
+/// decomp constant.
+pub const DOOR_FADE_IN_TICKS: u16 = 20;
+
+/// Phase of a confirmed type-1 door (`0x72` value 7 = 1): the screen fades out, the map
+/// changes once at black, then fades in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoorPhase {
+    FadeOut,
+    FadeIn,
+}
+
+/// The warp door task the field queue runs for a type-1 warp (`ov_017::0219cd98`, task 8:
+/// `Field_WarpFromRegion` then `Save_Warp+2`), followed by the map entry (`ov_017::0219e384`).
+#[derive(Debug, Clone)]
+pub struct DoorTask {
+    change: MapChange,
+    phase: DoorPhase,
+    ticks: u16,
+}
+
+impl DoorTask {
+    pub fn phase(&self) -> DoorPhase {
+        self.phase
+    }
+
+    /// Ticks spent in [`DoorTask::phase`].
+    pub fn ticks(&self) -> u16 {
+        self.ticks
+    }
+
+    /// The map change the task carries.
+    pub fn change(&self) -> MapChange {
+        self.change
+    }
+}
+
+/// How [`Field::step_inner`] treats a type-1 (`door`) warp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WarpMode {
+    /// Change map at once (region tests, the camera crossings, the trigger simulator).
+    Immediate,
+    /// Arm task 8 on a confirm edge, then fade and change map at black.
+    Confirm(bool),
+}
+
+fn map_change_of(warp: &Warp, index: usize) -> MapChange {
+    MapChange {
+        destination: warp.destination,
+        position: Some(from_fx(warp.arrival)),
+        angle: Some(f32::from(warp.arrival_angle) / 4096.0),
+        entry: (warp.entry >= 0).then_some(warp.entry),
+        cause: Cause::Warp {
+            index,
+            kind: warp.kind,
+        },
+    }
+}
+
 /// What the talk event (event 0) did, see [`Field::talk`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum TalkTrigger {
@@ -381,6 +446,10 @@ pub struct Field {
     pub entered_area: Option<u16>,
     /// `+0x42ec`: frames spent walking into a doorway.
     approach: i16,
+    /// Task 8 of the field queue: the confirm edge armed this type-1 warp and its change.
+    armed: Option<MapChange>,
+    /// The type-1 door task once `Save_Warp+2` was consumed (fade out, change, fade in).
+    door_task: Option<DoorTask>,
 }
 
 /// `data/scenario/trigger<xxx>.bin` of a map code (`Trig_LoadMap`, `0x0206462c`): the first
@@ -464,6 +533,8 @@ impl Field {
             added_area: None,
             entered_area: None,
             approach: 0,
+            armed: None,
+            door_task: None,
         })
     }
 
@@ -486,17 +557,93 @@ impl Field {
         events
     }
 
-    /// One fixed step of the field task with the leader's pose after movement.
+    /// One fixed step of the field task with the leader's pose after movement. Kept for the
+    /// callers that only test the regions (camera crossings, trigger simulations): a type-1
+    /// warp changes map at once, as the port did before the door task was read. The
+    /// application uses [`Field::step_with_confirm`].
     pub fn step(&mut self, leader: &Leader, state: &mut State) -> Vec<Event> {
+        self.step_inner(leader, state, WarpMode::Immediate)
+    }
+
+    /// One fixed step of the field task, with the action key's edge (`func_02039820`'s gate
+    /// is the task dispatcher's key press, `ov_017::0219aa7c`): a type-1 `0x72` warp is only
+    /// armed when `confirm` is set and the leader stands inside it, then the door task fades
+    /// and changes map (`ov_017::0219cd98`, `ov_017::0219e384`).
+    pub fn step_with_confirm(
+        &mut self,
+        leader: &Leader,
+        confirm: bool,
+        state: &mut State,
+    ) -> Vec<Event> {
+        self.step_inner(leader, state, WarpMode::Confirm(confirm))
+    }
+
+    fn step_inner(&mut self, leader: &Leader, state: &mut State, mode: WarpMode) -> Vec<Event> {
         let mut events = Vec::new();
+        // The pad is ignored while the door task runs; the application already feeds it none.
+        if self.door_task.is_some() {
+            return events;
+        }
+        // Task 8 ran on the confirm frame: `Save_Warp+2` is consumed on the next field step
+        // (`ov_017::0219ca88`), which fires event 6 and starts the map entry's fade-out.
+        if let Some(change) = self.armed.take() {
+            let fired = self.fire(EVENT_WARP, &[(3, u32::from(self.room))], state);
+            let mut pending = Vec::new();
+            self.collect(fired, Some(change), &mut pending, state);
+            let mut change = change;
+            for event in pending {
+                match event {
+                    Event::MapChange(next) => change = next,
+                    other => events.push(other),
+                }
+            }
+            self.door_task = Some(DoorTask {
+                change,
+                phase: DoorPhase::FadeOut,
+                ticks: 0,
+            });
+            return events;
+        }
         let p = to_fx(leader.position);
         if self.step_doorways(leader, p, state, &mut events) {
             return events;
         }
         self.step_areas(p, state, &mut events);
         self.step_added_areas(p, state, &mut events);
-        self.step_warps(p, state, &mut events);
+        self.step_warps(p, state, &mut events, mode);
         events
+    }
+
+    /// The door task's current phase, `None` when no type-1 door runs.
+    pub fn door_task(&self) -> Option<&DoorTask> {
+        self.door_task.as_ref()
+    }
+
+    /// Puts the door task back after the map load replaced [`Field`]: the fade-in belongs to
+    /// the map entry, not to the map that was left (`ov_017::0219e384` states 9/10).
+    pub fn set_door_task(&mut self, task: DoorTask) {
+        self.door_task = Some(task);
+    }
+
+    /// One 60 Hz tick of the door task. The map change is returned once, when the fade-out
+    /// reaches black (`ov_017::0219e384` state 0 waits for the transition, then loads the
+    /// destination map); the fade-in then runs `DOOR_FADE_IN_TICKS` ticks.
+    pub fn step_door(&mut self) -> Option<Event> {
+        let task = self.door_task.as_mut()?;
+        task.ticks += 1;
+        match task.phase {
+            DoorPhase::FadeOut if task.ticks >= DOOR_FADE_OUT_TICKS => {
+                let change = task.change;
+                task.phase = DoorPhase::FadeIn;
+                task.ticks = 0;
+                Some(Event::MapChange(change))
+            }
+            DoorPhase::FadeIn if task.ticks >= DOOR_FADE_IN_TICKS => {
+                self.door_task = None;
+                None
+            }
+            _ => None,
+        }
     }
 
     /// An event ended (`EventTask_Update`, `ov_017::021bc77c`): fires trigger event 11 with
@@ -775,9 +922,10 @@ impl Field {
     }
 
     /// `ov_017::0219ca88`: the leader inside the box of a `0x72` warp changes map; event 6
-    /// runs first with the room. The game animates the approach of kind 1 doors and tests
-    /// a leader state this model lacks (`func_02039820`): the change is immediate here.
-    fn step_warps(&mut self, p: Fx3, state: &mut State, events: &mut Vec<Event>) {
+    /// runs first with the room. Kind 1 (a door) is immediate in [`WarpMode::Immediate`];
+    /// with a confirm edge it is armed for task 8 instead, and [`Field::step_door`] then
+    /// fades and changes map.
+    fn step_warps(&mut self, p: Fx3, state: &mut State, events: &mut Vec<Event>, mode: WarpMode) {
         let Some((index, warp)) = self
             .warps
             .iter()
@@ -787,18 +935,19 @@ impl Field {
             return;
         };
         let warp = warp.clone();
+        if warp.kind == 1 {
+            if mode == WarpMode::Confirm(true) && self.armed.is_none() {
+                // Field_CheckWarps copies the warp into Save_Warp (`Field_WarpFromRegion`)
+                // and the task queue's dispatcher runs task 8 on the key press
+                // (`ov_017::0219aa7c`, `ov_017::0219cd98`).
+                self.armed = Some(map_change_of(&warp, index));
+            }
+            if mode != WarpMode::Immediate {
+                return;
+            }
+        }
         let fired = self.fire(EVENT_WARP, &[(3, u32::from(self.room))], state);
-        let own = MapChange {
-            destination: warp.destination,
-            position: Some(from_fx(warp.arrival)),
-            angle: Some(f32::from(warp.arrival_angle) / 4096.0),
-            entry: (warp.entry >= 0).then_some(warp.entry),
-            cause: Cause::Warp {
-                index,
-                kind: warp.kind,
-            },
-        };
-        self.collect(fired, Some(own), events, state);
+        self.collect(fired, Some(map_change_of(&warp, index)), events, state);
     }
 
     /// The doorways in the game's list order as `(class, number, flags)`, flags with their
@@ -1076,3 +1225,190 @@ fn dot(a: [f32; 2], b: [f32; 2]) -> i32 {
 
 #[cfg(test)]
 mod tests;
+
+/// The type-1 door task (`0x72` value 7 = 1, `ov_017::0219cd98` and `ov_017::0219e384`):
+/// the confirm edge arms task 8, the next field step starts the map entry, the fade-out
+/// runs 15 ticks, the map changes at black and the fade-in 20 ticks more.
+#[cfg(test)]
+mod door_tests {
+    use super::*;
+    use dq9_formats::map::Regions;
+
+    fn fx(v: f32) -> i32 {
+        (v * 4096.0) as i32
+    }
+
+    fn type_one_warp() -> Warp {
+        let center = [fx(0.0), fx(0.0), fx(10.0)];
+        let size = [fx(2.0), fx(2.0), fx(1.0)];
+        let half = size.map(|v| v / 2);
+        Warp {
+            volume: WarpVolume {
+                high: [0, 1, 2].map(|i| center[i] + half[i]),
+                low: [0, 1, 2].map(|i| center[i] - half[i]),
+                center,
+                angle: 0,
+                radius_sq: square(size[0] / 2) + square(size[2] / 2),
+            },
+            kind: 1,
+            destination: 42,
+            arrival: [fx(10.0), fx(1.0), fx(-3.0)],
+            arrival_angle: fx(1.5) as i16,
+            entry: -1,
+        }
+    }
+
+    fn leader_inside() -> Leader {
+        Leader {
+            position: Vec3::new(0.0, 0.5, 10.0),
+            yaw: yaw_of_angle(0.0),
+            input: Vec3::ZERO,
+        }
+    }
+
+    #[test]
+    fn a_type_one_warp_arms_on_confirm_then_fades_and_changes_map() {
+        let regions = Regions {
+            warps: vec![type_one_warp()],
+            zones: Vec::new(),
+        };
+        let mut field = Field::new(1100, &regions, None).unwrap();
+        let mut state = State::default();
+        // No confirm: the volume holds, but the dispatcher never runs task 8.
+        assert!(
+            field
+                .step_with_confirm(&leader_inside(), false, &mut state)
+                .is_empty()
+        );
+        assert!(field.armed.is_none());
+        assert!(field.door_task().is_none());
+        // The confirm edge arms the warp; the map has not changed yet.
+        assert!(
+            field
+                .step_with_confirm(&leader_inside(), true, &mut state)
+                .is_empty()
+        );
+        assert!(field.armed.is_some());
+        // The next field step consumes Save_Warp+2 and starts the map entry.
+        assert!(
+            field
+                .step_with_confirm(&leader_inside(), false, &mut state)
+                .is_empty()
+        );
+        let task = field.door_task().expect("the door task runs");
+        assert_eq!(task.phase(), DoorPhase::FadeOut);
+        assert_eq!(task.ticks(), 0);
+        // Fifteen 60 Hz ticks of fade-out, the change at black.
+        for tick in 1..DOOR_FADE_OUT_TICKS {
+            assert!(field.step_door().is_none(), "tick {tick}");
+        }
+        let change = match field.step_door() {
+            Some(Event::MapChange(change)) => change,
+            other => panic!("expected the map change, got {other:?}"),
+        };
+        assert_eq!(change.destination, 42);
+        assert_eq!(change.cause, Cause::Warp { index: 0, kind: 1 });
+        assert_eq!(field.door_task().unwrap().phase(), DoorPhase::FadeIn);
+        // The pad is ignored while the task runs: stepping the field changes nothing.
+        assert!(
+            field
+                .step_with_confirm(&leader_inside(), false, &mut state)
+                .is_empty()
+        );
+        assert!(field.door_task().is_some());
+        for tick in 1..DOOR_FADE_IN_TICKS {
+            assert!(field.step_door().is_none(), "fade-in tick {tick}");
+        }
+        assert!(field.step_door().is_none());
+        assert!(
+            field.door_task().is_none(),
+            "the task ends after the fade-in"
+        );
+    }
+
+    #[test]
+    fn a_type_zero_warp_is_unchanged() {
+        let mut warp = type_one_warp();
+        warp.kind = 0;
+        let regions = Regions {
+            warps: vec![warp],
+            zones: Vec::new(),
+        };
+        let mut field = Field::new(1100, &regions, None).unwrap();
+        let mut state = State::default();
+        let events = field.step(&leader_inside(), &mut state);
+        assert!(Field::changes_map(&events));
+        assert!(field.door_task().is_none());
+    }
+
+    /// The 43 type-1 warps of the ROM (every `.bmbl` of every distinct map archive, as
+    /// `dq9re doors --stats` counts them); 42 name a destination, one does not.
+    #[test]
+    fn the_type_one_warps_name_a_destination() {
+        use dq9_formats::Table;
+        use dq9_formats::map::{self, MapFiles};
+        use dq9_formats::maplist::{self, MapList};
+        use dq9_formats::table::Value;
+        use nds_rom::{Narc, Rom, compress};
+        use std::collections::BTreeSet;
+
+        let Some(bytes) = testrom::load() else {
+            return;
+        };
+        let rom = Rom::parse(bytes).unwrap();
+        let table = Table::parse(rom.file_by_path(maplist::PATH).unwrap()).unwrap();
+        let list = MapList::parse(&table).unwrap();
+        let mut seen = BTreeSet::new();
+        let mut doors = 0;
+        let mut without = Vec::new();
+        for record in &list.records {
+            if record.id == 0 || record.code.is_empty() {
+                continue;
+            }
+            let files = MapFiles::new(record.id, record.code, 1);
+            if !seen.insert(files.ambl.clone()) {
+                continue;
+            }
+            let Some(ambl) = map::rom_file(&rom, &files.ambl) else {
+                continue;
+            };
+            let narc = Narc::parse(ambl).unwrap();
+            for entry in narc
+                .names
+                .files
+                .iter()
+                .filter(|file| file.path.ends_with(".bmbl"))
+            {
+                let bmbl = compress::decompress(narc.file(entry.id).unwrap()).unwrap();
+                let table = Table::parse(&bmbl).unwrap();
+                for r in &table.records {
+                    if r.kind != 0x72 {
+                        continue;
+                    }
+                    let v = &r.values;
+                    if v.len() < 16 || v[7].int() != 1 {
+                        continue;
+                    }
+                    doors += 1;
+                    let named = match &v[8] {
+                        Value::Str(Some(code)) => !code.is_empty(),
+                        Value::Int(id) => *id != 0,
+                        _ => false,
+                    };
+                    if !named {
+                        without.push(String::from_utf8_lossy(record.code).into_owned());
+                    }
+                }
+            }
+        }
+        assert_eq!(doors, 43, "the ROM's type-1 warps");
+        // All but one name a destination (`docs/re/map-archive.md`: 976 of 978 warps do,
+        // and `D04M03`'s type-1 record is one of the two without).
+        assert_eq!(
+            without.len(),
+            1,
+            "type-1 warps without a destination: {without:?}"
+        );
+        assert_eq!(without[0], "D04M03");
+    }
+}

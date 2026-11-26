@@ -417,6 +417,9 @@ impl App {
                     .flags
                     .insert(i32::from(dq9_core::state::KEY_REFRESH_FLAG));
             }
+            // The A edge of this VBlank, before the conversation/container code spends it:
+            // the door task dispatcher reads the same press (`ov_017::0219aa7c`).
+            let confirm_edge = self.talk.confirm_pending();
             if self.options.trace_inputs {
                 self.recording
                     .input_trace
@@ -454,7 +457,14 @@ impl App {
             }
             let mut events = Vec::new();
             let menu_open = self.services.is_open();
-            if !self.talk.is_active() && !menu_open && self.talk.confirm_pending() {
+            // A fade holds the field: the action key may not open a container or a
+            // conversation while the door task runs (`ov_017::0219e384` clears the leader's
+            // control byte).
+            let fading = self
+                .field
+                .as_ref()
+                .is_some_and(|field| field.door_task().is_some());
+            if !fading && !self.talk.is_active() && !menu_open && self.talk.confirm_pending() {
                 // A container in front takes the key when no conversation partner does: the
                 // original's containers are "things to examine", reached by the action key.
                 let partner = self
@@ -523,6 +533,7 @@ impl App {
             }
             self.view.camera.step(&input, STEP);
             let steering = walking && !talking && piloted.is_none() && replay.is_none();
+            let piloted_flag = piloted.is_some();
             let pad = match (replay, piloted) {
                 (Some(bits), _) => pad_input(bits),
                 (None, Some(direction)) => Input::from_direction(direction),
@@ -533,6 +544,18 @@ impl App {
                     right: steering && self.axis(&[KeyCode::KeyD, KeyCode::ArrowRight], &[]) > 0.0,
                 },
             };
+            // The type-1 door task holds the field: the pad and the pilot are ignored while it
+            // fades and changes map (`ov_017::0219e384`, the original's brightness transition).
+            let door_task = self
+                .field
+                .as_ref()
+                .is_some_and(|field| field.door_task().is_some());
+            let pad = if door_task { Input::default() } else { pad };
+            // A press on an even VBlank would otherwise be spent by the conversation code
+            // before the next 30 Hz field step reads it: latch it until that step.
+            if confirm_edge && !door_task && !talking && !menu_open {
+                self.doors.confirm_latched = true;
+            }
             if self.options.trace_inputs
                 && let Some(last) = self.recording.input_trace.last_mut()
             {
@@ -572,6 +595,19 @@ impl App {
                 }
                 (None, None) => Vec3::ZERO,
             };
+            let move_direction = if door_task {
+                Vec3::ZERO
+            } else {
+                move_direction
+            };
+            // The action key the door task dispatcher reads (`ov_017::0219aa7c`): the
+            // leftover A edge (not spent on a conversation or a container) confirms a
+            // type-1 warp the leader stands in. The pilot presses it for its doors so its
+            // route keeps entering them.
+            let confirm = !door_task
+                && !talking
+                && !menu_open
+                && (confirm_edge || self.doors.confirm_latched || piloted_flag);
             let mut stepped = false;
             if let Some(hero) = &mut self.hero {
                 let before = hero.position();
@@ -592,7 +628,7 @@ impl App {
                             yaw: hero.yaw(),
                             input: move_direction.normalize_or_zero(),
                         };
-                        events.extend(field.step(&leader, &mut self.state));
+                        events.extend(field.step_with_confirm(&leader, confirm, &mut self.state));
                     }
                     if let (Some(runtime), Some(index)) = (&mut self.runtime, self.hero_instance) {
                         // Motion over the two ticks: gait thresholds are in units/s, so
@@ -613,12 +649,16 @@ impl App {
                 // original's follow runs per VBlank, not per game update.
                 self.view.camera.follow_hero(hero.position());
             }
+            if field_due {
+                self.doors.confirm_latched = false;
+            }
             if self.apply_events(events) {
                 continue;
             }
             if field_due
                 && !talking
                 && !menu_open
+                && !door_task
                 && let Some(contact) = self.step_roaming(stepped)
             {
                 self.begin_encounter(contact);

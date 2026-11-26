@@ -136,7 +136,7 @@ converted to `fx32` by `ToVec3fix` (× 4096, truncated):
 | 0–2 | center | `+0x58` |
 | 3–5 | **full size** (width, height, depth) | box `+4` (top corner) and `+0x10` (bottom corner) = center ± size / 2; `+0x54` = (width/2)² + (depth/2)² |
 | 6 | box angle, radians, **not reduced** | `+0x52` (16 bits) |
-| 7 | type: 0 (935); 1 (43) queues task 8 of the field queue if `0x02039820` allows it **[hypothesis: animated door]** | `+0` |
+| 7 | type: 0 (935) changes map at once; type 1 (43, door) arms task 8 on the action key, then fades out, changes map at black and fades in (below) | `+0` |
 | 8 | destination: map list code (or integer = id) | `+0x1c` |
 | 9, 10 | −1, 0 or 1 **[unknown]** | `+0x64`, `+0x68` |
 | 11–13 | arrival position in the destination map | `+0x20` |
@@ -214,10 +214,50 @@ outside → inside crossing.
 3. **Areas added by triggers** (action `0x8f`, `ov_017::02198e30`): same rule.
 4. **Warps `0x72`** (`Field_CheckWarps`, `ov_017::0219ca88`): the leader inside the box
    (`Region_InRotatedBox`) copies the warp data into `Save_Warp` (`Field_WarpFromRegion`,
-   `ov_017::0219c6f4`: map, position, orientation, entrance), queues the door task
-   if the type is 1, applies the transport and triggers event **6** (word 3 = the map
-   left). The predicate type 1 tests on the leader (`0x02039820`) and the door task
-   (animation, automatic walk, fade) are not read.
+   `ov_017::0219c6f4`: map, position, orientation, entrance), applies the transport and
+   triggers event **6** (word 3 = the map left). A **type-1** warp instead queues task 8
+   (`0x02039820`, the leader's control byte) and its map change runs through the door task
+   (next subsection): with a type-0 warp the change is immediate.
+
+#### Type-1 warp door task (task 8, `ov_017::0219e384`)
+
+Task 8 is `ov_017::0219cd98` (table at `0x021d64f4`, id 8): `Field_WarpFromRegion` then
+`Save_Warp+2 = 1`. The task queue is the field dispatcher `ov_017::0219aa7c`; it runs the
+pending task only on a **key edge** (`KeyManager::TestKeysPressed`) or a touch on the hero's
+sprite, not while a direction is merely held. On the next field update `Field_CheckWarps`
+consumes `+2`, fires event 6 (word 3 = the room left) and queues `Field_EnterMap`
+(`ov_017::0219e384`), whose state 0 sets the fade (`SetBrightness(-16, 15)` at `+0xc` and
+`+0x18`: both engines), state 1 waits for the transition and state 2 queues the destination
+map. The map id (`Zone3D+0`) changes four frames after black; the hero is placed at the
+arrival once the files are loaded. Nothing walks the hero and no door placement is opened:
+the type-1 record names no placement and the path calls neither native 584 (`0x02018300`) nor
+the shared door state.
+
+Facts from the melonDS capture
+(`build/evidence/v2-door-task/door-phases.jsonl`, sha256 `a9024e755b1d`; the
+same walk without the key, `door-walk-noconfirm.jsonl`, `a60961250b54`; `C01` record #7 at
+`(-13.624; -1.065; 20.546)` → `C01M10`): with the d-pad held into the volume (released or
+re-pressed) the map never changes, although `Save_Warp` holds 110 and task 8 is queued; a
+single A edge inside the volume arms `+2` (frame 40), the fade starts two frames later,
+runs 15 ticks to -16 (frame 58), the map id changes at frame 62 and the arrival pose appears
+at frame 104 (file load); the main engine's fade-in starts at 140 and reaches 0 at 160
+(20 frames observed; `Field_EnterMap` state 9 calls `SetMainBrightness(0, 15)` and the sub
+engine returns separately at 154-178). The hero slid from 21.07 (the A press) to 22.02 and
+stopped: no automatic walk. **[hypothesis]** the frame-104
+delay and the 140 start are I/O, not logic; the port models the 15 + 20 tick logic.
+
+The port: `dq9_core::field::DoorTask` (phases, `step_door` at 60 Hz, `step_with_confirm`),
+the application advancing it in `app/doors.rs::step_doors` and feeding no pad while it runs
+(`app.rs`). `Field::step` (region tests, camera crossings, the trigger simulator) keeps the
+immediate behaviour. Type-0 warps and type-2 doorways are unchanged. Of the 43 type-1
+records, 42 name a destination; `D04M03`'s has none (`dq9re doors --stats`: 976 of 978 warps
+name a map). A Flash challenger (independent reviewer) attacked the claim from the
+decompilation and the capture: verdict **partially holds** — the trigger, the one-field-step
+arming, the 15-tick both-engine fade-out, the map change at black, no walk/animation and the
+type-0/type-2 isolation were confirmed; it corrected the fade-in wording (main engine, 15 in
+the code, 20 observed frames) and found a lost A edge on an even VBlank in the port, fixed by
+reading `Doors::confirm_latched` and by holding containers, conversations and roaming while
+the task runs.
 
 #### Type-1 zones and the Observatory height passage
 
@@ -350,9 +390,11 @@ inside (z −12.27), the exit (type-0 warp, z from 7.25 to 8.75) when the hero e
 
 #### Limits and unknowns
 
-- Door task (animation, walk and fade), type-1 predicate `0x02039820`, guards of
-  `Field_CheckRegions` (`+0x424`, modal task), leader states `+0xbe` ("walking", here: a
-  direction is requested) and held keys (here: the requested direction).
+- Type-1 door task: what the dispatcher's key mask accepts (A works, the d-pad held or
+  re-pressed does not), the 4-frame gap between black and the map switch and the 36-frame
+  gap before the fade-in (I/O), guards of `Field_CheckRegions` (`+0x424`, modal task),
+  leader states `+0xbe` ("walking", here: a direction is requested) and held keys (here:
+  the requested direction).
 - Zone types 0, 1, 4 to 12 (`Field_CheckRegions` reads several: `021982ac`, `021983e0`,
   `021984f4`, `02198618`, `021986fc`, `02198aa0`), warp values 9, 10, 15 and 16–24,
   doorway values 5, 6, 11 and 12–20, low nibble of `+0x2e`, transport entrance.
