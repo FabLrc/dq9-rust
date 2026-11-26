@@ -348,8 +348,87 @@ and a dump of every reader accessor shows that no other field moved. `visited_lo
 event block's global flag array** (`11724..12288`), so writing them changes two readers at
 once: that is the format, not a bug.
 
-Not done yet: binding a `dq9_core::state::GameState` to a file (a later batch); the hardware
-protocol (lock, EEPROM write, wait states) stays unported (§ "Unknown").
+Not done yet: the hardware protocol (lock, EEPROM write, wait states) stays unported
+(§ "Unknown").
+
+## Writing a session
+
+`dq9_core::state::GameState::write_into(&self, slot: &mut SlotMut)` binds the modelled state to
+a slot: the **inverse of `from_slot`**, every field the reader fills going back at the offset
+the reader takes it from (`crates/dq9-core/src/state.rs`, tests in the same module; the real
+save test runs when `DQ9_SAVE` names one).
+
+| Written | Offset | From the state |
+|---|---|---|
+| map (`set_area`) | 11476, or the warp map of an intermission save | `map` |
+| resume block (`set_warp`) | 27104 | `placement` when it carries a pose (`Placement::At`) |
+| day timer (`set_day_timer`) | header A `+32` | `clock.seconds()` |
+| chapter / step / substep (`set_chapter`…) | 11568, 11572, 11576 | `scenario` (the active track's progress) |
+| five tracks (`track_mut`: chapter/step/substep, 13 chapter flags, 12 step flags) | event block `+0`, 5 × `0x1c` | the event block's track bytes |
+| global flags (`set_global_flag`, all 4,512 bits) | event block `+0x8c`, `0x234` | the event block's flag array |
+| quest nibbles (`set_quest`, 204) | event block `+0x2cc`, `0x66` | the event block's quest quartets |
+| current track (`set_current_track`) | event block `+0x332` | the event block's selector |
+| party count (`set_party_count`) | 7577 | `party.members.len()` (at most 4) |
+| members (`character_mut`): name glyphs, sex, vocation, 13 levels, 13 experiences, equipment, skill points, skill panel bytes, maximum HP and MP (`set_max_hp`/`set_max_mp`, 10-bit fields 7 and 8 of `+0x14c`) | records `136 + 572 n` | `party.members`, records `standby_count + i` |
+| held items (`set_held_items`) | `7578 + 18 i` | `member.held_items` |
+| bag (`set_bag`: capacity, ids, quantities) | `7652`, `0x1d4` bytes | `party.bag` |
+| gold (`set_gold_on_hand`) | 11448 | `party.gold` |
+
+The maxima are stored by the format: `Save_UnpackMain` copies `+0x14c` fields 7 and 8 into
+the member's HP and MP, so a load restores the member **at full** HP and MP. The record's
+**current** HP/MP are not saved. The base attributes (fields 0 to 6) are not written either:
+the record holds the values **with the worn equipment's modifiers** (`func_02083e28`, e.g. the
+demo's Sage 91 has 246 strength for a table value of 186), while the state's copy
+(`apply_level_tables`) is the level table's base only, so writing it would corrupt a valid
+record — the file keeps what it has, and a level gained in the port leaves those fields one
+level behind **[limit]**. A maximum of 0 in the state means "not established yet" (a new
+game's hero before the tables) and keeps the record's own value instead of zeroing it.
+
+Kept **byte for byte**, because the state does not carry them: the standby count and the
+party order (member object ids, not record indices), the per-vocation **seeds** (`+0x58`),
+the record's `+0x14c` base attributes (fields 0 to 6), the bank, medals, visited places,
+special guests, party tricks, unlocked vocations, the version string, and every block the
+reader leaves opaque (`QuestLog`…`Suspend`, the 12 bytes at `+0x2c0` of the event block). An
+empty equipment, held-item or bag place keeps the empty word it already had (`0` or
+`0xffff`), so a write of unchanged state changes no byte.
+
+A normal save carries **no hero position** (§ "Position on resume"): `from_slot` gives
+`Placement::MapStart`, so the reload stands the party at the map's start record, as the
+original does; only a suspend (intermission) save resumes at `Save_Warp`, and `write_into`
+writes that block only for a state that holds one.
+
+**The live state.** `GameState::from_play(&trigger::State, base: &GameState, map, clock, party)`
+builds the state of a played session: the application's live trigger state supplies the event
+block's tracks, global flags (indices outside the saved array are dropped), quest nibbles and
+selector — the inverse of `dq9_core::field::saved_state` — and the live map, day clock and
+party the rest; `base` is the state loaded from the input slot, which lends its placement and
+the opaque bytes above.
+
+**The CLI.** `dq9-app --save <in.sav> --save-out <out.sav>` (with `--headless-steps`,
+`--auto`, `--replay`, `--walk`, `--play-record` or the window) writes at the end of the run:
+the input's current normal slot is updated, sealed (`SlotMut::seal`) and mirrored when it was
+slot 0 (`Save::mirror_normal_slot`, § "Role of the two slots"), then the whole 64 KiB container
+is written through a sibling `.tmp` file and a rename — a truncated image can never appear
+under the requested name, and the input file is never modified (an `--save-out` that names the
+input, through any spelling, is refused). Without `--save` the command refuses: a fresh
+container's opaque blocks are not modelled, so they would be zeroed. The run logs one line
+with the map, story, party and gold written and how many bytes differ from the input.
+
+**Tests** (`dq9-core` state module; `dq9-app` `app/headless.rs`): a state read from a save and
+written back is byte-identical, including the demo (`DQ9_SAVE`); a mutated state — map, story,
+clock, gold, bag, a member's name, vocation, level, experience, weapon and maxima — changes
+only bytes inside the ranges `write_into` reports (plus the three checksum words); the app's
+write, checked against the same ranges on a synthetic mirrored save, stays inside them and
+its mirror copy; `from_play` round-trips through `field::saved_state`; a party that would fall
+outside the 13 records is refused; a real ROM + `DQ9_SAVE` headless run (bag and a maximum
+mutated) reloads to the state the run held. Evidence: `build/evidence/v3-save-bind/`.
+
+**DS acceptance: the original loads the written container.** melonDS with the written file as
+`dq9.sav` shows its adventure log on the title screen (the four members with their vocations
+and levels, play time, "Stornway") and continues into Stornway's church with that party on the
+map (`build/evidence/v3-save-bind/melonds-title.png`, `melonds-continue.png`): the header, the
+three checksums and the blocks are accepted by the game's own loader. It does not prove the
+meaning of every written field, nor a mutation made in game and saved from the DS menu.
 
 ## Unknown
 

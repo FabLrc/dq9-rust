@@ -34,8 +34,13 @@ pub const EVENT_FLAGS_SIZE: usize = 0x334;
 const TRACK_COUNT: usize = 5;
 const TRACK_SIZE: usize = 0x1c;
 const GLOBAL_FLAGS: usize = TRACK_COUNT * TRACK_SIZE;
-const GLOBAL_FLAGS_SIZE: usize = 0x234;
+/// Size of the global flag array (4,512 bits, `Flags_Test` indices; `+0x8c` of the block).
+pub const GLOBAL_FLAGS_SIZE: usize = 0x234;
 const TRACK_SELECTOR: usize = 0x332;
+/// Quest nibbles at `+0x2cc`: two per byte, low nibble first, 204 quests.
+const QUEST_STATES: usize = 0x2cc;
+/// Number of quests in the event block (`+0x2cc`, two quartets per byte).
+pub const QUEST_COUNT: usize = 0xcc;
 
 /// Characters stored per slot (hero, standby and party members, 8 at the inn + 4 in party
 /// + 1 spare in the editor's reading).
@@ -90,6 +95,21 @@ const BODY: usize = 376;
 /// Bytes `Save_WriteStep` state 2 copies from slot 0 to slot 1 on a normal save (`0x6fe4`
 /// at `0x10` / `0x8010`), i.e. the slot minus its first 16 bytes.
 const MIRROR_LEN: usize = 0x6fe4;
+
+/// The bag inside the `Main` block: 12 header bytes (two runtime pointers, the capacity
+/// `u16` at `+8`, then two more), the ids (`u16`) and their quantities (`u8`). Same block as
+/// `dq9_core::party::Bag` reads (`docs/re/party.md`); the offsets live here because this
+/// module owns the file layout.
+const BAG: usize = 7652;
+const BAG_SIZE: usize = 0x1d4;
+const BAG_HEADER: usize = 12;
+
+/// The record's derived stat block (`+0x14c`): fourteen 10-bit fields, three per word, of
+/// which 7 and 8 are the maximum HP and MP `PartyMember_LoadRecord` writes into the member
+/// (`dq9_core::party`). The base attributes are fields 0 to 6.
+const STAT_BLOCK: usize = 0x14c;
+const MAX_HP_FIELD: usize = 7;
+const MAX_MP_FIELD: usize = 8;
 
 /// Value of an empty item word.
 pub const NO_ITEM: u16 = 0xffff;
@@ -749,6 +769,12 @@ impl core::fmt::Debug for SlotMut<'_> {
 }
 
 impl SlotMut<'_> {
+    /// Read view of the same bytes, for the fields a write keeps as they are (the standby
+    /// count, a record outside the party, the opaque parts of a block).
+    pub fn as_slot(&self) -> Slot<'_> {
+        Slot(self.0)
+    }
+
     /// Byte 20 of the header (`slot+0x14`), read back by [`Slot::is_intermission`].
     pub fn set_intermission(&mut self, intermission: bool) -> Range<usize> {
         self.0[INTERMISSION_FLAG] = u8::from(intermission);
@@ -839,6 +865,31 @@ impl SlotMut<'_> {
     pub fn set_gold_on_hand(&mut self, gold: u32) -> Range<usize> {
         put_u32(self.0, GOLD_ON_HAND, gold);
         GOLD_ON_HAND..GOLD_ON_HAND + 4
+    }
+
+    /// The bag the party carries (`Main+0x1d5c`, `docs/re/party.md`): the capacity at `+8`,
+    /// then the ids and quantities of its slots. An empty slot keeps the empty word it
+    /// already had (`0` or [`NO_ITEM`]); the pointer words and the block's tail stay as they
+    /// are. `None` when the slots do not fit the block (`12 + 3n > 0x1d4`).
+    pub fn set_bag(&mut self, slots: &[(Option<u16>, u8)]) -> Option<Range<usize>> {
+        let count = slots.len();
+        if BAG_HEADER + 3 * count > BAG_SIZE {
+            return None;
+        }
+        put_u16(self.0, BAG + 8, count as u16);
+        let ids = BAG + BAG_HEADER;
+        let quantities = ids + 2 * count;
+        for (index, (item, quantity)) in slots.iter().enumerate() {
+            let current = u16_at(self.0, ids + 2 * index);
+            let word = match item {
+                Some(id) => *id,
+                None if current == NO_ITEM || current == 0 => current,
+                None => NO_ITEM,
+            };
+            put_u16(self.0, ids + 2 * index, word);
+            self.0[quantities + index] = *quantity;
+        }
+        Some(BAG + 8..BAG + BAG_HEADER + 3 * count)
     }
 
     pub fn set_gold_in_bank(&mut self, gold: u32) -> Range<usize> {
@@ -935,7 +986,14 @@ impl core::fmt::Debug for EventFlagsMut<'_> {
     }
 }
 
-impl EventFlagsMut<'_> {
+impl<'a> EventFlagsMut<'a> {
+    /// Editing view of a standalone event block (an array of [`EVENT_FLAGS_SIZE`] bytes): the
+    /// ranges are then relative to the block. For composing a block before it has a slot
+    /// (`dq9_core::state::GameState::from_play`).
+    pub fn new(bytes: &'a mut [u8]) -> Option<Self> {
+        (bytes.len() == EVENT_FLAGS_SIZE).then_some(Self { bytes, base: 0 })
+    }
+
     /// Byte `+0x332`: which track [`EventFlags::current_track`] reads.
     pub fn set_current_track(&mut self, track: u8) -> Range<usize> {
         self.bytes[TRACK_SELECTOR] = track;
@@ -980,6 +1038,19 @@ impl EventFlagsMut<'_> {
         } else {
             self.bytes[at] &= !mask;
         }
+        Some(self.base + at..self.base + at + 1)
+    }
+
+    /// Quest nibble `index` (0..[`QUEST_COUNT`]), the counterpart of [`EventFlags::quest`]:
+    /// two per byte at `+0x2cc`, low nibble first, four bits stored. `None` past the array.
+    pub fn set_quest(&mut self, index: i32, value: u8) -> Option<Range<usize>> {
+        let index = usize::try_from(index).ok()?;
+        if index >= QUEST_COUNT {
+            return None;
+        }
+        let at = QUEST_STATES + index / 2;
+        let shift = (index & 1) * 4;
+        self.bytes[at] = self.bytes[at] & !(0xf << shift) | (value & 0xf) << shift;
         Some(self.base + at..self.base + at + 1)
     }
 }
@@ -1099,6 +1170,26 @@ impl CharacterMut<'_> {
     pub fn set_unallocated_skill_points(&mut self, points: u16) -> Range<usize> {
         put_u16(self.bytes, SKILL_POINTS, points);
         self.range(SKILL_POINTS, 2)
+    }
+
+    /// Maximum HP: 10-bit field 7 of the stat block at `+0x14c`, the value
+    /// `Save_UnpackMain` writes into the member's HP (`dq9_core::party`'s `stat_field`).
+    pub fn set_max_hp(&mut self, hp: u16) -> Range<usize> {
+        self.set_stat_field(MAX_HP_FIELD, hp)
+    }
+
+    /// Maximum MP: field 8 of the same block.
+    pub fn set_max_mp(&mut self, mp: u16) -> Range<usize> {
+        self.set_stat_field(MAX_MP_FIELD, mp)
+    }
+
+    /// Writes one of the fourteen 10-bit fields, keeping the two neighbours of its word.
+    fn set_stat_field(&mut self, field: usize, value: u16) -> Range<usize> {
+        let at = STAT_BLOCK + 4 * (field / 3);
+        let shift = 10 * (field % 3);
+        let word = u32_at(self.bytes, at) & !(0x3ff << shift) | (u32::from(value & 0x3ff) << shift);
+        put_u32(self.bytes, at, word);
+        self.range(at, 4)
     }
 
     /// 36 proficiency bytes ([`Character::proficiency_flags`]), at most 36 copied.
@@ -1248,10 +1339,10 @@ impl<'a> EventFlags<'a> {
         let Ok(index) = usize::try_from(index) else {
             return 0;
         };
-        if index >= 0xcc {
+        if index >= QUEST_COUNT {
             return 0;
         }
-        (self.0[0x2cc + index / 2] >> ((index & 1) * 4)) & 0xf
+        (self.0[QUEST_STATES + index / 2] >> ((index & 1) * 4)) & 0xf
     }
 
     /// Story flag `index` (`Flags_TestExt`, `0x0206eba8`): indices from `0x400` are shifted
@@ -1379,6 +1470,24 @@ mod tests {
         assert_eq!(ev.current_track(), 4);
         assert_eq!(ev.track(4).unwrap().step(), 7);
         assert!(ev.track(5).is_none());
+    }
+
+    #[test]
+    fn quest_nibbles_round_trip_through_the_setter() {
+        let mut block = [0u8; EVENT_FLAGS_SIZE];
+        {
+            let mut flags = EventFlagsMut::new(&mut block).expect("a whole block");
+            assert_eq!(flags.set_quest(2, 0xf), Some(0x2cd..0x2ce));
+            assert_eq!(flags.set_quest(3, 0b1010), Some(0x2cd..0x2ce));
+            assert_eq!(flags.set_quest(QUEST_COUNT as i32, 1), None);
+            assert_eq!(flags.set_quest(-1, 1), None);
+        }
+        // Two per byte, low nibble first, four bits kept.
+        assert_eq!((block[0x2cc], block[0x2cd]), (0x00, 0xaf));
+        let flags = EventFlags::from_bytes(&block).unwrap();
+        assert_eq!((flags.quest(2), flags.quest(3)), (0xf, 0b1010));
+        assert_eq!(flags.quest(0), 0);
+        assert!(EventFlagsMut::new(&mut [0u8; 4]).is_none());
     }
 
     #[test]

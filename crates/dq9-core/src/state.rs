@@ -6,10 +6,17 @@
 //!
 //! port: 0x02010250, 0x02010298, 0x02010364, 0x0201036c, 0x02010374
 
-use dq9_formats::map::StartPoint;
-use dq9_formats::save::{EVENT_FLAGS_SIZE, EventFlags, Save, Slot};
+use core::ops::Range;
+use std::collections::BTreeSet;
 
-use crate::party::Party;
+use dq9_formats::hero::Sex;
+use dq9_formats::map::StartPoint;
+use dq9_formats::save::{
+    EVENT_FLAGS_SIZE, EventFlags, EventFlagsMut, GLOBAL_FLAGS_SIZE, NO_ITEM, QUEST_COUNT, Save,
+    Slot, SlotMut, Warp,
+};
+
+use crate::party::{HELD_ITEMS, PARTY_MAX, Party};
 
 /// Length of the in-game day in seconds (`GameState+0x3d0`, 420.0 in RAM).
 pub const DAY_LENGTH: f32 = 420.0;
@@ -372,6 +379,215 @@ impl GameState {
             Placement::MapStart => start.into(),
         }
     }
+
+    /// The state a played session holds, bound to a save's layout: the live trigger state
+    /// supplies the event block's tracks, global flags, quest nibbles and track selector (the
+    /// inverse of [`crate::field::saved_state`]); `map` and `clock` are the live map and day
+    /// clock, `party` the live party (members, gold, bag). `base` is the state loaded from
+    /// the input slot: it carries what a run does not model and what a write keeps, the
+    /// placement (a normal save has none, `docs/re/save.md` § "Position on resume") and the
+    /// opaque bytes of the event block (`+0x2c0`, 12 bytes).
+    ///
+    /// Global flags outside the saved array are dropped here: the array holds indices
+    /// `0..0x11a0` (`Flags_Test`), and `live` may hold flags the save does not carry.
+    pub fn from_play(
+        live: &crate::trigger::State,
+        base: &Self,
+        map: u16,
+        clock: DayClock,
+        party: Party,
+    ) -> Result<Self, StateError> {
+        let mut events = base.events.clone();
+        {
+            let mut saved = EventFlagsMut::new(&mut events).ok_or(StateError::BadEventBlock)?;
+            for (index, track) in live.tracks.iter().enumerate() {
+                let Some(mut block) = saved.track_mut(index) else {
+                    break;
+                };
+                block.set_chapter(track.chapter);
+                block.set_step(track.step);
+                block.set_substep(track.substep);
+                block.set_chapter_flags(&flag_bits(&track.flags[0], 13));
+                block.set_step_flags(&flag_bits(&track.flags[1], 12));
+            }
+            for index in 0..(GLOBAL_FLAGS_SIZE * 8) {
+                let index = index as i32;
+                saved.set_global_flag(index, live.flags.contains(&index), false);
+            }
+            for quest in 0..QUEST_COUNT as i32 {
+                saved.set_quest(quest, live.quests.get(&quest).copied().unwrap_or(0));
+            }
+            saved.set_current_track(live.track.try_into().unwrap_or(0));
+        }
+        let track = live.tracks.get(live.track).unwrap_or(&live.tracks[0]);
+        Ok(Self {
+            map,
+            placement: base.placement,
+            scenario: Scenario {
+                chapter: u32::from(track.chapter),
+                step: u32::from(track.step),
+                substep: u32::from(track.substep),
+            },
+            clock,
+            party,
+            events,
+        })
+    }
+
+    /// Writes the fields this state carries into `slot`: the inverse of
+    /// [`GameState::from_slot`], every field the reader fills going back at the same offset.
+    /// The checksums stay stale ([`SlotMut::seal`]); the ranges returned are the slot-relative
+    /// bytes written, sorted and deduplicated.
+    ///
+    /// Not written, because the state does not carry them: the standby count and the party
+    /// order (member object ids, not record indices), the per-vocation seeds (`+0x58`), the
+    /// record's `+0x14c` base attributes (fields 0 to 6, a level-table cache the state leaves
+    /// empty on a load — fields 7/8, the maxima, **are** written), the bank, medals, visited
+    /// places, special guests, party tricks, unlocked vocations, the version string, and every
+    /// block the reader leaves opaque (`Block`'s content beyond the fields above, the 12 bytes
+    /// at `+0x2c0` of the event block). An empty equipment, held-item or bag place keeps the
+    /// word it had when that word was empty too (`0` or [`NO_ITEM`]), so a write of unchanged
+    /// state changes no byte.
+    pub fn write_into(&self, slot: &mut SlotMut<'_>) -> Result<Vec<Range<usize>>, StateError> {
+        let mut ranges = Vec::new();
+        ranges.push(slot.set_area(self.map));
+        if let Placement::At(pose) = self.placement {
+            ranges.push(slot.set_warp(Warp {
+                map: self.map,
+                angle: pose.angle,
+                position: pose.position,
+            }));
+        }
+        ranges.push(slot.set_day_timer(self.clock.seconds()));
+        ranges.push(slot.set_chapter(self.scenario.chapter));
+        ranges.push(slot.set_scenario_step(self.scenario.step));
+        ranges.push(slot.set_scenario_substep(self.scenario.substep));
+        let events = self.events();
+        {
+            let mut flags = slot.event_flags_mut();
+            for index in 0.. {
+                let Some(track) = events.track(index) else {
+                    break;
+                };
+                let Some(mut block) = flags.track_mut(index) else {
+                    break;
+                };
+                ranges.push(block.set_chapter(track.chapter()));
+                ranges.push(block.set_step(track.step()));
+                ranges.push(block.set_substep(track.substep()));
+                ranges.push(block.set_chapter_flags(track.chapter_flags()));
+                ranges.push(block.set_step_flags(track.step_flags()));
+            }
+            for index in 0..(GLOBAL_FLAGS_SIZE * 8) {
+                let index = index as i32;
+                if let Some(range) = flags.set_global_flag(index, events.global_flag(index), false)
+                {
+                    ranges.push(range);
+                }
+            }
+            for quest in 0..QUEST_COUNT as i32 {
+                if let Some(range) = flags.set_quest(quest, events.quest(quest)) {
+                    ranges.push(range);
+                }
+            }
+            ranges.push(flags.set_current_track(events.current_track().try_into().unwrap_or(0)));
+        }
+        let count = self.party.members.len();
+        if count > PARTY_MAX {
+            return Err(StateError::BadParty);
+        }
+        ranges.push(slot.set_party_count(count as u8));
+        let standby = usize::from(slot.as_slot().standby_count());
+        for (index, member) in self.party.members.iter().enumerate() {
+            let record = standby.checked_add(index).ok_or(StateError::BadParty)?;
+            // An empty place keeps the word it already had when that word is empty too
+            // (`0` and `NO_ITEM` both read as empty): a write of unchanged state must not
+            // change the representation an input save used.
+            let (current_equipment, current_held): ([u16; 8], [u16; HELD_ITEMS]) = {
+                let current = slot.as_slot();
+                let character = current.character(record);
+                (
+                    core::array::from_fn(|i| {
+                        character.map_or(0, |c| c.equipment(dq9_formats::save::EquipSlot::ALL[i]))
+                    }),
+                    current.held_items(index).unwrap_or([0; HELD_ITEMS]),
+                )
+            };
+            {
+                let mut saved = slot.character_mut(record).ok_or(StateError::BadParty)?;
+                ranges.push(saved.set_name_raw(&member.name));
+                ranges.push(saved.set_gender(u8::from(member.sex == Sex::Woman)));
+                ranges.push(saved.set_vocation(member.vocation));
+                for (vocation, &level) in member.levels.iter().enumerate() {
+                    ranges.extend(saved.set_level(vocation, level));
+                }
+                for (vocation, &experience) in member.experience.iter().enumerate() {
+                    ranges.extend(saved.set_experience(vocation, experience));
+                }
+                for (i, place) in dq9_formats::save::EquipSlot::ALL.into_iter().enumerate() {
+                    let word = match member.equipment.get(place) {
+                        Some(item) => item,
+                        None if is_empty_word(current_equipment[i]) => continue,
+                        None => NO_ITEM,
+                    };
+                    ranges.push(saved.set_equipment(place, word));
+                }
+                ranges.push(saved.set_unallocated_skill_points(member.skill_points));
+                ranges.push(saved.set_proficiency_flags(&member.skill_panels));
+                // The record stores the derived maxima (`+0x14c` fields 7/8), which the load
+                // writes into the member's HP and MP. A zero in the state means "not
+                // established yet" (a new game's hero before the level tables): the record's
+                // own value is then kept rather than zeroed.
+                if member.max_hp != 0 {
+                    ranges.push(saved.set_max_hp(member.max_hp));
+                }
+                if member.max_mp != 0 {
+                    ranges.push(saved.set_max_mp(member.max_mp));
+                }
+            }
+            let held: [u16; HELD_ITEMS] =
+                core::array::from_fn(|slot| match member.held_items[slot] {
+                    Some(item) => item,
+                    None if is_empty_word(current_held[slot]) => current_held[slot],
+                    None => NO_ITEM,
+                });
+            ranges.extend(slot.set_held_items(index, &held));
+        }
+        // The bag is part of the state (`Party::from_slot` fills it) and the session mutates
+        // it: containers, item use and battle drops all go through `Bag`.
+        let bag: Vec<(Option<u16>, u8)> = self
+            .party
+            .bag
+            .slots()
+            .iter()
+            .map(|stack| (stack.item, stack.quantity))
+            .collect();
+        ranges.push(slot.set_bag(&bag).ok_or(StateError::BadParty)?);
+        ranges.push(slot.set_gold_on_hand(self.party.gold));
+        ranges.sort_by_key(|range| (range.start, range.end));
+        ranges.dedup();
+        Ok(ranges)
+    }
+}
+
+/// The bytes of a flag set that a track holds: bit `index` of `bytes` bytes, least significant
+/// bit first (`Flags_Test`'s convention, [`dq9_formats::save::test_bit`]).
+fn flag_bits(set: &BTreeSet<i32>, bytes: usize) -> Vec<u8> {
+    let mut out = vec![0u8; bytes];
+    for &flag in set {
+        if let Ok(index) = usize::try_from(flag)
+            && index < bytes * 8
+        {
+            out[index / 8] |= 1 << (index % 8);
+        }
+    }
+    out
+}
+
+/// Whether an item word is an empty place: the two representations the readers accept
+/// ([`dq9_formats::save::NO_ITEM`] and 0).
+fn is_empty_word(word: u16) -> bool {
+    word == NO_ITEM || word == 0
 }
 
 #[cfg(test)]
@@ -531,6 +747,231 @@ mod tests {
         // Index 0 has no compendium entry: `func_0207cc18` skips it.
         assert_eq!(item_obtained_flag(0), None);
         assert_eq!(item_obtained_flag(u16::MAX), None);
+    }
+
+    /// A normal save with every field the binding writes set to a distinct value.
+    fn played_save() -> Vec<u8> {
+        use dq9_formats::save::EquipSlot;
+        let mut save = sealed(blank_save());
+        {
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.set_area(109);
+            slot.set_day_timer(42.5);
+            slot.set_chapter(19);
+            slot.set_scenario_step(2);
+            slot.set_scenario_substep(1);
+            slot.set_party_count(1);
+            slot.set_gold_on_hand(38_754);
+            {
+                let mut flags = slot.event_flags_mut();
+                flags.set_global_flag(9, true, false);
+                flags.set_global_flag(4511, true, false);
+                flags.set_quest(3, 0b1010);
+                flags.set_quest(0xcb, 1);
+                flags.set_current_track(1);
+                let mut track = flags.track_mut(1).unwrap();
+                track.set_chapter(19);
+                track.set_step(2);
+                track.set_substep(1);
+                track.set_chapter_flags(&[0x0f, 0]);
+                track.set_step_flags(&[0x30]);
+            }
+            let mut hero = slot.character_mut(0).unwrap();
+            hero.set_name_raw(&[18, 47, 48, 39]);
+            hero.set_gender(1);
+            hero.set_vocation(6);
+            hero.set_level(6, 42).unwrap();
+            hero.set_experience(6, 1_234_567).unwrap();
+            hero.set_equipment(EquipSlot::Weapon, 20_004);
+            hero.set_equipment(EquipSlot::Head, 9_001);
+            hero.set_unallocated_skill_points(12);
+            hero.set_proficiency_flags(&[0b1, 0, 0b10]);
+            slot.set_held_items(0, &[1, 2, 3, NO_ITEM, 5, 6, NO_ITEM, 8])
+                .unwrap();
+            slot.set_bag(&[(Some(1), 3), (Some(2), 1), (None, 0), (None, 0)])
+                .unwrap();
+            slot.seal();
+        }
+        let mut bytes = save.as_bytes().to_vec();
+        // The per-vocation seeds (`+0x58`) and the base attributes (`+0x14c` fields 0 to 6)
+        // have no writer: a pattern there proves the binding leaves them alone (fields 7/8,
+        // the maxima, do round-trip and are written from the member's values).
+        for (i, byte) in bytes[136 + 0x58..136 + 0x94].iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(7) | 1;
+        }
+        for (i, byte) in bytes[136 + 0x14c..136 + 0x160].iter_mut().enumerate() {
+            *byte = (i as u8) | 0x80;
+        }
+        let mut save = Save::parse(&bytes).unwrap();
+        save.slot_mut(0).unwrap().seal();
+        save.as_bytes().to_vec()
+    }
+
+    #[test]
+    fn a_state_writes_back_onto_its_own_slot() {
+        let bytes = played_save();
+        let state = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let mut rewritten = Save::parse(&bytes).unwrap();
+        let ranges = {
+            let mut slot = rewritten.slot_mut(0).unwrap();
+            let ranges = state.write_into(&mut slot).unwrap();
+            slot.seal();
+            ranges
+        };
+        assert!(!ranges.is_empty(), "the binding wrote nothing");
+        assert_eq!(rewritten.as_bytes(), &bytes[..]);
+    }
+
+    #[test]
+    fn an_intermission_state_writes_its_warp_and_map() {
+        let mut bytes = blank_save();
+        bytes[20] = 1;
+        bytes[27104..27106].copy_from_slice(&100u16.to_le_bytes());
+        bytes[27106..27108].copy_from_slice(&(-5i16).to_le_bytes());
+        for (i, v) in [4096i32, 8192, -4096].iter().enumerate() {
+            bytes[27108 + 4 * i..][..4].copy_from_slice(&v.to_le_bytes());
+        }
+        let save = sealed(bytes);
+        let bytes = save.as_bytes().to_vec();
+        let state = GameState::from_slot(&save.slot(0).unwrap()).unwrap();
+        let mut rewritten = Save::parse(&bytes).unwrap();
+        {
+            let mut slot = rewritten.slot_mut(0).unwrap();
+            state.write_into(&mut slot).unwrap();
+            slot.seal();
+        }
+        assert_eq!(rewritten.as_bytes(), &bytes[..]);
+    }
+
+    #[test]
+    fn a_mutation_stays_inside_the_written_ranges() {
+        use dq9_formats::save::{Checksum, EquipSlot};
+        let bytes = played_save();
+        let mut state = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        state.map = 1100;
+        state.scenario = Scenario {
+            chapter: 2,
+            step: 1,
+            substep: 3,
+        };
+        state.clock = DayClock::new(300.0, true);
+        state.party.gold = 1234;
+        state.party.bag.add(3);
+        let hero = &mut state.party.members[0];
+        hero.name = [9, 8, 7, 0, 0, 0, 0, 0, 0, 0];
+        hero.vocation = 1;
+        hero.levels[1] = 12;
+        hero.experience[1] = 9999;
+        hero.equipment.set(EquipSlot::Weapon, Some(20_005));
+        hero.max_hp = 111;
+        hero.max_mp = 22;
+        let mut save = Save::parse(&bytes).unwrap();
+        let ranges = {
+            let mut slot = save.slot_mut(0).unwrap();
+            let ranges = state.write_into(&mut slot).unwrap();
+            slot.seal();
+            ranges
+        };
+        let checksums: Vec<Range<usize>> = Checksum::ALL
+            .iter()
+            .map(|which| which.stored_at()..which.stored_at() + 4)
+            .collect();
+        let out = save.as_bytes();
+        let mut changed = 0;
+        for (index, (before, after)) in bytes.iter().zip(out).enumerate() {
+            if before == after {
+                continue;
+            }
+            changed += 1;
+            let in_slot = index % dq9_formats::save::SLOT_SIZE;
+            assert!(
+                ranges
+                    .iter()
+                    .chain(&checksums)
+                    .any(|range| range.contains(&in_slot)),
+                "byte {in_slot} of slot {} changed outside the written ranges",
+                index / dq9_formats::save::SLOT_SIZE
+            );
+        }
+        assert!(
+            changed > 5,
+            "the mutation changed nothing ({changed} bytes)"
+        );
+    }
+
+    #[test]
+    fn from_play_round_trips_the_live_state() {
+        let base = GameState::from_save(&Save::parse(&played_save()).unwrap()).unwrap();
+        let mut live = crate::field::saved_state(&base);
+        live.flags.insert(4321);
+        live.flags.remove(&9);
+        live.tracks[2].chapter = 7;
+        live.tracks[2].step = 4;
+        live.tracks[2].substep = 2;
+        live.tracks[2].flags[1].insert(5);
+        live.quests.insert(7, 0b1001);
+        live.track = 2;
+        // The 12 opaque bytes of the block (quest manager `+0x2c0`) have no setter and no
+        // reader: a base state keeps them, so the output must carry them unchanged.
+        let mut base = base;
+        base.events[0x2c0] = 0xab;
+        let played = GameState::from_play(
+            &live,
+            &base,
+            1112,
+            DayClock::new(100.0, true),
+            base.party.clone(),
+        )
+        .unwrap();
+        assert_eq!(played.map, 1112);
+        assert_eq!(played.events().as_bytes()[0x2c0], 0xab);
+        assert_eq!(
+            played.scenario,
+            Scenario {
+                chapter: 7,
+                step: 4,
+                substep: 2
+            }
+        );
+        let back = crate::field::saved_state(&played);
+        assert_eq!(back.flags, live.flags);
+        assert_eq!(back.tracks, live.tracks);
+        assert_eq!(back.quests, live.quests);
+        assert_eq!(back.track, live.track);
+    }
+
+    #[test]
+    fn a_party_past_the_character_table_is_refused() {
+        let bytes = played_save();
+        let mut state = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let extra = state.party.members[0].clone();
+        state.party.members.push(extra);
+        let mut save = Save::parse(&bytes).unwrap();
+        save.slot_mut(0).unwrap().set_standby_count(12);
+        let mut slot = save.slot_mut(0).unwrap();
+        assert_eq!(state.write_into(&mut slot), Err(StateError::BadParty));
+    }
+
+    #[test]
+    fn a_real_save_writes_back_byte_identical() {
+        let Some(path) = std::env::var_os("DQ9_SAVE") else {
+            eprintln!("skipped: no DQ9_SAVE");
+            return;
+        };
+        let bytes = std::fs::read(path).unwrap();
+        let save = Save::parse(&bytes).unwrap();
+        let state = GameState::from_save(&save).unwrap();
+        let mut rewritten = Save::parse(&bytes).unwrap();
+        let index = rewritten.current_slot().unwrap();
+        {
+            let mut slot = rewritten.slot_mut(index).unwrap();
+            let ranges = state.write_into(&mut slot).unwrap();
+            assert!(!ranges.is_empty());
+            slot.seal();
+        }
+        assert_eq!(index, 0, "the fixture is a normal save in slot 0");
+        rewritten.mirror_normal_slot();
+        assert_eq!(rewritten.as_bytes(), &bytes[..]);
     }
 }
 

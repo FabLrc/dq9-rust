@@ -32,6 +32,15 @@ struct Cli {
     /// DS save image; selects its current map when `--map` is absent.
     #[arg(long)]
     save: Option<PathBuf>,
+    /// Writes the session's state into the save's current normal slot and into this file
+    /// (needs `--save`, which is never modified): the whole container, sealed and mirrored
+    /// like the game's own normal save. What the state does not carry stays as it was.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["screenshot", "events_report", "battle", "battle_stage"]
+    )]
+    save_out: Option<PathBuf>,
     /// Time of day: `night`, `morning`, `day`, `evening` (or 0-3, `LightingManager+0x98`);
     /// defaults to the save's clock phase, else the night.
     #[arg(long, value_parser = lighting::parse_time)]
@@ -456,6 +465,7 @@ fn read_inputs(path: &std::path::Path) -> anyhow::Result<Vec<(u8, bool)>> {
 
 pub fn main() -> Result<()> {
     let cli = Cli::parse();
+    require_input_save(&cli)?;
     let path = match &cli.rom {
         Some(p) => p.clone(),
         None => find_rom()?,
@@ -513,6 +523,7 @@ pub fn main() -> Result<()> {
             }
             println!("after step {index}: {}", pose(&app));
         }
+        write_save_out(&cli, &app)?;
         return Ok(());
     }
     if let Some((major, first, last)) = cli.events_report {
@@ -609,6 +620,7 @@ pub fn main() -> Result<()> {
             std::fs::write(path, app.checkpoints_jsonl())
                 .with_context(|| format!("writing {}", path.display()))?;
         }
+        write_save_out(&cli, &app)?;
         return Ok(());
     }
     if cli.auto {
@@ -632,6 +644,7 @@ pub fn main() -> Result<()> {
             std::fs::write(path, app.input_trace_jsonl())
                 .with_context(|| format!("writing {}", path.display()))?;
         }
+        write_save_out(&cli, &app)?;
         return Ok(());
     }
     if cli.headless || cli.headless_steps.is_some() {
@@ -645,6 +658,7 @@ pub fn main() -> Result<()> {
         if let (Some(path), Some((rate, samples))) = (&cli.sound_wav, app.take_recording()) {
             write_sound(path, rate, &samples)?;
         }
+        write_save_out(&cli, &app)?;
         return Ok(());
     }
     if let (Some(eye), Some(target)) = (cli.eye, cli.target) {
@@ -653,6 +667,7 @@ pub fn main() -> Result<()> {
     if let Some(event_loop) = event_loop {
         event_loop.run_app(&mut app)?;
     }
+    write_save_out(&cli, &app)?;
     Ok(())
 }
 
@@ -685,6 +700,7 @@ fn play_record(cli: &Cli, rom: Vec<u8>, save: Option<Vec<u8>>, path: &Path) -> R
         app.set_fx(cli.enhanced()?);
         app.start_replay(record);
         event_loop.run_app(&mut app)?;
+        write_save_out(cli, &app)?;
         return Ok(());
     }
     let mut app = App::new_replay(options, Some(rom));
@@ -698,8 +714,58 @@ fn play_record(cli: &Cli, rom: Vec<u8>, save: Option<Vec<u8>>, path: &Path) -> R
     match (&stop, cli.expect_event) {
         (RecordStop::Mismatch(why), _) => bail!("{why}"),
         (RecordStop::End, Some(event)) => bail!("event {event} did not end in the record"),
-        _ => Ok(()),
+        _ => write_save_out(cli, &app),
     }
+}
+
+/// `--save-out`: the session's state into the file it names, at the end of any run that has
+/// an application to read it from (`--walk`, `--headless`, `--auto`, `--replay`,
+/// `--play-record`, the window). The input save is never modified.
+fn write_save_out(cli: &Cli, app: &App) -> Result<()> {
+    match &cli.save_out {
+        Some(out) => app.write_save_out(out).map(|_| ()),
+        None => Ok(()),
+    }
+}
+
+/// `--save-out` updates the container of `--save`: without one there is nothing to update,
+/// and a fresh container's opaque blocks (quest log, monsters, grotto maps, zone) are not
+/// modelled, so writing them would zero real data. The output must be another file: the
+/// input is never written.
+fn require_input_save(cli: &Cli) -> Result<()> {
+    let Some(out) = &cli.save_out else {
+        return Ok(());
+    };
+    let Some(input) = &cli.save else {
+        bail!(
+            "--save-out needs --save <file>: a fresh container's opaque blocks (quest log, \
+             monsters, grotto maps, zone) are not modelled yet, so writing one would zero them"
+        );
+    };
+    if same_file(input, out) {
+        bail!(
+            "--save-out must name another file than --save: the input save is never written \
+             ({} is both)",
+            input.display()
+        );
+    }
+    Ok(())
+}
+
+/// Whether two paths name the same file: the canonical forms when they exist (so a symlink or
+/// a `./` spelling does not slip through), else the canonical parent plus the file name.
+fn same_file(a: &Path, b: &Path) -> bool {
+    fn normalized(path: &Path) -> Option<PathBuf> {
+        if let Ok(resolved) = fs::canonicalize(path) {
+            return Some(resolved);
+        }
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        Some(fs::canonicalize(parent).ok()?.join(path.file_name()?))
+    }
+    normalized(a).is_some_and(|a| Some(a) == normalized(b))
 }
 
 /// What `--screenshot` prepared before rendering: the loaded map, the hero after the inputs,
@@ -1278,4 +1344,64 @@ fn write_sound(path: &Path, rate: u32, samples: &[f32]) -> Result<()> {
         path.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_out_without_an_input_save_is_refused_with_a_message() {
+        let cli = Cli::try_parse_from(["dq9-app", "--save-out", "out.sav"]).unwrap();
+        assert!(cli.save.is_none());
+        let error = require_input_save(&cli).unwrap_err().to_string();
+        assert!(error.contains("--save-out needs --save"), "{error}");
+        assert!(error.contains("opaque blocks"), "{error}");
+    }
+
+    #[test]
+    fn save_out_with_an_input_save_is_accepted() {
+        let cli =
+            Cli::try_parse_from(["dq9-app", "--save", "in.sav", "--save-out", "out.sav"]).unwrap();
+        assert!(require_input_save(&cli).is_ok());
+    }
+
+    /// The input save is never written: the same file under two spellings is refused.
+    #[test]
+    fn save_out_may_not_name_the_input_file() {
+        let dir = std::env::temp_dir().join(format!("dq9-save-alias-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let save = dir.join("in.sav");
+        std::fs::write(&save, b"x").unwrap();
+        for out in [
+            save.clone(),
+            dir.join("./in.sav"),
+            dir.join(".").join("in.sav"),
+        ] {
+            let cli = Cli::try_parse_from([
+                "dq9-app",
+                "--save",
+                save.to_str().unwrap(),
+                "--save-out",
+                out.to_str().unwrap(),
+            ])
+            .unwrap();
+            let error = require_input_save(&cli).unwrap_err().to_string();
+            assert!(error.contains("never written"), "{error}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_out_conflicts_with_the_runs_that_have_no_field() {
+        for extra in [
+            ["--screenshot", "s.png"],
+            ["--events-report", "1.1-3"],
+            ["--battle", "2"],
+        ] {
+            let mut args = vec!["dq9-app", "--save", "in.sav", "--save-out", "out.sav"];
+            args.extend(extra);
+            assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+        }
+    }
 }

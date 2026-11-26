@@ -9,6 +9,10 @@ use glam::Vec3;
 
 use super::{App, status};
 use crate::talk::Button;
+#[cfg(not(target_arch = "wasm32"))]
+use dq9_core::state::GameState;
+#[cfg(not(target_arch = "wasm32"))]
+use dq9_formats::save::Save;
 
 /// How a replayed record ended (`--play-record`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +45,74 @@ impl App {
     pub(crate) fn walk_step(&mut self, direction: Vec3) {
         self.pilot_dir = Some(direction);
         self.run_steps(1);
+    }
+
+    /// The state the session holds, bound to a save's layout: [`GameState::from_play`] over
+    /// the live trigger state, map, day clock and party, with the input save's own state as
+    /// the base (its placement and the opaque parts of its event block).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn save_state(&self) -> anyhow::Result<(GameState, usize)> {
+        use anyhow::Context as _;
+        let input = self.options.save.as_deref().context(
+            "--save-out needs --save <file>: a fresh container's opaque blocks (quest log, \
+             monsters, grotto maps, zone) are not modelled, so they cannot be written",
+        )?;
+        let save = Save::parse(input).context("parsing the input save")?;
+        let index = save
+            .current_slot()
+            .context("the input save has no valid normal slot to update")?;
+        let base = GameState::from_save(&save).context("restoring the input save")?;
+        let map = self
+            .current
+            .as_ref()
+            .map(|(entry, _)| entry.id)
+            .context("no map is loaded: there is no state to write")?;
+        let state = GameState::from_play(&self.state, &base, map, self.day, self.party.clone())?;
+        Ok((state, index))
+    }
+
+    /// `--save-out`: writes the session's state into the input save's current normal slot,
+    /// seals it, mirrors it like a normal save (`Save_WriteStep` state 2) and writes the whole
+    /// container atomically. The input file is never touched. Returns the state written, so a
+    /// caller can compare it with the reload.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn write_save_out(&self, out: &std::path::Path) -> anyhow::Result<GameState> {
+        use anyhow::Context as _;
+        let input = self.options.save.as_deref().context(
+            "--save-out needs --save <file>: a fresh container's opaque blocks (quest log, \
+             monsters, grotto maps, zone) are not modelled, so they cannot be written",
+        )?;
+        let (state, index) = self.save_state()?;
+        let mut save = Save::parse(input).context("parsing the input save")?;
+        let ranges = {
+            let mut slot = save.slot_mut(index).context("slot out of range")?;
+            let ranges = state.write_into(&mut slot)?;
+            // A setter leaves the checksums stale: an image the game rejects is not a save.
+            slot.seal();
+            ranges
+        };
+        let mirrored = index == 0 && save.mirror_normal_slot();
+        write_atomically(out, save.as_bytes())?;
+        let changed = input
+            .iter()
+            .zip(save.as_bytes())
+            .filter(|(before, after)| before != after)
+            .count();
+        status(&format!(
+            "--save-out: wrote {} (slot {index}, map {}, story {}.{}.{}, {} member(s), {} gold, \
+             {} byte(s) differ from the input{}; {} field range(s))",
+            out.display(),
+            state.map,
+            state.scenario.chapter,
+            state.scenario.step,
+            state.scenario.substep,
+            state.party.members.len(),
+            state.party.gold,
+            changed,
+            if mirrored { ", slot 1 mirrored" } else { "" },
+            ranges.len(),
+        ));
+        Ok(state)
     }
 
     /// Places the hero at `(x, z)` on the current map (`--start`), on the collision's ground.
@@ -369,5 +441,281 @@ impl App {
         out.push_str(&format!("digests: {checked} checked\n"));
         out.push_str(&self.party_report());
         out
+    }
+}
+
+/// Writes `bytes` to `path` through a sibling temporary file and a rename: an interrupted
+/// write cannot leave a truncated image under the requested name, and the input save (a
+/// different path) is never touched.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    let name = path
+        .file_name()
+        .with_context(|| format!("{} is not a file name", path.display()))?;
+    let mut temp = path.to_path_buf();
+    temp.set_file_name(format!("{}.tmp", name.to_string_lossy()));
+    std::fs::write(&temp, bytes).with_context(|| format!("writing {}", temp.display()))?;
+    std::fs::rename(&temp, path)
+        .with_context(|| format!("renaming {} to {}", temp.display(), path.display()))
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use crate::app::story_of;
+    use crate::load::MapEntry;
+    use crate::screens::Layout;
+    use dq9_core::state::DayClock;
+    use dq9_formats::save::{FILE_SIZE, MAGIC, NO_ITEM};
+
+    /// A normal save with a named hero, held items and one global flag.
+    fn save_bytes() -> Vec<u8> {
+        let mut data = vec![0u8; FILE_SIZE];
+        data[..MAGIC.len()].copy_from_slice(MAGIC);
+        data[21] = 1;
+        let mut save = Save::parse(&data).unwrap();
+        {
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.set_area(109);
+            slot.set_day_timer(42.5);
+            slot.set_chapter(19);
+            slot.set_scenario_step(2);
+            slot.set_scenario_substep(1);
+            slot.set_party_count(1);
+            slot.set_gold_on_hand(38_754);
+            {
+                let mut flags = slot.event_flags_mut();
+                flags.set_global_flag(9, true, false);
+                // The progress words above are the active track's own copy.
+                let mut track = flags.track_mut(0).unwrap();
+                track.set_chapter(19);
+                track.set_step(2);
+                track.set_substep(1);
+            }
+            let mut hero = slot.character_mut(0).unwrap();
+            hero.set_name_raw(&[18, 47, 48, 39]);
+            hero.set_vocation(6);
+            hero.set_level(6, 42).unwrap();
+            hero.set_experience(6, 1234).unwrap();
+            hero.set_equipment(dq9_formats::save::EquipSlot::Weapon, 20_004);
+            slot.set_held_items(0, &[NO_ITEM; 8]).unwrap();
+            slot.set_bag(&[(Some(1), 3), (None, 0)]).unwrap();
+            slot.seal();
+        }
+        // The game writes a normal save twice (`Save_WriteStep` state 2): the input is a
+        // mirrored image, like a save taken on the DS.
+        save.mirror_normal_slot();
+        save.as_bytes().to_vec()
+    }
+
+    fn options(save: Option<Vec<u8>>) -> crate::app::Options {
+        crate::app::Options {
+            map: None,
+            save,
+            time: None,
+            clock: None,
+            layout: Layout::default(),
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: story_of([None; 3], true, None),
+            story_override: [None; 3],
+            new_game: false,
+            battle: None,
+            play: Default::default(),
+        }
+    }
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("dq9-save-out-{name}-{}.sav", std::process::id()))
+    }
+
+    /// The state a run holds is what the written file reloads to, field for field.
+    #[test]
+    fn a_session_writes_the_state_it_holds() {
+        let bytes = save_bytes();
+        let base = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let mut app = App::new_headless(options(Some(bytes.clone())), None);
+        // Without a ROM the save is not applied at start-up: put the run where a load would.
+        app.party = base.party.clone();
+        app.state = dq9_core::field::saved_state(&base);
+        app.current = Some((
+            MapEntry {
+                id: 109,
+                code: "C01M09".into(),
+                byte_c: 0,
+            },
+            "C01M09".into(),
+        ));
+        app.day = DayClock::new(300.0, true);
+        app.party.gold = 4321;
+        app.party.bag.add(123);
+        app.party.members[0].max_hp += 7;
+        app.party.members[0].max_mp += 3;
+        // The format restores a member at full HP and MP (`from_record`: `hp = max_hp`), so a
+        // state that expects to reload equal must hold full values.
+        app.party.members[0].hp = app.party.members[0].max_hp;
+        app.party.members[0].mp = app.party.members[0].max_mp;
+        app.state.flags.insert(11);
+        app.state.tracks[0].chapter = 3;
+        app.state.tracks[0].step = 2;
+        let out = temp_path("held");
+        let _ = std::fs::remove_file(&out);
+        let written = app.write_save_out(&out).unwrap();
+        let reloaded =
+            GameState::from_save(&Save::parse(&std::fs::read(&out).unwrap()).unwrap()).unwrap();
+        assert_eq!(reloaded, written);
+        assert_eq!(reloaded.map, 109);
+        assert_eq!(
+            (
+                reloaded.scenario.chapter,
+                reloaded.scenario.step,
+                reloaded.scenario.substep
+            ),
+            (3, 2, 1)
+        );
+        assert_eq!(reloaded.clock.seconds(), 300.0);
+        assert_eq!(reloaded.party.gold, 4321);
+        assert!(reloaded.events().global_flag(11) && reloaded.events().global_flag(9));
+        let hero = &reloaded.party.members[0];
+        assert_eq!(hero.name(), &[18, 47, 48, 39]);
+        assert_eq!(hero.levels[6], 42);
+        assert_eq!(hero.experience[6], 1234);
+        assert_eq!(
+            (hero.max_hp, hero.max_mp),
+            (
+                written.party.members[0].max_hp,
+                written.party.members[0].max_mp
+            )
+        );
+        assert_eq!(reloaded.party.bag.count(123), 1);
+        assert!(reloaded.party.bag.count(123) == written.party.bag.count(123));
+        // The temporary file of the atomic write is gone.
+        assert!(!out.with_extension("sav.tmp").exists());
+        let _ = std::fs::remove_file(&out);
+    }
+
+    /// Every byte the write changes lies in the checksummed slot block or a checksum word,
+    /// and its mirror copy in slot 1: the opaque blocks elsewhere in the image do not move.
+    #[test]
+    fn a_written_save_changes_only_the_slot_it_updates() {
+        use dq9_formats::save::{Checksum, SLOT_SIZE};
+        let bytes = save_bytes();
+        let mut app = App::new_headless(options(Some(bytes.clone())), None);
+        let base = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        app.party = base.party.clone();
+        app.state = dq9_core::field::saved_state(&base);
+        app.current = Some((
+            MapEntry {
+                id: 1100,
+                code: "M01M12".into(),
+                byte_c: 0,
+            },
+            "M01M12".into(),
+        ));
+        app.party.gold = 7;
+        app.party.bag.add(5);
+        let (state, index) = app.save_state().unwrap();
+        // What the binding says it owns, measured on a copy of the input (checksums stale).
+        let mut probe = Save::parse(&bytes).unwrap();
+        let ranges = {
+            let mut slot = probe.slot_mut(index).unwrap();
+            state.write_into(&mut slot).unwrap()
+        };
+        let out = temp_path("confined");
+        let _ = std::fs::remove_file(&out);
+        app.write_save_out(&out).unwrap();
+        let written = std::fs::read(&out).unwrap();
+        let checksums: Vec<std::ops::Range<usize>> = Checksum::ALL
+            .iter()
+            .map(|which| which.stored_at()..which.stored_at() + 4)
+            .collect();
+        let mut changed = 0;
+        for (index, (before, after)) in bytes.iter().zip(&written).enumerate() {
+            if before == after {
+                continue;
+            }
+            changed += 1;
+            let in_slot = index % SLOT_SIZE;
+            // Slot 0's written ranges and checksums; slot 1 as the mirror of slot 0's `+0x10`,
+            // which copies each byte to the same slot offset.
+            let mirrored = index >= SLOT_SIZE
+                && in_slot >= 0x10
+                && ranges
+                    .iter()
+                    .chain(&checksums)
+                    .any(|range| range.contains(&in_slot));
+            assert!(
+                mirrored
+                    || (index < SLOT_SIZE
+                        && ranges
+                            .iter()
+                            .chain(&checksums)
+                            .any(|range| range.contains(&in_slot))),
+                "byte {in_slot} of slot {} changed outside the written ranges",
+                index / SLOT_SIZE
+            );
+        }
+        assert!(changed > 0, "the mutation changed nothing");
+        let _ = std::fs::remove_file(&out);
+    }
+
+    /// Without `--save` there is no container to update: the write refuses instead of
+    /// inventing the opaque blocks of a fresh one.
+    #[test]
+    fn writing_without_an_input_save_is_refused() {
+        let app = App::new_headless(options(None), None);
+        let out = temp_path("refused");
+        let error = app.write_save_out(&out).unwrap_err().to_string();
+        assert!(error.contains("--save-out needs --save"), "{error}");
+        assert!(!out.exists());
+    }
+
+    /// A real save, a real map and a played run: the written file reloads to the very state
+    /// the run held (map, story, party with its derived HP/MP, gold, clock, flags).
+    #[test]
+    fn a_real_rom_headless_run_writes_a_save_that_reloads_equal() {
+        let (Some(rom), Some(path)) = (testrom::load(), std::env::var_os("DQ9_SAVE")) else {
+            eprintln!("skipping: no ROM or DQ9_SAVE");
+            return;
+        };
+        let bytes = std::fs::read(&path).unwrap();
+        let mut app = App::new_headless(options(Some(bytes.clone())), Some(rom.to_vec()));
+        for _ in 0..30 {
+            app.walk_step(Vec3::new(0.0, 0.0, 1.0));
+        }
+        // A played session mutates the party: gold, the bag and a member's stored maximum.
+        app.party.bag.add(123);
+        app.party.members[0].max_hp += 5;
+        // A normal save restores a member at full HP: the current value is not stored.
+        app.party.members[0].hp = app.party.members[0].max_hp;
+        let (map, _, _, _) = app.walk_pose().expect("the save's map is loaded");
+        let out = temp_path("rom");
+        let _ = std::fs::remove_file(&out);
+        let written = app.write_save_out(&out).unwrap();
+        let reloaded =
+            GameState::from_save(&Save::parse(&std::fs::read(&out).unwrap()).unwrap()).unwrap();
+        assert_eq!(reloaded, written);
+        assert_eq!(reloaded.map, map);
+        assert_eq!(reloaded.party.members.len(), app.party.members.len());
+        assert_eq!(reloaded.party.gold, app.party.gold);
+        assert_eq!(reloaded.clock.seconds(), app.day.seconds());
+        for (saved, live) in reloaded.party.members.iter().zip(&app.party.members) {
+            assert_eq!(saved.name, live.name);
+            assert_eq!(saved.vocation, live.vocation);
+            assert_eq!(saved.levels, live.levels);
+            assert_eq!(saved.experience, live.experience);
+            assert_eq!(saved.equipment, live.equipment);
+            // HP/MP are restored at full by the load; the record stores the maxima
+            // (`+0x14c` fields 7/8), which the binding writes, so the reload must find the
+            // run's own maxima.
+            assert_eq!((saved.max_hp, saved.max_mp), (live.max_hp, live.max_mp));
+        }
+        assert_eq!(reloaded.party.bag.count(123), 1);
+        // The input save is never modified.
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let _ = std::fs::remove_file(&out);
     }
 }
