@@ -13,9 +13,9 @@ use std::sync::Arc;
 
 use dq9_formats::Gpc2;
 use dq9_formats::chr::Chr;
-use dq9_formats::hero::{HeroLook, ItemModels, Outfit};
+use dq9_formats::hero::{CharacterColours, ColourRule, HeroLook, ItemModels, Outfit, Skin};
 use glam::{Mat4, Vec3};
-use nds_rom::g3d::{Fx12, G3dFile, Mat4 as DsMat, Model, RenderOp};
+use nds_rom::g3d::{Fx12, G3dFile, Mat4 as DsMat, Model, Palette, RenderOp, Tex0};
 use nds_rom::{Error, Result};
 
 use crate::SceneVertex;
@@ -185,13 +185,24 @@ fn motion(packs: &Gpc2<'_>, pack: &str, name: &str) -> Result<Clip> {
     Ok(clip)
 }
 
+/// A recolour `func_020730e0` applies to a part's palettes.
+#[derive(Clone, Copy)]
+struct Recolour<'a> {
+    colours: &'a CharacterColours,
+    rule: ColourRule,
+    look: &'a HeroLook,
+}
+
 /// Builds one part's scene model; `overrides` are texture files looked up before the part's own
-/// textures.
+/// textures. `own` is the palette rule for the part's own TEX0, `shared` the one for the
+/// override files (the arm palette of a body part).
 fn build_part(
     scene: &mut Scene,
     name: &str,
     bytes: &[u8],
     overrides: &[Vec<u8>],
+    own: Option<Recolour<'_>>,
+    shared: Option<Recolour<'_>>,
 ) -> Result<SceneModel> {
     let file = G3dFile::parse(bytes)?;
     let model = file
@@ -203,6 +214,45 @@ fn build_part(
         tex.push(G3dFile::parse(o)?.tex);
     }
     tex.push(file.tex.clone());
+
+    // The recolour is a palette write (`func_02099e18`, `func_02099d34`): the texels stay,
+    // so it happens on the palette blocks before their textures are decoded. The blocks
+    // borrow these copies, one per palette, in `tex` order.
+    let mut blocks: Vec<Vec<u8>> = Vec::new();
+    for (i, t) in tex.iter().enumerate() {
+        let recolour = if i < overrides.len() { shared } else { own };
+        for p in t.iter().flat_map(|t| &t.palettes) {
+            let mut data = p.data.to_vec();
+            if let Some(recolour) = recolour {
+                recolour
+                    .colours
+                    .recolour_block(recolour.rule, recolour.look, &mut data);
+            }
+            blocks.push(data);
+        }
+    }
+    let tex: Vec<Option<Tex0>> = if own.is_some() || shared.is_some() {
+        let mut next = blocks.iter();
+        tex.iter()
+            .map(|t| {
+                t.as_ref().map(|t| Tex0 {
+                    textures: t.textures.clone(),
+                    palettes: t
+                        .palettes
+                        .iter()
+                        .map(|p| Palette {
+                            name: p.name,
+                            offset: p.offset,
+                            data: next.next().map_or(p.data, Vec::as_slice),
+                        })
+                        .collect(),
+                })
+            })
+            .collect()
+    } else {
+        tex
+    };
+
     let sources = TextureSources { tex };
     let mut b = Builder {
         sources: &sources,
@@ -213,6 +263,17 @@ fn build_part(
     let built = b.model("data/pack_lv5/chara_pc.gp2", name, model);
     *scene = b.scene;
     built
+}
+
+/// One part to assemble: its model, the texture files that override its own, whether it
+/// carries the rig, and the recolour `func_020730e0` applies to its own TEX0 and to the
+/// overrides.
+struct Job {
+    name: String,
+    overrides: Vec<Vec<u8>>,
+    rig: bool,
+    own: Option<ColourRule>,
+    shared: Option<ColourRule>,
 }
 
 impl HeroRig {
@@ -231,6 +292,7 @@ impl HeroRig {
         let models = ItemModels::parse(&def_bytes)?;
         let pc = Gpc2::parse(need("data/pack_lv5/chara_pc.gp2")?)?;
         let outfit = Outfit::resolve(look, &models, |n| pc.find(n).is_some());
+        let colours = CharacterColours::parse(need("data/chara/palette.bin")?)?;
 
         // Texture files that replace the rig parts' default arms and footwear.
         let tex = |name: &Option<String>| -> Result<Vec<Vec<u8>>> {
@@ -239,23 +301,56 @@ impl HeroRig {
                 .transpose()
                 .map(|t| t.into_iter().collect())
         };
-        let mut jobs: Vec<(String, Vec<Vec<u8>>, bool)> = Vec::new();
-        jobs.push((outfit.body.clone(), tex(&outfit.arms_texture)?, true));
+        // `func_020730e0`'s part index per job: 0 armour, 2 face, 3/4 hair, 5 footwear,
+        // 6 headgear. Only the face is a fully established rule (`func_02099e18`, case 2):
+        // a body part takes `func_02099d34` with the shade count of *its own* record
+        // (`func_020de2a4`), and which file fills those eleven records is **[unknown]**
+        // (wiki Character-Colours § Not established). The arm palette the batch asks for is
+        // the override texture of the body part, whose four-shade ramp is at slots 2–5.
+        let skin = Some(ColourRule::Skin(Skin::Four));
+        let mut jobs: Vec<Job> = Vec::new();
+        jobs.push(Job {
+            name: outfit.body.clone(),
+            overrides: tex(&outfit.arms_texture)?,
+            rig: true,
+            own: None,
+            shared: skin,
+        });
         if let Some(legs) = &outfit.legs {
-            jobs.push((legs.clone(), tex(&outfit.feet_texture)?, true));
+            jobs.push(Job {
+                name: legs.clone(),
+                overrides: tex(&outfit.feet_texture)?,
+                rig: true,
+                own: None,
+                shared: None,
+            });
         }
         if let Some(face) = &outfit.face {
-            jobs.push((face.clone(), Vec::new(), false));
+            jobs.push(Job {
+                name: face.clone(),
+                overrides: Vec::new(),
+                rig: false,
+                own: Some(ColourRule::Face),
+                shared: None,
+            });
         }
         if let Some(hair) = &outfit.hair {
-            jobs.push((
-                hair.model.clone(),
-                vec![member(&pc, &format!("{}.nsbtx", hair.texture))?],
-                false,
-            ));
+            jobs.push(Job {
+                name: hair.model.clone(),
+                overrides: vec![member(&pc, &format!("{}.nsbtx", hair.texture))?],
+                rig: false,
+                own: None,
+                shared: None,
+            });
         }
         if let Some(head) = &outfit.headgear {
-            jobs.push((head.clone(), Vec::new(), false));
+            jobs.push(Job {
+                name: head.clone(),
+                overrides: Vec::new(),
+                rig: false,
+                own: None,
+                shared: None,
+            });
         }
 
         let mut merged = SceneModel {
@@ -271,9 +366,30 @@ impl HeroRig {
             tinted: false,
         };
         let mut parts = Vec::new();
-        for (name, overrides, rig) in jobs {
+        for Job {
+            name,
+            overrides,
+            rig,
+            own,
+            shared,
+        } in jobs
+        {
             let bytes: Arc<[u8]> = member(&pc, &format!("{name}.nsbmd"))?.into();
-            let built = build_part(scene, &format!("{name}.nsbmd"), &bytes, &overrides)?;
+            let recolour = |rule: Option<ColourRule>| {
+                rule.map(|rule| Recolour {
+                    colours: &colours,
+                    rule,
+                    look,
+                })
+            };
+            let built = build_part(
+                scene,
+                &format!("{name}.nsbmd"),
+                &bytes,
+                &overrides,
+                recolour(own),
+                recolour(shared),
+            )?;
             let f = G3dFile::parse(&bytes)?;
             let m = &f.models[0];
             let pose = VertexPose::compile(m)?;
@@ -543,7 +659,7 @@ impl HeroRig {
 
 #[cfg(test)]
 mod tests {
-    use super::Gait;
+    use super::*;
 
     /// Horizontal speeds a hero held on the d-pad measures during an update, in units per
     /// second: the speed ramp-up on the flat (1.17 … 4.69), the 36° ramp of `X01M05` at the top
@@ -555,5 +671,73 @@ mod tests {
             assert_eq!(Gait::from_speed(speed), Gait::Run, "{speed}");
         }
         assert_eq!(Gait::from_speed(0.0), Gait::Stand);
+    }
+
+    /// The face and arm palettes of a built hero are the ones `func_020730e0` writes: the
+    /// decoded textures equal a decode with [`CharacterColours`]' rows over the cartridge's
+    /// palettes, and two tones differ.
+    #[test]
+    fn the_hero_decodes_its_face_and_arms_from_the_recoloured_palettes() {
+        use nds_rom::g3d::tex::decode_texture;
+
+        let Some(bytes) = testrom::load() else { return };
+        let rom = nds_rom::Rom::parse(bytes).unwrap();
+        let file = |path: &str| dq9_formats::map::rom_file(&rom, path);
+        let pc = dq9_formats::Gpc2::parse(file("data/pack_lv5/chara_pc.gp2").unwrap()).unwrap();
+
+        let mut faces = Vec::new();
+        for tone in [0u8, 7] {
+            let mut look = HeroLook::new_game();
+            look.skin_tone = tone;
+            let mut scene = Scene {
+                textures: Vec::new(),
+                models: Vec::new(),
+                instances: Vec::new(),
+                unbound_textures: Vec::new(),
+                placements: Vec::new(),
+                undrawn_placements: Vec::new(),
+                warnings: Vec::new(),
+                billboards: Default::default(),
+            };
+            HeroRig::build(&mut scene, &look, file).unwrap();
+
+            let expected = |member: &str, rule| {
+                let part = pc.member(pc.find(member).unwrap()).unwrap();
+                let g3d = G3dFile::parse(&part).unwrap();
+                let tex0 = g3d.tex.as_ref().unwrap();
+                let texture = &tex0.textures[0];
+                let palette = &tex0.palettes[0];
+                let mut data = palette.data.to_vec();
+                let colours =
+                    CharacterColours::parse(file("data/chara/palette.bin").unwrap()).unwrap();
+                assert!(colours.recolour_block(rule, &look, &mut data));
+                let palette = Palette {
+                    name: palette.name,
+                    offset: palette.offset,
+                    data: &data,
+                };
+                (
+                    texture.name.to_string(),
+                    decode_texture(texture, Some(&palette)).unwrap(),
+                )
+            };
+            let (face_name, face) = expected("p_f004.nsbmd", ColourRule::Face);
+            let (arm_name, arm) = expected("p_a007.nsbtx", ColourRule::Skin(Skin::Four));
+            let built = |name: &str| {
+                scene
+                    .textures
+                    .iter()
+                    .find(|t| t.name == name)
+                    .map(|t| t.rgba.clone())
+                    .unwrap_or_else(|| panic!("no {name} texture"))
+            };
+            assert_eq!(built(&face_name), face, "tone {tone} face");
+            assert_eq!(built(&arm_name), arm, "tone {tone} arms");
+            faces.push(built(&face_name));
+        }
+        assert_ne!(
+            faces[0], faces[1],
+            "two skin tones paint the face differently"
+        );
     }
 }

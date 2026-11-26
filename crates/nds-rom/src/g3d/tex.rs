@@ -124,6 +124,11 @@ impl Palette<'_> {
     pub fn color(&self, i: usize) -> u16 {
         u16_at(self.data, i * 2).unwrap_or(0)
     }
+
+    /// Colour `i` as RGBA8, opaque, the way [`decode_texture`] expands it.
+    pub fn rgba(&self, i: usize) -> [u8; 4] {
+        colour_rgba(self.color(i))
+    }
 }
 
 /// A `TEX0` section.
@@ -197,6 +202,12 @@ pub(crate) fn read_tex0(data: &[u8], base: usize) -> Result<Tex0<'_>> {
 
 fn extend5(x: u32) -> u8 {
     ((x << 3) | (x >> 2)) as u8
+}
+
+/// A BGR555 palette entry as opaque RGBA8, exactly as [`decode_texture`] expands it: the
+/// colour a palette write (e.g. a character recolour) replaces, with the texels untouched.
+pub fn colour_rgba(c: u16) -> [u8; 4] {
+    rgba(c, 31)
 }
 
 /// RGB555 + 5-bit alpha to RGBA8.

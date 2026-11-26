@@ -41,7 +41,7 @@ pub use model::{Material, Mesh, Model, Object, ObjectLink, RenderOp, SkinTerm};
 pub use pattern::{Pattern, PatternKeyframe, PatternTrack};
 pub use pose::ObjectTransform;
 pub use srt::{SrtCurve, TexMatrix, TexSrt, TexSrtAnimation, TexSrtTrack};
-pub use tex::{Palette, Tex0, TexFormat, Texture, TextureParams};
+pub use tex::{Palette, Tex0, TexFormat, Texture, TextureParams, colour_rgba};
 
 /// Sixteen-byte NUL-padded name used for every G3D resource.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

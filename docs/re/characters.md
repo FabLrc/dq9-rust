@@ -357,6 +357,75 @@ saves (13309 → `p_b309`, absent): the game ties them to another item's part
   shoes `p_r<nnn>.nsbtx`). Assembly places these files **before** the model's
   textures in the by-name lookup (`TextureSources`).
 
+### Skin, eyes and brows (Character-Colours)
+
+`data/chara/palette.bin` (672 bytes, byte-identical on the USA and European releases) is a
+tagged table (`table.md`) run **once at startup** by `func_02099cb8` (EU `0x02099cc8`, USA
+`0x02099cb8`) called from `main`'s `0x02000eac` (wiki). It clears `0x12c` bytes — the six
+tables, back to back from `0x02109928` — loads the file and runs it with the handler table
+`0x020f1574` (wiki). Each handler reads its record's values with `Tbl_FieldInt` and stores
+each as a **halfword**, row after row (EU addresses; the wiki quotes the USA ones):
+
+| Tag | Handler (EU) | Table | Rows × halfwords | What it is |
+|---|---|---|---|---|
+| `0x64` | `0x02099ad4` | `0x02109928` | 10 × 2 | brow pair of each hair colour |
+| `0x65` | `0x02099b30` | `0x02109950` | 8 × 2 | skin ramp, two shades per tone |
+| `0x66` | `0x02099b8c` | `0x02109970` | 8 × 4 | skin ramp, four shades |
+| `0x67` | `0x02099be8` | `0x021099b0` | 8 × 8 | skin ramp, eight shades |
+| `0x68` | `0x02099c44` | `0x02109a30` | 8 × 2 | eye pair of each eye colour |
+| `0x69` | `0x02099ca0` | `0x02109a50` | 1 | **[unknown]** reader |
+
+The file is a `Table`: one record per tag, `0x14`/`0x10`/`0x20`/`0x40`/`0x10`/1 integer
+fields; `CharacterColours::parse` (`dq9_formats::hero`) checks the six tags, their row counts
+and the single word (on the ROM: brows 0 `0x14e9 0x359d`, tone 3 shade 0 `0x46fe`, eyes 0
+`0x2108 0x1084`, tag `0x69` `0x1086`).
+
+**Where they go** — `func_020730e0` (EU `0x020730f0`, USA `0x020730e0`) is called for each
+part index of `CharaParts_GetPartNumbers` (ten model numbers, index 4 repeating h3;
+EU `func_02072b0c`); the appearance record is `save +0x14`: byte `+0x14` bits 1–3 the tone,
+bits 4–7 the eye colour, `+0x15` low nibble the hair colour (wiki, re-checked in the
+decompilation). It writes the cartridge's own palette words, not the texels:
+
+- **Part 2 (face)**, `func_02099e18` (EU `0x02099e28`): copies into the face palette, at byte
+  offsets `{4, 8, 16}` with lengths `{4, 4, 16}`: the brow pair at slots 2–3, the eye pair at
+  4–5, the tone's **eight** shades at 8–15 (`0x67` table, tone × 16 bytes; tone > 8 returns).
+- **Parts 0, 1, 5, 6, 7**, `func_02099d34` (EU `0x02099d44`): `kind` 1, 2 or 4 picks the two-,
+  four- or eight-shade table (`+0x28`, `+0x48`, `+0x88` from `0x02109928`), and its tone row
+  is copied to **byte offset 4 (slot 2) of every `0x20`-byte palette** of the part's TEX0.
+- **Part 4** does the same at byte offset `0x10` (slot 8); it repeats the hair's model number.
+  Part 3 (hair) returns without writing.
+
+**Modelled.** `CharacterColours` (typed rows) and the two rules as pure writes
+(`recolour_rgba`/`recolour_entries` on one palette, `recolour_block` on a palette block);
+`HeroRig::build` recolours the **face** palette (`ColourRule::Face`) and the **arm** palette,
+the body part's `p_a<armour>.nsbtx`/`p_g<gloves>.nsbtx` override (`ColourRule::Skin(Skin::Four)`),
+before `Builder` decodes the textures, so the texels keep their indices and only the palette
+entries change. `nds_rom::g3d::Palette::rgba` and `colour_rgba` expose the RGBA of an entry.
+Tests: `palette_bin_holds_the_six_colour_tables`, `the_cartridge_face_palette_matches_tone_three`
+(7 of the 8 tone-3 shades to the bit), `the_face_rule_writes_brows_eyes_and_eight_skin_shades`,
+`a_body_part_takes_the_tone_ramp_at_slot_two_of_every_palette`,
+`the_hero_decodes_its_face_and_arms_from_the_recoloured_palettes` (the built scene's decoded
+face and arm textures equal a decode with the recoloured palettes; two tones differ).
+
+**The cartridge's painted palettes are not the generated rows.** The face palette of
+`p_f004` holds brow pair 0, eye pair 0 and seven of tone 3's eight shades (the lightest is
+`0x4afe` where the table has `0x46fe`); the body and arm palettes hold **painted** four-shade
+ramps (`p_b007` slots 2–5 `3edc 2a39 0ce9 0066`, `p_a007` `3a9c 2619 0ce9 04a7`) that no tone
+row reproduces. Because `func_020730e0` rewrites them, the default new-game hero's face, hands
+and arms change when the rule is applied (evidence `build/evidence/v3-hero-skin/`:
+`default-before-close.png` 3751c7a29c78 vs `default-after-close.png` f8f6e071d935, 1030 pixels
+in the face/arm area, max channel delta 109); the original game shows the recoloured palettes.
+
+**Not modelled / [unknown].**
+- `kind` per part: the eleven records `func_020de2a4` reads are built at runtime
+  (`func_0208358c`, `func_02083554`, from resource descriptors fetched by part number); the
+  file they come from is **[unknown]** (wiki § Not established). The arm palette takes the
+  four-shade ramp here, the layout those palettes hold; the armour, legs, footwear and
+  headgear's own TEX0 palettes are left as painted.
+- Part 4's byte-16 write (hair model number) and the headgear/legs' own palettes: not applied.
+- Hair colours: the skin ramp of `GetItemSkinShades` (`0x020731f0`, wiki) is not applied.
+- What reads the `0x69` word.
+
 ### The rig and assembly
 
 Body and legs carry the same 14-bone skeleton (`root`, part, `waist`, `chest`,
@@ -404,7 +473,10 @@ displacement (`movement.md` § "Stairs and the run cycle"). `walk` stays availab
 `charapreset.bin`), skin tone 3, Celestrian outfit from the start of Angel Falls **[hypothesis]**:
 celestial costume 13007, celestial stockings 16215, celestial shoes 17120 and halo 12805 (character
 creation is in overlay 9: the real hero is not modelled). With `--save`:
-the hero of the current slot (first character of the party).
+the hero of the current slot (first character of the party). Tone 3 is the tone the cartridge's
+face palette is painted for (§ "Skin, eyes and brows"), but that palette is one shade off the
+generated row and the body/arm palettes are painted, so applying the rule changes those
+pixels relative to a capture taken before it.
 
 ### Not done
 
@@ -413,9 +485,9 @@ the hero of the current slot (first character of the party).
   by the application, not part of `HeroRig` (`re/mortal-veil.md` § 7: `chara_sub/s023n2.chr` on
   the `chest` bone, `s069.chr` on `head`); the `d_hane` rig named here earlier is not what
   `ov_017::021bdc34` loads.
-- **Skin tones, eyes, eyebrows**: `data/chara/palette.bin` recolours the face and
-  arm palettes (Character-Colours); only the original palettes are used **[unknown]**.
-- Hair colours: the skin ramp of `GetItemSkinShades` (`0x020731f0`, wiki) is not applied.
+- **Skin tones, eyes, eyebrows**: the rule is modelled for the face and the arm palette
+  (§ "Skin, eyes and brows"); the `kind` of the other body parts, part 4's byte-16 write and
+  hair colours stay **[unknown]** (see there).
 - Lighting: fixed character light (`app/rendering.md`), not the DS lights.
 - Item parts without a model (see above); party companions outside cutscenes (the guest of
   the scenes is drawn: § The guest); the hero during
