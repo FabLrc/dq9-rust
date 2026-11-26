@@ -116,12 +116,39 @@ records, mostly dungeons) leaves the placeholder and the status line says so. Ca
 |---|---|---|---|---|---|
 | 3D field | the world, the hero, NPCs, roamers | per-frame field draw `ov_017::021960b8` (sets the projection, `0x020c52e8`/`0x020c5414`, lighting, background gradient, `Object3D` draws); camera `0x0202df78` | whole 256×192 | camera, hero, map | capture + decomp |
 | Message window | NPC lines and captions | `MsgWin_Show` `0x0204501c`, `MsgWin_Update` `0x020659a0`, `MsgWin_SetRect` `0x02042ba8`; frames `data/ani/win0..7.spr` (`MsgWin_LoadFrames` `0x0202f25c`) | rect `(2, 0x74, 0xfc, 0x4a)`, i.e. x 2..254, y 116..190; text origin y + 8; only on the 3D screen | window `W = 0x021152f4`, `+0x998` active, `+0x9a0` wait state | decomp + capture |
-| "X Menu" affordance | shows that X (or a touch) opens the field menu | not identified as a function **[unknown]**; drawn in the field's engine-A BG1/BG2, whose screens are cleared at field exit (`LoadToMainBG{1,2}{Character,Screen}Data`, `ov_017::021b1c..`); asset **[unknown]** | top-right: "Menu" text x≈228..255, y≈17..24, the X button icon x≈202..226, y≈14..28 (Western Stornway) | — | capture; code path of the text/icon **[unknown]** |
-| Stylus hand | white gloved pointer at the touch point / on the Menu affordance | **[unknown]** (a game sprite, not melonDS's mouse) | 16×16 around the touch point | touch coordinates | capture |
+| "X Menu" affordance | shows that X (or a touch) opens the field menu | not identified as a function **[unknown]**; drawn in the field's engine-A BG1/BG2, whose screens are cleared at field exit (`LoadToMainBG{1,2}{Character,Screen}Data`, `ov_017::021b1c..`); asset **[unknown]** | top-right: the label ("×" icon then "Menu", white on a dark rim) **x 214..243, y 28..35** on the bottom half of `field-western-stornway.png`, its icon's blue rim reaching x 213 and row 27 (the port's touch box: x 213..243, y 27..35) | — | capture; re-measured (§ 2.2 below, `build/evidence/v3-touch-ui/menu-affordance-measured.png`): the earlier `202..255 × 14..28` took the hand for the label; code path of the text/icon **[unknown]** |
+| Stylus hand | white gloved pointer at the touch point / on the Menu affordance | **[unknown]** (a game sprite, not melonDS's mouse) | 16×16 around the touch point; in the capture the glove is x 224..234, y 15..26 and its blue outline x 221..236, y 14..26 | touch coordinates | capture |
 | Touch actions | advance/close a message, pick up a spot, walk, climb a ladder (drag), steer the ship (drag), press the Menu affordance | `TouchInput::GetTouchPoint` `0x02012a94` (callers `ov_017::021960b8`, `ov_017::021ab0c0`), `TouchInput::IsPressed` `0x02012abc`, `TestHoldInRectangle` `0x02012744` | — | `TouchInput` state, field flags | callers + wiki (Gathering, Getting-Around, Ship) |
 
 The Menu affordance is absent in interiors with a dialogue open (Stornway church capture);
 whether it is hidden by the window or by the map is **[unknown]**.
+
+**Touch in the port** (`crates/dq9-app/src/app/input.rs`, `screens.rs`; `docs/app/screens.md`
+§ Touch). A left press released after at most 8 window pixels of pointer travel is a tap — the
+travel is the path length, so a back-and-forth inside those 8 px is a drag too; anything longer
+rotates the camera and fires nothing, so the two gestures never overlap. (A press that arrives
+before the window has seen any pointer motion is ignored: `winit`'s button events carry no
+position and guessing one would tap the wrong place.) The tap is mapped from its window pixel
+to the 256×192 DS screen the field draws on — the bottom screen in `original` mode and after a
+cutscene's 109, the top one in `port`, the only screen in `top` and the 16:9 rectangle in the
+enhanced layouts (proportional there: a 16:9 field has no DS screen shape **[hypothesis]**) —
+and a tap on the other LCD, the letterbox or a black margin does nothing.
+
+On the field's screen it does two things and only two. With a message window open it presses
+the action button: the note's `field-church-tap-bottom.png` (256×409, a 25-row melonDS menu bar
+above the two LCDs) advances the line from an image tap at `(128,300)` — bottom-screen row 83,
+above the window's own rectangle `y 116..190`; the capture helper's tap coordinates are
+bottom-relative and would make it row 100. Either way the tap was outside the window, so the
+whole 3D screen is the target; the exact point is **[unknown]**, and reading the touched row of
+a prompt is not established and is not done. Without a window, a tap on the label's measured
+rectangle (x 213..243, y 27..35, **[hypothesis]**: the game's own rectangle
+`TestHoldInRectangle` `0x02012744` was not resolved for it) opens the field menu where the key
+`I` does, and nowhere else. The original's other handlers (walk and climb by drag, pick a spot,
+steer the ship) are not modelled, so the port routes no tap to them. A recorded session replays
+keys and camera deltas only, so a tap is ignored while recording or replaying. Neither the
+label nor the stylus hand is drawn: their asset is **[unknown]**, and `bg1`/`bg2` are not
+modelled, so an invention would replace a missing element rather than reproduce one. Evidence:
+`build/evidence/v3-touch-ui/` (`menu-affordance-measured.png`, `tap-trace.txt`, `tests.txt`).
 
 ## 3. Battle
 
@@ -158,14 +185,18 @@ consistent with the wiki's panel reading.
    resolves as `<TMAP_SEC>`. Cheap once step 3 places the screen.
 5. **Menu affordance and touch** on the field: draw "X Menu" (asset still **[unknown]**) and
    hit-test the touch rectangle; the field menu already exists (`field-menu.png`). Also route
-   the existing tap-to-advance and drag actions through the same handler.
+   the existing tap-to-advance and drag actions through the same handler. Implemented
+   (`v3-touch-ui`): a tap routes to the message window's action button and to the label's
+   measured rectangle, the camera drag suppresses it, and neither the label nor the hand is
+   drawn (their asset stays **[unknown]**, § 2.2 "Touch in the port").
 6. **Battle bottom-screen check**: the port already draws party panels and command windows
    there; compare the bands' geometry (hero band 72 px, others 40 px) with the port's layout.
 
 Minimum for "not a blank background" in the field: 1 (screen assignment) and 2 (strips);
-1 and 3 for the screen to look like the original. Steps 1 to 4 are implemented (`v3-screens-*`,
-then `v3-map-screen-data`, `v3-map-screen-draw` and `v3-map-screen-details`, § 2.1 "What the
-port draws"); step 5's assets stay **[unknown]**, and its touch rectangle is not hit-tested.
+1 and 3 for the screen to look like the original. Steps 1 to 5 are implemented
+(`v3-screens-*`, then `v3-map-screen-data`, `v3-map-screen-draw` and
+`v3-map-screen-details`, § 2.1 "What the port draws"; `v3-touch-ui` for the tap grammar of
+§ 2.2); step 5's assets stay **[unknown]**, so its label and stylus hand are not drawn.
 
 ## Evidence
 
@@ -192,6 +223,12 @@ members; the tab measured on `field-church.png` at x 200..253, y 0..15 (dark `97
 `211,146,48`, white name); the port's `--screens port` reference is byte-identical to the
 parent commit (`3475c61`).
 
+Touch UI implemented (`v3-touch-ui`, `build/evidence/v3-touch-ui/`):
+`menu-affordance-measured.png` (`b21563f6ebbc`, the measured label box in green, the note's
+earlier box in red over the stylus hand), `tap-trace.txt` (`d16a4a0b6814`, the `X01M07`
+conversation leaving its wait on a tap at DS `(128,96)`: arrow at tick 105, `-` at 106, the
+prompt at 158) and `tests.txt` (the mapping, gesture, menu and tap tests).
+
 Ghidra queries (cache under `build/ghidra-cache/`): `decomp ov_017::021b1564`,
 `ov_017::021960b8`, `0x020214f0`, `0x02022d88`; `calls 0x02021500`, `0x02012a94`,
 `0x02012abc`; `xrefs` on the asset strings `0x020ef4b0`, `0x020ef5a5`, `0x020ef5c0`,
@@ -208,7 +245,9 @@ Ghidra queries (cache under `build/ghidra-cache/`): `decomp ov_017::021b1564`,
   rectangle (`re/minimap.md` § 4.1, § 6).
 - Which of `marker0`–`4` an ordinary door or house mark takes, and what `obj_mappoint.pac`
   holds (`re/minimap.md` § 4.1).
-- Whether the Menu affordance is a touch target (it is drawn like one) or only an X hint.
+- Whether the Menu affordance is a touch target (it is drawn like one) or only an X hint: the
+  port hit-tests the label's measured box (a decision, **[hypothesis]**), not the game's own
+  rectangle (`TestHoldInRectangle` `0x02012744` was not resolved for it).
 - The party colour source (not a paletted entry of the map sprite set).
 - What the sub-screen fade (105/114) does while the field is swapped: the field's fade code
   treats the two engines by the logical swap flag (`0x020db9a8`, `0x020db360`), not by LCD.

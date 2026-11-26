@@ -4,6 +4,8 @@
 use super::App;
 use super::fight;
 use crate::record::Input as Logged;
+use crate::screens;
+use crate::screens::ScreenMode;
 use crate::talk::Button;
 use dq9_core::Input;
 use dq9_core::state::TimeOfDay;
@@ -86,11 +88,21 @@ pub(super) struct Controls {
     pub(super) held: HashSet<KeyCode>,
     pub(super) cursor: Option<(f64, f64)>,
     pub(super) dragging: bool,
+    /// Where the left button went down, while it is held: the tap's start.
+    press: Option<(f64, f64)>,
+    /// How far the pointer travelled since the press, in window pixels: past [`TAP_SLOP`] the
+    /// release is the camera gesture, not a touch.
+    travel: f64,
     pub(super) rotate: Vec2,
     pub(super) zoom: f32,
     /// The type-1 door task holds the field: the pad and the camera axes ignore the keys.
     pub(super) suppress: bool,
 }
+
+/// How far, in window pixels, the pointer may travel from the press and still count as a tap on
+/// the touch screen (the path length): the camera gesture is a drag, and a tap must not fire
+/// after it (`docs/app/screens.md`, § Touch).
+const TAP_SLOP: f64 = 8.0;
 
 impl Controls {
     pub(super) fn new() -> Self {
@@ -98,10 +110,34 @@ impl Controls {
             held: HashSet::new(),
             cursor: None,
             dragging: false,
+            press: None,
+            travel: 0.0,
             rotate: Vec2::ZERO,
             zoom: 0.0,
             suppress: false,
         }
+    }
+
+    /// The left button went down at the pointer: the potential tap starts here (the last
+    /// position the window reported; `winit`'s button events carry none, so a click before any
+    /// pointer motion has no tap).
+    pub(super) fn begin_press(&mut self) {
+        self.press = self.cursor;
+        self.travel = 0.0;
+    }
+
+    /// The pointer moved while the button is held: the distance of the camera gesture.
+    pub(super) fn travel_to(&mut self, from: (f64, f64), to: (f64, f64)) {
+        self.travel += ((to.0 - from.0).powi(2) + (to.1 - from.1).powi(2)).sqrt();
+    }
+
+    /// The left button went up: the press's start when the pointer travelled at most
+    /// [`TAP_SLOP`] (a tap), `None` after a drag, without a press, or before the window reported
+    /// any pointer position.
+    pub(super) fn finish_press(&mut self) -> Option<(f64, f64)> {
+        let press = self.press.take();
+        let travel = std::mem::take(&mut self.travel);
+        press.filter(|_| travel <= TAP_SLOP)
     }
 }
 
@@ -229,6 +265,61 @@ impl App {
         self.controls.held.clear();
         self.log_input(Logged::FocusLost);
     }
+
+    /// A tap on the touch screen: a left press released after at most [`TAP_SLOP`] of pointer
+    /// travel, at `point` in window pixels, in a `window` (`docs/app/screens.md`, § Touch).
+    ///
+    /// The point is mapped to the 256×192 DS screen the field draws on for the layout, the
+    /// screen mode and the script's swap ([`Screens::field_pointer`]); a press on the other LCD
+    /// or the letterbox does nothing. On the field's screen: an open conversation takes the tap
+    /// as the action button (the original's bottom-half capture advances on a tap outside the
+    /// window's own rectangle too), and otherwise a tap on the "X Menu" rectangle
+    /// ([`screens::menu_affordance`], the measured label, **[hypothesis]**) opens the field menu
+    /// under the key `I`'s conditions. Nothing else: the original's other touch handlers (walk
+    /// and climb by drag, pick up a spot, steer the ship) are not established in this port.
+    ///
+    /// A recorded session replays keys and camera deltas only (`record::Input`), so a tap would
+    /// move the game without appearing in the record: it is ignored while recording or
+    /// replaying.
+    pub(super) fn tap(&mut self, point: (f64, f64), window: (u32, u32)) {
+        if self.recording.replay.is_some() || self.recording.recorder.is_some() {
+            return;
+        }
+        let screens = screens::screens(self.options.layout, window.0, window.1);
+        // A battle keeps the port's assignment, which is the original's for a battle
+        // (`re/bottom-screen.md` § 3): the tap would reach the same rectangle either way.
+        let mode = if self.encounter.battle.is_some() {
+            ScreenMode::Port
+        } else {
+            self.presentation.screens
+        };
+        let swapped = self.events.screen_swapped();
+        let Some(on_screen) = screens.field_pointer(mode, swapped, point) else {
+            return;
+        };
+        if self.encounter.battle.is_some() || self.combat.fight.is_some() || self.services.is_open()
+        {
+            // A battle scene, a played fight and a facility screen route no tap: the command
+            // windows they draw are not touch-driven in the port (the original's overlay 23
+            // callers are not modelled), and the field menu must not open over them.
+            return;
+        }
+        if self.talk.is_active() {
+            // The touch acts as the action button on the message window **[hypothesis]**: the
+            // capture `field-church-tap-bottom.png` shows a tap advancing a plain line; which
+            // row a tap takes on a prompt is not established, so the touched row is not read.
+            self.talk.press(Button::Confirm);
+            return;
+        }
+        if self.battle_is_active()
+            || self.events.is_active()
+            || self.events.pending_start().is_some()
+            || !screens::menu_affordance(on_screen)
+        {
+            return;
+        }
+        self.open_field_menu();
+    }
 }
 
 #[cfg(test)]
@@ -308,5 +399,213 @@ mod tests {
             assert!(talk_button(code).is_none());
             assert!(talk_advance(code), "{code:?} only leaves a wait");
         }
+    }
+
+    /// The camera gesture and the touch screen share the left button: a press released where it
+    /// went down is a tap, one released after a drag is not (`docs/app/screens.md`, § Touch).
+    #[test]
+    fn a_press_released_in_place_is_a_tap_and_a_drag_is_not() {
+        let mut controls = Controls::new();
+        controls.cursor = Some((100.0, 100.0));
+        controls.begin_press();
+        controls.travel_to((100.0, 100.0), (102.0, 103.0));
+        assert_eq!(
+            controls.finish_press(),
+            Some((100.0, 100.0)),
+            "a small jitter stays a tap"
+        );
+        assert_eq!(controls.finish_press(), None, "one release per press");
+
+        controls.cursor = Some((400.0, 300.0));
+        controls.begin_press();
+        controls.travel_to((400.0, 300.0), (430.0, 300.0));
+        assert_eq!(
+            controls.finish_press(),
+            None,
+            "the drag rotates the camera and must not also tap"
+        );
+
+        // The slop is inclusive, and a release the window never saw go down is not a tap.
+        controls.cursor = Some((10.0, 10.0));
+        controls.begin_press();
+        controls.travel_to((10.0, 10.0), (18.0, 10.0));
+        assert_eq!(controls.finish_press(), Some((10.0, 10.0)), "8 px = slop");
+        controls.begin_press();
+        controls.travel_to((10.0, 10.0), (10.0, 18.5));
+        assert_eq!(controls.finish_press(), None, "8.5 px is a drag");
+        assert_eq!(controls.finish_press(), None);
+
+        // A press the window saw before any pointer motion has no position to tap: no tap
+        // (winit's button events carry none, and guessing one would tap the wrong place).
+        let mut cold = Controls::new();
+        cold.begin_press();
+        assert_eq!(cold.finish_press(), None);
+    }
+
+    use crate::app::Options;
+
+    /// The start options of a headless run on an explicit map and story point (`--map`,
+    /// `--story`, `--new-game`), in the enhanced layout: the same as `app::test_support`'s
+    /// `map_options`, which compiles on Windows only, so that the touch tests also build on
+    /// CI's Linux test run (they skip themselves without a ROM).
+    fn options(map: Option<&str>, story: (u8, u8, u8, bool), new_game: bool) -> Options {
+        Options {
+            map: map.map(Into::into),
+            save: None,
+            time: None,
+            clock: None,
+            layout: crate::screens::Layout::Enhanced,
+            mute: true,
+            record_sound: false,
+            trace_inputs: false,
+            event: None,
+            story: dq9_formats::cast::Story {
+                chapter: story.0,
+                step: story.1,
+                substep: story.2,
+                daytime: story.3,
+                ..Default::default()
+            },
+            story_override: [None; 3],
+            new_game,
+            battle: None,
+            play: Default::default(),
+        }
+    }
+
+    /// A DS screen point of the enhanced layout, in the 1920×1080 window these tests tap.
+    fn at(x: f32, y: f32) -> (f64, f64) {
+        (f64::from(x) * 1920.0 / 256.0, f64::from(y) * 1080.0 / 192.0)
+    }
+
+    /// The "X Menu" rectangle opens the field menu, under the same conditions as the key `I`
+    /// (`open_field_menu`); any other point of the field does nothing.
+    #[test]
+    fn a_tap_on_the_menu_affordance_opens_the_field_menu() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = App::new_headless(
+            options(Some("M01"), (1, 1, 1, true), false),
+            Some(rom.to_vec()),
+        );
+        assert!(
+            !app.events.is_active() && app.events.pending_start().is_none(),
+            "M01 at 1.1.1 must be free for the menu"
+        );
+        assert!(!app.services.is_open());
+        app.tap(at(60.0, 100.0), (1920, 1080));
+        assert!(
+            !app.services.is_open(),
+            "a tap on the 3D view opens nothing"
+        );
+        app.tap(at(228.0, 31.0), (1920, 1080));
+        assert!(
+            app.services.is_open(),
+            "the X Menu rectangle opened the field menu"
+        );
+        // While the menu holds the field, a tap on the affordance does not stack another.
+        app.tap(at(228.0, 31.0), (1920, 1080));
+        assert!(app.services.is_open());
+    }
+
+    /// The Observatory's NPC 130 on `X01M07` at 1.1.1, the conversation the message-flow tests
+    /// use: a real line from the ROM, opened directly and run to its first wait for the key.
+    fn observatory_conversation(rom: &[u8]) -> App {
+        let mut app = App::new_headless(
+            options(Some("X01M07"), (1, 1, 1, true), false),
+            Some(rom.to_vec()),
+        );
+        app.talk
+            .start(rom, "X01M07", &mut app.state, 130, 0)
+            .expect("NPC 130 of X01M07 speaks");
+        assert!(app.talk.is_active(), "the conversation is open");
+        for _ in 0..400 {
+            app.run_steps(1);
+            if let Some((_, what)) = app.talk.trace.last()
+                && what == "window shows: arrow"
+            {
+                return app;
+            }
+        }
+        panic!(
+            "the line reaches no wait for the key: {:?}",
+            app.talk.trace.last()
+        );
+    }
+
+    /// A synthetic tap on the field advances a real conversation line: on the `X01M07` line it
+    /// has the action button's effect (the tap and an `Enter` press leave the same trace) and
+    /// without it the line keeps waiting (`talk::trace`, the message-flow probe).
+    #[test]
+    fn a_synthetic_tap_advances_a_real_conversation_line() {
+        let Some(rom) = testrom::load() else { return };
+        let mut pressed = observatory_conversation(rom);
+        let mut tapped = observatory_conversation(rom);
+        let waiting = tapped.talk.trace.clone();
+        pressed.talk.press(Button::Confirm);
+        // The field's screen centre in the 1920×1080 window: DS (128, 96).
+        tapped.tap((960.0, 540.0), (1920, 1080));
+        for _ in 0..120 {
+            pressed.run_steps(1);
+            tapped.run_steps(1);
+        }
+        assert_eq!(
+            tapped.talk.trace, pressed.talk.trace,
+            "the tap must act as the message window's action button"
+        );
+        assert_ne!(
+            tapped.talk.trace, waiting,
+            "an untouched line keeps its wait: the tap must have moved it"
+        );
+    }
+
+    /// A tap acts as the action button to the end of a line too: repeated taps read the
+    /// `X01M07` conversation to its yes/no, answer it and close the window, as the key does.
+    #[test]
+    fn taps_read_the_line_and_close_the_conversation() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = observatory_conversation(rom);
+        for _ in 0..600 {
+            if !app.talk.is_active() {
+                break;
+            }
+            // DS (128, 96) in the 1920×1080 enhanced window: the field's screen.
+            app.tap((960.0, 540.0), (1920, 1080));
+            app.run_steps(20);
+        }
+        assert!(
+            !app.talk.is_active(),
+            "the taps read the line to its end and closed the window"
+        );
+        assert!(
+            app.talk
+                .trace
+                .iter()
+                .any(|(_, what)| what.starts_with("window closed")),
+            "the window closed by the tap's action edge: {:?}",
+            app.talk.trace.last()
+        );
+    }
+
+    /// Prints the trace of the `X01M07` conversation around a synthetic tap, for the batch's
+    /// evidence (`cargo test -p dq9-app print_tap_trace -- --ignored --nocapture`).
+    #[test]
+    #[ignore = "prints the probe, asserts nothing"]
+    fn print_tap_trace() {
+        let Some(rom) = testrom::load() else { return };
+        let mut app = observatory_conversation(rom);
+        let before = app.talk.trace.len();
+        println!(
+            "before the tap (DS 128,96 in a 1920×1080 enhanced window): {:?}",
+            &app.talk.trace[before.saturating_sub(3)..]
+        );
+        app.tap((960.0, 540.0), (1920, 1080));
+        for step in 0..120 {
+            let len = app.talk.trace.len();
+            app.run_steps(1);
+            if app.talk.trace.len() > len {
+                println!("after {} step(s): {:?}", step + 1, &app.talk.trace[len..]);
+            }
+        }
+        println!("window open: {}", app.talk.is_active());
     }
 }

@@ -6,6 +6,7 @@
 //! (bottom, the top one the map screen drawn from `minimap.gp2`, `docs/re/bottom-screen.md`).
 
 use dq9_render::Viewport;
+use dq9_render::ui::SCREEN;
 
 /// Which screens are shown and where.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -137,6 +138,25 @@ impl ScreenMode {
     }
 }
 
+/// The "X Menu" affordance's rectangle in DS screen pixels, `(x, y, width, height)`: the
+/// label's box as measured on the original's capture
+/// `build/evidence/j4-bottom-screen-re/field-western-stornway.png`, bottom half. The label's
+/// dark box is x 214..243, y 28..35; its "×" icon's blue rim reaches x 213 and row 27, which the
+/// touch box includes. § 2.2 of `docs/re/bottom-screen.md` gave x≈202..255, y≈14..28 from the
+/// same capture: those rows are the stylus hand drawn above the label (glove x 224..234,
+/// y 15..26; outline x 221..236, y 14..26), and the label's top row 28 sits 14 rows lower. The
+/// game's own rectangle (`TestHoldInRectangle` `0x02012744`) was not resolved for the
+/// affordance: the exact rectangle is **[hypothesis]**.
+pub const MENU_AFFORDANCE: (f32, f32, f32, f32) = (213.0, 27.0, 31.0, 9.0);
+
+/// Whether a point of the 256×192 DS screen is on the "X Menu" affordance
+/// ([`MENU_AFFORDANCE`]).
+pub fn menu_affordance(point: (f32, f32)) -> bool {
+    let (x, y) = point;
+    let (left, top, width, height) = MENU_AFFORDANCE;
+    x >= left && x < left + width && y >= top && y < top + height
+}
+
 /// Rectangles of the screens in a window, in pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Screens {
@@ -217,6 +237,32 @@ impl Screens {
         } else {
             bottom
         })
+    }
+
+    /// The point of the 256×192 DS screen the field draws on that a window pixel touches, or
+    /// `None` when the pixel is on the other LCD, outside both, or on the enhanced field's
+    /// letterbox. The DS screens are 4:3, so the scaling is uniform there; the enhanced layouts
+    /// are one 16:9 field with no DS screen shape, and their whole rectangle maps to the
+    /// 256×192 screen proportionally (a touch has no DS geometry to follow) **[hypothesis]**.
+    pub fn field_pointer(
+        self,
+        mode: ScreenMode,
+        swapped: bool,
+        point: (f64, f64),
+    ) -> Option<(f32, f32)> {
+        let field = self.field_for(mode, swapped);
+        let (x, y) = point;
+        let (left, top) = (f64::from(field.x), f64::from(field.y));
+        let width = f64::from(field.width.max(1));
+        let height = f64::from(field.height.max(1));
+        if x < left || y < top || x >= left + width || y >= top + height {
+            return None;
+        }
+        let (screen_width, screen_height) = SCREEN;
+        Some((
+            ((x - left) / width * f64::from(screen_width)) as f32,
+            ((y - top) / height * f64::from(screen_height)) as f32,
+        ))
     }
 
     /// The viewport of the 3D field and of the message window in the port's assignment. The
@@ -475,6 +521,118 @@ mod tests {
             assert_eq!(s.field_for(ScreenMode::Original, false), s.top);
             assert_eq!(s.overlay_for(ScreenMode::Original, false), None);
         }
+    }
+
+    #[test]
+    fn a_window_pixel_maps_to_the_field_screens_touch_point() {
+        // `stacked`, original: the field and its window are the bottom LCD, the map screen the
+        // top one; a pixel of the middle of each maps (or not) accordingly.
+        let s = screens(Layout::Stacked, 512, 768);
+        assert_eq!(
+            s.field_pointer(ScreenMode::Original, false, (256.0, 576.0)),
+            Some((128.0, 96.0)),
+            "the bottom screen's centre is the DS screen's centre"
+        );
+        assert_eq!(
+            s.field_pointer(ScreenMode::Original, false, (256.0, 192.0)),
+            None,
+            "the top screen is the map screen: no touch"
+        );
+        assert_eq!(
+            s.field_pointer(ScreenMode::Original, false, (0.0, 384.0)),
+            Some((0.0, 0.0)),
+            "the screen's top-left corner"
+        );
+        assert_eq!(
+            s.field_pointer(ScreenMode::Original, false, (512.0, 768.0)),
+            None,
+            "the exclusive right and bottom edges are outside"
+        );
+        // The port's assignment puts the field on the top screen.
+        assert_eq!(
+            s.field_pointer(ScreenMode::Port, false, (256.0, 192.0)),
+            Some((128.0, 96.0))
+        );
+        assert_eq!(
+            s.field_pointer(ScreenMode::Port, false, (256.0, 576.0)),
+            None
+        );
+        // A cutscene's swap moves the port's field down.
+        assert_eq!(
+            s.field_pointer(ScreenMode::Port, true, (256.0, 576.0)),
+            Some((128.0, 96.0))
+        );
+
+        // `side`: the two screens are centred together, the map screen left and the bottom
+        // screen right, both 512×384 at y 192.
+        let s = screens(Layout::Side, 1024, 768);
+        assert_eq!(
+            s.field_pointer(ScreenMode::Original, false, (768.0, 384.0)),
+            Some((128.0, 96.0))
+        );
+        assert_eq!(
+            s.field_pointer(ScreenMode::Original, false, (256.0, 384.0)),
+            None,
+            "the left half (the map screen) is not the field"
+        );
+
+        // `top`: one screen, the field in either mode.
+        let s = screens(Layout::Top, 1024, 768);
+        for mode in [ScreenMode::Port, ScreenMode::Original] {
+            assert_eq!(
+                s.field_pointer(mode, false, (512.0, 384.0)),
+                Some((128.0, 96.0)),
+                "{mode:?}"
+            );
+        }
+
+        // The enhanced layouts are one 16:9 field with no DS screen shape: its rectangle maps
+        // proportionally, the letterbox does not map at all.
+        let s = screens(Layout::Enhanced, 1920, 1080);
+        assert_eq!(
+            s.field_pointer(ScreenMode::Original, false, (960.0, 540.0)),
+            Some((128.0, 96.0))
+        );
+        assert_eq!(
+            s.field_pointer(ScreenMode::Original, false, (1920.0, 540.0)),
+            None,
+            "past the field's right edge"
+        );
+        let bars = screens(Layout::Enhanced, 800, 1200);
+        assert_eq!(
+            bars.field_pointer(ScreenMode::Original, false, (400.0, 100.0)),
+            None,
+            "the letterbox above the field is not a touch"
+        );
+        assert_eq!(
+            bars.field_pointer(ScreenMode::Original, false, (400.0, 600.0)),
+            Some((128.0, 96.0))
+        );
+        let reactive = screens(Layout::EnhancedReactive, 1000, 500);
+        assert_eq!(
+            reactive.field_pointer(ScreenMode::Original, false, (250.0, 125.0)),
+            Some((64.0, 48.0)),
+            "the reactive field is the whole window"
+        );
+    }
+
+    /// The "X Menu" affordance's rectangle is the label measured on the original's capture: the
+    /// dark box is x 214..243, y 28..35 in the bottom half of
+    /// `build/evidence/j4-bottom-screen-re/field-western-stornway.png`, and the touch box adds
+    /// the icon's rim (x 213, row 27). The note's earlier numbers sit on the stylus hand instead
+    /// (`re/bottom-screen.md` § 2.2).
+    #[test]
+    fn the_menu_affordance_is_the_measured_label_rectangle() {
+        assert!(menu_affordance((213.0, 27.0)), "top-left");
+        assert!(menu_affordance((243.0, 35.0)), "bottom-right");
+        assert!(menu_affordance((228.0, 31.0)), "the Menu text");
+        assert!(!menu_affordance((212.0, 31.0)), "one pixel left");
+        assert!(!menu_affordance((244.0, 31.0)), "one pixel right");
+        assert!(!menu_affordance((228.0, 26.0)), "one row above");
+        assert!(!menu_affordance((228.0, 36.0)), "one row below");
+        // The note's older rectangle's rows are the stylus hand drawn over the label, not the
+        // label: a point there is not on the affordance.
+        assert!(!menu_affordance((228.0, 20.0)));
     }
 
     #[test]

@@ -69,6 +69,44 @@ screen). The sweep log `sweep.txt` (`b25081e83a2a`; `9c1ec9f9e913` in the draw b
 map screen test: 283 layouts and 418 of the map list's 1,010 maps resolve, 592 fall back with
 `no .bmmp layout for <code>`.
 
+## Touch
+
+The window routes the pointer to the DS touch screen (`app/input.rs`, `screens.rs`); the
+original's touch elements and coordinates are in `re/bottom-screen.md` § 2.2.
+
+- **A tap** is a left press released after at most 8 window pixels of pointer travel (the path
+  length, so a back-and-forth counts as a drag). The camera gesture is the same button dragged,
+  so a drag turns the camera and fires no tap. A press that arrives before the window has seen
+  any pointer motion is ignored (`winit`'s button events carry no position).
+- **Mapping.** The window pixel becomes a point of the 256×192 screen the field draws on: the
+  bottom screen in `original` mode and after a cutscene's 109, the top one in `port`, the only
+  screen in `top`, and the whole 16:9 rectangle proportionally in the enhanced layouts (a 16:9
+  field has no DS screen shape **[hypothesis]**). A press on the other LCD, on a black margin or
+  on the enhanced letterbox does nothing (`Screens::field_pointer`).
+- **Routes.** With a message window open, the tap presses the action button: in the note's
+  `field-church-tap-bottom.png` (256×409, a 25-row melonDS menu bar) a tap advances a line from
+  an image row 300 — bottom-screen row 83, above the window's own rectangle `y 116..190` (row
+  100 if the capture helper's bottom-relative coordinates were used) — so the whole 3D screen is
+  the target; the exact point is **[unknown]**, and a prompt is not answered by the touched row
+  (not established). Otherwise a tap on the "X Menu" label opens the field menu where `I` does
+  (`screens::menu_affordance`, the label's measured box x 213..243, y 27..35, **[hypothesis]**:
+  the game's own `TestHoldInRectangle` rectangle was not resolved). Nothing else: walking and
+  climbing by drag, picking a spot and steering the ship are not modelled, and a battle scene,
+  a played fight or a facility screen routes no tap.
+- **Recording.** A recorded session replays keys and camera deltas only, so a tap would move the
+  game without being recorded: taps are ignored while recording or replaying.
+- **Not drawn.** Neither the "X Menu" label nor the stylus hand is drawn: their asset is
+  **[unknown]** and the field's engine-A `bg1`/`bg2` layers are not modelled, so the port draws
+  nothing there rather than an invented stand-in.
+
+Tests (`cargo test -p dq9-app`): `a_window_pixel_maps_to_the_field_screens_touch_point`,
+`the_menu_affordance_is_the_measured_label_rectangle`,
+`a_press_released_in_place_is_a_tap_and_a_drag_is_not`,
+`a_tap_on_the_menu_affordance_opens_the_field_menu`,
+`a_synthetic_tap_advances_a_real_conversation_line` and
+`taps_read_the_line_and_close_the_conversation` (real `X01M07` lines; the probe
+`print_tap_trace` prints one trace, kept in `build/evidence/v3-touch-ui/`).
+
 ## Enhanced 16:9
 
 `--layout enhanced` (Web: `?layout=enhanced`; the **default** on both) is the enhanced

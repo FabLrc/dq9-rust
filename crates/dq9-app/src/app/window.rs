@@ -215,13 +215,38 @@ impl ApplicationHandler<UserEvent> for App {
                 ..
             } => {
                 self.audio.gesture();
-                self.controls.dragging = state == ElementState::Pressed;
+                match state {
+                    ElementState::Pressed => {
+                        self.controls.dragging = true;
+                        self.controls.begin_press();
+                    }
+                    ElementState::Released => {
+                        self.controls.dragging = false;
+                        // A press released without dragging the camera is a tap on the touch
+                        // screen (`Input`, § "Touch" of `docs/app/screens.md`).
+                        let tap = self.controls.finish_press();
+                        // The same window size the frame's screen rectangles were computed
+                        // from (`present_frame`: the GPU config), so a tap lands on the
+                        // screen the user saw.
+                        let size = match &self.gpu {
+                            Some(gpu) => Some((gpu.config.width, gpu.config.height)),
+                            None => self.window.as_ref().map(|window| {
+                                let size = window.inner_size();
+                                (size.width, size.height)
+                            }),
+                        };
+                        if let (Some(at), Some(size)) = (tap, size) {
+                            self.tap(at, size);
+                        }
+                    }
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some((x, y)) = self.controls.cursor
                     && self.controls.dragging
                     && self.recording.replay.is_none()
                 {
+                    self.controls.travel_to((x, y), (position.x, position.y));
                     let speed = 0.005;
                     let rotate = Vec2::new(
                         ((position.x - x) * speed) as f32,
