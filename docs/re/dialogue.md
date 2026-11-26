@@ -712,12 +712,10 @@ played by `Dialogue`.
   projection and the two sheets are executed and tested, but the only captures are synthetic
   (no NPC of the prologue or chapter 2 carries a tagged line the cast places), and the 60 ticks
   counted per 60 Hz step and the sheets' single frame are **[hypothesis]**. **`--screenshot`'s
-  preview draws no balloon**: `native.rs::write_png` calls `talk.draw`/`talk.draw_hud` without
-  ever handing the frame's camera to the window (`Talk::set_view`), so `self.view` is `None`
-  there. The fix is the one line the window path already uses in
-  `app/draw.rs::present_frame`, added in `write_png` before the `render_to_rgba_with` closure:
-  `talk.set_view(camera, cli.layout.is_reactive());` — left to the coordinator, `native.rs`
-  being owned by another batch.
+  preview feeds the same camera**: `native.rs::write_png` calls `talk.set_view(camera,
+  cli.layout.is_reactive())` before the `render_to_rgba_with` closure, as `present_frame` does
+  for the window and the Web, so a preview capture carries the balloon; without a balloon the
+  image is byte-identical to before that line (`--map M01`, `stacked`, sha256 `4ab94a64…`).
 - The turn tags are executed (`<N_TURN>`, `<R_TURN>`, `<END_R_TURN>`: `dq9_core`'s dialogue
   reports the tick, `Talk::face_partner` releases the pivot), but no capture shows the partner
   turning back: the two real lines that carry the tags (`M12J0/108_en.bin` record 13,

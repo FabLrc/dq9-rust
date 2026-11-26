@@ -1040,6 +1040,9 @@ fn write_png(
     } else {
         crate::hud::Canvas::ENHANCED
     };
+    // The message window's balloon is projected with the frame's camera (`func_0202ec84`);
+    // `present_frame` feeds it in the window and the Web, and the offscreen preview here.
+    talk.set_view(camera, cli.layout.is_reactive());
     let rgba = renderer
         .render_to_rgba_with(device, queue, (w, h), field, camera, |encoder, view| {
             if let Some(overlay) = shown.overlay_for(cli.screens, *swapped) {
