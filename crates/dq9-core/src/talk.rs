@@ -22,8 +22,8 @@ mod speed;
 pub use counts::TalkCounts;
 pub use dialogue::{CLOSE_STEPS, Dialogue, Input, Outcome, PromptView, SCROLL_STEPS, View};
 pub use layout::{
-    AnswerSound, BLIP_EVERY, DEFAULT_LINES, EndKind, Names, Op, Plate, PromptKind, Script, Sound,
-    compile_message, layout, prepare,
+    AnswerSound, BALLOON_TICKS, BLIP_EVERY, Balloon, BalloonKind, DEFAULT_LINES, EndKind, Names,
+    Op, Plate, PromptKind, Script, Sound, compile_message, layout, prepare,
 };
 pub use partner::{RANGE, REACH, Talkable, Target, nearest, zones_containing};
 pub use speed::{STEPS_PER_UPDATE, TextSpeed};

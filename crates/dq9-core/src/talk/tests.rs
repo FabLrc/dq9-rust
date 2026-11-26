@@ -877,3 +877,133 @@ fn an_answer_without_branch_ends_the_message() {
         "the message ended with the answer"
     );
 }
+
+/// A message prepared with its leading tags consumed (`0x0206a3d0`), for the forms of the
+/// balloon tags.
+fn prepared(text: &[u8]) -> Script {
+    let (info, data) = font_files();
+    let font = Font::parse(&info, &data, FontId::Message).unwrap();
+    prepare(&font, text, &Names::default(), 228)
+}
+
+/// Steps `dialogue` until a balloon is reported, at most 12 steps.
+fn raised(dialogue: &mut Dialogue) -> Option<Balloon> {
+    for _ in 0..12 {
+        dialogue.step(Input::default());
+        if let Some(balloon) = dialogue.take_balloon() {
+            return Some(balloon);
+        }
+    }
+    None
+}
+
+/// Both forms of both tags raise the same 60-tick balloon (`0x0206a3d0` leading,
+/// `0x020659a0` inside the page), and no other code does.
+#[test]
+fn both_forms_of_the_two_balloon_codes_raise_their_balloon() {
+    assert_eq!(
+        Dialogue::new(prepared(b"<EXC>ab<END>")).take_balloon(),
+        Some(Balloon::new(BalloonKind::Exclamation)),
+        "the leading form"
+    );
+    assert_eq!(
+        Dialogue::new(prepared(b"<QES>ab<END>")).take_balloon(),
+        Some(Balloon::new(BalloonKind::Question))
+    );
+    assert_eq!(Balloon::new(BalloonKind::Question).ticks, BALLOON_TICKS);
+
+    let mut exclamation = Dialogue::new(script(b"ab<EXC>cd<END>", 228));
+    assert_eq!(exclamation.take_balloon(), None, "nothing before the code");
+    assert_eq!(
+        raised(&mut exclamation),
+        Some(Balloon::new(BalloonKind::Exclamation)),
+        "the interpreter's form"
+    );
+    assert!(
+        exclamation.take_sounds().contains(&Sound::Exclamation),
+        "the code still plays its sound"
+    );
+    let mut question = Dialogue::new(script(b"ab<QES>cd<END>", 228));
+    assert_eq!(
+        raised(&mut question),
+        Some(Balloon::new(BalloonKind::Question))
+    );
+}
+
+/// Codes around the tags do not raise one: no leading `<EXC>`/`<QES>` means no balloon, and
+/// other control codes leave it `None`.
+#[test]
+fn other_codes_raise_no_balloon() {
+    for text in [
+        b"ab<END>".as_slice(),
+        b"<N_TURN>ab<END>",
+        b"<CEN>ab<END>",
+        b"ab<MOJI=12,16>cd<END>",
+        b"ab<COLOR=1,2,3>cd<END>",
+        b"ab<R_TURN>cd<END>",
+        b"<YESNO>a<END>",
+    ] {
+        let mut dialogue = Dialogue::new(prepared(text));
+        assert_eq!(
+            raised(&mut dialogue),
+            None,
+            "no balloon for {:?}",
+            String::from_utf8_lossy(text)
+        );
+    }
+}
+
+/// A leading `<N_TURN>` does not hide the leading balloon: both are consumed by the same
+/// leading-tag loop.
+#[test]
+fn a_leading_turn_code_keeps_the_leading_balloon() {
+    let mut dialogue = Dialogue::new(prepared(b"<N_TURN><EXC>ab<END>"));
+    assert!(dialogue.view().tags.no_turn);
+    assert_eq!(
+        dialogue.take_balloon(),
+        Some(Balloon::new(BalloonKind::Exclamation))
+    );
+}
+
+/// The leading form plays the tag's sound as the in-page code does (`0x0205eab0` with 6 for
+/// `<EXC>`, 0x1c for `<QES>`, `arm9.c:86545`).
+#[test]
+fn the_leading_form_plays_its_sound() {
+    let mut exclamation = Dialogue::new(prepared(b"<EXC>ab<END>"));
+    assert_eq!(
+        exclamation.take_sounds(),
+        [Sound::Exclamation],
+        "the sound is queued with the balloon"
+    );
+    let mut question = Dialogue::new(prepared(b"<QES>ab<END>"));
+    assert_eq!(question.take_sounds(), [Sound::Question]);
+    let mut plain = Dialogue::new(prepared(b"ab<END>"));
+    assert!(plain.take_sounds().is_empty());
+}
+
+/// A page break does **not** zero the balloon: `Msg_Compile` and its `Msg_ConsumeLeadingTags`
+/// run once per line (callers `MsgWin_Show` `0x0204501c` and `Msg_Prepare` `0x02067ea8`), so
+/// the timer of a `<EXC>` on page 1 keeps running into page 2.
+#[test]
+fn a_page_break_keeps_the_balloon() {
+    let mut dialogue = Dialogue::new(script(b"ab<EXC>cd<PAGE>ef<END>", 228));
+    let mut raised = None;
+    for _ in 0..12 {
+        dialogue.step(Input::default());
+        if let Some(balloon) = dialogue.take_balloon() {
+            raised = Some(balloon);
+        }
+    }
+    assert_eq!(raised, Some(Balloon::new(BalloonKind::Exclamation)));
+    // The key on `<PAGE>` clears the box; page 2's text types with no new request.
+    while !dialogue.waiting() {
+        dialogue.step(Input::default());
+    }
+    dialogue.step(press());
+    play(&mut dialogue, 2);
+    assert_eq!(
+        dialogue.take_balloon(),
+        None,
+        "no new request at the page break"
+    );
+}

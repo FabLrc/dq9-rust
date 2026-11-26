@@ -259,9 +259,12 @@ compiled:
 | (none) | `+0x1844 = ReduceAngle(FX_Atan2(leader.x − npc.x, leader.z − npc.z))` — the angle **from the partner to the hero** — and `+0x19b6 = 1` |
 | `<N_TURN>` (`0xFF2B`) | `+0x1844 = +0x183c` (the angle saved at the open) and `+0x19b6 = 0`: this message does not turn the speaker at all |
 
-The tags are consumed per message, so each page's own leading tags decide. English text:
+The tags are consumed once per compiled line (`Msg_Compile` `0x02069ffc`, called by
+`MsgWin_Show` `0x0204501c` and `Msg_Prepare` `0x02067ea8`; the pages are in-stream `0xFF0D`
+codes of that one line), so the line's own leading tags decide, not each page's. English text:
 6,638 `<N_TURN>`, all leading (the table also counts 312 `<EXC>` and 51 `<QES>`, of which only
-2 and 0 are leading: the others are mid-message codes of the interpreter).
+1 and 0 are leading: the others are mid-message codes of the interpreter, as `<WIN_OFF>` before
+the only other early `<EXC>` stops the leading loop).
 
 **Per window update** — `func_020656f4` (`0x020656f4`): while `+0x19b6` is set it gives the
 partner `+0x1844` as its **requested** angle (`func_02040af0(chara, angle)`) and compares the
@@ -348,7 +351,7 @@ window, not by the leading-tag consumer:
 
 Inside a message the same codes reach the interpreter (`MsgWin_Update` `0x020659a0`), which
 raises the same 60-tick timer (`docs/re/sdat.md`). Counts: 312 `<EXC>` and 51 `<QES>` in the
-English text, 2 and 0 of them leading.
+English text, 1 and 0 of them leading.
 
 `func_02065758` counts `+0x1959` down by the tick delta and clears `+0x19b7` at zero. The draw
 is `func_020675fc` (`0x0206760c`):
@@ -362,11 +365,85 @@ is `func_020675fc` (`0x0206760c`):
   `0x021d656c` (`{"ARC:%s", …}`): **13 `ev_mark.spr` (the "!"), 14 `field_qu.spr` (the "?")**;
 - `SPRSprite::DrawAnimatedNoRotation(sprite, 1)`.
 
-The port does not draw them yet **[unknown: no capture, and the balloon needs the speaker's
-screen projection]**: the request is not kept by `dq9-core` (the codes only play their sound,
-`Sound::Exclamation`/`Question`) and `Talk` has no camera to project the speaker. The sheets
-are already known to the event layer (`field_sprite`, natives 541/542/561,
-`docs/re/stb-natives.md`).
+The port draws them. `dq9_core::talk` keeps the request in both forms: a code met inside the
+page compiles to `Op::Balloon(BalloonKind)` (`0x020659a0`'s handler), a leading one is read by
+`compile_message` into `LeadingTags::exclamation`/`question` and raised by `Dialogue::new`;
+both hand `Balloon { kind, ticks: 60 }` out through `Dialogue::take_balloon`, and each code
+plays its sound, leading form included (`Sound::Exclamation`/`Sound::Question`, `0x0205eab0`
+with 6/0x1c, `arm9.c:86545`; SDAT 6/0x1c). `Talk` keeps it (`balloon`, `balloon_npc` — the
+conversation's speaker, `+0x1838`), drops one tick per fixed step (`Talk::step`,
+`func_02065758`) and clears it at zero. The lifetime is the window's (`arm9.c:82465` and
+`83194`, checked against the decompilation by the batch's challenger): `MsgWin_Update` counts
+`+0x1959` and `MsgWin_DrawGlyphs` calls `func_020675fc` inside `if (W+0x998 != 0)`, so a
+closed window freezes the timer and draws nothing over the field, and the **next message**
+zeroes `+0x1959`/`+0x19b7` in `Msg_ConsumeLeadingTags` (`arm9.c:86527`; `Talk` clears in
+`start` and `show_event`). A page break keeps it: `Msg_Compile` and its leading-tag pass run
+once per line (callers `MsgWin_Show` `0x0204501c` and `Msg_Prepare` `0x02067ea8`), the pages
+being in-stream codes of that one compiled line. A map change clears it too. A balloon
+therefore lives 60 ticks at most, and only while its window shows.
+
+The draw is a **screen-space quad in the interface pass**, not a world sprite: the original's
+`SPRSprite::DrawAnimatedNoRotation` is a 2D sheet at a projected screen point, and
+`dq9_render::ui` already draws the window in DS pixels over the field. `Atlas::build_sprites`
+packs `ev_mark.spr` and `field_qu.spr` (field sprites 13 and 14 of the table above) after the
+wait arrow;
+`event/scan.rs::field_sprite_bytes` reads them from `data/bin/icon.nsarc`, so the ids stay the
+event layer's single table. The partner's placement (`fx32` ÷ 4096) goes through the same
+`Camera::view_proj`/`reactive_view_proj` the renderer gives the field (aspect 4:3 on a DS
+screen, the window's otherwise) to NDC, then to the field's rectangle in the pass's canvas. The
+DS pass uses the original's `ConvertWorldToScreenCoordinates` viewport `(0, 0, 255, 191)` and
+its rounding (`x = round(normX × 255)`, `y = 191 − round(normY × 191)`), so the centre is
+`(128, 95)`; the enhanced canvas has no DS viewport and maps proportionally
+**[hypothesis]**. The sheet's corner is `(−12, −62)` DS pixels from that point, one texel being
+one DS pixel at 192 lines (so the enhanced HUD scales it with the canvas). `Talk::set_view`
+carries the frame's camera (`app/draw.rs::present_frame`); the HUD does **not** re-anchor it
+with the message box, because the balloon belongs to the field. Both `--screens port` and
+`original` draw it in the window pass (`ui.rs`'s `Ui::draw` into the field's screen), and the
+Web uses the same code. A headless run steps no timer and draws nothing.
+
+Tests: `both_forms_of_the_two_balloon_codes_raise_their_balloon`,
+`other_codes_raise_no_balloon`, `a_leading_turn_code_keeps_the_leading_balloon`,
+`the_leading_form_plays_its_sound` and `a_page_break_keeps_the_balloon` on synthetic lines, `a_real_line_raises_its_balloon_mid_page` on `M01A0/102_en.bin` record 0 (its `<EXC>`
+sits on the second page), and in the application
+`a_balloon_lasts_sixty_steps_and_the_line_does_not_restart_it`,
+`the_interpreter_form_raises_it_at_its_step`,
+`a_closed_window_freezes_the_balloon_and_the_next_message_clears_it`, and the page break it
+keeps (`a_page_break_keeps_the_balloon`), plus
+`the_balloon_sits_at_the_offset_from_the_partners_projection` (a synthetic camera: centre
+`(116, 33)`, a camera axis 1 unit off a point at 10 units, the 960×540 canvas) and
+`the_drawn_sheet_is_the_one_of_its_tag` (the two sheets' rects from the ROM).
+
+**[Hypothesis]**, not read from a capture: the 60 ticks are counted one per 60 Hz step (the
+original counts `GetTickCount` deltas and 2 per 30 Hz update in the window); only the sheets'
+first frame is drawn
+(`SPRSprite` animates them); both tags leading keeps `<EXC>` (not in the text: 1 leading
+`<EXC>`, 0 `<QES>`). The offset is the sheet's corner as the code sets its draw position
+(`0x020675fc` adds `−12, −62` to the projected point), not verified pixel by pixel.
+**[Deviation]** the projected point is the partner's map placement
+(`Talkable::position` ÷ 4096), where the original reads the character's current position
+(`func_020406f8`): an NPC a script moves during the conversation would keep its balloon on the
+placement, and a talk to a moved NPC has not been captured.
+
+**No reachable real line in the prologue or chapter 2** carries either tag over a speaker that
+the map's cast has: the search (`build/evidence/v3-balloons/text-search.txt`) counts the 312
+`<EXC>` and 51 `<QES>` of the English tables and lists every tagged member of each NPC talk
+archive. The prologue and chapter 2 candidates all fail one way or another: `M01A0`/`M01B0`
+`102_en.bin#4` (quest 80) names an NPC M01's cast never places; `X01A0` `119_en.bin#1` needs
+story step 4 and a talk context of exactly 192/193, while NPC 119 of `X01M06` has no talk zone
+and the room's only trigger is an arrival (`dq9re talk … --step 4 --zone 192` does choose it,
+`--zone 0` chooses record 0, so the line is unreachable from the field); `C01*`
+`133_en.bin#8` (the princess) and `030_en.bin` are not in C01's casts; `D01*` `103_en.bin` sits
+in the Hexagon, which places no NPC at chapter 2; `M02B0` `018_en.bin#2/#4` needs quest 106
+state 2 with a context of 197..200 and NPC 18 is not in M02's cast either. Every `<QES>` of the
+NPC tables falls in a chapter C or later archive (`R01C0`..`R04Q0`, `S14Q0`, `H14Q0`); none in a
+`*A0`/`*B0` one. A capture of the balloon is therefore synthetic:
+`balloon_tests::a_capture_shows_the_balloon_for_sixty_steps_and_nothing_after` renders the
+`<EXC>` and `<QES>` windows over a synthetic camera (`DQ9_EVIDENCE_DIR`):
+`balloon-exclamation.png`, `balloon-question.png` and `balloon-after-sixty-steps.png`, the last
+identical to the same window without the sheet, 60 steps after it was raised, and
+`balloon-enhanced.png`, the `?` in the enhanced HUD's 960×540 canvas (the sheet stays where the
+field projects the speaker, while the window is moved to the bottom left). A real capture in
+the window stays open until a save reaches a chapter C map or a forced talk context.
 
 ## Message window
 
@@ -430,7 +507,8 @@ once (no smooth scrolling).
 | `0xFF04`–`0xFF07`, `0xFF08` | state 6: choice; `0xFF05` (`<NOYES>`) places the cursor on No; answer in `+0x954` (up/down move, A confirms, B cancels = −2) |
 | `0xFF14`–`0xFF17` | **no handler** in the interpreter: plain markers |
 | `0xFF26`/`0xFF27`, `0xFF28`/`0xFF29` | `+0x19b1` (frame) and `+0x19b8` (centering) |
-| `0xFF2A`…`0xFF2F`, `0xFF0E`, `0xFF10`–`0xFF13`, `0xFF34`–`0xFF48`, `0xFF4B`… | NPC turns, balloons, shake, quests, sounds: **not modeled** |
+| `0xFF2E`, `0xFF2F` | `<EXC>`, `<QES>`: the balloon over the speaker and its sound (`Op::Balloon`, § Balloons) |
+| `0xFF2A`, `0xFF2B`/`0xFF2C`/`0xFF02`, `0xFF0E`, `0xFF10`–`0xFF13`, `0xFF34`–`0xFF48`, `0xFF4B`… | NPC turns (executed, § Turned), shake, quests, sounds: **not modeled** |
 
 Choice sounds (details and evidence in [`sdat.md`](sdat.md)): opening, effect 5; answer,
 effect 1, except `<YESNO_NOTSE>` (`0xFF06`, no answer) and `<YESNO_NOTSE_IIE>` (`0xFF07`,
@@ -630,9 +708,16 @@ played by `Dialogue`.
 
 ## Remaining
 
-- Balloons `<EXC>`/`<QES>`: the rule, the 60-tick wait, the sheets (`ev_mark.spr`,
-  `field_qu.spr` of `data/bin/icon.nsarc`) and the draw (`func_020675fc`) are read (§ "Turned to
-  the hero"); the port neither keeps the request nor projects the speaker, so nothing is drawn.
+- Balloons `<EXC>`/`<QES>` are drawn (§ "Turned to the hero"): the 60-tick request, the
+  projection and the two sheets are executed and tested, but the only captures are synthetic
+  (no NPC of the prologue or chapter 2 carries a tagged line the cast places), and the 60 ticks
+  counted per 60 Hz step and the sheets' single frame are **[hypothesis]**. **`--screenshot`'s
+  preview draws no balloon**: `native.rs::write_png` calls `talk.draw`/`talk.draw_hud` without
+  ever handing the frame's camera to the window (`Talk::set_view`), so `self.view` is `None`
+  there. The fix is the one line the window path already uses in
+  `app/draw.rs::present_frame`, added in `write_png` before the `render_to_rgba_with` closure:
+  `talk.set_view(camera, cli.layout.is_reactive());` — left to the coordinator, `native.rs`
+  being owned by another batch.
 - The turn tags are executed (`<N_TURN>`, `<R_TURN>`, `<END_R_TURN>`: `dq9_core`'s dialogue
   reports the tick, `Talk::face_partner` releases the pivot), but no capture shows the partner
   turning back: the two real lines that carry the tags (`M12J0/108_en.bin` record 13,

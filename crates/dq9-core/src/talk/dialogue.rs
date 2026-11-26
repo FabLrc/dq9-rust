@@ -1,6 +1,8 @@
 use dq9_formats::message::LeadingTags;
 
-use super::layout::{AnswerSound, BLIP_EVERY, EndKind, Op, Plate, PromptKind, Script, Sound};
+use super::layout::{
+    AnswerSound, BLIP_EVERY, Balloon, BalloonKind, EndKind, Op, Plate, PromptKind, Script, Sound,
+};
 use super::speed::{STEPS_PER_UPDATE, TextSpeed};
 
 // --- The dialogue state machine -------------------------------------------------------------
@@ -173,10 +175,39 @@ pub struct Dialogue {
     /// The conversation gave the partner its heading back since the last
     /// [`Dialogue::take_turn_release`].
     released: bool,
+    /// A balloon raised and not yet taken ([`Dialogue::take_balloon`]): the `!`/`?` over the
+    /// speaker of `+0x1959`/`+0x19b7`/`+0x195c`.
+    balloon: Option<Balloon>,
+}
+
+/// The balloon the leading tags ask for (`0x0206a3d0`): `<EXC>` sets `+0x195c = 0`, `<QES`
+/// `1`. Both leading is not in the English text (1 leading `<EXC>`, 0 `<QES>`), the first
+/// wins **[hypothesis]**.
+fn leading_balloon(tags: &LeadingTags) -> Option<Balloon> {
+    if tags.exclamation {
+        Some(Balloon::new(BalloonKind::Exclamation))
+    } else if tags.question {
+        Some(Balloon::new(BalloonKind::Question))
+    } else {
+        None
+    }
+}
+
+/// The sound a balloon's code plays: base effect 6 for `<EXC>`, 0x1c for `<QES>`
+/// (`docs/re/sdat.md`).
+fn balloon_sound(kind: BalloonKind) -> Sound {
+    match kind {
+        BalloonKind::Exclamation => Sound::Exclamation,
+        BalloonKind::Question => Sound::Question,
+    }
 }
 
 impl Dialogue {
     pub fn new(script: Script) -> Self {
+        let balloon = leading_balloon(&script.tags);
+        // The leading tag plays its sound as the in-page code does (`0x0205eab0` with 6 for
+        // `<EXC>`, 0x1c for `<QES>`, `arm9.c:86545`).
+        let sounds = balloon.map_or_else(Vec::new, |b| vec![balloon_sound(b.kind)]);
         Self {
             script,
             at: 0,
@@ -185,7 +216,7 @@ impl Dialogue {
             lines: vec![Vec::new()],
             answer: None,
             hold_at_end: false,
-            sounds: Vec::new(),
+            sounds,
             typed: 0,
             blip: false,
             speed: TextSpeed::default(),
@@ -195,6 +226,7 @@ impl Dialogue {
             arrow_frames: 0,
             empty_branch: false,
             released: false,
+            balloon,
         }
     }
 
@@ -276,6 +308,15 @@ impl Dialogue {
     /// A plain `<END>` never reports: the partner keeps the heading the turn left it at.
     pub fn take_turn_release(&mut self) -> bool {
         std::mem::take(&mut self.released)
+    }
+
+    /// The balloon the text raised since the last call: the leading `<EXC>`/`<QES>` when the
+    /// message opens, then every time the interpreter meets one (`0x020659a0`). The window's
+    /// own countdown is not modelled here: the application holds the timer (`func_02065758`),
+    /// which only runs while the window is open (`arm9.c:82465`). A page break keeps it
+    /// (`Msg_Compile` runs once per line); the next message zeroes it (`0x0206a3d0`).
+    pub fn take_balloon(&mut self) -> Option<Balloon> {
+        self.balloon.take()
     }
 
     fn clear_box(&mut self) {
@@ -364,8 +405,11 @@ impl Dialogue {
                     self.sounds.push(Sound::Choice);
                     return;
                 }
-                Op::Sound(sound) => {
-                    self.sounds.push(*sound);
+                // `<EXC>`/`<QES>` inside the page: the interpreter raises the same timer as the
+                // leading form (`+0x1959 = 0x3c`, `+0x195c` the kind) and plays its sound.
+                Op::Balloon(kind) => {
+                    self.sounds.push(balloon_sound(*kind));
+                    self.balloon = Some(Balloon::new(*kind));
                     self.spend(&mut budget);
                 }
                 Op::Marker(_) | Op::Label(_) => self.spend(&mut budget),

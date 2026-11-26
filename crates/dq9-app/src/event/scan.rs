@@ -187,7 +187,7 @@ pub(crate) fn monster_archive_bytes(rom: &[u8], path: &str) -> Option<Vec<u8>> {
 }
 
 /// The sheet of a sprite the field draws by itself (`fieldSpriteFiles`, `docs/re/stb-natives.md`).
-pub(super) fn field_sprite(id: i32) -> Option<&'static str> {
+pub(crate) fn field_sprite(id: i32) -> Option<&'static str> {
     Some(match id {
         2 => "fuki_com",
         3 => "fuki_in",
@@ -211,4 +211,12 @@ pub(super) fn icon_sprite(files: &LazyRom, name: &str) -> Option<Vec<u8>> {
         .iter()
         .find(|e| e.path.eq_ignore_ascii_case(&wanted))?;
     narc.file(entry.id).ok().map(<[u8]>::to_vec)
+}
+
+/// The bytes of the sheet of a field sprite, by its field id (`icon_sprite` on the ROM image):
+/// the message window's balloons read `ev_mark` (13) and `field_qu` (14) this way
+/// (`func_020675fc`, `docs/re/dialogue.md` § Balloons).
+pub(crate) fn field_sprite_bytes(rom: &[u8], id: i32) -> Option<Vec<u8>> {
+    let name = field_sprite(id)?;
+    icon_sprite(&LazyRom::new(rom), name)
 }

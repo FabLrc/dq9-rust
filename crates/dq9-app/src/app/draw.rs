@@ -348,6 +348,10 @@ impl App {
     /// screen, and the message window when the field draws one. `swapped` is the script's
     /// screen swap (natives 109/110); the battle keeps the default layout.
     fn present_frame(&mut self, camera: &Camera, swapped: bool, messages: bool) {
+        // The balloon over a speaker is projected with the camera this frame draws the field
+        // with (`func_0202ec84` of the original, `docs/re/dialogue.md` § Balloons).
+        self.talk
+            .set_view(camera, self.options.layout.is_reactive());
         // The original's map screen is decoded and uploaded before the frame's GPU state is
         // borrowed (once per map).
         self.prepare_map_screen();

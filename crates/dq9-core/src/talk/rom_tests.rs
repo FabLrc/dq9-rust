@@ -146,3 +146,38 @@ fn a_captured_line_costs_the_units_the_original_spent() {
     // The original's idx 0 to 61 is 61 units; the end code is read the step after the last.
     assert_eq!(steps, 62, "units of the captured line");
 }
+
+/// `M01A0/102_en.bin` record 0 carries `<EXC>` in the middle of its first page
+/// (`...Oh<,> what shall I do...?<PAGE><WIN_OFF><EXC><WIN_ON><TURN_P>...`): the interpreter's
+/// form raises its balloon on a real line, 312 `<EXC>` of the English text being of that form
+/// (2 are leading, `build/evidence/v3-balloons/text-search.txt`). No NPC of the prologue or of
+/// chapter 2 has this line (§ Balloons of `docs/re/dialogue.md`).
+#[test]
+fn a_real_line_raises_its_balloon_mid_page() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let text = line(&rom, "data/scenario/M01A0.gp2", "102_en.bin", 0);
+    assert!(text.windows(5).any(|w| w == b"<EXC>"));
+    let font = message_font(&rom);
+    let mut dialogue = Dialogue::new(prepare(&font, &text, &Names::default(), 228));
+    assert_eq!(dialogue.take_balloon(), None, "no leading tag");
+    let mut raised = None;
+    for _ in 0..80 {
+        // The `<EXC>` sits after the first `<PAGE>`: the key starts the second page, where
+        // the code is met.
+        dialogue.step(if dialogue.waiting() {
+            press()
+        } else {
+            Input::default()
+        });
+        if let Some(balloon) = dialogue.take_balloon() {
+            raised = Some(balloon);
+            break;
+        }
+    }
+    assert_eq!(
+        raised,
+        Some(Balloon::new(BalloonKind::Exclamation)),
+        "the first page's `<EXC>`"
+    );
+}

@@ -48,6 +48,8 @@ pub struct Atlas {
     white: Rect,
     border: [Rect; 8],
     arrow: Rect,
+    /// Extra sheets packed after the arrow, in the order they were given.
+    sprites: Vec<Rect>,
 }
 
 /// Size of the border pieces (`win*.spr` are 8×8).
@@ -58,11 +60,31 @@ impl Atlas {
     /// the order of `win0..win7` (top-left corner, top, top-right corner, right, bottom-right
     /// corner, bottom, bottom-left corner, left) and the wait arrow. Pieces must be 8×8.
     pub fn build(font: &Font, border: &[Image; 8], arrow: &Image) -> Self {
+        Self::build_sprites(font, border, arrow, &[])
+    }
+
+    /// [`Atlas::build`] and extra sprite sheets packed on the same shelf, after the arrow in
+    /// the order given ([`Atlas::sprite`] returns their rectangles). The balloon sheets of
+    /// the message window are drawn this way (`func_020675fc`, `docs/re/dialogue.md`).
+    pub fn build_sprites(
+        font: &Font,
+        border: &[Image; 8],
+        arrow: &Image,
+        sprites: &[Image],
+    ) -> Self {
         let strip = (u32::from(font.width), u32::from(font.height));
-        let width = strip.0.max(256);
-        // One shelf under the strip: white texel, border pieces, arrow.
+        // One shelf under the strip: white texel, border pieces, arrow, extra sheets.
         let shelf = strip.1 + 1;
-        let height = shelf + arrow.height.max(PIECE).max(2);
+        let shelf_width =
+            2 + PIECE * 8 + arrow.width + sprites.iter().map(|s| s.width).sum::<u32>();
+        let shelf_height = sprites
+            .iter()
+            .map(|s| s.height)
+            .chain([arrow.height.max(PIECE).max(2)])
+            .max()
+            .unwrap_or(2);
+        let width = strip.0.max(256).max(shelf_width);
+        let height = shelf + shelf_height;
         let mut atlas = Self {
             width,
             height,
@@ -72,6 +94,7 @@ impl Atlas {
             white: [0; 4],
             border: [[0; 4]; 8],
             arrow: [0; 4],
+            sprites: Vec::with_capacity(sprites.len()),
         };
         for y in 0..strip.1 {
             for x in 0..strip.0 {
@@ -100,6 +123,10 @@ impl Atlas {
             atlas.border[i] = place(&mut atlas, piece);
         }
         atlas.arrow = place(&mut atlas, arrow);
+        for image in sprites {
+            let at = place(&mut atlas, image);
+            atlas.sprites.push(at);
+        }
         atlas
     }
 
@@ -134,6 +161,23 @@ impl Atlas {
     /// Size of the wait arrow.
     pub fn arrow_size(&self) -> (u32, u32) {
         (self.arrow[2], self.arrow[3])
+    }
+
+    /// Rectangle of the extra sheet `index` ([`Atlas::build_sprites`]): `.spr` sheets are
+    /// DS pixels.
+    pub fn sprite(&self, index: usize) -> Option<Rect> {
+        self.sprites.get(index).copied()
+    }
+
+    /// The extra sheet `index` with its top-left corner at `corner` and `scale` pixels per
+    /// DS pixel (the balloon over a speaker, `func_020675fc`).
+    pub fn sprite_quad(&self, index: usize, corner: (f32, f32), scale: f32) -> Option<Quad> {
+        let [sx, sy, w, h] = self.sprite(index)?;
+        Some(Quad {
+            dst: [corner.0, corner.1, w as f32 * scale, h as f32 * scale],
+            src: [sx, sy, w, h],
+            color: [1.0; 4],
+        })
     }
 
     /// A filled rectangle `[x, y, w, h]`.
@@ -510,6 +554,32 @@ mod tests {
         };
         assert_eq!(texel(&atlas, arrow.src[0], arrow.src[1]), 9);
         assert_eq!(atlas.arrow_size(), (16, 16));
+    }
+
+    #[test]
+    fn extra_sheets_are_packed_after_the_arrow_and_placed_by_their_corner() {
+        let (info, data) = font_files();
+        let font = Font::parse(&info, &data, FontId::Message).unwrap();
+        let pieces: [Image; 8] = std::array::from_fn(|i| image(8, 8, i as u8 + 1));
+        let sheets = [image(24, 24, 4), image(16, 20, 5)];
+        let atlas = Atlas::build_sprites(&font, &pieces, &image(16, 16, 9), &sheets);
+        let arrow = atlas.arrow;
+        let first = atlas.sprite(0).unwrap();
+        let second = atlas.sprite(1).unwrap();
+        assert_eq!((first[2], first[3]), (24, 24));
+        assert_eq!(first[0], arrow[0] + arrow[2], "right after the arrow");
+        assert_eq!((second[2], second[3]), (16, 20));
+        assert_eq!(texel(&atlas, first[0], first[1]), 4);
+        assert_eq!(texel(&atlas, second[0], second[1]), 5);
+        assert_eq!(atlas.sprite(2), None);
+        let quad = atlas.sprite_quad(0, (100.0, 50.0), 2.0).unwrap();
+        assert_eq!(quad.dst, [100.0, 50.0, 48.0, 48.0]);
+        assert_eq!(quad.src, first);
+        // The plain constructor packs none.
+        assert_eq!(
+            Atlas::build(&font, &pieces, &image(16, 16, 9)).sprite(0),
+            None
+        );
     }
 
     #[test]

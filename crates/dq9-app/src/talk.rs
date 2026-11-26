@@ -10,13 +10,15 @@
 use anyhow::{Context as _, Result, bail};
 use dq9_core::Hero;
 use dq9_core::field::{Event, Field, TalkTrigger};
-use dq9_core::talk::{self, Dialogue, Input, Names, PromptKind, TalkCounts, Talkable, TextSpeed};
+use dq9_core::talk::{
+    self, Balloon, BalloonKind, Dialogue, Input, Names, PromptKind, TalkCounts, Talkable, TextSpeed,
+};
 use dq9_core::trigger::{Request, State};
 use dq9_formats::dialogue::{self, Session, TalkState};
 use dq9_formats::spr::Sprite;
 use dq9_formats::{Font, FontId, Gpc2, Table};
 use dq9_render::ui::{Atlas, Image, Quad, Ui};
-use dq9_render::{AnimatedScene, Viewport};
+use dq9_render::{AnimatedScene, Camera, Viewport};
 use nds_rom::Rom;
 
 use crate::app::status;
@@ -49,6 +51,16 @@ const NAME_HEIGHT: i32 = 22;
 pub(crate) const FILL: [f32; 4] = [0.02, 0.03, 0.22, 0.9];
 pub(crate) const SELECTED: [f32; 4] = [0.25, 0.35, 0.8, 0.95];
 
+/// Field sprite ids of the two balloons, as `event/scan.rs::field_sprite` names them:
+/// 13 `ev_mark.spr` (the "!"), 14 `field_qu.spr` (the "?") of `data/bin/icon.nsarc`
+/// (`*(u8 *)(0x020e7e18 + kind)` of `func_020675fc`).
+const BALLOON_SPRITES: [i32; 2] = [13, 14];
+/// The balloon's sheet corner from the partner's projected point: `(−12, −62)` pixels
+/// (`0x020675fc`).
+const BALLOON_OFFSET: [f32; 2] = [-12.0, -62.0];
+/// The DS screen, the canvas of the window pass (`[x, y, w, h]`).
+const SCREEN: [f32; 4] = [0.0, 0.0, 256.0, 192.0];
+
 /// Glyphs and width of one prompt label.
 #[derive(Debug)]
 struct Label {
@@ -72,6 +84,26 @@ fn sprite_image(rom: &Rom, path: &str) -> Result<Image> {
     let (width, height, rgba) = sprite
         .frame_rgba(0)
         .with_context(|| format!("{path} has no frame"))?;
+    Ok(Image {
+        width,
+        height,
+        rgba,
+    })
+}
+
+/// The first frame of a field sprite's sheet (`data/bin/icon.nsarc`, by its field id):
+/// `ev_mark` and `field_qu` for the two balloons. `func_020675fc` draws the animated sprite
+/// with `SPRSprite::DrawAnimatedNoRotation(sprite, 1)`; the first frame is what the port
+/// shows **[hypothesis: the sheets of the balloons have a single frame]**.
+fn field_sprite_image(rom: &[u8], id: i32) -> Result<Image> {
+    let name =
+        crate::event::scan::field_sprite(id).with_context(|| format!("no field sprite {id}"))?;
+    let bytes = crate::event::scan::field_sprite_bytes(rom, id)
+        .with_context(|| format!("field sprite {id} ({name}) is not in data/bin/icon.nsarc"))?;
+    let sprite = Sprite::parse(&bytes).with_context(|| format!("parsing {name}.spr"))?;
+    let (width, height, rgba) = sprite
+        .frame_rgba(0)
+        .with_context(|| format!("{name}.spr has no frame"))?;
     Ok(Image {
         width,
         height,
@@ -109,8 +141,21 @@ impl Assets {
         };
         let [yes, no] = PromptKind::YesNo.labels();
         let [accept, decline] = PromptKind::AcceptDecline.labels();
+        // The two balloons over a speaker (`func_020675fc`): a missing sheet leaves the
+        // message window working, without balloons.
+        let mut sheets = Vec::new();
+        let raw = rom.data();
+        for id in BALLOON_SPRITES {
+            match field_sprite_image(raw, id) {
+                Ok(image) => sheets.push(image),
+                Err(e) => status(&format!("balloon sprite unavailable: {e:#}")),
+            }
+        }
+        if sheets.len() != BALLOON_SPRITES.len() {
+            sheets.clear();
+        }
         Ok(Self {
-            atlas: Atlas::build(&font, &border, &arrow),
+            atlas: Atlas::build_sprites(&font, &border, &arrow, &sheets),
             labels: [[label(yes), label(no)], [label(accept), label(decline)]],
             font_info,
             font_data,
@@ -222,6 +267,18 @@ pub struct Ended {
     pub answer: Option<u8>,
 }
 
+/// Where the field's 3D view of the current pass is drawn, and with which camera: the balloon
+/// over the speaker is projected with it (`func_0202ec84` of the original, called with the
+/// field camera). The rectangle itself depends on the pass ([`Talk::draw`]: the DS screen;
+/// [`Talk::draw_hud`]: the whole canvas), so each computes it and passes it in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FieldView {
+    camera: Camera,
+    /// The enhanced-reactive presentation: the camera's field of view follows the window's
+    /// aspect ([`Camera::reactive_view_proj`]).
+    reactive: bool,
+}
+
 /// Conversations of the application: the NPCs of the map, the open dialogue. The counters
 /// live in the trigger state ([`State::talk_counts`]).
 #[derive(Debug, Default)]
@@ -267,6 +324,15 @@ pub struct Talk {
     /// The service tag of the open talk line, if any (`<INN=n>`…): the facility opens when
     /// the window closes.
     service: Option<ServiceTag>,
+    /// The balloon over the partner (`+0x1959` ticks left, `+0x19b7` raised): raised by
+    /// `<EXC>`/`<QES>` (`0x0206a3d0` leading, `0x020659a0` inside the page), counted down once
+    /// per fixed step and cleared at zero (`func_02065758`).
+    balloon: Option<Balloon>,
+    /// The partner the balloon hangs over: the speaker of the conversation (`+0x1838`), kept
+    /// after the window closes, because the original draws the balloon while the timer runs.
+    balloon_npc: Option<u16>,
+    /// The field's view of the current drawing pass ([`Talk::set_view`]).
+    view: Option<FieldView>,
     /// The tag the closed line carried, until [`Talk::take_service`].
     pending_service: Option<ServiceTag>,
     /// The end of a conversation a service has not finished with: trigger event 1 waits for
@@ -351,6 +417,8 @@ impl Talk {
         self.active = None;
         self.facing = None;
         self.turn_back = false;
+        self.balloon = None;
+        self.balloon_npc = None;
         self.abort_service();
     }
 
@@ -465,6 +533,9 @@ impl Talk {
     /// One fixed step of the open dialogue.
     pub fn step(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
+        // `func_02065758`: the balloon's 60 ticks drop once per step, whether or not the
+        // window is still open, and `+0x19b7` clears at zero.
+        self.age_balloon();
         // Native 409 (`020657c8`): while the timed caption runs, the message tick is suspended:
         // the action key cannot advance or close it before the alpha envelope ends.
         let input = if self.event_message && self.caption_frozen {
@@ -473,10 +544,14 @@ impl Talk {
         } else {
             std::mem::take(&mut self.pending)
         };
+        let partner = self.conversation.map(|(npc, _)| npc);
         let Some(dialogue) = &mut self.active else {
             return;
         };
         dialogue.step(input);
+        // `<EXC>`/`<QES>` met in the page: `0x020659a0` raises the 60-tick timer of
+        // `+0x1959` (the leading form's own is taken by `start`).
+        let balloon = dialogue.take_balloon();
         // `<R_TURN>` met in the text or the key on an `<END_R_TURN>` line: the partner is given
         // the heading the conversation found, from the step the window reports it.
         if dialogue.take_turn_release() {
@@ -554,6 +629,12 @@ impl Talk {
             }
             self.active = None;
         }
+        // `func_020675fc` draws over the speaker of the conversation (`+0x1838`): the one the
+        // step started with, even when this very step closed the window.
+        if let (Some(balloon), Some(npc)) = (balloon, partner) {
+            self.balloon = Some(balloon);
+            self.balloon_npc = Some(npc);
+        }
     }
 
     /// The conversation the player closed since the last call: the application fires the
@@ -592,6 +673,11 @@ impl Talk {
         let font = assets.font()?;
         let script = talk::prepare(&font, text, &self.names, TEXT_WIDTH);
         self.active = Some(self.dialogue(Dialogue::for_event(script)));
+        // A new message compiles again and `Msg_ConsumeLeadingTags` zeroes the balloon fields;
+        // native 400 also clears the speaker (`+0x1838 = -1`), so a conversation's balloon
+        // never shows over an event's text.
+        self.balloon = None;
+        self.balloon_npc = None;
         #[cfg(test)]
         self.trace.push((
             self.ticks,
@@ -786,7 +872,15 @@ impl Talk {
         // not take cannot release it.
         self.turn_back = false;
         self.service = service_tag(text);
-        self.active = Some(self.dialogue(Dialogue::new(script)));
+        // A new conversation: `TalkTask_Update` saves the speaker and its heading, and the
+        // leading `<EXC>`/`<QES>` of the line (`0x0206a3d0`) raises its balloon with it.
+        self.balloon = None;
+        self.balloon_npc = None;
+        let mut dialogue = self.dialogue(Dialogue::new(script));
+        if let Some(balloon) = dialogue.take_balloon() {
+            self.raise_balloon(balloon);
+        }
+        self.active = Some(dialogue);
         self.caption_alpha = None;
         self.centered_caption = false;
         self.silent_caption = false;
@@ -794,13 +888,132 @@ impl Talk {
         Ok(())
     }
 
-    /// The quads of the window and of the fade over it on the 256×192 screen.
+    /// The quads of the balloon over the speaker, of the window and of the fade over them on
+    /// the 256×192 screen. The balloon outlives the window: the original draws it for its 60
+    /// ticks while the speaker (`+0x1838`) is known.
     pub fn quads(&self) -> Vec<Quad> {
+        let mut out = Vec::new();
+        if let Some(view) = self.view
+            && let Some(balloon) = self.balloon_quad(view, SCREEN)
+        {
+            out.push(balloon);
+        }
+        out.extend(self.window_and_fade_quads());
+        out
+    }
+
+    /// The window's quads and the full-screen fade, without the balloon: the DS-space pieces
+    /// the enhanced HUD re-anchors and rescales ([`crate::hud::frame`]).
+    fn window_and_fade_quads(&self) -> Vec<Quad> {
         let mut out = self.window_quads();
         if let (Some(assets), Some(color)) = (&self.assets, self.fade) {
             out.push(assets.atlas.solid([0, 0, 256, 192], color));
         }
         out
+    }
+
+    /// Records the camera the field is drawn with, for the balloon's projection
+    /// (`func_0202ec84`): call before drawing a frame ([`Talk::draw`] and [`Talk::draw_hud`]).
+    /// `reactive` is the enhanced-reactive layout, whose field of view follows the window's
+    /// aspect ([`Camera::reactive_view_proj`]).
+    pub fn set_view(&mut self, camera: &Camera, reactive: bool) {
+        self.view = Some(FieldView {
+            camera: *camera,
+            reactive,
+        });
+    }
+
+    /// Raises the balloon over the conversation's partner (`func_020675fc` needs the
+    /// speaker's character `+0x1838`; a message of an event has none).
+    fn raise_balloon(&mut self, balloon: Balloon) {
+        let Some((npc, _)) = self.conversation else {
+            return;
+        };
+        self.balloon = Some(balloon);
+        self.balloon_npc = Some(npc);
+    }
+
+    /// Counts the balloon down by one fixed step (`func_02065758`: `+0x1959` by the tick
+    /// delta) and clears it at zero (`+0x19b7`). The countdown only runs while the window is
+    /// open: `MsgWin_Update` (`0x020659a0`) calls it inside `if (W+0x998 != 0)`
+    /// (`arm9.c:82465`), so a closed window freezes it and the next message zeroes it.
+    fn age_balloon(&mut self) {
+        if self.active.is_none() {
+            return;
+        }
+        let Some(balloon) = &mut self.balloon else {
+            return;
+        };
+        balloon.ticks = balloon.ticks.saturating_sub(1);
+        if balloon.ticks == 0 {
+            self.balloon = None;
+            self.balloon_npc = None;
+        }
+    }
+
+    /// The screen point the balloon's sheet corner takes (`0x020675fc`): the partner's
+    /// position through the field projection (`func_0202ec84` →
+    /// `ConvertWorldToScreenCoordinates`), then [`BALLOON_OFFSET`] DS pixels. `rect` is the
+    /// field's rectangle in the pass's canvas, `[x, y, w, h]`.
+    ///
+    /// The DS pass uses the original's viewport `(0, 0, 255, 191)` and its rounding:
+    /// `x = round(normX × 255)`, `y = 191 − round(normY × 191)` with `norm = (ndc + 1) / 2`
+    /// (`GeometryFifo.cpp`, `ConvertWorldToScreenCoordinates`). The enhanced canvas has no DS
+    /// viewport: its rectangle is the same proportion without the 255/191 rounding
+    /// **[hypothesis]**.
+    fn balloon_corner(&self, view: FieldView, rect: [f32; 4]) -> Option<(f32, f32)> {
+        self.balloon?;
+        let npc = self.balloon_npc?;
+        let at = self.npcs.iter().find(|n| n.id == npc)?.position;
+        let aspect = rect[2] / rect[3].max(f32::EPSILON);
+        let view_proj = if view.reactive {
+            view.camera.reactive_view_proj(aspect)
+        } else {
+            view.camera.view_proj(aspect)
+        };
+        let clip = view_proj
+            * glam::Vec4::new(
+                at[0] as f32 / 4096.0,
+                at[1] as f32 / 4096.0,
+                at[2] as f32 / 4096.0,
+                1.0,
+            );
+        // Behind the eye or past a clip plane: the original's `SPRSprite` draw would be
+        // culled by the projection too.
+        if clip.w <= 0.0 || !(0.0..=1.0).contains(&(clip.z / clip.w)) {
+            return None;
+        }
+        let ndc = glam::Vec2::new(clip.x, clip.y) / clip.w;
+        let scale = rect[3] / 192.0;
+        let (x, y) = if rect == SCREEN {
+            let norm = (ndc + glam::Vec2::ONE) * 0.5;
+            ((norm.x * 255.0).round(), 191.0 - (norm.y * 191.0).round())
+        } else {
+            // Canvas pixels back in the DS-pixel scale of the sheet.
+            (
+                (ndc.x + 1.0) * 0.5 * rect[2] / scale,
+                (1.0 - ndc.y) * 0.5 * rect[3] / scale,
+            )
+        };
+        Some((
+            rect[0] + x * scale + BALLOON_OFFSET[0] * scale,
+            rect[1] + y * scale + BALLOON_OFFSET[1] * scale,
+        ))
+    }
+
+    /// The balloon over the partner for this pass, if it is up. `MsgWin_DrawGlyphs`
+    /// (`0x02066d00`) calls `func_020675fc` inside `if (W+0x998 != 0)` (`arm9.c:83194`): with
+    /// the window closed nothing is drawn.
+    fn balloon_quad(&self, view: FieldView, rect: [f32; 4]) -> Option<Quad> {
+        self.active.as_ref()?;
+        let kind = self.balloon?.kind;
+        let assets = self.assets.as_ref()?;
+        let slot = match kind {
+            BalloonKind::Exclamation => 0,
+            BalloonKind::Question => 1,
+        };
+        let corner = self.balloon_corner(view, rect)?;
+        assets.atlas.sprite_quad(slot, corner, rect[3] / 192.0)
     }
 
     /// The quads of the window, empty when no dialogue is open.
@@ -948,7 +1161,7 @@ impl Talk {
         info: &crate::hud::HudInfo<'_>,
     ) {
         let quads = {
-            let dialogue = self.quads();
+            let dialogue = self.window_and_fade_quads();
             let Some(assets) = &self.assets else {
                 return;
             };
@@ -964,7 +1177,24 @@ impl Talk {
             } else {
                 crate::hud::DialogueLayout::bottom(canvas)
             };
-            crate::hud::frame(&assets.atlas, &font, info, &dialogue, layout, canvas)
+            let mut out = Vec::new();
+            // The balloon stays on the field, which the HUD's canvas covers: it is not
+            // re-anchored with the window (`func_020675fc` projects the speaker, not the box).
+            let field = [0.0, 0.0, canvas.width as f32, canvas.height as f32];
+            if let Some(view) = self.view
+                && let Some(balloon) = self.balloon_quad(view, field)
+            {
+                out.push(balloon);
+            }
+            out.extend(crate::hud::frame(
+                &assets.atlas,
+                &font,
+                info,
+                &dialogue,
+                layout,
+                canvas,
+            ));
+            out
         };
         if self.gpu.as_ref().is_none_or(|(f, _)| *f != format) {
             let Some(assets) = &self.assets else {
@@ -1186,7 +1416,7 @@ mod turn_tests {
         (info, data)
     }
 
-    fn script(text: &[u8]) -> Script {
+    pub(super) fn script(text: &[u8]) -> Script {
         let (info, data) = font_files();
         let font = Font::parse(&info, &data, FontId::Message).unwrap();
         talk::prepare(&font, text, &Names::default(), 228)
@@ -1248,6 +1478,502 @@ mod turn_tests {
         play(&mut talk, dq9_core::talk::CLOSE_STEPS as usize);
         assert!(!talk.is_active());
         assert!(!talk.turn_back, "a plain `<END>` keeps the heading");
+    }
+}
+
+/// The balloons `<EXC>`/`<QES>` of the message window (`func_020675fc`, `docs/re/dialogue.md`
+/// § Balloons): the 60-step timer, the projection of the speaker and the drawn sheet.
+#[cfg(test)]
+mod balloon_tests {
+    use dq9_core::talk::{Balloon, BalloonKind, Dialogue, Talkable};
+    use dq9_render::Camera;
+    use dq9_render::camera::CameraMode;
+    use glam::Vec3;
+
+    use super::turn_tests::script;
+    use super::{FieldView, SCREEN, Talk};
+
+    /// The partner of [`Talkable::id`] 7, its feet at `position` (`fx32`).
+    fn partner(position: [i32; 3]) -> Talkable {
+        Talkable {
+            id: 7,
+            kind: 0,
+            position,
+            zones: Vec::new(),
+            extra: None,
+        }
+    }
+
+    /// A window open on NPC 7, its line compiled from `text`, the balloon the line's leading
+    /// tag asks for taken like [`Talk::start`] does. No ROM assets (no atlas).
+    fn window(text: &[u8]) -> Talk {
+        let mut dialogue = Dialogue::new(script(text));
+        let balloon = dialogue.take_balloon().expect("a leading balloon tag");
+        Talk {
+            npcs: vec![partner([0, 0, 0])],
+            conversation: Some((7, 0)),
+            balloon: Some(balloon),
+            balloon_npc: Some(7),
+            active: Some(dialogue),
+            ..Talk::default()
+        }
+    }
+
+    /// A camera looking straight down `-z`, its target at the world origin: `(-12, -62)` from
+    /// the point it projects is [`super::BALLOON_OFFSET`].
+    fn camera() -> Camera {
+        Camera {
+            mode: CameraMode::Fly,
+            target: Vec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            distance: 10.0,
+            fovy: dq9_render::camera::DS_FOVY,
+            near: 1.0,
+            far: 400.0,
+            roll: 0.0,
+        }
+    }
+
+    fn play(talk: &mut Talk, steps: usize) {
+        for _ in 0..steps {
+            talk.step();
+        }
+    }
+
+    /// `func_02065758`: the balloon drops one tick per fixed step and clears at zero; the
+    /// page typing under it never raises it again, and the window is not held by it.
+    #[test]
+    fn a_balloon_lasts_sixty_steps_and_the_line_does_not_restart_it() {
+        let mut talk = window(b"<EXC>ab<END>");
+        assert_eq!(
+            talk.balloon,
+            Some(Balloon::new(BalloonKind::Exclamation)),
+            "raised at the open"
+        );
+        play(&mut talk, 1);
+        assert_eq!(talk.balloon.map(|b| b.ticks), Some(59));
+        play(&mut talk, 58);
+        assert_eq!(talk.balloon.map(|b| b.ticks), Some(1), "the last tick");
+        assert!(talk.is_active(), "the line still shows (an `<END>` waits)");
+        play(&mut talk, 1);
+        assert_eq!(talk.balloon, None, "cleared at zero (+0x19b7)");
+        assert_eq!(talk.balloon_npc, None);
+        // The window still ends on its key with the balloon gone.
+        talk.press(super::Button::Confirm);
+        talk.step();
+        play(&mut talk, dq9_core::talk::CLOSE_STEPS as usize);
+        assert!(!talk.is_active(), "the balloon does not block the window");
+    }
+
+    /// The in-message form raises it on the step the code is met, 60 ticks again.
+    #[test]
+    fn the_interpreter_form_raises_it_at_its_step() {
+        let mut talk = Talk {
+            npcs: vec![partner([0, 0, 0])],
+            conversation: Some((7, 0)),
+            active: Some(Dialogue::new(script(b"<QES>ab<QES>cd<END>"))),
+            ..Talk::default()
+        };
+        // The leading one is only taken by `start`; the page's own arrives with the code.
+        play(&mut talk, 3);
+        assert_eq!(
+            talk.balloon,
+            Some(Balloon::new(BalloonKind::Question)),
+            "the code in the page"
+        );
+    }
+
+    /// `MsgWin_Update` counts the timer inside `if (W+0x998 != 0)` (`0x020659a0`,
+    /// `arm9.c:82465`): a closed window freezes it, and `MsgWin_DrawGlyphs` draws nothing over
+    /// the field. The next message zeroes both fields (`0x0206a3d0`, `arm9.c:86527`).
+    #[test]
+    fn a_closed_window_freezes_the_balloon_and_the_next_message_clears_it() {
+        let Some(rom) = testrom::load() else { return };
+        let mut talk = window(b"<EXC>ab<END>");
+        talk.set_rom(rom);
+        talk.set_view(&camera(), false);
+        play(&mut talk, 3);
+        let view = talk.view.unwrap();
+        assert!(
+            talk.balloon_quad(view, SCREEN).is_some(),
+            "drawn while open"
+        );
+        // The key on the `<END>` and the six steps of the close.
+        talk.press(super::Button::Confirm);
+        talk.step();
+        play(&mut talk, dq9_core::talk::CLOSE_STEPS as usize);
+        assert!(!talk.is_active(), "the window closed");
+        let frozen = talk.balloon.expect("the field still holds it");
+        assert_eq!(
+            talk.balloon_quad(view, SCREEN),
+            None,
+            "nothing is drawn over a closed window"
+        );
+        play(&mut talk, 10);
+        assert_eq!(
+            talk.balloon,
+            Some(frozen),
+            "the countdown does not run without a window"
+        );
+        // A new event message compiles again and zeroes the fields.
+        talk.show_event(b"caption").unwrap();
+        assert_eq!(talk.balloon, None);
+        assert_eq!(talk.balloon_npc, None);
+    }
+
+    /// A page break keeps the balloon: `Msg_Compile` runs once per line (`MsgWin_Show`
+    /// `0x0204501c`), so `Msg_ConsumeLeadingTags` does not zero `+0x1959` between the pages of
+    /// one message; the next message does (`start`).
+    #[test]
+    fn a_page_break_keeps_the_balloon() {
+        let mut dialogue = Dialogue::new(script(b"<EXC>ab<PAGE>cd<END>"));
+        let balloon = dialogue.take_balloon().expect("the leading tag");
+        let mut talk = Talk {
+            npcs: vec![partner([0, 0, 0])],
+            conversation: Some((7, 0)),
+            active: Some(dialogue),
+            balloon: Some(balloon),
+            balloon_npc: Some(7),
+            ..Talk::default()
+        };
+        play(&mut talk, 3);
+        assert!(talk.balloon.is_some(), "page 1 holds it");
+        talk.press(super::Button::Confirm);
+        talk.step();
+        assert!(talk.balloon.is_some(), "the page break does not clear it");
+        assert_eq!(talk.balloon_npc, Some(7));
+    }
+
+    /// The projection and the `(−12, −62)` offset on a synthetic camera: the sheet's corner is
+    /// that far from the point the field camera projects the partner to.
+    #[test]
+    fn the_balloon_sits_at_the_offset_from_the_partners_projection() {
+        let view = FieldView {
+            camera: camera(),
+            reactive: false,
+        };
+        // Feet on the camera's axis at 10 units: the point projects to the centre of the
+        // original's `255 × 191` viewport, `(128, 95)`, then the `(−12, −62)` offset.
+        let mut talk = window(b"<EXC>ab<END>");
+        let corner = talk.balloon_corner(view, SCREEN).unwrap();
+        assert_eq!(corner, (116.0, 33.0));
+
+        // One unit to the right: ndc.x = 1 / (10 × tan 15° × 4/3), norm.x × 255 rounded, the
+        // offset applied after.
+        talk.npcs = vec![partner([4096, 0, 0])];
+        let (x, y) = talk.balloon_corner(view, SCREEN).unwrap();
+        let ndc = 1.0 / (10.0 * (std::f32::consts::PI / 12.0).tan() * 4.0 / 3.0);
+        let expected = (((ndc + 1.0) * 0.5) * 255.0).round() - 12.0;
+        assert_eq!((x, y), (expected, 33.0));
+
+        // The wide canvas scales the sheet with the field's 192 lines and widens the projection
+        // to the canvas's own aspect (16:9 here).
+        let wide = [0.0, 0.0, 960.0, 540.0];
+        let wide_ndc = 1.0 / (10.0 * (std::f32::consts::PI / 12.0).tan() * 960.0 / 540.0);
+        let (x, y) = talk.balloon_corner(view, wide).unwrap();
+        assert!(
+            (x - (480.0 + wide_ndc * 480.0 - 12.0 * 540.0 / 192.0)).abs() < 0.01,
+            "{x}"
+        );
+        assert!((y - (270.0 - 62.0 * 540.0 / 192.0)).abs() < 1e-3);
+
+        // Behind the eye: nothing to draw.
+        talk.npcs = vec![partner([0, 0, 20 * 4096])];
+        assert_eq!(talk.balloon_corner(view, SCREEN), None);
+        // No balloon up: no quad either.
+        talk.npcs = vec![partner([0, 0, 0])];
+        talk.balloon = None;
+        assert_eq!(talk.balloon_quad(view, SCREEN), None);
+    }
+
+    /// The sheet drawn by the window pass: `ev_mark.spr` for `<EXC>`, `field_qu.spr` for
+    /// `<QES>`, at the projected corner and its own size (1 texel = 1 DS pixel).
+    #[test]
+    fn the_drawn_sheet_is_the_one_of_its_tag() {
+        let Some(rom) = testrom::load() else { return };
+        let mut talk = window(b"<EXC>ab<END>");
+        talk.set_rom(rom);
+        talk.set_view(&camera(), false);
+        let view = talk.view.unwrap();
+        let exclamation = talk.balloon_quad(view, SCREEN).unwrap();
+        assert_eq!(
+            exclamation.dst,
+            [
+                116.0,
+                33.0,
+                exclamation.src[2] as f32,
+                exclamation.src[3] as f32
+            ]
+        );
+        // `ev_mark.spr` and `field_qu.spr` are different sheets.
+        talk.balloon = Some(Balloon::new(BalloonKind::Question));
+        let question = talk.balloon_quad(view, SCREEN).unwrap();
+        assert_ne!(question.src, exclamation.src);
+        assert!(exclamation.src[2] > 0 && exclamation.src[3] > 0);
+        assert!(question.src[2] > 0 && question.src[3] > 0);
+    }
+
+    /// Renders one window pass into a 256×192 RGBA image over black: the frame
+    /// `--screens port` composes over the field, without the 3D view (a synthetic camera
+    /// stands in for it).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn gpu() -> (wgpu::Device, wgpu::Queue) {
+        pollster::block_on(async {
+            let instance = crate::gpu::instance().await;
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions::default())
+                .await
+                .expect("a GPU adapter for the balloon capture");
+            crate::gpu::device(&adapter).await.expect("a GPU device")
+        })
+    }
+
+    /// One pass of `talk` with `device` into a `size` RGBA image over black: the DS window
+    /// pass, or (`hud`) the enhanced 960×540 one. The cached [`super::Ui`] belongs to the
+    /// device, so every frame of one capture shares it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn render(
+        talk: &mut Talk,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        (width, height): (u32, u32),
+        hud: bool,
+    ) -> Vec<u8> {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("balloon capture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let row = (4 * width).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("balloon readback"),
+            size: u64::from(row) * u64::from(height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("balloon capture"),
+        });
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        let region = super::Viewport {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+        if hud {
+            let party = dq9_core::party::Party::new_game();
+            let info = crate::hud::HudInfo {
+                title: "Angel Falls",
+                code: "M01",
+                time: "Day",
+                party: Some(&party),
+                glass: false,
+            };
+            talk.draw_hud(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8Unorm,
+                &mut encoder,
+                &view,
+                region,
+                crate::hud::Canvas::ENHANCED,
+                &info,
+            );
+        } else {
+            talk.draw(
+                device,
+                queue,
+                wgpu::TextureFormat::Rgba8Unorm,
+                &mut encoder,
+                &view,
+                region,
+            );
+        }
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        let slice = buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
+        rx.recv().unwrap().unwrap();
+        let data = slice.get_mapped_range().unwrap();
+        let mut out = Vec::with_capacity((4 * width * height) as usize);
+        for r in 0..height as usize {
+            out.extend_from_slice(&data[r * row as usize..r * row as usize + 4 * width as usize]);
+        }
+        drop(data);
+        buffer.unmap();
+        out
+    }
+
+    /// The capture of `build/evidence/v3-balloons/`: the `!` and the `?` over the partner in
+    /// the window pass, then the frame the balloon had left once its 60 steps have run (the
+    /// page's own text is still there). Both are the same window without the sheet.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_capture_shows_the_balloon_for_sixty_steps_and_nothing_after() {
+        let Some(rom) = testrom::load() else { return };
+        let (device, queue) = gpu();
+        let evidence = std::env::var_os("DQ9_EVIDENCE_DIR").map(std::path::PathBuf::from);
+        let save = |name: &str, pixels: &[u8], (width, height): (u32, u32)| {
+            let Some(dir) = &evidence else { return };
+            std::fs::create_dir_all(dir).unwrap();
+            let file = std::fs::File::create(dir.join(name)).unwrap();
+            let mut encoder = png::Encoder::new(file, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(pixels)
+                .unwrap();
+        };
+        // The bounding box of the pixels two frames `width` × `height` disagree on.
+        let difference = |a: &[u8], b: &[u8], width: u32, height: u32| {
+            let (mut count, mut bounds) = (0u32, [u32::MAX, u32::MAX, 0, 0]);
+            for i in 0..(width * height) as usize {
+                if a[i * 4..i * 4 + 4] == b[i * 4..i * 4 + 4] {
+                    continue;
+                }
+                count += 1;
+                let (x, y) = (i as u32 % width, i as u32 / width);
+                bounds = [
+                    bounds[0].min(x),
+                    bounds[1].min(y),
+                    bounds[2].max(x),
+                    bounds[3].max(y),
+                ];
+            }
+            (count, bounds)
+        };
+        // A window on the in-message form: `a` and `b` type, the code raises the balloon, the
+        // `<END>` holds the page still, so every frame from here draws the same text.
+        let mut talk = Talk {
+            npcs: vec![partner([0, 0, 0])],
+            conversation: Some((7, 0)),
+            active: Some(Dialogue::new(script(b"ab<EXC><END>"))),
+            ..Talk::default()
+        };
+        talk.set_rom(rom);
+        talk.set_view(&camera(), false);
+        play(&mut talk, 3);
+        assert!(talk.balloon.is_some(), "the code raised it");
+        let with = render(&mut talk, &device, &queue, (256, 192), false);
+        save("balloon-exclamation.png", &with, (256, 192));
+        let quad = talk.balloon_quad(talk.view.unwrap(), SCREEN).unwrap();
+        // The same window without the sheet: the frame it must leave behind.
+        let balloon = talk.balloon.take();
+        let without = render(&mut talk, &device, &queue, (256, 192), false);
+        assert!(without != with, "the sheet is drawn");
+        let (count, bounds) = difference(&with, &without, 256, 192);
+        assert!(count > 40, "only {count} pixels of the sheet");
+        let [x, y, w, h] = quad.dst;
+        assert!(
+            bounds[0] as f32 >= x - 1.0
+                && bounds[1] as f32 >= y - 1.0
+                && (bounds[2] + 1) as f32 <= x + w
+                && (bounds[3] + 1) as f32 <= y + h,
+            "the changed pixels {bounds:?} sit in the sheet's quad {quad:?}"
+        );
+        // 59 more steps: still the same picture, then the 60th clears it (`+0x1959`).
+        talk.balloon = balloon;
+        play(&mut talk, 59);
+        assert_eq!(talk.balloon.map(|b| b.ticks), Some(1));
+        assert_eq!(
+            render(&mut talk, &device, &queue, (256, 192), false),
+            with,
+            "still drawn at the last tick"
+        );
+        play(&mut talk, 1);
+        assert_eq!(talk.balloon, None);
+        let after = render(&mut talk, &device, &queue, (256, 192), false);
+        save("balloon-after-sixty-steps.png", &after, (256, 192));
+        assert_eq!(after, without, "the sheet is gone; the page is unchanged");
+        assert!(talk.is_active(), "the window still waits for its key");
+
+        // The `?` of `<QES>`, its own sheet.
+        let mut question = Talk {
+            npcs: vec![partner([0, 0, 0])],
+            conversation: Some((7, 0)),
+            active: Some(Dialogue::new(script(b"ab<QES><END>"))),
+            ..Talk::default()
+        };
+        question.set_rom(rom);
+        question.set_view(&camera(), false);
+        play(&mut question, 3);
+        let question_frame = render(&mut question, &device, &queue, (256, 192), false);
+        save("balloon-question.png", &question_frame, (256, 192));
+        assert!(
+            difference(&question_frame, &with, 256, 192).0 > 0,
+            "a different sheet"
+        );
+
+        // The enhanced layout draws the same sheet on the field's canvas, not re-anchored with
+        // the message box the HUD moves to the bottom left.
+        let hud = [0.0, 0.0, 960.0, 540.0];
+        let quad = question.balloon_quad(question.view.unwrap(), hud).unwrap();
+        let hud_with = render(&mut question, &device, &queue, (960, 540), true);
+        save("balloon-enhanced.png", &hud_with, (960, 540));
+        let held = question.balloon.take();
+        let hud_without = render(&mut question, &device, &queue, (960, 540), true);
+        question.balloon = held;
+        let (count, bounds) = difference(&hud_with, &hud_without, 960, 540);
+        assert!(
+            count > 40,
+            "the balloon in the enhanced HUD ({count} pixels)"
+        );
+        let [x, y, w, h] = quad.dst;
+        assert!(
+            bounds[0] as f32 >= x - 1.0
+                && bounds[1] as f32 >= y - 1.0
+                && (bounds[2] + 1) as f32 <= x + w
+                && (bounds[3] + 1) as f32 <= y + h,
+            "the enhanced sheet {bounds:?} in its quad {quad:?}"
+        );
     }
 }
 

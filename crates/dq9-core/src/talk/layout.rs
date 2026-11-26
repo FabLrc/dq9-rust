@@ -111,6 +111,39 @@ pub struct Plate {
     pub advance: i32,
 }
 
+/// Which balloon `<EXC>`/`<QES>` raises over the speaker (`+0x195c`, the byte
+/// `*(u8 *)(0x020e7e18 + kind)` of `func_020675fc`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BalloonKind {
+    /// `<EXC>` (`0xFF2E`): the "!" (`ev_mark.spr`, field sprite 13).
+    Exclamation,
+    /// `<QES>` (`0xFF2F`): the "?" (`field_qu.spr`, field sprite 14).
+    Question,
+}
+
+/// Ticks a balloon stays up: `+0x1959 = 0x3c` set by both forms of the tag, then counted down
+/// by `func_02065758` and cleared at zero (`+0x19b7`). The field's update is the 60 Hz loop,
+/// so the port counts one step per tick **[hypothesis: `GetTickCount` deltas of 1]**.
+pub const BALLOON_TICKS: u32 = 60;
+
+/// The balloon raised over the speaker: what `Talk` draws and counts down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Balloon {
+    pub kind: BalloonKind,
+    /// Ticks left before the window clears it (`+0x1959`).
+    pub ticks: u32,
+}
+
+impl Balloon {
+    /// A balloon raised by its tag: [`BALLOON_TICKS`] ticks left, like `+0x1959 = 0x3c`.
+    pub fn new(kind: BalloonKind) -> Self {
+        Self {
+            kind,
+            ticks: BALLOON_TICKS,
+        }
+    }
+}
+
 /// A sound of the message window (`docs/re/sdat.md`: base archive effects 10 to 12, 6, 28, 5,
 /// 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,8 +214,9 @@ pub enum Op {
     /// `<TIME=n>`: pause for `n` updates of the window, 2 steps each (`0x020659a0`
     /// decrements the counter once per call).
     Pause(u32),
-    /// `<EXC>`, `<QES>`: a sound, no wait (`0x020659a0`).
-    Sound(Sound),
+    /// `<EXC>`, `<QES>`: a sound and a [`Balloon`] over the speaker, no wait (`0x020659a0`,
+    /// which raises the same 60-tick timer as the leading form, `0x0206a3d0`).
+    Balloon(BalloonKind),
     /// A choice: its labels and which answers play the confirmation effect.
     Prompt {
         kind: PromptKind,
@@ -318,8 +352,8 @@ pub fn layout(tokens: &[Token], tags: LeadingTags, font: &Font, max_width: i32) 
                     0xFF2C => Some(Op::ReleaseTurn),
                     0xFF0C | 0xFF0D => Some(Op::Page),
                     0xFF1D | 0xFF1E => Some(Op::Wait { cursor: true }),
-                    0xFF2E => Some(Op::Sound(Sound::Exclamation)),
-                    0xFF2F => Some(Op::Sound(Sound::Question)),
+                    0xFF2E => Some(Op::Balloon(BalloonKind::Exclamation)),
+                    0xFF2F => Some(Op::Balloon(BalloonKind::Question)),
                     0xFF1F => Some(Op::Wait { cursor: false }),
                     0xFF1A => Some(Op::Pause(n())),
                     0xFF04 => Some(Op::Prompt {
