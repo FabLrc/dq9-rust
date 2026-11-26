@@ -295,8 +295,11 @@ the application, other requests logged until J3), `0x6c`/`0x88` door marks.
 works (`dq9-app --walk`, test `angel_falls_houses_open_and_close`).
 Comparison with melonDS on the Stornway church: exit (warp `0x72`) and return (type-2
 door) match for maps, arrivals, angles and the crossing edge, within ± 2
-driving frames ([`re/map-archive.md`](re/map-archive.md)). Remaining: the door task
-(animation, automatic walk, fade), zones of other types and the comparison at equal
+driving frames ([`re/map-archive.md`](re/map-archive.md)). The warp type-1 **door task** is
+modelled (`dq9_core::field::DoorTask`, `app/doors.rs`): the confirm edge from the dispatcher,
+one-field-step arming, the 15-tick fade on both engines, the map change at black and the fade-in,
+with the pad held while it runs; `D04M03`'s type-1 warp has no destination and is inert.
+Remaining: zones of other types and the comparison at equal
 frame count over a full route: the 30 Hz field step equals the original VBlank by
 VBlank on `X01M05` (`field_cadence_holds_the_pose_and_matches_the_original_every_vblank`),
 but the J2 differential criterion is not validated over all of Angel Falls.
@@ -384,10 +387,14 @@ Progress:
       placements (574/575 on walls/ground), comparing order, durations and poses with
       melonDS, the caller of entry 200 and the natives without a role
       (`re/stb.md`, § Interpreter).
-- **Two DS screens** (`dq9-app/src/screens.rs`, `dq9_render::Panel`): top screen = 3D field with
-  the game's camera (`0x0202df78`); bottom screen = plain background, touch content not identified
-  **[unknown]**; layouts `stacked`, `side`, `top` (`--layout`, key `R`, Web select).
-  Partial: nothing is displayed on the bottom screen yet.
+- **Two DS screens** (`dq9-app/src/screens.rs`, `dq9_render::Panel`): the original's assignment
+  is selectable (`--screens original`, `?screens=original`): field on the bottom LCD, message
+  window with it, and the **map screen** on the top one — the `.obg` picture and backdrop of
+  `minimap.gp2`, the area tab, the four party name strips and the party dot, from the readers of
+  `dq9_formats::minimap` (`re/minimap.md`, `re/bottom-screen.md`). The port's own assignment stays
+  the default until the user's test. Not done: the `.bmmp` marks are decoded but not drawn (no
+  record names a marker), the scroll of a picture larger than 256×192, the touch UI ("X Menu",
+  stylus) and the battle bottom screen's exact bands.
 
 **v0.1**: new game with a default hero (animated model done in J1; choosing
 its appearance at character creation remains), playable Angel Falls prologue (cutscenes,
