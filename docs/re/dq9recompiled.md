@@ -12,10 +12,11 @@ corpus, and states what we did not import (code) and why. It is the record for
 
 Read: `f6e8571ad3ce2f096f657443825ce584b4091e6a` (2026-11-18), submodules `ndsrecomp`
 `2b27915dcca31b551de0942833a6faf648cff153` and `recomp-net`
-`7a4d330ecf995b881d167234da3c0b01675fd512` (clone `--depth 1`, without submodules; evidence
-[`build/evidence/k2-recomp-facts/commit.txt`](../../build/evidence/k2-recomp-facts/commit.txt)).
+`7a4d330ecf995b881d167234da3c0b01675fd512` (clone `--depth 1`, without submodules; the
+checkout under `tools/dq9recompiled` still answers `git rev-parse HEAD` with the same commit).
 The ROM SHA-1 in `game.toml` and `.recomp.json` matches ours byte for byte
-([`rom.sha1`](../../build/evidence/k2-recomp-facts/rom.sha1)).
+([`tools/dq9recompiled/.recomp.json`](../../tools/dq9recompiled/.recomp.json), the `original`
+entry).
 
 ## 1. What it is, and what it is not
 
@@ -52,15 +53,15 @@ The ROM SHA-1 in `game.toml` and `.recomp.json` matches ours byte for byte
 1. Read all 15 manifests (`config/hooks/*.toml`, 157 `[[hook]]` entries in total) and the
    comments of the handler sources that carry those hooks (`src/hooks/*.cpp|h`), plus
    `dq9_scene.h`, `dq9_text.h`, `options_model.h`, `save_image.h`.
-2. Extracted every entry into [`hooks.tsv`](../../build/evidence/k2-recomp-facts/hooks.tsv)
-   (address, handler, anchor instruction, file) and the grouped table of § 4.
+2. Extracted every entry (address, handler, anchor instruction, file) into a local `hooks.tsv`
+   and the grouped table of § 4; the extraction is reproducible from the manifests under
+   `tools/dq9recompiled/config/hooks/`, which the counts above were re-read against.
 3. Resolved each address against `re/functions.txt` (is it a function start? which function
    contains it?) and `re/symbols.txt`.
-4. Re-read 11 functions in the decompilation corpus (`scripts/decomp-find.ps1`), saved in
-   [`decomp-arm9.txt`](../../build/evidence/k2-recomp-facts/decomp-arm9.txt) and
-   [`decomp-overlays.txt`](../../build/evidence/k2-recomp-facts/decomp-overlays.txt). These
-   confirm the instruction-level claims sampled below, including the OS/owner-info layout, the
-   quest-log remove, the 2D-window redraw, the VBlank wait, the gold share and the reward apply.
+4. Re-read 11 functions in the decompilation corpus (`scripts/decomp-find.ps1`, which prints
+   them on demand from the main checkout's `build/decomp`). These confirm the
+   instruction-level claims sampled below, including the OS/owner-info layout, the quest-log
+   remove, the 2D-window redraw, the VBlank wait, the gold share and the reward apply.
 
 **Counts**
 
