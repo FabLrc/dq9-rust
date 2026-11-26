@@ -711,15 +711,22 @@ fn a_shown_battle_leaves_the_game_in_the_state_an_instant_one_does() {
 /// position (the walk is timed by the pilot's presses), the game time 3686.9 s instead of
 /// 3627.8 s (+59.1 s, +3546 ticks: the pilot presses every 20th step, so every `<ADD>` now
 /// costs it up to 20 steps and every answer six fewer). `build/evidence/j4-message-flow/route-2750-checkpoints-after.jsonl`.
+/// Re-pinned after `j4-message-flow` by the coordinator on 2026-11-26: the warp door task
+/// (`1d4e76b`) and the encounter settlement (`94b95de`) are the only logic changes since
+/// `f33a42d4…`; the run still reaches event 2750 with story 2.6.5 and every battle fought,
+/// now 964 checkpoints and the Hexagoon lost at Lv 5–8 then won at Lv 9. The run's dump and
+/// its first difference against the `j4-message-flow` artifact are in
+/// `build/evidence/v3-route-after-door/`.
 const ROUTE_CHECKPOINTS_SHA256: &str =
-    "f33a42d42a95795d2815500efe5ee5c618e43cf64487a49120510c600d1ae9d7";
+    "d721c11fd0d2fb4e92565cb27fc2df4ae5ed6361ccd1896b9a711b579f93ad5b";
 
 /// The prologue and chapter 2 played by the pilot with the real battle engine, from a new
 /// game to event 2750 (`--new-game --pilot --fight --route 2750 --seed 7 --headless`): the
-/// Hexagoon is lost at Lv 4, 5, 6 and 7 and won at Lv 8, the story ends at 2.6.5, and the
-/// checkpoints are the acceptance run's 972 lines, digest and all, at 3686.9 s of game time
-/// (the original message pacing and `<ADD>` waits; 3057.2 s in the acceptance run). The digest is the whole
-/// game state the run went through, so a changed draw, step, flag or map fails it.
+/// Hexagoon is lost at Lv 5, 6, 7 and 8 and won at Lv 9, the story ends at 2.6.5, and the
+/// checkpoints are 964 lines, digest and all (re-pinned after the warp door task, `1d4e76b`,
+/// and the encounter settlement, `94b95de`: the pilot's step timeline moves, so the draws of
+/// the fights before the Hexagoon move with it). The digest is the whole game state the run
+/// went through, so a changed draw, step, flag or map fails it.
 ///
 /// `#[ignore = "long: ~17 min in release"]`: `cargo test` stays fast; `scripts/verify.ps1
 /// -Only long` runs it before a milestone. Set `DQ9_ROUTE_REFERENCE` to a previous JSONL to
@@ -775,17 +782,17 @@ fn the_route_reaches_event_2750_with_the_pinned_checkpoints() {
     assert_eq!(
         attempts,
         [
-            "lost at Lv 4: 3 rounds, 0 experience, 0 gold",
-            "lost at Lv 5: 5 rounds, 0 experience, 0 gold",
+            "lost at Lv 5: 4 rounds, 0 experience, 0 gold",
             "lost at Lv 6: 6 rounds, 0 experience, 0 gold",
-            "lost at Lv 7: 4 rounds, 0 experience, 0 gold",
-            "won at Lv 8: 7 rounds, 175 experience, 100 gold, HP 5/53 left",
+            "lost at Lv 7: 7 rounds, 0 experience, 0 gold",
+            "lost at Lv 8: 7 rounds, 0 experience, 0 gold",
+            "won at Lv 9: 9 rounds, 175 experience, 100 gold, HP 2/58 left",
         ],
         "the Hexagoon (set battle 2) as the acceptance run fought it"
     );
     assert_eq!(
         jsonl.lines().count(),
-        972,
+        964,
         "the acceptance run's checkpoint count (sha256 {digest})"
     );
     let reference = std::env::var_os("DQ9_ROUTE_REFERENCE").map(|path| {
