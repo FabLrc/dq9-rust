@@ -170,8 +170,8 @@ struct SceneTarget {
 /// GPU resources of one scene.
 pub struct Renderer {
     color_format: wgpu::TextureFormat,
-    /// The enhanced presentation's switches: linear/mipmapped textures and the post pass when
-    /// `Some`; nearest filtering and direct drawing when `None` (the DS look).
+    /// The enhanced presentation's switches: the post pass when `Some`, direct drawing when
+    /// `None` (the DS look; textures are always the DS's nearest, one mip level).
     enhanced: Option<EnhancedOptions>,
     /// The enhanced-reactive layout: the camera's field of view follows the window's aspect.
     reactive: bool,
@@ -190,7 +190,7 @@ pub struct Renderer {
     textures: Vec<wgpu::TextureView>,
     translucent_textures: Vec<bool>,
     white: wgpu::TextureView,
-    samplers: HashMap<([Wrap; 2], bool), wgpu::Sampler>,
+    samplers: HashMap<[Wrap; 2], wgpu::Sampler>,
     models: Vec<GpuModel>,
     /// Translucent draws of the current frame, sorted back to front.
     translucent_draws: Vec<(f32, usize, usize, u32)>,
@@ -283,62 +283,11 @@ fn material_uniform(m: &SceneMaterial) -> MaterialUniform {
     }
 }
 
-/// Number of mip levels of a texture, down to 1×1 (the largest dimension decides).
-fn mip_levels(width: u32, height: u32) -> u32 {
-    32 - width.max(height).max(1).leading_zeros()
-}
-
-/// Box-filtered mip levels below level 0 (RGBA8), with alpha-weighted colour so cut-out
-/// sprites keep clean edges.
-fn mip_chain(rgba: &[u8], width: u32, height: u32) -> Vec<(u32, u32, Vec<u8>)> {
-    let mut out = Vec::new();
-    let (mut w, mut h) = (width, height);
-    let mut src = rgba;
-    while w > 1 || h > 1 {
-        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-        let mut next = vec![0; (nw * nh * 4) as usize];
-        for y in 0..nh {
-            for x in 0..nw {
-                let mut sums = [0u32; 3];
-                let mut alpha = 0u32;
-                let mut samples = 0u32;
-                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let sx = (2 * x + dx).min(w - 1);
-                    let sy = (2 * y + dy).min(h - 1);
-                    let o = ((sy * w + sx) * 4) as usize;
-                    let a = u32::from(src[o + 3]);
-                    for (i, sum) in sums.iter_mut().enumerate() {
-                        *sum += u32::from(src[o + i]) * a;
-                    }
-                    alpha += a;
-                    samples += 1;
-                }
-                let o = ((y * nw + x) * 4) as usize;
-                for (i, sum) in sums.iter().enumerate() {
-                    next[o + i] = sum.checked_div(alpha).unwrap_or(0).min(255) as u8;
-                }
-                next[o + 3] = (alpha / samples).min(255) as u8;
-            }
-        }
-        out.push((nw, nh, next));
-        src = &out.last().expect("just pushed a mip level").2;
-        w = nw;
-        h = nh;
-    }
-    out
-}
-
 fn upload_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     t: &SceneTexture,
-    mipmaps: bool,
 ) -> wgpu::TextureView {
-    let levels = if mipmaps {
-        mip_levels(t.width, t.height)
-    } else {
-        1
-    };
     let size = wgpu::Extent3d {
         width: t.width,
         height: t.height,
@@ -347,7 +296,8 @@ fn upload_texture(
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&t.name),
         size,
-        mip_level_count: levels,
+        // The DS samples one mip level with nearest filtering; the enhanced view keeps that.
+        mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         // DS colours are display values: no sRGB decoding.
@@ -377,11 +327,6 @@ fn upload_texture(
         );
     };
     write(0, t.width, t.height, &t.rgba);
-    if mipmaps {
-        for (level, (w, h, rgba)) in mip_chain(&t.rgba, t.width, t.height).iter().enumerate() {
-            write(level as u32 + 1, *w, *h, rgba);
-        }
-    }
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
@@ -542,9 +487,8 @@ impl Renderer {
         Self::new_with(device, queue, color_format, scene, None)
     }
 
-    /// Same as [`Renderer::new`]; `enhanced` adds the presentation's textures and post pass:
-    /// mipmapped linear samples with `trilinear`, and the post effects [`Post`] the options
-    /// switch on. `None` keeps the DS look.
+    /// Same as [`Renderer::new`]; `enhanced` adds the presentation's post pass: the effects the
+    /// options switch on. `None` keeps the DS look.
     pub fn new_with(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -630,7 +574,6 @@ impl Renderer {
                 rgba: vec![255; 4],
                 translucent: false,
             },
-            false,
         );
         let (edge_buffer, edge_layout, edge_pipeline) = edge_pipeline(device, color_format);
         let (cover_buffer, cover_group, cover_pipeline) = cover_pipeline(device, color_format);
@@ -653,7 +596,7 @@ impl Renderer {
             textures: scene
                 .textures
                 .iter()
-                .map(|t| upload_texture(device, queue, t, enhanced.is_some_and(|o| o.trilinear)))
+                .map(|t| upload_texture(device, queue, t))
                 .collect(),
             translucent_textures: scene.textures.iter().map(|t| t.translucent).collect(),
             white,
@@ -745,7 +688,7 @@ impl Renderer {
 
     /// Changes the presentation's switches in place: the post mask is read every frame, and
     /// whether the field is composed offscreen (some post effect) or drawn directly is decided
-    /// here. Mipmaps are uploaded with the renderer: `trilinear` needs a new [`Renderer`].
+    /// here.
     pub fn set_enhanced(&mut self, enhanced: Option<EnhancedOptions>) {
         self.enhanced = enhanced;
     }
@@ -762,26 +705,17 @@ impl Renderer {
     }
 
     fn sampler(&mut self, device: &wgpu::Device, wrap: [Wrap; 2]) -> wgpu::Sampler {
-        let linear = self.enhanced.is_some_and(|o| o.trilinear);
         self.samplers
-            .entry((wrap, linear))
+            .entry(wrap)
             .or_insert_with(|| {
-                let filter = if linear {
-                    wgpu::FilterMode::Linear
-                } else {
-                    wgpu::FilterMode::Nearest
-                };
                 device.create_sampler(&wgpu::SamplerDescriptor {
                     label: Some("material"),
                     address_mode_u: address_mode(wrap[0]),
                     address_mode_v: address_mode(wrap[1]),
-                    mag_filter: filter,
-                    min_filter: filter,
-                    mipmap_filter: if linear {
-                        wgpu::MipmapFilterMode::Linear
-                    } else {
-                        wgpu::MipmapFilterMode::Nearest
-                    },
+                    // The DS's own filtering: nearest, one mip level.
+                    mag_filter: wgpu::FilterMode::Nearest,
+                    min_filter: wgpu::FilterMode::Nearest,
+                    mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                     ..Default::default()
                 })
             })

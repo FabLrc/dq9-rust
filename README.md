@@ -76,7 +76,6 @@ What it changes, all from the ROM data the rest of the demo already reads:
 
 - one 16:9 field letterboxed in the window, the camera keeping the game's 15° vertical
   half-angle;
-- mipmapped, linearly filtered textures instead of the DS's nearest filtering;
 - a cinematic post pass: FXAA, screen-space contact shadows, threshold bloom, filmic
   tonemapping, colour grading, vignette and dithering;
 - a 16:9 interface: location, time of day, the whole party's HP/MP and the purse, and the game's message

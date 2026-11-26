@@ -1,16 +1,14 @@
 //! The enhanced presentation's switches (`--fx`/`--no-fx`, the page's checkboxes), one boolean
 //! per effect of the 16:9 view (`docs/app/screens.md`, § "Enhanced 16:9").
 //!
-//! The post pass reads the post effects as a bit mask (`post.wgsl`, [`PostBits`]); mipmapped
-//! textures, the single-pixel edge accent and the HUD's glass panels are decided on the CPU and
-//! are not part of that mask.
+//! The post pass reads the post effects as a bit mask (`post.wgsl`, [`PostBits`]); the
+//! single-pixel edge accent and the HUD's glass panels are decided on the CPU and are not part of
+//! that mask.
 
 /// One switch per effect of the enhanced presentation. Every field is on in [`Self::DEFAULT`]
 /// except [`Self::contact_shadows`], which is opt-in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnhancedOptions {
-    /// Mipmapped, linearly sampled textures instead of the DS's nearest filtering.
-    pub trilinear: bool,
     /// FXAA-lite in the post pass.
     pub fxaa: bool,
     /// Screen-space contact shadows read from the depth buffer.
@@ -49,7 +47,6 @@ impl EnhancedOptions {
 
     /// Every effect on: what `--fx all` and `?fx=all` select.
     pub const ALL: Self = Self {
-        trilinear: true,
         fxaa: true,
         contact_shadows: true,
         bloom: true,
@@ -63,7 +60,6 @@ impl EnhancedOptions {
 
     /// Every effect off: the DS look of the field in the layout's frame.
     pub const NONE: Self = Self {
-        trilinear: false,
         fxaa: false,
         contact_shadows: false,
         bloom: false,
@@ -76,8 +72,7 @@ impl EnhancedOptions {
     };
 
     /// The names `--fx`/`--no-fx` and `?fx=`/`?nofx=` accept, in the order of the fields.
-    pub const NAMES: [&'static str; 10] = [
-        "trilinear",
+    pub const NAMES: [&'static str; 9] = [
         "fxaa",
         "contact-shadows",
         "bloom",
@@ -92,7 +87,6 @@ impl EnhancedOptions {
     /// Whether the switch `name` is on, for the page's checkboxes.
     pub fn is_on(&self, name: &str) -> Option<bool> {
         Some(match name {
-            "trilinear" => self.trilinear,
             "fxaa" => self.fxaa,
             "contact-shadows" => self.contact_shadows,
             "bloom" => self.bloom,
@@ -109,7 +103,6 @@ impl EnhancedOptions {
     /// The field `name` switches, for [`EnhancedOptions::set`].
     fn get(&mut self, name: &str) -> Option<&mut bool> {
         Some(match name {
-            "trilinear" => &mut self.trilinear,
             "fxaa" => &mut self.fxaa,
             "contact-shadows" => &mut self.contact_shadows,
             "bloom" => &mut self.bloom,
@@ -272,7 +265,6 @@ mod tests {
         options.apply_list("fxaa, bloom", false).unwrap();
         assert!(!options.fxaa);
         assert!(!options.bloom);
-        assert!(options.trilinear);
         assert_eq!(options.post_mask() & PostBits::FXAA.0, 0);
         options.apply_list("bloom", true).unwrap();
         assert!(options.bloom);

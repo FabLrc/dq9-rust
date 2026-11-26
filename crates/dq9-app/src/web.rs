@@ -186,7 +186,7 @@ type PageOptions = (
 
 /// `map`, `time` (`night`, `morning`, `day`, `evening` or 0-3), `clock` (second of the day),
 /// `layout` (`enhanced`, `enhanced-reactive`, `stacked`, `side` or `top`), `fx`/`nofx`
-/// (comma-separated effects to switch on/off: `trilinear`, `fxaa`, `contact-shadows`,
+/// (comma-separated effects to switch on/off: `fxaa`, `contact-shadows`,
 /// `bloom`, `tonemapping`, `grading`, `vignette`, `dithering`, `edge-accent`, `glass`, or
 /// `all`/`none`), `screens` (`port` or `original`: where
 /// the field and its message window are drawn), `textspeed` (`slow`, `normal` or `fast`: how

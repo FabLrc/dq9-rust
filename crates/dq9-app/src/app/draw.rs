@@ -217,15 +217,10 @@ impl App {
     }
 
     /// Switches effects of the enhanced presentation (`--fx`/`--no-fx`, the page's
-    /// checkboxes). Only mipmaps need new textures: the other effects are read by the post
-    /// pass or the frame every time it is drawn.
+    /// checkboxes). The post pass reads the mask every frame, so no texture or pipeline is
+    /// rebuilt.
     pub fn set_fx(&mut self, fx: EnhancedOptions) {
-        let mipmaps = fx.trilinear != self.presentation.fx.trilinear;
         self.presentation.fx = fx;
-        if mipmaps {
-            self.upload();
-            return;
-        }
         let enhanced = self.enhanced();
         if let Some(renderer) = &mut self.renderer {
             renderer.set_enhanced(enhanced);

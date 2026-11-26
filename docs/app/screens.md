@@ -125,7 +125,6 @@ presentation, not a DS reconstruction:
 
 | Name | Effect |
 |---|---|
-| `trilinear` | mipmapped, linearly sampled textures instead of the DS's nearest filtering with one mip level |
 | `fxaa` | FXAA-lite |
 | `contact-shadows` | screen-space contact shadows read from the depth buffer; **off by default**, `--fx contact-shadows` (or the page's checkbox) turns them on |
 | `bloom` | threshold bloom |
@@ -146,8 +145,8 @@ presentation, not a DS reconstruction:
 - The post effects travel to `post.wgsl` as a uniform bit mask (`features.x`,
   `PostBits` in the same module), read every frame: switching one rebuilds nothing. With
   every post effect off the field is drawn directly, the DS look (nearest filtering, DS-width
-  edge marking) in the layout's frame. Only `trilinear` needs new textures, so only it
-  rebuilds the renderer. The shaders are parsed and validated by
+  edge marking) in the layout's frame. Textures always keep the DS's nearest filtering and one
+  mip level, so no effect rebuilds them. The shaders are parsed and validated by
   `crates/dq9-render/tests/shaders.rs` without a GPU, including the mask bits the Rust side
   sends; this does not certify backend support.
 - The field is rendered to an offscreen target (`Renderer`) and composed by `post.wgsl`. The
@@ -158,9 +157,9 @@ presentation, not a DS reconstruction:
   the whole party (up to four members: name, level, HP and MP bars with numbers), the purse,
   and the game's message window scaled into a bottom-left glass panel. Battle windows keep
   their 4:3 shape in the upper and lower left corners.
-- The renderer is rebuilt when `R` or the select enters or leaves the enhanced layouts
-  (texture filtering differs) and when `trilinear` changes; `--screens` has no effect: one
-  field, no second DS screen and no placeholder.
+- The renderer is rebuilt when `R` or the select enters or leaves the enhanced layouts (the
+  post pass appears or goes); `--screens` has no effect: one field, no second DS screen and no
+  placeholder.
 
 Screenshots of the layout (a DS capture of the same map asks `--layout stacked`
 explicitly: `stacked` used to be the default):
@@ -199,7 +198,7 @@ follows the window:
 Captures below are local (`build/evidence/j4-enhanced-mode/`, sha256 prefix, `manifest.json`):
 M01 at 1280×720 with every effect on, `enhanced-all.png` (`399b66298d10`), and with none,
 `enhanced-none.png` (`1a24c4918d79`: the DS look in a 16:9 frame); each effect off in turn
-`enhanced-no-trilinear.png` (`7cb1552e2ff8`), `-fxaa` (`03e65edac654`), `-contact-shadows`
+`-fxaa` (`03e65edac654`), `-contact-shadows`
 (`65186b3d4a4e`), `-bloom` (`162817d0f6a7`), `-tonemapping` (`fd33cc2599be`), `-grading`
 (`280b7d97a235`), `-vignette` (`825ea3399b2c`), `-dithering` (`c33495172196`), `-edge-accent`
 (`30dc6d73e250`) and `-glass` (`a646593b06f1`), all pairwise different; the Hugo conversation

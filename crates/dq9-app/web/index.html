@@ -48,8 +48,8 @@
         Recent browser with WebGPU or WebGL 2 required; computer and keyboard recommended.
         No ROM is provided.</p>
       <p><strong>Graphics:</strong> "Enhanced" is the default layout (also
-        <code>?layout=enhanced</code>): a single widescreen field with mipmapped textures,
-        bloom, screen-space contact shadows, filmic tonemapping, colour grading, a vignette,
+        <code>?layout=enhanced</code>): a single widescreen field with bloom, screen-space
+        contact shadows, filmic tonemapping, colour grading, a vignette,
         dithering, the single-pixel edge accent and a 16:9 interface showing the whole party.
         Every effect has its own checkbox above (or <code>?fx=</code> / <code>?nofx=</code>,
         e.g. <code>?nofx=bloom,vignette</code>); with every effect off the field keeps the
@@ -59,9 +59,9 @@
       <p><strong>Field screens:</strong> the original draws the field's 3D view and its
         message window on the bottom (touch) screen and its map screen on the top one; this
         port draws them on the top screen by default. "3D at the bottom" (or
-        <code>?screens=original</code>) is the original's assignment; the top screen is then a
-        plain placeholder until the map screen is read, and a battle is unchanged. Both work
-        with every screen layout.</p>
+        <code>?screens=original</code>) is the original's assignment: the top screen then
+        shows the area's map with the party's name strips and dots, and a battle is unchanged.
+        Both work with every screen layout.</p>
       <p><strong>Recording a session:</strong> open the page with <code>?record=1</code>
         (and <code>?newgame=1</code> to record the prologue), choose the ROM: the session that
         starts with it is recorded from its first step, and the header shows the seed
@@ -90,7 +90,6 @@
       <option value="top">top only</option>
     </select></label>
     <div id="fx" class="fx" role="group" aria-label="Effects">
-      <label><input type="checkbox" data-fx="trilinear" checked disabled> mipmaps</label>
       <label><input type="checkbox" data-fx="fxaa" checked disabled> FXAA</label>
       <label><input type="checkbox" data-fx="contact-shadows" checked disabled> contact shadows</label>
       <label><input type="checkbox" data-fx="bloom" checked disabled> bloom</label>

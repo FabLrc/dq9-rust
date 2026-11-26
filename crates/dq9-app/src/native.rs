@@ -74,7 +74,7 @@ struct Cli {
     /// experimental), `stacked`, `side` or `top` (`screens.rs`).
     #[arg(long, default_value = "enhanced", value_parser = Layout::parse)]
     layout: Layout,
-    /// Effects of the enhanced layouts to switch on, comma-separated: `trilinear`, `fxaa`,
+    /// Effects of the enhanced layouts to switch on, comma-separated: `fxaa`,
     /// `contact-shadows`, `bloom`, `tonemapping`, `grading`, `vignette`, `dithering`,
     /// `edge-accent`, `glass`, or `all` / `none`. All but `contact-shadows` are on by default.
     #[arg(long, value_name = "LIST")]
