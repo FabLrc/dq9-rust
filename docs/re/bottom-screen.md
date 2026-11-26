@@ -81,6 +81,7 @@ field task's indirect calls and were not resolved.
 | Element | Purpose | Draw / data | Layout (screen pixels) | State read | Confidence |
 |---|---|---|---|---|---|
 | Map picture | area plan, `.obg` of `minimap.gp2` drawn as a BG tilemap (`z01`-`z05` palettes) | mode-0 loader above; `.bncg`/`.bncl`/`.bnsc` staging `0x02020e58` | full 256×192, scrolled; `.obg` scale and corner come from the map's `.bmmp` (`0x69`, `0x64`) | map id → `.bmmp` picture | code + capture; scrolling **[unknown]**; port draws the picture at its own top-left (a larger one is cropped) |
+| Backdrop | paper pattern under the map picture | the layout's `.bmmp` `0x6a` name → `minimapbg2`–`4` `.obg` of `minimap.gp2` (8×8 cells) | the port repeats it at one texel per pixel over the picture's own rectangle, from its top-left (stated choice, DS layout **[unknown]**) | `.bmmp` `0x6a` | data + code; `221 of 283` layouts name one (`re/minimap.md` § 4.1) |
 | Area tab | the map section's name ("Stornway", "Western Stornway", "Observatory - L1") | text; `TMAP_SEC` is the same name inside dialogue (`MsgSubst_TMAP_SEC`, `0x020691d0`) | x 200..253, y 0..15 on `field-church.png` (dark tab, light edge); the port keeps the right edge and grows the tab left when the name is wider | map id → map list name (`maplist9` label, the port's `loaded.label`) | capture; drawing function and palette source **[unknown]** |
 | Party strips | one name strip per party slot | the 64×64 panel of `obj_mm.pac` (cell 2 of `obj_minimap.NCER`, name strip = rows 0..15 only) | 4 × **64×16** at **y = 176**, x = **0, 64, 128, 192**; only as many as the party holds | party order `GameState+0x397c`, count `+0x3980`; per-member colour | capture + decomp; colour source **[unknown]**; the port uses the file's palette slots 0–3 (blue, green, pink, orange) **[hypothesis]** |
 | Party dots | one coloured dot per member on the map | `obj_minimap.NCER` cells 3..7 / the dots of `obj_mm.pac` | on the party's position, projected by the `.bmmp` scale/corner | hero and members' x/z | wiki + capture; colour choice **[unknown]**; the port draws cells 3..7 and the members' positions coincide (only the hero's is modelled) **[hypothesis]** |
@@ -141,20 +142,18 @@ consistent with the wiki's panel reading.
 
 1. **Field screen assignment (no new data).** Render the field's 3D view and message window
    on the bottom screen and leave the top to the map screen — the original's `POWCNT1` bit 15
-   is set for the whole field (`ov_017::021b1ca8`, entry/exit calls above). Today the port
-   shows the field on top with an empty bottom, which is exactly inverted. This is the only
+   is set for the whole field (`ov_017::021b1ca8`, entry/exit calls above). This is the only
    element that changes the look of every field frame, needs no reader, and also fixes where
    the message window goes. It touches `dq9-app` only (`screens.rs`/`app.rs`, the capture
-   path), not the deterministic core.
+   path), not the deterministic core. Implemented by `v3-screens-*` (`--screens original`).
 2. **Party name strips** (top, four 64×16 strips at y 176, x 0/64/128/192). Data: party order
    and count (already read by `dq9-parity-party`), the panel part of `obj_mm.pac` /
-   `obj_minimap.NCER` with its palette. Needs a `.pac` member list and NCER/NCGR/NCLR
-   decoding (`dq9-formats`: none yet, only the `.pac` chain is documented). Cheapest visible
-   win of the map screen: four sprites and four names, no map reader.
+   `obj_minimap.NCER` with its palette. Implemented: `dq9-formats` decodes the
+   `obj_minimap` NCER/NCGR/NCLR (`re/minimap.md` § 5) and § 2.1 draws the strips.
 3. **Map picture** (the largest element, and what the top screen is for). Data: `.bmmp` per
    map (record table, `docs/re/table.md`), the `.obg` picture and `z01`-`z05` palettes of
-   `minimap.gp2` (`.obg` layout in the wiki's *Mini-Map*), then the party dots. Needs an
-   `.obg`+`.bmmp` reader; without it the top screen stays empty after step 1.
+   `minimap.gp2` (`.obg` layout in the wiki's *Mini-Map*), then the party dots. Implemented:
+   the `.obg`+`.bmmp` reader (`v3-map-screen-data`) and the backdrop (`v3-map-screen-details`).
 4. **Area tab** (name over the map) — the map list's name, which the text pipeline already
    resolves as `<TMAP_SEC>`. Cheap once step 3 places the screen.
 5. **Menu affordance and touch** on the field: draw "X Menu" (asset still **[unknown]**) and
@@ -165,8 +164,8 @@ consistent with the wiki's panel reading.
 
 Minimum for "not a blank background" in the field: 1 (screen assignment) and 2 (strips);
 1 and 3 for the screen to look like the original. Steps 1 to 4 are implemented (`v3-screens-*`,
-then `v3-map-screen-data` and `v3-map-screen-draw`, § 2.1 "What the port draws"); step 5's
-assets stay **[unknown]**.
+then `v3-map-screen-data`, `v3-map-screen-draw` and `v3-map-screen-details`, § 2.1 "What the
+port draws"); step 5's assets stay **[unknown]**, and its touch rectangle is not hit-tested.
 
 ## Evidence
 
@@ -181,12 +180,17 @@ Local, never committed (`build/evidence/j4-bottom-screen-re/`):
 | `field-observatory.png` | the Observatory map with the floor badge (state `bat6`) | `c0fe94e7d2db` |
 | `field-pro11.png` | a field cutscene state: the option screen and window | `ccb7e2dccb8d` |
 
-Map screen implemented (this batch, `build/evidence/v3-map-screen-draw/`): `original-M01.png`
-(`13d50e43d010`), `original-F01.png` (`b97b361c63cf`), `original-S01M01.png` (`08033af76f1e`),
-window captures of `--map <code> --save … --layout stacked --screens original`;
-`sweep.txt` (`9c1ec9f9e913`), the 283-layout and 1,010-map resolution test; the tab measured
-on `field-church.png` at x 200..253, y 0..15 (dark `97,65,40`, edge `211,146,48`, white name);
-the port's `--screens port` reference is byte-identical to the parent commit (`3475c61`).
+Map screen implemented (`build/evidence/v3-map-screen-draw/`, then the backdrop — and the marks,
+decoded but not drawn — in `v3-map-screen-details/`): `original-M01.png` (`13d50e43d010` /
+`b319a0f1adbd` with the backdrop), `original-F01.png` (`b97b361c63cf`) and `original-S01M01.png`
+(`08033af76f1e`), or `original-F01M01.png` (`127ab848910c`, the placeholder) and `original-S01M01.png`
+(`72ddf077c467`) from the details batch; window captures of `--map <code> --save …
+--layout stacked --screens original`; `sweep.txt` (`9c1ec9f9e913`, `b25081e83a2a`), the
+283-layout and 1,010-map resolution test (418 draw, 592 fall back); `backdrops.txt`
+(`db3f23c110a2`) and `obg-members.txt` (`9538d3e5c321`), the archive's backdrop and marker
+members; the tab measured on `field-church.png` at x 200..253, y 0..15 (dark `97,65,40`, edge
+`211,146,48`, white name); the port's `--screens port` reference is byte-identical to the
+parent commit (`3475c61`).
 
 Ghidra queries (cache under `build/ghidra-cache/`): `decomp ov_017::021b1564`,
 `ov_017::021960b8`, `0x020214f0`, `0x02022d88`; `calls 0x02021500`, `0x02012a94`,
@@ -197,7 +201,13 @@ Ghidra queries (cache under `build/ghidra-cache/`): `decomp ov_017::021b1564`,
 
 - The field's map-screen mode (0 assumed) and which element draws the area tab, the floor
   badge and the "X Menu" text/hand (asset and function).
-- How the `.obg` picture scrolls and how the party's dots are placed and coloured.
+- How the `.obg` picture scrolls (the port crops a larger one at its top-left) and the
+  colours of the party's dots; their placement is the projection of § 2.1 (the members'
+  own positions are not modelled, only the hero's, so their dots coincide).
+- How the DS lays out the backdrop (`0x6a`): the port tiles it over the picture's own
+  rectangle (`re/minimap.md` § 4.1, § 6).
+- Which of `marker0`–`4` an ordinary door or house mark takes, and what `obj_mappoint.pac`
+  holds (`re/minimap.md` § 4.1).
 - Whether the Menu affordance is a touch target (it is drawn like one) or only an X hint.
 - The party colour source (not a paletted entry of the map sprite set).
 - What the sub-screen fade (105/114) does while the field is swapped: the field's fade code

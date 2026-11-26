@@ -140,11 +140,14 @@ Escape leaves the session running: download the record, then reload the page.
 **Determinism hunt** (batch `j4-human-record`, evidence under `build/evidence/j4-human-record/`).
 Observed:
 
-- The pilot's `--route 2750` (instant battles, release) pins the 972 checkpoints of the long
-  test: `stopped: event 2750 ended` at **3627.8 s** of game time, sha256 `3d27e89d9737`
-  (`build/evidence/j4-parity-regress/route-2750-checkpoints.jsonl`; the run before the original
-  message pacing of `d068809`/`f516d79` stood at 3035.5 s and `8ce4af30e497`, and the two files
-  differ on 970 of the 972 lines in `tick`/`seconds`/`vblank` alone). Two runs of one build give
+- The pilot's `--route 2750` (instant battles, release) pins the long test's checkpoints. At this
+  batch it was 972 lines: `stopped: event 2750 ended` at **3627.8 s** of game time, sha256
+  `3d27e89d9737` (`build/evidence/j4-parity-regress/route-2750-checkpoints.jsonl`; the run
+  before the original message pacing of `d068809`/`f516d79` stood at 3035.5 s and
+  `8ce4af30e497`, and the two files differ on 970 of the 972 lines in
+  `tick`/`seconds`/`vblank` alone). The pin has moved twice since: **964 lines**, 3899.58 s,
+  sha256 `d721c11fd0d2`, after the warp door task and the encounter settlement
+  (`docs/app/new-game.md` § "The pilot"). Two runs of one build give
   the digest byte for byte (`route-instant-a-checkpoints.jsonl`, 1251 s of wall time each, the
   machine loaded). The headless `--replay` of the parity trace runs on the same `App` step and
   reaches the story points the trace was recorded on: since batch `j4-parity-regress` that trace

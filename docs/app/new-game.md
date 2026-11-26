@@ -50,9 +50,18 @@ control point included.
 Batch `j4-message-flow` moved the route's timeline once more: `<ADD>` messages now wait for the
 action key and draw the blinking wait arrow (state 3; `j4-message-arrow` corrected the
 "no arrow" note), a Yes/No answer closes its window with the press, and an `<END>` closes 6 steps after its
-key (`docs/re/dialogue.md` § "Message pacing"). The pilot's route keeps its 972 checkpoints, story
-2.6.5 and the five Hexagoon fights; 966 lines differ only in `tick`/`seconds`/`vblank`, 6 in the hero's
-position, and the game time at event 2750 is **3686.9 s** (was 3627.8 s), sha256 `f33a42d42a95`.
+key (`docs/re/dialogue.md` § "Message pacing"). At that batch the pilot's route kept its 972
+checkpoints, story 2.6.5 and the five Hexagoon fights; 966 lines differ only in
+`tick`/`seconds`/`vblank`, 6 in the hero's position, and the game time at event 2750 was
+**3686.9 s** (was 3627.8 s), sha256 `f33a42d42a95`.
+
+Re-pinned by `794829d` after the warp door task (`1d4e76b`) and the encounter settlement
+(`94b95de`): **964 checkpoints**, story 2.6.5 and every battle fought, the Hexagoon lost at
+Lv 5, 6, 7 and 8 and won at Lv 9 (175 experience, 100 gold), the game time at the last
+checkpoint **3899.58 s**, sha256 `d721c11fd0d2` (`build/evidence/v3-route-after-door/`). Up to
+checkpoint 701 only `tick`/`seconds`/`vblank` differ from the previous artifact; the first state
+difference is at 702, an extra battle's 25 experience before the Hexagoon — the door task moves
+the pilot's step timeline, so the draws on the way move with it.
 
 On the Web: the page's "New game" button (or `?newgame=1`), after choosing the ROM.
 

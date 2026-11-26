@@ -11,9 +11,9 @@ verified is marked **[unverified]**.
    organization [DQI-haX](https://github.com/DQIX) (decompilation, format wiki, tools) and
    the Discord *The Quester's Rest* (<https://discord.gg/dqix>, "DQI-haX" thread).
 2. **The USA decompilation symbols apply to our European ROM** with a simple address
-   offset (verified below on the 193 symbols present at the survey; `re/symbols.txt` now
-   holds 735 names, 86 of them overlay-17, and the mapping rule is unchanged). 1,704 names
-   and the bounds of ~20,000 functions, under the Unlicense (public domain).
+   offset (verified below on the 193 symbols present at the survey; `re/symbols.txt` held 735
+   names when this survey was written, 86 of them overlay-17, and the mapping rule is unchanged).
+   1,704 names and the bounds of ~20,000 functions, under the Unlicense (public domain).
 3. **The [DQIX wiki](https://github.com/DQIX/wiki) documents, on the same `YDQP` ROM, a
    good part of our roadmap**: triggers, `.stb` scripts, `.nat` tables,
    maps, sprites, SDAT, NSBMD… Read it before tackling a format.

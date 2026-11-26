@@ -333,9 +333,8 @@ touched, and the list read at `+0xf78` of the battle context is not filled by an
   the id) is never in a capture — it is the code's reading (§ (d2)).
 - **A fled fight** never happened in the oracle runs, so the roamer's own state after one
   (kept as it was, in state 9, which message 61 set at the battle's start) is the code's reading of
-  `ov_000::021688dc`, not a capture; the app uses it and does not model a resumption. The escape
-  reading of `02163c80` is a **[hypothesis]** too.
-  **[hypothesis]**
+  `ov_000::021688dc`, not a capture; `Roamers::settle` enters the same state 9 for a fled or lost
+  fight. The escape reading of `02163c80` is a **[hypothesis]** too.
 - **The party members' `+0x1b2`** (the battle id a field character is bound to, written by the
   message-61 handler and cleared at the battle's end) is not modelled: the port has no field
   character to bind, and nothing it renders depends on it.

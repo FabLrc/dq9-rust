@@ -139,8 +139,9 @@ ends (frame 1098, queue `[3]`, then empty at 1153).
 - `BATTLE_ENTER_AT`/`BATTLE_ENTER_DONE`/`fade_in` are deleted; the transition module is no
   longer `allow(dead_code)`.
 - Headless runs (`battles_instant()`) still return before any step is spent: the traces, the
-  route digest and `parity.ps1` do not move. A shown run spends 3 more steps per battle
-  (38 instead of 35) and nothing else.
+  route digest and `parity.ps1` do not move. At that batch a shown run spent 3 more steps per
+  battle (38 instead of 35) and nothing else; the entry phases below add their own steps to a
+  window run.
 
 Checked on the pilot's route (`--new-game --pilot --fight --route 2750 --seed 7`; the shown
 battles of the Web session's `battles=show` are the same `battles_instant()` false path, run
@@ -156,11 +157,21 @@ point on `4101`), so this is a window of one shown battle, not the whole route; 
 instant runs diverge past it on the roamers' draws, a **[hypothesis]** recorded before this
 batch.
 
-**Not modelled / [unknown]**: the load-bound black periods (94 and 95 frames; headless runs never
-spend them and the window would add 3 s per fight for nothing), the 12-frame freeze after contact,
-the intro camera's script (the arc above is measured, its source in `ov_000` not read), the set
-battle's 15-update delay (derived from the code; no set battle was run in the DS core), the map
-screen's own transition on the top screen.
+**The entry and return phases** (batch `v3-battle-entry`, `9854488`) are `battle/entry.rs`'s
+constants and table, and `BattleChange` (`app/encounter.rs`) runs them in order: a roamer's
+contact freezes the picture `FREEZE_STEPS` = 12 steps (frames 5-17 above), a set battle waits the
+swirl task's `DELAY_UPDATES` = 15 updates of `UPDATE_TICKS` = 2 frames, 30 steps
+(`SwirlTask_Init` `+0xfd`), and a preview (`--battle`, `?battle=`) spends neither; both entries
+that load a stage then hold `LOAD_BLACK_STEPS` = 94 frames while it loads, and the way back is
+`FADE_OUT_STEPS` = 15 to black, `RETURN_BLACK_STEPS` = 95 while the field reloads and
+`RETURN_FADE_STEPS` = 30 up. The scene's own fade-in is `SCENE_FADE_STEPS` = 15 (the brightness
+log changes over ~13 frames, so 15 is the chosen count). Headless runs and
+`scripts/parity.ps1` spend none of them: a headless battle is settled in the step it starts.
+
+**Not modelled / [unknown]**: the intro camera's script (the arc above is measured, its source in
+`ov_000` not read), the map screen's own transition on the top screen, and whether the 12-frame
+freeze is the blocking zone load rather than a designed delay (`ov_017::021b790c` state 0's
+`func_02015438` loop, **[hypothesis]**).
 
 Ours, `cargo test -p dq9-app -- the_swirl_is_drawn_over_the_field` with `DQ9_EVIDENCE_DIR`
 (local, `build/evidence/j4-swirl-wire/`; map 1100, the window path's own field scene, clock and

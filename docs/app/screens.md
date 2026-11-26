@@ -46,23 +46,28 @@ old `--ds-aspect` and `ds=` are removed.
 
 Captures of both modes (local, never committed, `build/evidence/j4-screens-original/`):
 `after-port-m01.png` (`69b60fca0327`, `--map M01`, pixel-identical to the capture before the
-option existed), `original-m01.png` (`dadac22d6bca`, 3D view at the bottom, placeholder at the
-top), `original-m01-side.png` (`ebbca9caf9d0`), `original-conversation.png` (`dd113de81d1c`,
-Hugo's window on the bottom screen with the 3D view), `original-conversation-top.png`
+option existed), `original-m01.png` (`dadac22d6bca`, 3D view at the bottom, the placeholder the
+top screen kept until the map screen batch below), `original-m01-side.png` (`ebbca9caf9d0`),
+`original-conversation.png` (`dd113de81d1c`, Hugo's window on the bottom screen with the 3D
+view), `original-conversation-top.png`
 (`49828f3975b9`: `top` keeps the field and its window on the only screen), and
 `battle-original.png` (`dd025965b166`, identical to `battle-port.png`: a fight ignores the
 option) and `wide-original.png` (`7867f9fee551`, identical to `wide-port.png`: one 16:9 field
 has no second screen to move; those two files keep their names from that batch).
 
-The map screen (this batch, `build/evidence/v3-map-screen-draw/`, local): `original-M01.png`
-(`13d50e43d010`), `original-F01.png` (`b97b361c63cf`) and `original-S01M01.png`
-(`08033af76f1e`), window captures of `--map <code> --save … --layout stacked --screens
-original`; the portrait of the two screens compared with the original is
-`re/bottom-screen.md` § 2.1. `port-m01.png` (`b6bd79252785`) and `battle-port.png`
+The map screen (batches `v3-map-screen-draw`, then `v3-map-screen-details` for the backdrop;
+`build/evidence/v3-map-screen-details/`, local): `original-M01.png` (`b319a0f1adbd`, the village,
+its backdrop outside the torn paper), `original-S01M01.png` (`72ddf077c467`, the pass) and
+`original-F01M01.png` (`127ab848910c`, a map without a layout: the placeholder), window captures
+of `--map <code> --save … --layout stacked --screens original`; the draw batch's
+`original-M01.png` (`13d50e43d010`), `original-F01.png` (`b97b361c63cf`) and `original-S01M01.png`
+(`08033af76f1e`) predate the backdrop. The portrait of the two screens compared with the original
+is `re/bottom-screen.md` § 2.1. `port-m01.png` (`b6bd79252785`) and `battle-port.png`
 (`019c69584c9d`) are the headless `--screenshot` references, byte-identical to the same
 captures built from the parent commit `3475c61` (the port and a battle do not draw the map
-screen). The sweep log `sweep.txt` (`9c1ec9f9e913`) is the map screen test: 283 layouts and
-418 of the map list's 1,010 maps resolve, 592 fall back with `no .bmmp layout for <code>`.
+screen). The sweep log `sweep.txt` (`b25081e83a2a`; `9c1ec9f9e913` in the draw batch) is the
+map screen test: 283 layouts and 418 of the map list's 1,010 maps resolve, 592 fall back with
+`no .bmmp layout for <code>`.
 
 ## Enhanced 16:9
 

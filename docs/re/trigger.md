@@ -142,11 +142,12 @@ flags 12 and 14 instead of 8 and 10, i.e. bit `0x4` (`dq9re doors --state`, test
 `stornway_at_night_marks_its_two_locked_doorways`). The church doorways (numbers 18 and 20)
 stay free, and the hero takes them.
 
-**Not modelled**: the doorway animation and automatic walking, the guards of
-`ov_017::0219755c`, zones of other types, and the application by the window of map
-objects `0x6d`, `0x99`… For `0x95`/`0x96`, the emission is done (`Request::SetPlacementHidden`,
-see the actions table); applying it to rendering and collisions belongs to
-`dq9-app`.
+**Not modelled**: the automatic walk some doorway approaches need (nothing here moves the
+hero), the guards of `ov_017::0219755c`, zones of other types, and the application by the window
+of map objects `0x6d`, `0x99`… For `0x95`/`0x96`, the emission is done
+(`Request::SetPlacementHidden`, see the actions table); applying it to rendering and collisions
+belongs to `dq9-app`. The doorway's own rotation, sound and collision are modelled (§ "Doorways
+without destination and inner doors").
 
 ## Words (`Trig_CompileWords`, `0x0205ec80`)
 

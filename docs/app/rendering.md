@@ -32,8 +32,10 @@ Faithful to what the game reads:
   placed on the `head` bone, arms and shoes by texture files, merged into one model;
   oriented by heading (`angle_of_yaw`), scale `0x10a × build`; the gait comes from the
   distance covered per step (`Gait::from_speed`: stand if still, run otherwise). Appearance: the first character of the
-  save (`--save`), otherwise a default hero **[hypothesis]**; no weapons, no shields, no tints
-  from `palette.bin` ([`re/characters.md`](../re/characters.md)). In his winged form (Angel Falls,
+  save (`--save`), otherwise a default hero **[hypothesis]**; no weapons, no shields. The face
+  and arm palettes are recoloured from `palette.bin` (`func_020730e0`, `HeroRig::build`) before
+  the textures are decoded ([`re/characters.md`](../re/characters.md) § "Skin, eyes and brows").
+  In his winged form (Angel Falls,
   story 1.2 to 1.3) the application adds the pink palette operation and two scripted models hung
   on his `chest` (wings) and `head` (halo) bones each frame, `--screenshot` included
   ([`re/mortal-veil.md`](../re/mortal-veil.md) § 7).
@@ -133,14 +135,17 @@ Approximated or absent:
   engine), shadow polygons (mode 3) and wireframe (alpha 0), fog
   alpha-only mode and `FOG_COLOR` alpha, DS precision
   (6-bit colors, W depth; fog depth is recomputed on 24 bits).
-- **NPCs, limits**: NPCs neither stop nor turn toward the hero while he talks
-  to them (sprites follow the camera; model orientation has no API in
-  `AnimatedScene`); NPC heights are those of the placements; ground snapping and
-  hero movement are approximate (no acceleration or radius).
-  Doors, areas and warps follow `dq9_core::field` (compared with
-  melonDS on the Stornway church) without the door animation; zone triggers are
-  evaluated; their event requests are executed (§ [Events](events.md)), the other requests
-  only logged, and stairs, falls and NPC paths are not executed. Network
+- **NPCs, limits**: the NPC a conversation opens with turns toward the hero at the game's step
+  and holds that heading; `<END_R_TURN>` gives its saved heading back
+  (`AnimatedScene::turn_npc_toward`/`release_npc`, `animation/facing.rs`;
+  [`re/dialogue.md`](../re/dialogue.md) § "Turned to the hero"); an NPC a scene leaves alone
+  keeps its angle (the scene used to write 0 back every tick). NPC heights are those of the
+  placements; ground snapping and hero movement are approximate (no acceleration or radius).
+  Doors, areas and warps follow `dq9_core::field` (compared with melonDS on the Stornway
+  church), including a doorway's own rotation on touch (native 584,
+  [`re/trigger.md`](../re/trigger.md) § "Doorways without destination and inner doors"); zone
+  triggers are evaluated; their event requests are executed (§ [Events](events.md)), the other
+  requests only logged, and stairs, falls and NPC paths are not executed. Network
   visitors, the `s069` accessory and additive palette tint (type 22) remain
   absent. Blending of several poses, `.beff`/`.bact` effects/actions and sprite
   modes other than standing/seated are not executed. MAT colors are evaluated;

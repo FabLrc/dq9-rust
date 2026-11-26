@@ -10,11 +10,13 @@ the purse halved, the party wakes in a church), a flight returns to the field.
 `<code>_f.mon` models and stand/walk/run/appear motions. `app/roaming.rs` steps the existing
 core rules at 30 Hz, on the actual collision world; equipment contributes to party strength
 and deftness, preset companies come from `eventbattle.bin`, and the field and battles retain
-one continuous generator stream. Natural contact calls `start_encounter`; victory fades and
-releases the fought model, flight retains it and prevents immediate re-contact. The exact
-original post-flight state/recent-list writer remains **[hypothesis]**
-(`re/encounter.md`, Application wiring). Field-menu/facility screens are still absent.
-Headless parity runs keep roaming disabled.
+one continuous generator stream. Natural contact calls `start_encounter`; a won fight releases
+the fought model at once (`Roamers::settle`, the original's reset + hide at `ov_000::021688dc`)
+and its id leaves the four-id recent ring; a flight leaves the model standing where it was, in
+state 9 (`FOUGHT`, which the contact check skips) and drops the id too. The ring's writer (field
+message 61) and remover (message 83) are read from the code; the run never captured a battle's
+exit, so that step is the code's reading (`re/encounter.md` § (d2), "Not modelled / open").
+Field-menu/facility screens are still absent. Headless parity runs keep roaming disabled.
 
 Native window evidence (`build/evidence/j4-roaming-play/`): natural F01 contact → victory
 in 3 rounds (3 experience, 5 gold) → same field with no ghost model,
