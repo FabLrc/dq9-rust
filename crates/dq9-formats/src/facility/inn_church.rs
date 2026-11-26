@@ -96,7 +96,7 @@ pub mod church_line {
 /// The services of a church's menu, in the order of its labels 0 to 5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Service {
-    /// Confession: saves the adventure log. Not in this build (v0.3).
+    /// Confession: saves the adventure log (the application runs the flow, `v3-save-menu`).
     Confession,
     /// Divination: free, what the next level wants.
     Divination,

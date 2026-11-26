@@ -201,10 +201,6 @@ fn the_church_services_and_the_resurrection_price_table() {
             cursed: true
         }
     );
-    assert_eq!(
-        church::offer(Service::Confession),
-        church::Offer::Unavailable(church::NOT_AVAILABLE)
-    );
 }
 
 /// `str_ch` line 1100, the coffin greeting: all eight church files carry it, the Observatory's

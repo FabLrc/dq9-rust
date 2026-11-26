@@ -99,7 +99,7 @@ impl App {
             .filter(|(before, after)| before != after)
             .count();
         status(&format!(
-            "--save-out: wrote {} (slot {index}, map {}, story {}.{}.{}, {} member(s), {} gold, \
+            "save: wrote {} (slot {index}, map {}, story {}.{}.{}, {} member(s), {} gold, \
              {} byte(s) differ from the input{}; {} field range(s))",
             out.display(),
             state.map,

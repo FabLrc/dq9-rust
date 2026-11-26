@@ -446,32 +446,6 @@ pub fn wipe_out_voice_file(voice: u8) -> Option<u8> {
     (voice != WIPE_OUT_SILENT).then(|| voice.saturating_sub(1))
 }
 
-/// What this build does with a service.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Offer {
-    /// The service runs here.
-    Runs,
-    /// The service does not: the text to show.
-    Unavailable(&'static str),
-}
-
-/// The text [`Offer::Unavailable`] gives for the Confession, which needs saving (`docs/status.md`,
-/// v0.3).
-pub const NOT_AVAILABLE: &str = "not available in this build";
-
-/// Whether a service runs in this build: everything but the Confession, which saves the
-/// adventure log and ends the game on "No" (wiki *Inns-and-Churches*, § The church).
-pub fn offer(service: Service) -> Offer {
-    match service {
-        Service::Confession => Offer::Unavailable(NOT_AVAILABLE),
-        Service::Divination
-        | Service::Resurrection
-        | Service::Purification
-        | Service::Benediction
-        | Service::Nothing => Offer::Runs,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -721,24 +695,6 @@ mod tests {
             Err(ChurchError::NoStatus)
         );
         assert_eq!(state.gold, 1000);
-    }
-
-    #[test]
-    fn the_confession_is_not_in_this_build() {
-        assert_eq!(
-            offer(Service::Confession),
-            Offer::Unavailable("not available in this build")
-        );
-        assert_eq!(NOT_AVAILABLE, "not available in this build");
-        for service in [
-            Service::Divination,
-            Service::Resurrection,
-            Service::Purification,
-            Service::Benediction,
-            Service::Nothing,
-        ] {
-            assert_eq!(offer(service), Offer::Runs);
-        }
     }
 
     #[test]

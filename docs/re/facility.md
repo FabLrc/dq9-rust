@@ -257,9 +257,8 @@ death is the member's HP being 0, and what sets the other two is **not establish
 caller keeps the two bits beside the party (`facility::church::MemberStatus`).
 
 **Confession** saves the adventure log: `ov_003::02159d0c` (state 3) is the whole flow, in
-§ "The Confession" below. `church::offer` still returns `Offer::Unavailable(NOT_AVAILABLE)` and
-its own test asserts it; the port no longer asks it — the saving is the application's — so that
-core copy is a leftover for its owner to remove.
+§ "The Confession" below; the application runs it and writes the save (`v3-save-menu`), so the
+core has no "unavailable" fallback any more.
 
 **Divination**: free; line 1021 with the experience wanted when the next level's row is above
 the member's experience, 1022 at level 99, **[hypothesis]** 1023 when the experience for the
