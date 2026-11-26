@@ -444,8 +444,8 @@ pub struct Frame {
 
 impl Frame {
     /// The frame of `content` for the party at `party` (map positions `x, z`), hero first: one
-    /// strip and one dot per member, up to [`MEMBERS`]. The members share the party's position
-    /// in the port (their own field positions are not modelled), so their dots coincide.
+    /// strip and one dot per member, up to [`MEMBERS`]. The dots sit at each member's own field
+    /// position (`v3-party-companions`; the app passes the followers' places).
     pub fn new(content: &Content, party: &[(f32, f32)], picture_offset: (f32, f32)) -> Self {
         let mut sprites = Vec::with_capacity(party.len().min(MEMBERS) * 2);
         for (slot, &position) in party.iter().take(MEMBERS).enumerate() {
