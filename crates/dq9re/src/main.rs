@@ -11,6 +11,7 @@ mod hero;
 mod inspect;
 mod map;
 mod maps;
+mod minimap;
 mod model;
 mod msg;
 mod save;
@@ -193,6 +194,9 @@ enum Command {
         #[arg(long)]
         state: Option<PathBuf>,
     },
+    /// The field's map screen data (`minimap.gp2`): counts over the cartridge, or one map's
+    /// layout (picture, scale, corner, marks, party strip) and its picture as a PNG.
+    Minimap(minimap::MinimapArgs),
     /// The files a map loads (`<code>.ambl`, lighting, `<code>.amdj`) and how the game
     /// assembles them: blocks, parts with their files, instances with world transforms.
     /// With `--state`, compares the result with the map loaded in a melonDS state.
@@ -458,6 +462,7 @@ fn main() -> Result<()> {
             decompress,
         } => inspect::narc(&rom, &path, out.as_deref(), decompress),
         Command::Maps { state } => maps::run(&rom, state.as_deref()),
+        Command::Minimap(args) => minimap::run(&rom, &args),
         Command::Map(args) => map::run(&rom, &args),
         Command::Doors(args) => doors::run(&rom, &args),
         Command::Chr(args) => cast::run_chr(&rom, &args),

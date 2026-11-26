@@ -20,6 +20,7 @@ pub mod map;
 pub mod maplist;
 pub mod melonds;
 pub mod message;
+pub mod minimap;
 pub mod save;
 pub mod sdat;
 pub mod spr;

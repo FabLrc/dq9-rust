@@ -11,6 +11,7 @@ pub mod fnt;
 pub mod g3d;
 pub mod header;
 pub mod narc;
+pub mod nitro2d;
 pub mod rom;
 
 pub use error::{Error, Result};
