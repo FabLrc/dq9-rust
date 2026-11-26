@@ -12,6 +12,13 @@
 # (`?play-record=1`) with the ROM and reads the stop line (docs/app/record.md, "Recording a human
 # session"). Both write result.json and console.log like the pilot.
 #
+# `-Mode shots -Script <plan>` drives the field itself for a capture: it chooses the ROM, the
+# optional `-Save` (which starts the field) through the page's file inputs and plays a one-line-
+# per-action plan (`web/session-driver.mjs`, section "macro mode") — `wait`/`tap`/`hold` keys,
+# the page's `screens`/`layout` selectors and `shot <name> [canvas]`. It writes the page or
+# `#dq9`-only screenshots under `<Out>/shots` and result.json, and works with `-Url` on the
+# hosted Pages deployment as well as with a local `-Site`.
+#
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out build/evidence/j4-web-pilot/run1
 #   powershell -ExecutionPolicy Bypass -File scripts/web-session.ps1 -Out ... `
@@ -31,8 +38,10 @@
 # docs/app/browser.md, "Build and local server"). The Cargo target is the caller's CARGO_TARGET_DIR.
 param(
     [Parameter(Mandatory = $true)] [string] $Out,
-    [ValidateSet('pilot', 'record', 'replay')] [string] $Mode = 'pilot',
+    [ValidateSet('pilot', 'record', 'replay', 'shots')] [string] $Mode = 'pilot',
     [string] $Record = '',
+    [string] $Script = '',
+    [string] $Save = '',
     [int] $Steps = 3000,
     [string] $Query = '',
     [string] $Url = '',
@@ -59,6 +68,11 @@ if (-not $Rom -or -not (Test-Path -LiteralPath $Rom)) {
 }
 
 # Each mode drives the page with its own query string (`docs/app/browser.md`).
+if ($Mode -eq 'shots') {
+    if (-not $Script) { throw '-Mode shots needs -Script <the capture plan>' }
+    if (-not $Query) { throw '-Mode shots needs -Query (the page start options of the capture)' }
+    if ($Save -and -not (Test-Path -LiteralPath $Save)) { throw "no save at $Save" }
+}
 if (-not $Query) {
     $Query = switch ($Mode) {
         'record' { 'newgame=1&seed=7&record=1&mute=1' }
@@ -95,6 +109,8 @@ $nodeArgs = @(
 )
 if ($Mode -eq 'record') { $nodeArgs += @('--steps', "$Steps") }
 if ($Record) { $nodeArgs += @('--record', (Resolve-Path -LiteralPath $Record).Path) }
+if ($Script) { $nodeArgs += @('--script', (Resolve-Path -LiteralPath $Script).Path) }
+if ($Save) { $nodeArgs += @('--save', (Resolve-Path -LiteralPath $Save).Path) }
 if ($Url) { $nodeArgs += @('--url', $Url) } else { $nodeArgs += @('--site', $Site) }
 if ($Browser) { $nodeArgs += @('--browser', $Browser) }
 if ($BrowserArgs) { $nodeArgs += "--browser-args=$BrowserArgs" }

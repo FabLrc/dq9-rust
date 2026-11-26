@@ -94,7 +94,13 @@ if (site) {
 // ---- browser ----
 // The browser profile is scratch: outside the evidence folder, one per DevTools port.
 const profile = path.join(os.tmpdir(), `dq9-web-session-${debugPort}`);
-fs.rmSync(profile, { recursive: true, force: true });
+// A previous browser of the same port may still be closing: the profile is scratch, so a
+// locked file must not abort the run.
+try {
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+} catch (e) {
+  say(`profile left in place (${e.code}); the browser reuses it`);
+}
 const browser = spawn(
   browserPath,
   [
@@ -411,6 +417,166 @@ if (mode === "record" || mode === "replay") {
   stopBrowser();
   server?.close();
   process.exit(ok ? 0 : 1);
+}
+
+// ---- macro mode: field captures (`--mode shots`) ----
+// Drives the page's field from a small plan file, one action per line, so a capture session
+// chooses the ROM and the optional `--save` through the page's own file inputs, switches the
+// page's `Screens`/`Layout` selectors and presses real keys:
+//
+//   wait <ms>              sleep (the field needs a few frames after the ROM/save is read)
+//   focus                  give the keyboard back to the canvas (`#dq9`)
+//   tap <Key> [gapMs]      press and release a key
+//   hold <Key> <ms>        hold a key
+//   shot <name> [canvas]   screenshot the page, or only the `#dq9` canvas
+//   screens <port|original>  the page's `Screens` selector (`?screens=`)
+//   layout <name>          the page's `Layout` selector (`?layout=`)
+//
+// The query still carries the start options (`?map=M01&screens=original`); the save starts the
+// field itself (`set_save`), so a save session needs no "New game" click.
+if (mode === "shots") {
+  const planFile = args.script ? path.resolve(args.script) : null;
+  if (!planFile) throw new Error("missing --script (the capture plan)");
+  const plan = fs
+    .readFileSync(planFile, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => line.split(/\s+/));
+  const save = args.save ? path.resolve(args.save) : null;
+  const pickFile = async (selector, file) => {
+    const doc = await cdp("DOM.getDocument", { depth: 0 });
+    const node = await cdp("DOM.querySelector", { nodeId: doc.root.nodeId, selector });
+    if (!node.nodeId) throw new Error(`no ${selector} field in the page`);
+    await cdp("DOM.setFileInputFiles", { files: [file], nodeId: node.nodeId });
+  };
+  const virtualKeys = {
+    Enter: 13, Space: 32, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39,
+    KeyW: 87, KeyA: 65, KeyS: 83, KeyD: 68, KeyQ: 81, KeyE: 69, KeyZ: 90, KeyX: 88,
+    KeyI: 73, Escape: 27,
+  };
+  const keyText = (name) =>
+    name === "Space" ? " " : name.startsWith("Key") ? name.slice(3).toLowerCase() : name;
+  const keyEvent = (type, name) =>
+    cdp("Input.dispatchKeyEvent", {
+      type,
+      key: keyText(name),
+      code: name,
+      windowsVirtualKeyCode: virtualKeys[name] ?? 0,
+      nativeVirtualKeyCode: virtualKeys[name] ?? 0,
+    });
+  const tap = async (name, gap = 300) => {
+    await keyEvent("keyDown", name);
+    await sleep(60);
+    await keyEvent("keyUp", name);
+    await sleep(gap);
+  };
+  const hold = async (name, ms) => {
+    await keyEvent("keyDown", name);
+    await sleep(ms);
+    await keyEvent("keyUp", name);
+    await sleep(200);
+  };
+  const selectValue = async (selector, value) => {
+    const got = await evaluate(
+      `(() => { const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) return "no selector";
+        el.value = ${JSON.stringify(value)};
+        if (el.value !== ${JSON.stringify(value)}) return "rejected: " + el.value;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return el.value; })()`,
+    );
+    if (got !== value) throw new Error(`${selector}=${value}: ${got}`);
+    say(`${selector}=${got}`);
+  };
+  const taken = [];
+  const capture = async (name, canvasOnly) => {
+    const params = { format: "png" };
+    if (canvasOnly) {
+      const rect = JSON.parse(
+        await evaluate(`(() => { const el = document.querySelector('#dq9');
+          const r = el.getBoundingClientRect();
+          return JSON.stringify({ x: r.x, y: r.y, width: r.width, height: r.height }); })()`),
+      );
+      params.clip = { ...rect, scale: 1 };
+    }
+    const png = await cdp("Page.captureScreenshot", params);
+    const file = `shots/${String(taken.length + 1).padStart(2, "0")}-${name}.png`;
+    fs.writeFileSync(path.join(out, file), Buffer.from(png.data, "base64"));
+    taken.push({ file, name, canvasOnly });
+    say(`screenshot ${file}${canvasOnly ? " (canvas)" : ""}`);
+  };
+
+  const url = hosted ? hosted.toString() : `http://127.0.0.1:${port}/?${query}`;
+  say(`open ${url}`);
+  await cdp("Page.navigate", { url });
+  let ready = false;
+  for (let i = 0; i < 600 && !ready; i++) {
+    ready = await evaluate(
+      "(() => { const r = document.querySelector('#rom'); return !!r && !r.disabled; })()",
+    ).catch(() => false);
+    if (!ready) await sleep(250);
+  }
+  if (!ready) throw new Error("the page never offered the ROM field");
+  say(`choose ROM ${path.basename(rom)} (read by the browser, not served)`);
+  await pickFile("#rom", rom);
+  // The page disables a file field while it reads it, then re-enables it (`web.rs`). The status
+  // line is overwritten at once by the engine's own lines, so the field state is the signal.
+  const waitRead = async (selector, what) => {
+    for (let i = 0; i < 60; i++) {
+      const disabled = await evaluate(
+        `(() => !!document.querySelector(${JSON.stringify(selector)})?.disabled)()`,
+      );
+      if (disabled) break;
+      await sleep(100);
+    }
+    for (let i = 0; i < 1200; i++) {
+      const disabled = await evaluate(
+        `(() => !!document.querySelector(${JSON.stringify(selector)})?.disabled)()`,
+      );
+      if (!disabled) return;
+      await sleep(100);
+    }
+    throw new Error(`${what}: the field stayed disabled`);
+  };
+  await waitRead("#rom", "the ROM");
+  if (save) {
+    say(`choose save ${path.basename(save)} (read by the browser, not served)`);
+    await pickFile("#save", save);
+    await waitRead("#save", "the save");
+  }
+  // The field builds its map and assets over the next frames; the plan's first `wait` covers
+  // the rest (it captures whatever the page shows, so a short wait cannot fake a scene).
+  await sleep(2500);
+  for (const [action, ...rest] of plan) {
+    if (action === "wait") await sleep(Number(rest[0] ?? 1000));
+    else if (action === "focus") await evaluate("document.querySelector('#dq9').focus()");
+    else if (action === "tap") await tap(rest[0] ?? "Enter", Number(rest[1] ?? 300));
+    else if (action === "hold") await hold(rest[0] ?? "Enter", Number(rest[1] ?? 500));
+    else if (action === "shot") await capture(rest[0] ?? "shot", rest[1] === "canvas");
+    else if (action === "screens") await selectValue("#screens", rest[0] ?? "original");
+    else if (action === "layout") await selectValue("#layout", rest[0] ?? "stacked");
+    else throw new Error(`unknown plan action: ${action}`);
+  }
+  const summary = {
+    ok: !crashed && taken.length > 0,
+    mode,
+    url,
+    query,
+    save,
+    script: planFile,
+    browser: version.Browser,
+    wallSeconds: (Date.now() - started) / 1000,
+    consoleErrors,
+    shots: taken,
+  };
+  fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(summary, null, 2));
+  say(`result: ${JSON.stringify({ ok: summary.ok, shots: taken.length, consoleErrors })}`);
+  await new Promise((resolve) => consoleLog.end(resolve));
+  await new Promise((resolve) => progressLog.end(resolve));
+  stopBrowser();
+  server?.close();
+  process.exit(summary.ok ? 0 : 1);
 }
 
 // ---- screenshots ----
