@@ -13,13 +13,18 @@
 //!   `func_02032370(oneIn) == 0` on the C library's `rand` (EU `0x02032380`:
 //!   `(int)(oneIn × ((rand() − 1) / 32767.0))`, in `double`), `oneIn` from the word at
 //!   `0x021fd888`: 1, 8, 16, 32, 64, 128, 256 and 0 for "never" (no draw). At most eight items
-//!   are kept. The four extra passes of the item-finding ability are not modelled.
+//!   are kept. The leader's pass is followed by one extra pass per party member whose
+//!   live record carries the item-finding flag `0xA4` and whose battle counter is at least half
+//!   the turns played; that pass's `oneIn` is `N × 100 ÷ level` (`0x021f49c4`, `0x021f4a8c`), so
+//!   its odds are `level ÷ 100` of the leader's, and a "one in one" step (byte 0) draws nothing
+//!   there (`0x021f49e0`, `0x021f4aa8`). See [`PartyMember::item_finder`].
 //!
 //! Nothing here is marked as ported: the victory routine is translated for the totals and the
-//! first pass of the drops only.
+//! drops, without the group flags that force a drop nor the treasure-map branch.
 
 use super::random::CRand;
 use super::round::{Battle, BattleError};
+use crate::party::PARTY_MAX;
 
 /// How a battle ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +92,27 @@ impl Battle {
         }
     }
 
+    /// Whether party slot `slot` grants an extra drop pass, and at which level
+    /// (`ov_023::021f454c`): the member must exist, carry the item-finding flag
+    /// ([`PartyMember::item_finder`]), and hold at least half the battle's counter
+    /// (`0x02053e0c ÷ ctrl+0x58cc ≥ 0.5`, `0x021f4674`–`0x021f4690`). The counter is
+    /// [`Battle::passes`], the divisor the turns played.
+    ///
+    /// The site also skips a member `func_02010088` answers nonzero for (`0x021f4664`): bit 0 of
+    /// the live record's `+0xA8`, the same bit that freezes the battle counter
+    /// (`PartyMember_AddBattleCounter`, `0x02053de0`). Its meaning is **[unknown]**
+    /// (`docs/re/party.md`), and the port evaluates neither it nor the HP: a member that took
+    /// the bit mid-battle with a half counter keeps its extra pass here, the one known
+    /// divergence.
+    fn drop_pass(&self, slot: usize) -> Option<u8> {
+        let member = self.party.get(slot)?;
+        let level = member.item_finder?;
+        if u64::from(self.passes[slot]) * 2 < u64::from(self.round) {
+            return None;
+        }
+        Some(level)
+    }
+
     /// The end of a finished battle: the result, and on a victory the totals and the drops,
     /// rolled on `rand` (the C library's generator, which nothing in the battle seeds).
     ///
@@ -108,16 +134,39 @@ impl Battle {
         let experience = (self.experience as f32 * 1.0f32) as u32;
         let gold = (self.gold as f32 * 1.0f32) as u32;
         let mut drops = Vec::new();
-        'kinds: for kind in &self.kills {
-            // Rare first (`+0x03` step, `+0x06` item), the ordinary one only if it did not land.
-            for slot in [1usize, 0] {
-                let one_in = ONE_IN[usize::from(kind.steps[slot] & 7)];
-                if one_in > 0 && drop_roll(rand, one_in) {
-                    drops.push(kind.drops[slot]);
-                    if drops.len() >= MAX_DROPS {
-                        break 'kinds;
+        // One pass for the leader (`0x021f461c`–`0x021f46c0`: `psVar17[5] = 0xFF`) then one for
+        // each party slot whose member has the item-finding flag, is standing and holds at least
+        // half the battle's counter (`0x021f4628`–`0x021f46b4`). Every pass walks all the kinds
+        // again, rare first (`+0x03` step, `+0x06` item), the ordinary one (`+0x02`/`+0x04`) only
+        // when the rare did not land.
+        'passes: for pass in 0..=PARTY_MAX {
+            let scale = if pass == 0 {
+                None
+            } else {
+                match self.drop_pass(pass - 1) {
+                    Some(level) => Some(i32::from(level)),
+                    None => continue,
+                }
+            };
+            for kind in &self.kills {
+                for slot in [1usize, 0] {
+                    let base = ONE_IN[usize::from(kind.steps[slot] & 7)];
+                    // `0x021f49c4`–`0x021f49e4` (rare) and `0x021f4a8c`–`0x021f4aa8` (common):
+                    // `N × 100 ÷ level`, truncated. A step whose byte is 0 ("one in one") is
+                    // forced to 0 on an extra pass (`moveq` after the division), so a certain
+                    // drop is never granted again; a "never" step (index 7) stays 0 too.
+                    let one_in = match scale {
+                        None => base,
+                        Some(_) if kind.steps[slot] == 0 => 0,
+                        Some(level) => base * 100 / level,
+                    };
+                    if one_in > 0 && drop_roll(rand, one_in) {
+                        drops.push(kind.drops[slot]);
+                        if drops.len() >= MAX_DROPS {
+                            break 'passes;
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         }

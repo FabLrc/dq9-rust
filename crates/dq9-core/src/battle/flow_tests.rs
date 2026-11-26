@@ -517,6 +517,155 @@ fn the_drop_roll_matches_the_formula_and_the_cap_is_eight() {
     );
 }
 
+/// The drops' passes (`ov_023::021f454c`, read at `0x021f4618`–`0x021f46b8` and
+/// `0x021f49c4`–`0x021f4b30`): one leader pass, then **one extra pass per party slot** whose
+/// member carries the item-finding flag (`func_02083b00(live, 0xA4)`, EU `0x02083b10`) and holds
+/// at least half the battle's counter. A second member's flag therefore does add a pass: the
+/// batch's premise that only the leader's matters is refuted by the code, not adopted.
+#[test]
+fn an_extra_pass_never_replays_a_certain_drop() {
+    // Both steps are byte 0, "one in one". The leader's pass rolls the rare slot and keeps it;
+    // an extra pass forces `N` to 0 for a byte-0 step (`0x021f49d8`–`0x021f49e0`,
+    // `0x021f4aa0`–`0x021f4aa8`), so it draws nothing and repeats nothing.
+    let mut b = battle(
+        vec![slime(0, 1, 5)],
+        vec![hero(100, 9), hero(100, 8)],
+        Surprise::None,
+    );
+    b.result = Some(BattleResult::Won);
+    b.kills = vec![end::Kind {
+        number: 1,
+        group: 0,
+        drops: [22000, 22087],
+        steps: [0, 0],
+    }];
+    b.round = 2;
+    b.passes = [2, 2, 2, 2];
+    b.party[1].item_finder = Some(50);
+    let mut rand = CRand::new(1);
+    let end = b.finish(&mut rand).unwrap();
+    assert_eq!(end.drops, vec![22087], "the leader's one copy only");
+    assert_eq!(
+        rand,
+        {
+            let mut replay = CRand::new(1);
+            replay.rand();
+            replay
+        },
+        "exactly one draw"
+    );
+}
+
+/// An extra pass needs half the battle's counter (`0x021f4674`–`0x021f4690`) and rolls
+/// `N × 100 ÷ level` (`0x021f49c4`–`0x021f49d0`, the rare roll; `0x021f4a8c`–`0x021f4a98`, the
+/// ordinary one), so its odds are `level ÷ 100` of the leader's. The site has no HP test.
+#[test]
+fn an_extra_pass_needs_half_the_counter_and_rolls_n_times_one_hundred_over_the_level() {
+    let decision = |one_in: i32, draw: u32| {
+        (f64::from(one_in) * (f64::from(draw as i32 - 1) / 32767.0)) as i32 == 0
+    };
+    // A draw band where 1 in 8 would hit and 1 in 16 cannot (`one_in × (draw − 1) < 32767`):
+    // the leader's own draw misses, the extra pass's draw lands in it, so a drop there proves
+    // the extra pass used 16 and not 8.
+    let band = (1..=10_000)
+        .find(|&seed| {
+            let mut probe = CRand::new(seed);
+            let first = probe.rand();
+            let second = probe.rand();
+            !decision(8, first) && !decision(16, second) && decision(8, second)
+        })
+        .expect("a seed whose second draw is in the 1-in-8-only band");
+    let hit = (1..=10_000)
+        .find(|&seed| {
+            let mut probe = CRand::new(seed);
+            let first = probe.rand();
+            let second = probe.rand();
+            !decision(8, first) && decision(16, second)
+        })
+        .expect("a seed where the leader misses and 1 in 16 hits");
+    let setup = || {
+        let mut b = battle(
+            vec![slime(0, 1, 5)],
+            vec![hero(100, 9), hero(100, 8)],
+            Surprise::None,
+        );
+        b.result = Some(BattleResult::Won);
+        // The ordinary slot is "never", the rare one 1 in 8: one draw per pass.
+        b.kills = vec![end::Kind {
+            number: 1,
+            group: 0,
+            drops: [22000, 22087],
+            steps: [7, 1],
+        }];
+        b
+    };
+    let draws = |count: usize, seed| {
+        let mut generator = CRand::new(seed);
+        for _ in 0..count {
+            generator.rand();
+        }
+        generator
+    };
+    // Exactly half the counter passes the float comparison; the extra pass draws with `100 ÷ 50`
+    // and misses in the band, which 1 in 8 would have hit.
+    let mut b = setup();
+    b.passes = [2, 2, 2, 2];
+    b.round = 4;
+    b.party[1].item_finder = Some(50);
+    let mut rand = CRand::new(band);
+    assert!(b.finish(&mut rand).unwrap().drops.is_empty());
+    assert_eq!(rand, draws(2, band), "one draw per pass");
+    // Without the flag the leader's single miss is the whole story.
+    b.party[1].item_finder = None;
+    let mut rand = CRand::new(band);
+    assert!(b.finish(&mut rand).unwrap().drops.is_empty());
+    assert_eq!(rand, draws(1, band));
+    // Below half the counter there is no extra pass either.
+    b.party[1].item_finder = Some(50);
+    b.round = 5;
+    let mut rand = CRand::new(hit);
+    assert!(b.finish(&mut rand).unwrap().drops.is_empty());
+    assert_eq!(rand, draws(1, hit));
+    // At exactly half the extra pass lands; the port evaluates neither HP nor the unmodelled
+    // `live+0xA8` bit 0 gate, so a member down at the end still draws it.
+    b.round = 4;
+    b.party[1].fighter.hp = 0;
+    let mut rand = CRand::new(hit);
+    assert_eq!(b.finish(&mut rand).unwrap().drops, vec![22087]);
+    assert_eq!(rand, draws(2, hit));
+}
+
+/// The final damage of one hit is the quantity the executor stores at `sp+0x54` before the
+/// action handler applies and shows it (`ov_024::021ec7ac`): the target's HP loses exactly that
+/// amount and the report carries the same value, after the resistance, the block and the combo.
+#[test]
+fn the_final_damage_of_one_hit_is_the_hp_the_target_loses_and_the_report_carries() {
+    let mut b = battle(vec![slime(0, 5000, 5)], vec![hero(100, 99)], Surprise::None);
+    let mut world = Random::new(3);
+    let report = b.round(&[attack(0)], &mut world).unwrap();
+    let (target, outcome) = report
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::Acted {
+                who: Who::Party(0),
+                outcomes,
+                ..
+            } => outcomes.first().cloned(),
+            _ => None,
+        })
+        .expect("the hero acted");
+    assert_eq!(target, Who::Monster(0));
+    assert!(outcome.landed && !outcome.dodged && !outcome.blocked);
+    assert!(outcome.amount > 0);
+    assert_eq!(outcome.amount, outcome.hp_before - outcome.hp_after);
+    assert_eq!(
+        b.monsters()[0].fighter.hp,
+        outcome.hp_after,
+        "the HP the round applied is the amount the report carries"
+    );
+}
+
 /// The battle's counter (`ov_026::021dacb0` → `PartyMember_AddBattleCounter`, `0x02053de0`):
 /// one increment per round for every member the battle holds — the call site tests the slot's
 /// presence, not its HP, so a member down at the round's start still takes it — and a round the

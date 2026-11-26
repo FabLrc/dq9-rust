@@ -445,10 +445,59 @@ both multipliers taken as 1.0 (**[hypothesis]**). Drops (`func_ov023_021f454c`):
 land, `func_02032380(oneIn) == 0` = `(int)(oneIn × ((rand() − 1) / 32767.0)) == 0` in `double`
 (`0x020323d0` holds the divisor's high word), `oneIn` = 1, 8, 16, 32, 64, 128, 256, 0 (`0x021fd888`; 0
 draws nothing), at most eight kept; the C library's `rand` is the caller's `CRand` (nothing in the
-battle seeds it). Not modelled: the four extra passes of the item-finding trait (`0xa4`), the
-grotto and treasure-map branch, the group flags that force a drop. Sharing the experience is
-`func_ov023_021f4098` (`Party::award_with`'s), weighed by the member's level and by the battle's
-counter.
+battle seeds it). Not modelled: the grotto and treasure-map branch, the group flags that force a
+drop. Sharing the experience is `func_ov023_021f4098` (`Party::award_with`'s), weighed by the
+member's level and by the battle's counter.
+
+**The order the reward anchors impose** (batch `v3-reward-hooks`, EU code and the DQ9Recompiled
+manifests' anchors, `docs/re/dq9recompiled.md` § 11):
+
+| step | original (EU) | ours |
+|---|---|---|
+| totals | `ov_023::021edf54`: `(u32)(float([+0x8e28]) × [+0x8e3c])` → `ctrl+0x58c0`, gold `[+0x8e2c] × [+0x8e40]` → `ctrl+0x58c4` | `Battle::finish`: `(sum as f32) as u32`, both multipliers 1.0 |
+| experience per slot | the same routine, per slot of the battle's mask: `func_ov023_021f4098(ctrl, slot, 0)` → `ctrl+0x5758 + 4·slot` (22360), **before** the results snapshot; every machine reaches `0x021ee4f4` once the array holds the leader's figures (guests receive them with message 106) | `Party::award_with` splits the total with `func_ov023_021f4098`'s formula and the battle's counter when the fight closes, before the level-up rows are read — the same numbers in the same order relative to the snapshot, for one player (`func_ov023_021f4098` scales the total by `1 + (connected players − 1) ÷ uRam021f442c` in a session; `award_with` has no such factor, the multiplayer path being unmodelled) |
+| experience applied | `ov_023::021f5150`: each slot's `ctrl+0x5758 + 4·slot` added to `member + 0x138 + 4·vocation` | `Party::award_with`: the current vocation's experience |
+| gold share | `ov_023::021f44d0`: `x = (float)ctrl+0x58c4 × ((float)u16 ctrl+0x58ce ÷ (float)u16 ctrl+0x58cc)`, raised to `1.0` when `0 < x < 1` (`0x021f4520`–`0x021f453c`, `0x200c088` = `fcmplt`; 0 stays 0), then truncated | the whole total: the ratio is 1 whenever the player stood through the battle (below), and the total is far above 1 |
+| gold applied | `ov_023::021f5150`: the share is stored at `0x021f51ec` (`str r0,[r7]`, `r7` = the caller's `ctrl+0x5768`, the results amount) and added to the party's gold at `0x021f51f0`–`0x021f5208`, held to the literal `0x0098967F` | `Party::award_with`: `saturating_add`, held to `GOLD_MAX` |
+
+`ctrl+0x58cc` is written from `ctrl+0x8e20` (the turn count, incremented by `func_ov000_0215e6e8`
+at the end of every turn, `ov_000::02169770`'s call), and `ctrl+0x58ce` is counted once per turn in
+`ov_026::021d8ba0` (the command-entry block that also adds the battle counter) for a player with at
+least one member `func_02010088` answers 0 for. The ratio `0x58ce ÷ 0x58cc` is therefore 1 for a
+single player whose party stood, and the whole total is stored and added — the `bat6.ml1` oracle
+(13 gold from battle 26's 13) agrees with ours. A positive share below 1.0 is raised to 1.0 before
+the truncation, so a player who was wiped for part of the battle still receives at least 1 gold; a
+zero share stays 0. The two fields' multiplayer meaning remains **[hypothesis]** (which member
+answers `func_02010088` and when); no reference observes it.
+
+**The item-finding passes** (`func_ov023_021f454c`, read in the disassembly at `0x021f4618`–
+`0x021f4b64`): the leader's pass (`psVar17[5] = 0xFF`) is followed by one extra pass per **party
+slot** (`0x021f4628`: `slot = pass − 1`) whose member
+
+- exists and is in the battle's mask (`0x0200ff2c`, `0x020a35f0`),
+- is not held by `func_02010088` (`0x021f4664`): bit 0 of the live record's `+0xA8`, the same
+  bit that freezes the battle counter (`PartyMember_AddBattleCounter`, `0x02053de0`, increments
+  only when it is clear). Its meaning is **[unknown]** (`docs/re/party.md`). This port evaluates
+  neither that bit nor an HP test: a member that took the bit mid-battle but kept a half counter
+  would take an extra pass here where the original skips it — the one known divergence, dormant
+  while nothing sets `PartyMember::item_finder`,
+- holds at least **half** the battle's counter (`func_02053e0c ÷ ctrl+0x58cc ≥ 0.5`,
+  `0x021f4674`–`0x021f4690`, a float compare),
+- and carries bit `0xA4` of the live record's flag block (`func_02083b00(live, 0xA4)`, EU
+  `0x02083b10`: byte `live+0x900` bit 4, `0x021f4694`).
+
+That member's level (`func_0202053c`, EU `0x0202054c`, `0x021f46ac`) scales the pass: the rare
+and ordinary `1/N` becomes `1/(N × 100 ÷ level)` (`0x021f49c4`–`0x021f49d0`,
+`0x021f4a8c`–`0x021f4a98`), so its odds are `level ÷ 100` of the leader's. A step byte of 0
+("one in one") is forced to 0 on an extra pass (`moveq` after the division, `0x021f49e0` and
+`0x021f4aa8`), so a guaranteed drop is **never granted twice**; a "never" step stays 0 too.
+**A second member's flag does add a pass**: the batch's premise that only the leader's matters is
+refuted by this code. The pass order is the leader over every kind first, then each eligible slot
+over every kind again, rare before ordinary inside each, so a kind can drop twice when its step
+is not a guaranteed one. Our `Battle::finish` walks `0..=PARTY_MAX` that way and takes the slot's
+level from `PartyMember::item_finder`; nothing in `dq9-app` sets that field yet (what grants the
+flag is **[unknown]**). Tests: `an_extra_pass_never_replays_a_certain_drop`,
+`an_extra_pass_needs_half_the_counter_and_rolls_n_times_one_hundred_over_the_level`.
 
 **The battle's counter** (`PartyMember_AddBattleCounter`, `0x02053de0`; its only call site is
 `ov_026::021dacb0`): one increment per command pass, for every slot of the battle's mask whose
@@ -457,7 +506,16 @@ actor exists — dead or standing, the call site tests no HP — unless bit 0 of
 every slot the battle holds), so a party present from the start has equal counts and the counter
 cancels in the share; it separates only a late joiner and a held member (0 experience). The
 facts, the disassembly and the open **[unknown]** (what bit 0 is) are in `docs/re/party.md`
-§ "Sharing the experience".
+§ "Sharing the experience". The same counter gates the item-finding pass above.
+
+**The per-hit damage handoff** (`ov_024::021ec7ac`): the action executor stores the value
+`ov_024::021e6a90` returned at `sp+0x54`, the amount the action-type handler applies and shows,
+with `sp+0xD2`/`sp+0xD0` the attacker's and target's actor ids. Ours is the same quantity: after
+tension, resistance, block/dodge, the coin, the combo table and the cap, `resolve_action` truncates
+once into `TargetOutcome::amount` (`0x021e6a90`'s `_ffix`), subtracts exactly it from the target's
+HP (`hp_after`), and the round reports that `TargetOutcome` to the caller (`Event::Acted`), so the
+reward and the UI read one number. Test:
+`the_final_damage_of_one_hit_is_the_hp_the_target_loses_and_the_report_carries`.
 
 **The application's award** (`crates/dq9-app/src/battle/fight.rs`, `closing`): `Fight` passes
 `Party::award_with` the battle's counter and `itembtlprm.nat`, so the ×1.05 shoes bonus

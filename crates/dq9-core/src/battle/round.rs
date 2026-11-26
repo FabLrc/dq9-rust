@@ -69,15 +69,24 @@ pub struct PartyMember {
     /// (`func_02085180`, `0x02085190`: bit 6 of the weapon's `itembtlprm` word). **[unknown]**
     /// which weapons; false unless the caller knows.
     pub weapon_acts_first: bool,
+    /// The current vocation's level when the live record carries bit `0xA4` of its flag block
+    /// (`func_02083b00(live, 0xA4)`: `live + 0x900` bit 4, read at `0x021f4694`), the item-finding
+    /// flag that grants the battle's extra drop passes (`ov_023::021f454c`). `None` draws no extra
+    /// pass. The level (`func_0202053c`, read at `0x021f46ac`) scales that pass's odds by
+    /// `level / 100`: an extra roll of `1/N` becomes `1/(N × 100 ÷ level)` for the drops, and a
+    /// treasure-map percentage `p` becomes `p × level ÷ 100`. What grants the flag is
+    /// **[unknown]** (no item-to-flag table is read); false unless the caller knows it.
+    pub item_finder: Option<u8>,
 }
 
 impl PartyMember {
-    /// A front-line member with no special weapon.
+    /// A front-line member with no special weapon and no item-finding flag.
     pub fn new(fighter: Fighter) -> Self {
         Self {
             fighter,
             back_line: false,
             weapon_acts_first: false,
+            item_finder: None,
         }
     }
 }

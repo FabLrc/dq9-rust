@@ -392,3 +392,23 @@ Exact steps and estimate if "try":
   game-level replay; we have not run it (clang/SDL3 absent here).
 - The "60 FPS Accurate" overclock and the 2D-window half-rate hook change guest-visible timing;
   any oracle run must keep the defaults (Off) and no hooks that alter game state.
+
+## 11. The reward and damage anchors, read against our code (batch `v3-reward-hooks`)
+
+The manifests' comments at `dq9_arm9_ov023.toml` / `dq9_arm9_ov024.toml` name the data flow
+around four hooks; each was resolved in the EU code and compared with `dq9-core`
+(`docs/re/battle.md` § "End", `docs/re/party.md` § "A won battle's award"). Evidence:
+`build/evidence/v3-reward-hooks/decomp-ov_023__021edf54.txt`, `…/decomp-ov_023__021f454c.txt`,
+`…/decomp-ov_023__021f44d0.txt`, `…/decomp-ov_023__021f5150.txt`,
+`…/disasm-021f454c.txt`.
+
+| hook | anchor | what the code does | our code | verdict |
+|---|---|---|---|---|
+| `Dq9BattleExpScale` | `0x021ee4f4` (`ldr r1,[r7,#0x29c]`) | `ov_023::021edf54` computes `(u32)(float(0x8e28) × 0x8e3c)` and, per slot of the battle's mask, `func_ov023_021f4098(ctrl, slot, 0)` into `ctrl+0x5758+4·slot` (`0x021ee140`); every machine reaches the anchor once that array is filled (leader computes, guests receive it with message 106, `0x021ee4b0` waits on flags 0x2000/0x4000/0x8000) | `Battle::finish` reports the sums and `Party::award_with` splits them with `func_ov023_021f4098`'s formula and the battle counter at the fight's close | agree in numbers and order (the snapshot follows the share) **for one player**; the routine's connected-player factor `1 + (n − 1) ÷ uRam021f442c` is absent from `award_with` (multiplayer unmodelled) |
+| `Dq9BattleGoldScale` | `0x021f51ec` (`str r0,[r7]`) | `func_ov023_021f44d0` returns `(u32)max(ctrl+0x58c4 × (0x58ce ÷ 0x58cc), 1.0)` for a positive share (0 stays 0, `0x021f4520`–`0x021f453c`); `0x021f51ec` stores it at the caller's `ctrl+0x5768` (the results amount) and `0x021f51f0`–`0x021f5208` add it to the party's gold, held to `0x0098967F` | the total, added whole and held to `GOLD_MAX` | agree for one player: `0x58cc` = turn count, `0x58ce` = turns with a member `func_02010088` answers 0 for, so the ratio is 1 (`bat6.ml1`: 13 = the monsters' 13); the split's multiplayer meaning is **[hypothesis]** |
+| `Dq9BattleDropOdds` | `0x021f4a00`, `0x021f4ac8` (`mov r0,r1`) | `ov_023::021f454c`: the leader's pass, then one pass per **party slot** that is in the battle, is not held by the `live+0xA8` bit 0 gate, holds ≥ half the battle counter and carries flag `0xA4` (`live+0x900` bit 4); that pass's `1/N` is `N × 100 ÷ level`, and a byte-0 step ("one in one") draws nothing there (`0x021f49e0`, `0x021f4aa8`); rare (`+0x03`/`+0x06`) before ordinary (`+0x02`/`+0x04`), eight items at most, no HP test | `Battle::finish` walks the same passes, `PartyMember::item_finder` carrying the flag and level | the manifests only called the code leader-only; the **second member's flag does add a pass** (0x021f4628–0x021f46b4), so the batch's premise was refuted and the read rule implemented; the challenger's review caught the byte-0 suppression, now pinned by `an_extra_pass_never_replays_a_certain_drop` |
+| `Dq9BattleDamageScale` | `0x021ec7ac` (`str r0,[sp,#0x54]`) | the action executor stores `ov_024::021e6a90`'s result — after resistance, block/dodge, the coin, the combo table and the cap — at `sp+0x54`; `sp+0xD2`/`sp+0xD0` are the actor ids | `resolve_action` truncates once into `TargetOutcome::amount`, subtracts exactly it from HP, and reports it | agree: one quantity applied and shown |
+
+The manifests' group-force flags (kind word bit 14 forces the rare, bit 15 the ordinary) and the
+treasure-map percentage branch of the same function remain unmodelled; they need fields our
+`Kind` does not carry and a grotto battle the engine cannot set up.

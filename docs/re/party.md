@@ -227,8 +227,20 @@ wiki and the item descriptions, not from a battle state; the rate fields are rea
    points receive column 10's difference, the pool held at **2,600** (`iRam021f1224`,
    `0xA28`). The row's experience column 0 is the wiki's **[INFERRED]** experience
    threshold.
-4. **Gold is added whole** and held at **9,999,999** (`func_ov023_021f5150`'s literal;
-   `func_0207d2c4`, EU `0x0207d2d4`, has the same cap).
+4. **Gold is the victory routine's total multiplied by a share, floored, added and held at
+   **9,999,999**.** The victory routine (`func_ov023_021edf54`) computes
+   `(u32)(float([battle + 0x8e2c]) × [battle + 0x8e40])` into `ctrl+0x58c4`;
+   `func_ov023_021f44d0` returns `x = (float)ctrl+0x58c4 × (ctrl+0x58ce ÷ ctrl+0x58cc)` (two
+   u16s, in floats), raises a positive `x` below 1.0 to 1.0 (`0x021f4520`–`0x021f453c`) and
+   truncates. `func_ov023_021f5150` stores that share at `0x021f51ec` (`str r0,[r7]`, `r7` =
+   the caller's `ctrl+0x5768`, the results amount) and adds it to the party's gold at
+   `0x021f51f0`–`0x021f5208`, held to the literal `0x0098967F` (`func_0207d2c4`, EU `0x0207d2d4`,
+   has the same cap). `ctrl+0x58cc` holds the turn count (`ctrl+0x8e20`) and `ctrl+0x58ce` is
+   counted once per turn in `ov_026::021d8ba0` for a player with a member `func_02010088`
+   answers 0 for, so the ratio is 1 for a single player whose party stood: the award is the whole
+   total, which the `bat6.ml1` oracle confirms (13 gold). `Party::award_with` adds the total
+   whole; the multiplayer meaning of the two share fields is **[hypothesis]**
+   (`docs/re/battle.md` § "The order the reward anchors impose").
 5. **Drops** take `func_0207c378`'s rule (EU `0x0207c388`): add to the first stack of the
    item, clamped to **99**, else to the first empty slot; a full bag loses the copy. The
    drop rolls themselves are the C library `rand` (`re/battle-data.md`, § "A monster's
