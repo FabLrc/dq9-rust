@@ -42,3 +42,22 @@ fn the_post_shader_reads_the_option_mask_bits() {
     }
     assert!(source.contains("post.features.x"), "the mask uniform");
 }
+
+/// The map screen selects its texture by a divergent layer condition. WGSL forbids
+/// `textureSample` in non-uniform control flow; the browser's validator (Dawn/Tint) rejects the
+/// module, wgpu drops the pass and the whole canvas stays black, while naga on the native side
+/// accepts it (`v3-web-screens`: `textureSample must only be called from uniform control flow`).
+/// naga's validator does not catch it, so the source rule is pinned here: explicit-LOD sampling
+/// (`textureSampleLevel`) is the allowed form in divergent flow.
+#[test]
+fn the_map_screen_shader_samples_without_uniform_control_flow_requirements() {
+    let source = include_str!("../src/map_screen/shader.wgsl");
+    assert!(
+        !source.contains("textureSample("),
+        "map_screen/shader.wgsl uses textureSample in divergent flow; use textureSampleLevel"
+    );
+    assert!(
+        source.contains("textureSampleLevel("),
+        "map_screen/shader.wgsl no longer samples with an explicit LOD"
+    );
+}

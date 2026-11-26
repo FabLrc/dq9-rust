@@ -29,13 +29,17 @@ fn vs_main(v: Vertex) -> Varying {
     return out;
 }
 
+// The layer select is divergent, so the explicit LOD form: WGSL forbids `textureSample` in
+// non-uniform control flow and the browser's validator (Dawn/Tint) enforces it, while naga on
+// the native side accepts it — the whole Web pass was dropped with a black canvas until this
+// used `textureSampleLevel` (`crates/dq9-render/tests/shaders.rs` guards it).
 @fragment
 fn fs_main(v: Varying) -> @location(0) vec4<f32> {
     if v.layer > 1.5 {
-        return textureSample(sprites, sprite_sampler, v.uv);
+        return textureSampleLevel(sprites, sprite_sampler, v.uv, 0.0);
     }
     if v.layer > 0.5 {
-        return textureSample(picture, sprite_sampler, v.uv);
+        return textureSampleLevel(picture, sprite_sampler, v.uv, 0.0);
     }
-    return textureSample(backdrop, sprite_sampler, v.uv);
+    return textureSampleLevel(backdrop, sprite_sampler, v.uv, 0.0);
 }
