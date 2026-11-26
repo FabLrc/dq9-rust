@@ -448,6 +448,11 @@ pub struct Field {
     approach: i16,
     /// Task 8 of the field queue: the confirm edge armed this type-1 warp and its change.
     armed: Option<MapChange>,
+    /// Set by the application's door step before the gameplay field step: the type-1 gate
+    /// (confirm) then applies instead of the immediate path the region tests use.
+    gameplay_step: bool,
+    /// An action-key edge seen by the door step, consumed by the next gameplay field step.
+    wants_confirm: bool,
     /// The type-1 door task once `Save_Warp+2` was consumed (fade out, change, fade in).
     door_task: Option<DoorTask>,
 }
@@ -534,6 +539,8 @@ impl Field {
             entered_area: None,
             approach: 0,
             armed: None,
+            gameplay_step: false,
+            wants_confirm: false,
             door_task: None,
         })
     }
@@ -562,7 +569,27 @@ impl Field {
     /// warp changes map at once, as the port did before the door task was read. The
     /// application uses [`Field::step_with_confirm`].
     pub fn step(&mut self, leader: &Leader, state: &mut State) -> Vec<Event> {
-        self.step_inner(leader, state, WarpMode::Immediate)
+        // The application's `step_doors` marks the gameplay field step: only then does the
+        // action-key gate apply; the region tests, the camera crossings and the trigger
+        // simulator keep the immediate path.
+        let mode = if std::mem::take(&mut self.gameplay_step) {
+            WarpMode::Confirm(std::mem::take(&mut self.wants_confirm))
+        } else {
+            WarpMode::Immediate
+        };
+        self.step_inner(leader, state, mode)
+    }
+
+    /// The next field step is the application's gameplay step (called each 60 Hz tick by
+    /// `step_doors`): a type-1 warp then needs the action key and runs the door task.
+    pub fn enable_gameplay_step(&mut self) {
+        self.gameplay_step = true;
+    }
+
+    /// An action-key edge the door step saw (`ov_017::0219aa7c`'s `TestKeysPressed`); it is
+    /// consumed by the next gameplay field step so a press on an even VBlank is not lost.
+    pub fn note_confirm(&mut self) {
+        self.wants_confirm = true;
     }
 
     /// One fixed step of the field task, with the action key's edge (`func_02039820`'s gate

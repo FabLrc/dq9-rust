@@ -88,6 +88,8 @@ pub(super) struct Controls {
     pub(super) dragging: bool,
     pub(super) rotate: Vec2,
     pub(super) zoom: f32,
+    /// The type-1 door task holds the field: the pad and the camera axes ignore the keys.
+    pub(super) suppress: bool,
 }
 
 impl Controls {
@@ -98,6 +100,7 @@ impl Controls {
             dragging: false,
             rotate: Vec2::ZERO,
             zoom: 0.0,
+            suppress: false,
         }
     }
 }
@@ -204,6 +207,9 @@ impl App {
     }
 
     pub(super) fn axis(&self, plus: &[KeyCode], minus: &[KeyCode]) -> f32 {
+        if self.controls.suppress {
+            return 0.0;
+        }
         let any = |keys: &[KeyCode]| keys.iter().any(|k| self.controls.held.contains(k));
         f32::from(i8::from(any(plus)) - i8::from(any(minus)))
     }

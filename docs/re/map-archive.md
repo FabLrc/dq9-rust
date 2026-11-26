@@ -246,9 +246,12 @@ engine returns separately at 154-178). The hero slid from 21.07 (the A press) to
 stopped: no automatic walk. **[hypothesis]** the frame-104
 delay and the 140 start are I/O, not logic; the port models the 15 + 20 tick logic.
 
-The port: `dq9_core::field::DoorTask` (phases, `step_door` at 60 Hz, `step_with_confirm`),
-the application advancing it in `app/doors.rs::step_doors` and feeding no pad while it runs
-(`app.rs`). `Field::step` (region tests, camera crossings, the trigger simulator) keeps the
+The port: `dq9_core::field::DoorTask` (phases, `step_door` at 60 Hz). The application
+advances it and latches the key edge in `app/doors.rs::step_doors` (called every VBlank):
+while it runs, `app/input.rs`'s `Controls::suppress` zeroes the pad/camera axes and
+`step_doors` drops the pilot, a replayed pad and the conversation's pending key; when it is
+idle, `step_doors` marks the next field step as the gameplay step (`enable_gameplay_step`)
+and passes the action edge (`note_confirm`). `Field::step` (region tests, camera crossings, the trigger simulator) keeps the
 immediate behaviour. Type-0 warps and type-2 doorways are unchanged. Of the 43 type-1
 records, 42 name a destination; `D04M03`'s has none (`dq9re doors --stats`: 976 of 978 warps
 name a map). A Flash challenger (independent reviewer) attacked the claim from the
@@ -256,8 +259,9 @@ decompilation and the capture: verdict **partially holds** — the trigger, the 
 arming, the 15-tick both-engine fade-out, the map change at black, no walk/animation and the
 type-0/type-2 isolation were confirmed; it corrected the fade-in wording (main engine, 15 in
 the code, 20 observed frames) and found a lost A edge on an even VBlank in the port, fixed by
-reading `Doors::confirm_latched` and by holding containers, conversations and roaming while
-the task runs.
+latching the edge in `step_doors` (`Field::note_confirm`), zeroing the pad through
+`Controls::suppress` and dropping the container/conversation key, the pilot and a replayed
+pad while the task runs.
 
 #### Type-1 zones and the Observatory height passage
 

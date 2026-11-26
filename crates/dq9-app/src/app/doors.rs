@@ -12,8 +12,6 @@ pub(super) struct Doors {
     pub(super) door_angles: std::collections::BTreeMap<(i32, i32), i32>,
     /// The type-1 door task of the field was announced in the log.
     pub(super) task_announced: bool,
-    /// The action key's edge, kept until the next 30 Hz field step reads it.
-    pub(super) confirm_latched: bool,
 }
 
 impl Doors {
@@ -22,7 +20,6 @@ impl Doors {
             doors_opened: std::collections::BTreeSet::new(),
             door_angles: std::collections::BTreeMap::new(),
             task_announced: false,
-            confirm_latched: false,
         }
     }
 }
@@ -63,6 +60,27 @@ impl App {
         // The type-1 door task (`ov_017::0219cd98`, `ov_017::0219e384`): fade out, the map
         // change at black, then fade in. It advances on every 60 Hz tick and holds the
         // field; `run_steps` feeds it no pad.
+        let running = self
+            .field
+            .as_ref()
+            .is_some_and(|field| field.door_task().is_some());
+        self.controls.suppress = running;
+        if running {
+            // The fade holds the field: the action key may not open a container or a
+            // conversation, and the pilot and a replayed pad are ignored
+            // (`ov_017::0219e384` clears the leader's control byte).
+            self.talk.discard_input();
+            self.pilot_dir = None;
+            self.recording.replay_pad = None;
+        } else if let Some(field) = &mut self.field {
+            // The next 30 Hz field step is the application's gameplay step; a type-1 warp
+            // then needs the action key (`ov_017::0219aa7c`). The pilot presses it for its
+            // doors so its route keeps entering them.
+            field.enable_gameplay_step();
+            if self.talk.confirm_pending() || self.pilot_dir.is_some() {
+                field.note_confirm();
+            }
+        }
         let mut task_events = Vec::new();
         let mut task_log = None;
         let mut fade_in = None;
@@ -116,6 +134,11 @@ impl App {
                 field.set_door_task(task);
             }
         }
+        // The task may have ended on this tick: give the pad back at once.
+        self.controls.suppress = self
+            .field
+            .as_ref()
+            .is_some_and(|field| field.door_task().is_some());
         if self.events.doors().is_empty() {
             return;
         }
@@ -172,6 +195,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::app::test_support::map_options;
+    use crate::talk::Button;
     use dq9_core::field::{DOOR_FADE_IN_TICKS, DOOR_FADE_OUT_TICKS, DoorPhase, Leader};
     use glam::Vec3;
 
@@ -189,34 +213,44 @@ mod tests {
             input: Vec3::ZERO,
         };
         // No confirm: the volume holds but the task never runs.
+        app.step_doors();
         assert!(
             app.field
                 .as_mut()
                 .unwrap()
-                .step_with_confirm(&leader, false, &mut app.state)
+                .step(&leader, &mut app.state)
                 .is_empty()
         );
         assert!(app.field.as_ref().unwrap().door_task().is_none());
-        // The A edge arms it; the next field step starts the fade-out.
+        // The A edge of `step_doors` arms it; the next field step starts the fade-out.
+        app.talk.press(Button::Confirm);
+        app.step_doors();
         assert!(
             app.field
                 .as_mut()
                 .unwrap()
-                .step_with_confirm(&leader, true, &mut app.state)
+                .step(&leader, &mut app.state)
                 .is_empty()
         );
+        app.step_doors();
         assert!(
             app.field
                 .as_mut()
                 .unwrap()
-                .step_with_confirm(&leader, false, &mut app.state)
+                .step(&leader, &mut app.state)
                 .is_empty()
         );
         assert_eq!(
             app.field.as_ref().unwrap().door_task().unwrap().phase(),
             DoorPhase::FadeOut
         );
-        for tick in 1..DOOR_FADE_OUT_TICKS {
+        // The next 60 Hz tick sees the task and suppresses the pad.
+        app.step_doors();
+        assert!(
+            app.controls.suppress,
+            "the pad is ignored while the task runs"
+        );
+        for tick in 2..DOOR_FADE_OUT_TICKS {
             app.step_doors();
             assert_eq!(
                 app.current.as_ref().unwrap().0.id,
@@ -234,5 +268,9 @@ mod tests {
             app.step_doors();
         }
         assert!(app.field.as_ref().unwrap().door_task().is_none());
+        assert!(
+            !app.controls.suppress,
+            "the pad comes back after the fade-in"
+        );
     }
 }
