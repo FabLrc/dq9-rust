@@ -8,6 +8,8 @@
 //! The game's own save code is not ported yet (it cites no original function): this module
 //! is the file format, not the `GameState` serialization.
 
+use core::ops::Range;
+
 use nds_rom::{Error, Result};
 
 /// Size of the whole EEPROM image.
@@ -66,6 +68,28 @@ const VISITED_LOCATIONS: usize = 11788;
 const PARTY_TRICKS: usize = 12108;
 const UNLOCKED_VOCATIONS: usize = 12276;
 const PLAY_TIME: usize = 16024;
+
+// Offsets inside a character record (572 bytes), shared by the readers and the setters. The
+// evidence for them is `docs/re/save.md` § "Fields typed by `dq9_formats::save`".
+const NAME: usize = 320;
+const VOCATION: usize = 80;
+const LEVELS: usize = 2;
+const REVOCATIONS: usize = 15;
+const EXPERIENCE: usize = 28;
+const SEEDS: usize = 88;
+/// Three words of three 10-bit seeds per vocation.
+const SEED_STRIDE: usize = 12;
+const SKILL_POINTS: usize = 244;
+const PROFICIENCY_FLAGS: usize = 282;
+const FACE: usize = 356;
+const HAIR_STYLE: usize = 358;
+const APPEARANCE: usize = 372;
+const HAIR_COLOR: usize = 373;
+const BODY: usize = 376;
+
+/// Bytes `Save_WriteStep` state 2 copies from slot 0 to slot 1 on a normal save (`0x6fe4`
+/// at `0x10` / `0x8010`), i.e. the slot minus its first 16 bytes.
+const MIRROR_LEN: usize = 0x6fe4;
 
 /// Value of an empty item word.
 pub const NO_ITEM: u16 = 0xffff;
@@ -266,6 +290,14 @@ fn u32_at(b: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
 }
 
+fn put_u16(b: &mut [u8], at: usize, value: u16) {
+    b[at..at + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_u32(b: &mut [u8], at: usize, value: u32) {
+    b[at..at + 4].copy_from_slice(&value.to_le_bytes());
+}
+
 /// A whole save image. Parsing keeps the bytes as they are, so [`Save::as_bytes`] always
 /// gives back the input until a slot is edited and [`SlotMut::seal`]ed.
 #[derive(Clone, PartialEq, Eq)]
@@ -327,6 +359,20 @@ impl Save {
             self.slot(i)
                 .is_some_and(|s| s.status() == SlotStatus::Valid && s.checksums_valid())
         })
+    }
+
+    /// Rewrite the mirror copy of slot 0, as `Save_WriteStep` (`0x020aad2c`) state 2 does for
+    /// a **normal** save: slot 0 is written at `0x10`, then the same image again at `0x8010`,
+    /// so the first 16 bytes of slot 1 (where no header lives) are left alone. Returns
+    /// `false` when slot 0 holds no normal save (empty or intermission), which the game does
+    /// not copy. Evidence: the demo save, whose slot 1 equals slot 0 except those 16 bytes.
+    pub fn mirror_normal_slot(&mut self) -> bool {
+        let header = Slot(&self.data[..SLOT_SIZE]);
+        if !header.exists() || header.is_intermission() {
+            return false;
+        }
+        self.data.copy_within(16..16 + MIRROR_LEN, SLOT_SIZE + 16);
+        true
     }
 }
 
@@ -590,7 +636,7 @@ impl<'a> Character<'a> {
     /// Name as stored: one byte per character, each the index of a glyph of the message
     /// font (`fi_me.bin`), zero-terminated and padded with zeros.
     pub fn name_raw(&self) -> &'a [u8] {
-        &self.0[320..320 + NAME_LEN]
+        &self.0[NAME..NAME + NAME_LEN]
     }
 
     /// Name as text: every byte up to the first zero is looked up in the message font's
@@ -608,40 +654,40 @@ impl<'a> Character<'a> {
 
     /// Current vocation index (0 = Guardian … 12 = Ranger).
     pub fn vocation(&self) -> u8 {
-        self.0[80]
+        self.0[VOCATION]
     }
 
     /// Level in vocation `v` (0 when never taken; Guardian is vocation 0).
     pub fn level(&self, v: usize) -> Option<u8> {
-        (v < VOCATION_COUNT).then(|| self.0[2 + v])
+        (v < VOCATION_COUNT).then(|| self.0[LEVELS + v])
     }
 
     pub fn revocations(&self, v: usize) -> Option<u8> {
-        (v < VOCATION_COUNT).then(|| self.0[15 + v])
+        (v < VOCATION_COUNT).then(|| self.0[REVOCATIONS + v])
     }
 
     pub fn experience(&self, v: usize) -> Option<u32> {
-        (v < VOCATION_COUNT).then(|| u32_at(self.0, 28 + 4 * v))
+        (v < VOCATION_COUNT).then(|| u32_at(self.0, EXPERIENCE + 4 * v))
     }
 
     /// Seed `s` (see [`SEEDS_PER_VOCATION`] for the order) used on vocation `v`: three
     /// 10-bit values per 32-bit word, three words per vocation.
     pub fn seed(&self, v: usize, s: usize) -> Option<u16> {
         (v < VOCATION_COUNT && s < SEEDS_PER_VOCATION).then(|| {
-            let word = u32_at(self.0, 88 + 12 * v + 4 * (s / 3));
+            let word = u32_at(self.0, SEEDS + SEED_STRIDE * v + 4 * (s / 3));
             ((word >> (10 * (s % 3))) & 0x3ff) as u16
         })
     }
 
     /// Skill points not yet spent.
     pub fn unallocated_skill_points(&self) -> u16 {
-        u16_at(self.0, 244)
+        u16_at(self.0, SKILL_POINTS)
     }
 
     /// 36 bytes of proficiency flags (`+282`); also holds the Zoom and Egg On bits
     /// **[hypothesis]** per the editor.
     pub fn proficiency_flags(&self) -> &'a [u8] {
-        &self.0[282..282 + 36]
+        &self.0[PROFICIENCY_FLAGS..PROFICIENCY_FLAGS + 36]
     }
 
     pub fn equipment(&self, slot: EquipSlot) -> u16 {
@@ -649,48 +695,51 @@ impl<'a> Character<'a> {
     }
 
     pub fn face(&self) -> u8 {
-        self.0[356]
+        self.0[FACE]
     }
 
     pub fn hair_style(&self) -> u8 {
-        self.0[358]
+        self.0[HAIR_STYLE]
     }
 
     /// Face as an item id (`+356`, 9020..=9033: slot h2 of `CharaParts_GetPartNumbers`,
     /// `docs/re/characters.md` § "The hero").
     pub fn face_item(&self) -> u16 {
-        u16_at(self.0, 356)
+        u16_at(self.0, FACE)
     }
 
     /// Hair as an item id (`+358`, 9000..=9013: slot h3).
     pub fn hair_item(&self) -> u16 {
-        u16_at(self.0, 358)
+        u16_at(self.0, HAIR_STYLE)
     }
 
     /// Bit 0 of byte 372 (0 or 1; **[unknown]** which is which).
     pub fn gender(&self) -> u8 {
-        self.0[372] & 1
+        self.0[APPEARANCE] & 1
     }
 
     pub fn skin_color(&self) -> u8 {
-        (self.0[372] >> 1) & 7
+        (self.0[APPEARANCE] >> 1) & 7
     }
 
     pub fn eye_color(&self) -> u8 {
-        self.0[372] >> 4
+        self.0[APPEARANCE] >> 4
     }
 
     pub fn hair_color(&self) -> u8 {
-        self.0[373] & 0xf
+        self.0[HAIR_COLOR] & 0xf
     }
 
     /// Body type width and height words.
     pub fn body(&self) -> (u16, u16) {
-        (u16_at(self.0, 376), u16_at(self.0, 378))
+        (u16_at(self.0, BODY), u16_at(self.0, BODY + 2))
     }
 }
 
 /// Editing view of one slot. Each setter leaves checksums stale until [`SlotMut::seal`].
+///
+/// Every setter returns the slot-relative byte range it wrote, so that a caller can show the
+/// change and a test can assert that nothing else moved.
 pub struct SlotMut<'a>(&'a mut [u8]);
 
 impl core::fmt::Debug for SlotMut<'_> {
@@ -700,25 +749,418 @@ impl core::fmt::Debug for SlotMut<'_> {
 }
 
 impl SlotMut<'_> {
-    pub fn set_gold_on_hand(&mut self, gold: u32) {
-        self.0[GOLD_ON_HAND..GOLD_ON_HAND + 4].copy_from_slice(&gold.to_le_bytes());
+    /// Byte 20 of the header (`slot+0x14`), read back by [`Slot::is_intermission`].
+    pub fn set_intermission(&mut self, intermission: bool) -> Range<usize> {
+        self.0[INTERMISSION_FLAG] = u8::from(intermission);
+        INTERMISSION_FLAG..INTERMISSION_FLAG + 1
     }
 
-    pub fn set_gold_in_bank(&mut self, gold: u32) {
-        self.0[GOLD_IN_BANK..GOLD_IN_BANK + 4].copy_from_slice(&gold.to_le_bytes());
+    /// Byte 21 of the header (`slot+0x15`), read back by [`Slot::exists`].
+    pub fn set_exists(&mut self, exists: bool) -> Range<usize> {
+        self.0[EXISTS_FLAG] = u8::from(exists);
+        EXISTS_FLAG..EXISTS_FLAG + 1
     }
 
-    pub fn set_mini_medals(&mut self, medals: u32) {
-        self.0[MINI_MEDALS..MINI_MEDALS + 4].copy_from_slice(&medals.to_le_bytes());
+    /// Speed of the in-game day, as [`Slot::day_timer`] reads it.
+    pub fn set_day_timer(&mut self, seconds: f32) -> Range<usize> {
+        put_u32(self.0, DAY_TIMER, seconds.to_bits());
+        DAY_TIMER..DAY_TIMER + 4
+    }
+
+    /// `(hours, minutes, seconds)`, as [`Slot::play_time`] reads them.
+    pub fn set_play_time(&mut self, hours: u16, minutes: u8, seconds: u8) -> Range<usize> {
+        put_u16(self.0, PLAY_TIME, hours);
+        self.0[PLAY_TIME + 2] = minutes;
+        self.0[PLAY_TIME + 3] = seconds;
+        PLAY_TIME..PLAY_TIME + 4
+    }
+
+    /// The word [`Slot::area`] reads: `+11476` on a normal save, the warp map on an
+    /// intermission save (the reader picks by the header, so does the setter).
+    pub fn set_area(&mut self, map: u16) -> Range<usize> {
+        let at = if self.0[INTERMISSION_FLAG] != 0 {
+            WARP_MAP
+        } else {
+            AREA
+        };
+        put_u16(self.0, at, map);
+        at..at + 2
+    }
+
+    /// The whole [`Warp`] block of an intermission save.
+    pub fn set_warp(&mut self, warp: Warp) -> Range<usize> {
+        put_u16(self.0, WARP_MAP, warp.map);
+        put_u16(self.0, WARP_ANGLE, warp.angle as u16);
+        for (i, value) in warp.position.into_iter().enumerate() {
+            put_u32(self.0, WARP_POSITION + 4 * i, value as u32);
+        }
+        WARP_MAP..WARP_POSITION + 12
+    }
+
+    pub fn set_standby_count(&mut self, count: u8) -> Range<usize> {
+        self.0[STANDBY_COUNT] = count;
+        STANDBY_COUNT..STANDBY_COUNT + 1
+    }
+
+    pub fn set_party_count(&mut self, count: u8) -> Range<usize> {
+        self.0[PARTY_COUNT] = count;
+        PARTY_COUNT..PARTY_COUNT + 1
+    }
+
+    /// Writes the first `order.len()` (at most 4) entries of [`Slot::party_order`].
+    pub fn set_party_order(&mut self, order: &[u8]) -> Range<usize> {
+        let n = order.len().min(4);
+        self.0[PARTY_ORDER..PARTY_ORDER + n].copy_from_slice(&order[..n]);
+        PARTY_ORDER..PARTY_ORDER + n
+    }
+
+    /// One of the 8 item words [`Slot::held_items`] reads. `false` past member 3.
+    pub fn set_held_item(&mut self, member: usize, slot: usize, item: u16) -> Option<Range<usize>> {
+        if member >= 4 || slot >= 8 {
+            return None;
+        }
+        let at = HELD_ITEMS + member * HELD_ITEMS_STRIDE + 2 * slot;
+        put_u16(self.0, at, item);
+        Some(at..at + 2)
+    }
+
+    /// The 8 item words of one party member (`18` bytes are reserved, the last two untouched).
+    pub fn set_held_items(&mut self, member: usize, items: &[u16; 8]) -> Option<Range<usize>> {
+        if member >= 4 {
+            return None;
+        }
+        let at = HELD_ITEMS + member * HELD_ITEMS_STRIDE;
+        for (i, &item) in items.iter().enumerate() {
+            put_u16(self.0, at + 2 * i, item);
+        }
+        Some(at..at + 16)
+    }
+
+    pub fn set_gold_on_hand(&mut self, gold: u32) -> Range<usize> {
+        put_u32(self.0, GOLD_ON_HAND, gold);
+        GOLD_ON_HAND..GOLD_ON_HAND + 4
+    }
+
+    pub fn set_gold_in_bank(&mut self, gold: u32) -> Range<usize> {
+        put_u32(self.0, GOLD_IN_BANK, gold);
+        GOLD_IN_BANK..GOLD_IN_BANK + 4
+    }
+
+    pub fn set_mini_medals(&mut self, medals: u32) -> Range<usize> {
+        put_u32(self.0, MINI_MEDALS, medals);
+        MINI_MEDALS..MINI_MEDALS + 4
+    }
+
+    pub fn set_visited_locations(&mut self, bits: u32) -> Range<usize> {
+        put_u32(self.0, VISITED_LOCATIONS, bits);
+        VISITED_LOCATIONS..VISITED_LOCATIONS + 4
+    }
+
+    pub fn set_special_guests(&mut self, bits: u32) -> Range<usize> {
+        put_u32(self.0, SPECIAL_GUESTS, bits);
+        SPECIAL_GUESTS..SPECIAL_GUESTS + 4
+    }
+
+    pub fn set_party_tricks(&mut self, bits: u32) -> Range<usize> {
+        put_u32(self.0, PARTY_TRICKS, bits);
+        PARTY_TRICKS..PARTY_TRICKS + 4
+    }
+
+    pub fn set_unlocked_vocations(&mut self, bits: u16) -> Range<usize> {
+        put_u16(self.0, UNLOCKED_VOCATIONS, bits);
+        UNLOCKED_VOCATIONS..UNLOCKED_VOCATIONS + 2
+    }
+
+    /// Chapter word ([`Slot::chapter`]).
+    pub fn set_chapter(&mut self, chapter: u32) -> Range<usize> {
+        put_u32(self.0, PROGRESS, chapter);
+        PROGRESS..PROGRESS + 4
+    }
+
+    pub fn set_scenario_step(&mut self, step: u32) -> Range<usize> {
+        put_u32(self.0, PROGRESS + 4, step);
+        PROGRESS + 4..PROGRESS + 8
+    }
+
+    pub fn set_scenario_substep(&mut self, substep: u32) -> Range<usize> {
+        put_u32(self.0, PROGRESS + 8, substep);
+        PROGRESS + 8..PROGRESS + 12
+    }
+
+    /// Editing view of the event block [`Slot::event_flags`] reads.
+    pub fn event_flags_mut(&mut self) -> EventFlagsMut<'_> {
+        let range = EVENT_FLAGS..EVENT_FLAGS + EVENT_FLAGS_SIZE;
+        EventFlagsMut {
+            bytes: &mut self.0[range],
+            base: EVENT_FLAGS,
+        }
+    }
+
+    /// Editing view of character record `index` (< [`CHARACTER_COUNT`]).
+    pub fn character_mut(&mut self, index: usize) -> Option<CharacterMut<'_>> {
+        if index >= CHARACTER_COUNT {
+            return None;
+        }
+        let base = CHARACTER_OFFSET + index * CHARACTER_SIZE;
+        Some(CharacterMut {
+            bytes: &mut self.0[base..base + CHARACTER_SIZE],
+            base,
+        })
     }
 
     /// Recompute the three checksums from the data.
+    ///
+    /// Contract: every setter above writes bytes only and leaves the checksums stale, so
+    /// [`Slot::checksums`] reports the mismatch until this is called; the CLI writes sealed
+    /// images. A no-op edit must **not** call it: sealing an already valid slot rewrites the
+    /// stored CRC with the same value, so the bytes stay identical.
     pub fn seal(&mut self) {
         for which in Checksum::ALL {
             let crc = crc32fast::hash(&self.0[which.range()]);
             let at = which.stored_at();
             self.0[at..at + 4].copy_from_slice(&crc.to_le_bytes());
         }
+    }
+}
+
+/// Editing view of the event block (0x334 bytes at `PROGRESS + 16`). Ranges are slot-relative.
+pub struct EventFlagsMut<'a> {
+    bytes: &'a mut [u8],
+    base: usize,
+}
+
+impl core::fmt::Debug for EventFlagsMut<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("EventFlagsMut")
+    }
+}
+
+impl EventFlagsMut<'_> {
+    /// Byte `+0x332`: which track [`EventFlags::current_track`] reads.
+    pub fn set_current_track(&mut self, track: u8) -> Range<usize> {
+        self.bytes[TRACK_SELECTOR] = track;
+        self.base + TRACK_SELECTOR..self.base + TRACK_SELECTOR + 1
+    }
+
+    /// Track `index` (0..[`TRACK_COUNT`]).
+    pub fn track_mut(&mut self, index: usize) -> Option<TrackMut<'_>> {
+        if index >= TRACK_COUNT {
+            return None;
+        }
+        let at = index * TRACK_SIZE;
+        let range = at..at + TRACK_SIZE;
+        Some(TrackMut {
+            bytes: &mut self.bytes[range],
+            base: self.base + at,
+        })
+    }
+
+    /// Global flag `index` as the scripts see it (`Flags_Test`, same shift as
+    /// [`EventFlags::story_flag`] when `story` is set). `None` when the index falls outside
+    /// the 0x234-byte array, or outside it after the `0x6fa` story shift.
+    pub fn set_global_flag(
+        &mut self,
+        index: i32,
+        value: bool,
+        story: bool,
+    ) -> Option<Range<usize>> {
+        let index = if story && index >= 0x400 {
+            index.saturating_add(0x6fa)
+        } else {
+            index
+        };
+        let index = usize::try_from(index).ok()?;
+        if index >> 3 >= GLOBAL_FLAGS_SIZE {
+            return None;
+        }
+        let at = GLOBAL_FLAGS + (index >> 3);
+        let mask = 1u8 << (index & 7);
+        if value {
+            self.bytes[at] |= mask;
+        } else {
+            self.bytes[at] &= !mask;
+        }
+        Some(self.base + at..self.base + at + 1)
+    }
+}
+
+/// Editing view of one scenario track (28 bytes). Ranges are slot-relative.
+pub struct TrackMut<'a> {
+    bytes: &'a mut [u8],
+    base: usize,
+}
+
+impl core::fmt::Debug for TrackMut<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("TrackMut")
+    }
+}
+
+impl TrackMut<'_> {
+    pub fn set_chapter(&mut self, chapter: u8) -> Range<usize> {
+        self.bytes[0] = chapter;
+        self.base..self.base + 1
+    }
+
+    pub fn set_step(&mut self, step: u8) -> Range<usize> {
+        self.bytes[1] = step;
+        self.base + 1..self.base + 2
+    }
+
+    pub fn set_substep(&mut self, substep: u8) -> Range<usize> {
+        self.bytes[2] = substep;
+        self.base + 2..self.base + 3
+    }
+
+    /// 13 chapter-local bytes, as [`Track::chapter_flags`] reads them (at most 13 copied).
+    pub fn set_chapter_flags(&mut self, flags: &[u8]) -> Range<usize> {
+        let n = flags.len().min(13);
+        self.bytes[3..3 + n].copy_from_slice(&flags[..n]);
+        self.base + 3..self.base + 3 + n
+    }
+
+    /// 12 step-local bytes, as [`Track::step_flags`] reads them (at most 12 copied).
+    pub fn set_step_flags(&mut self, flags: &[u8]) -> Range<usize> {
+        let n = flags.len().min(12);
+        self.bytes[16..16 + n].copy_from_slice(&flags[..n]);
+        self.base + 16..self.base + 16 + n
+    }
+}
+
+/// Editing view of one character record (572 bytes). Ranges are slot-relative.
+pub struct CharacterMut<'a> {
+    bytes: &'a mut [u8],
+    /// Offset of the record inside the slot.
+    base: usize,
+}
+
+impl core::fmt::Debug for CharacterMut<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("CharacterMut")
+    }
+}
+
+impl CharacterMut<'_> {
+    fn range(&self, at: usize, len: usize) -> Range<usize> {
+        self.base + at..self.base + at + len
+    }
+
+    /// Name glyphs ([`Character::name_raw`]): at most [`NAME_LEN`] bytes, zero-padded.
+    pub fn set_name_raw(&mut self, glyphs: &[u8]) -> Range<usize> {
+        let n = glyphs.len().min(NAME_LEN);
+        self.bytes[NAME..NAME + NAME_LEN].fill(0);
+        self.bytes[NAME..NAME + n].copy_from_slice(&glyphs[..n]);
+        self.range(NAME, NAME_LEN)
+    }
+
+    pub fn set_vocation(&mut self, vocation: u8) -> Range<usize> {
+        self.bytes[VOCATION] = vocation;
+        self.range(VOCATION, 1)
+    }
+
+    /// `false` for a vocation index at or past [`VOCATION_COUNT`].
+    pub fn set_level(&mut self, v: usize, level: u8) -> Option<Range<usize>> {
+        if v >= VOCATION_COUNT {
+            return None;
+        }
+        self.bytes[LEVELS + v] = level;
+        Some(self.range(LEVELS + v, 1))
+    }
+
+    pub fn set_revocations(&mut self, v: usize, count: u8) -> Option<Range<usize>> {
+        if v >= VOCATION_COUNT {
+            return None;
+        }
+        self.bytes[REVOCATIONS + v] = count;
+        Some(self.range(REVOCATIONS + v, 1))
+    }
+
+    pub fn set_experience(&mut self, v: usize, experience: u32) -> Option<Range<usize>> {
+        if v >= VOCATION_COUNT {
+            return None;
+        }
+        let at = EXPERIENCE + 4 * v;
+        put_u32(self.bytes, at, experience);
+        Some(self.range(at, 4))
+    }
+
+    /// Writes the 10-bit seed `s` of vocation `v`, keeping its two neighbours.
+    pub fn set_seed(&mut self, v: usize, s: usize, value: u16) -> Option<Range<usize>> {
+        if v >= VOCATION_COUNT || s >= SEEDS_PER_VOCATION {
+            return None;
+        }
+        let at = SEEDS + SEED_STRIDE * v + 4 * (s / 3);
+        let shift = 10 * (s % 3);
+        let word = u32_at(self.bytes, at) & !(0x3ff << shift) | (u32::from(value & 0x3ff) << shift);
+        put_u32(self.bytes, at, word);
+        Some(self.range(at, 4))
+    }
+
+    pub fn set_unallocated_skill_points(&mut self, points: u16) -> Range<usize> {
+        put_u16(self.bytes, SKILL_POINTS, points);
+        self.range(SKILL_POINTS, 2)
+    }
+
+    /// 36 proficiency bytes ([`Character::proficiency_flags`]), at most 36 copied.
+    pub fn set_proficiency_flags(&mut self, flags: &[u8]) -> Range<usize> {
+        let n = flags.len().min(36);
+        self.bytes[PROFICIENCY_FLAGS..PROFICIENCY_FLAGS + n].copy_from_slice(&flags[..n]);
+        self.range(PROFICIENCY_FLAGS, n)
+    }
+
+    pub fn set_equipment(&mut self, slot: EquipSlot, item: u16) -> Range<usize> {
+        let at = slot.offset();
+        put_u16(self.bytes, at, item);
+        self.range(at, 2)
+    }
+
+    pub fn set_face(&mut self, face: u8) -> Range<usize> {
+        self.bytes[FACE] = face;
+        self.range(FACE, 1)
+    }
+
+    /// Face item id word ([`Character::face_item`], 9020..=9033), two bytes.
+    pub fn set_face_item(&mut self, item: u16) -> Range<usize> {
+        put_u16(self.bytes, FACE, item);
+        self.range(FACE, 2)
+    }
+
+    pub fn set_hair_style(&mut self, style: u8) -> Range<usize> {
+        self.bytes[HAIR_STYLE] = style;
+        self.range(HAIR_STYLE, 1)
+    }
+
+    /// Hair item id word ([`Character::hair_item`], 9000..=9013), two bytes.
+    pub fn set_hair_item(&mut self, item: u16) -> Range<usize> {
+        put_u16(self.bytes, HAIR_STYLE, item);
+        self.range(HAIR_STYLE, 2)
+    }
+
+    pub fn set_gender(&mut self, gender: u8) -> Range<usize> {
+        self.bytes[APPEARANCE] = self.bytes[APPEARANCE] & !1 | (gender & 1);
+        self.range(APPEARANCE, 1)
+    }
+
+    pub fn set_skin_color(&mut self, color: u8) -> Range<usize> {
+        self.bytes[APPEARANCE] = self.bytes[APPEARANCE] & !0b1110 | (color & 7) << 1;
+        self.range(APPEARANCE, 1)
+    }
+
+    pub fn set_eye_color(&mut self, color: u8) -> Range<usize> {
+        self.bytes[APPEARANCE] = self.bytes[APPEARANCE] & 0x0f | (color & 0xf) << 4;
+        self.range(APPEARANCE, 1)
+    }
+
+    pub fn set_hair_color(&mut self, color: u8) -> Range<usize> {
+        self.bytes[HAIR_COLOR] = self.bytes[HAIR_COLOR] & 0xf0 | (color & 0xf);
+        self.range(HAIR_COLOR, 1)
+    }
+
+    /// Body type width and height words, as [`Character::body`] reads them.
+    pub fn set_body(&mut self, width: u16, height: u16) -> Range<usize> {
+        put_u16(self.bytes, BODY, width);
+        put_u16(self.bytes, BODY + 2, height);
+        self.range(BODY, 4)
     }
 }
 

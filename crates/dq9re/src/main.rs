@@ -264,12 +264,19 @@ enum Command {
         check: bool,
     },
     /// Summarize a DS save file (`.sav`) and verify its checksums. The ROM is optional: when
-    /// found, character names are decoded with its message font.
+    /// found, character names are decoded with its message font. `--set` edits a field and
+    /// `--out` writes the sealed image (`docs/re/save.md` § "Writing").
     Save {
         path: PathBuf,
         /// Also list levels, equipment and appearance.
         #[arg(long, short)]
         verbose: bool,
+        /// Set a field, repeatable (`NAME=VALUE`, or `seal` alone); needs `--out`.
+        #[arg(long = "set", value_name = "NAME=VALUE")]
+        sets: Vec<String>,
+        /// Write the (edited) image here; without `--set` it is a byte-identical copy.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Inspect a melonDS savestate (`.ml1`): sections, frame, scenario, resident code compared
     /// with the ROM when one is found, or `--peek ADDR[:LEN]` (hex) bytes of main RAM / TCM.
@@ -364,7 +371,12 @@ fn main() -> Result<()> {
             readme,
             check,
         } => return coverage::run_coverage(functions, crates, readme.as_deref(), *check),
-        Command::Save { path, verbose } => return save::run(path, *verbose, cli.rom.as_deref()),
+        Command::Save {
+            path,
+            verbose,
+            sets,
+            out,
+        } => return save::run(path, *verbose, cli.rom.as_deref(), sets, out.as_deref()),
         Command::State {
             path,
             ram,

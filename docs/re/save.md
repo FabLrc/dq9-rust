@@ -1,6 +1,7 @@
 # DS save (`.sav`)
 
-Module `dq9_formats::save`, command `dq9re save <file> [-v]` (no ROM).
+Module `dq9_formats::save`, command `dq9re save <file> [-v] [--set <name>=<value>…] [--out <file>]`
+(no ROM). § "Writing" covers the write path.
 
 ## Sources and verification
 
@@ -283,6 +284,73 @@ character = index in the glyph table of the `me` font** (`font.md`), terminated 
 `+368`, accessory `+370`, face `+356`, hairstyle `+358`, skin/eyes/gender `+372`, hair
 `+373`, body shape `+376`/`+378`.
 
+## Writing (`SlotMut`, `dq9re save --set`)
+
+Every field the readers above expose has a setter that writes through the **same constant**
+the reader uses (`crates/dq9-formats/src/save.rs`: one `const` per field, read and written
+through it), and returns the slot-relative byte range it wrote. `SlotMut::seal` stays the only
+CRC writer: a setter leaves the three checksums stale, like a write in progress, so a caller
+that skips it produces an image the game rejects (`Save_ReadHeaderA` / `Save_LoadSlot`) — the
+contract is stated on `seal` and checked by `a_write_without_a_seal_reports_a_bad_checksum`.
+
+| Family | Setters |
+|---|---|
+| header | `set_exists`, `set_intermission`, `set_day_timer` (the `f32` at `slot+32`) |
+| summary | `set_play_time`, `set_area` |
+| resume | `set_warp` (`map`, `angle`, 3 × `fx32`; intermission save only) |
+| scenario | `set_chapter`, `set_scenario_step`, `set_scenario_substep` |
+| event block | `event_flags_mut` → `set_current_track`; `track_mut` → chapter / step / substep / chapter flags / step flags; `set_global_flag` (`story` applies the `0x6fa` shift of `Flags_TestExt`) |
+| party | `set_standby_count`, `set_party_count`, `set_party_order`, `set_held_item`, `set_held_items` |
+| money and counters | `set_gold_on_hand`, `set_gold_in_bank`, `set_mini_medals`, `set_visited_locations`, `set_special_guests`, `set_party_tricks`, `set_unlocked_vocations` |
+| character | `character_mut(i)` → `set_name_raw`, `set_vocation`, `set_level`, `set_revocations`, `set_experience`, `set_seed`, `set_unallocated_skill_points`, `set_proficiency_flags`, `set_equipment`, `set_face` / `set_face_item`, `set_hair_style` / `set_hair_item`, `set_gender`, `set_skin_color`, `set_eye_color`, `set_hair_color`, `set_body` |
+
+Not writable: the version string at `slot+24` (a format marker — the game rejects `save011`
+in `Save_ReadHeaderA`, so a wrong value makes the slot unreadable) and HP/MP, which the
+readers above do not expose: the record holds the per-vocation **seeds** (max HP/MP among
+them, `set_seed`), the current values live in `GameState`.
+
+**The mirror copy.** `Save_WriteStep` state 2 rewrites the **same image at `0x8010`** after a
+normal save (§ "Role of the two slots and write protocol"), so the game leaves two identical
+copies; the demo proves it (`build/sav/demo.sav`: slot 1 = slot 0 except its first 16 bytes,
+`ff`, where no header lives). `Save::mirror_normal_slot` performs that copy: `0x6fe4` bytes
+from `slot+16` to slot 1 `+0x10`, leaving the first 16 bytes of slot 1 alone; it returns
+`false` for an empty or suspend slot, which the game never copies. The test
+`a_real_saves_no_op_edit_is_byte_identical` checks that mirroring the demo changes no byte,
+and `mirror_skips_a_suspend_save` that a suspend image is left alone.
+
+**CLI.** `dq9re save <file> --set <name>=<value>… --out <file>` applies the sets to the
+current slot (`Save::current_slot`), seals, mirrors when slot 0 was the target, prints every
+changed field with its byte range and the number of differing bytes (data and checksums
+apart), then writes `--out`; the input is never modified. With `--out` and no `--set` the copy
+is byte-identical (nothing is sealed); `--set seal` seals without changing a field. Names
+mirror the accessors, values are decimal or `0x` hex:
+
+| Example | Meaning |
+|---|---|
+| `gold=1234` (alias of `gold_on_hand`), `gold_in_bank=0`, `mini_medals=12` | the words at `11448`, `11452`, `11460` |
+| `play_time=98:32:44`, `day_timer=42.5`, `area=109` | header and summary fields |
+| `chapter=19`, `scenario_step=2`, `scenario_substep=1` | the progress words |
+| `global_flag.9=1`, `story_flag.0x400=1` | one bit of the event block |
+| `track.2.chapter=19`, `track.2.step_flags=1,0` | one track |
+| `current_track=4` | the track selector at `+0x332` |
+| `exists=1`, `intermission=0` | the two header flags `Save_SlotStatus` tests |
+| `party_count=4`, `party_order=3,2,1,0`, `held_items.0=1,2,3,4,5,6,7,8` | party list and held items |
+| `character.0.name=18,47,48`, `character.0.level.5=42`, `character.0.equipment.head=9001` | one character record (glyph indices, vocation index) |
+| `warp=109:12866:0:0:0` | `map:angle:x:y:z`, intermission saves |
+
+An unknown name or an out-of-range index is refused before anything is written.
+
+**Checked by tests** (`crates/dq9-formats/tests/save_write.rs`; synthetic image always, the
+demo when `DQ9_SAVE` names it): each setter's diff is confined to its own field range plus
+the three checksum words and never touches slot 1, each round-trips through `Save::parse`,
+and a dump of every reader accessor shows that no other field moved. `visited_locations`
+(`11788`), `party_tricks` (`12108`) and `unlocked_vocations` (`12276`) are **views into the
+event block's global flag array** (`11724..12288`), so writing them changes two readers at
+once: that is the format, not a bug.
+
+Not done yet: binding a `dq9_core::state::GameState` to a file (a later batch); the hardware
+protocol (lock, EEPROM write, wait states) stays unported (§ "Unknown").
+
 ## Unknown
 
 - Names: see above (glyph indices); characters outside the `me` font are not
@@ -298,7 +366,7 @@ character = index in the glyph table of the `me` font** (`font.md`), terminated 
   `Accolades`, `TreasureMaps`, `Profile`, `Dqvc`, `Misc`: sizes and RAM destinations
   established, **fields not decoded**. The bag (`Main`+7652) is decoded in
   [party.md](party.md) (`dq9_core::party::Bag`).
-- The write protocol is understood (§ "Role of the two slots") but **not ported**:
-  it drives the hardware (`Save_BackupWrite`) and a load state machine, hence no
-  `port:` marker; `dq9_formats::save` only writes the image (`Save::seal`).
+- The write protocol is understood (§ "Role of the two slots") and its **file** effect is
+  ported (`Save::mirror_normal_slot`); the hardware side (`Save_BackupWrite`, the lock and
+  wait states) is not, hence no `port:` marker.
 - Number and order of skill allocations (`+247`).
