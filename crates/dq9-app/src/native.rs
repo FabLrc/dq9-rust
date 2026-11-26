@@ -41,6 +41,16 @@ struct Cli {
         conflicts_with_all = ["screenshot", "events_report", "battle", "battle_stage"]
     )]
     save_out: Option<PathBuf>,
+    /// The field menu's Misc. → Quick Save writes the session's state into the save's
+    /// **suspend** slot (slot 1) and into this file (needs `--save`, which is never
+    /// modified); the normal slot stays as it was. Given once, it is the destination of the
+    /// in-play write, not a write at exit.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["screenshot", "events_report", "battle", "battle_stage"]
+    )]
+    suspend_out: Option<PathBuf>,
     /// Time of day: `night`, `morning`, `day`, `evening` (or 0-3, `LightingManager+0x98`);
     /// defaults to the save's clock phase, else the night.
     #[arg(long, value_parser = lighting::parse_time)]
@@ -504,6 +514,7 @@ pub fn main() -> Result<()> {
         };
         let mut app = App::new_headless(options, Some(rom));
         app.set_save_files(cli.save.clone(), cli.save_out.clone());
+        app.set_suspend_out(cli.suspend_out.clone());
         app.walk_pose().context("cannot walk: no map loaded")?;
         if let Some((x, z)) = cli.start {
             app.place_hero(x, z)?;
@@ -601,6 +612,7 @@ pub fn main() -> Result<()> {
         None => App::new_headless(options, Some(rom)),
     };
     app.set_save_files(cli.save.clone(), cli.save_out.clone());
+    app.set_suspend_out(cli.suspend_out.clone());
     app.set_screens(cli.screens);
     app.set_text_speed(cli.text_speed);
     app.set_fx(cli.enhanced()?);
@@ -732,24 +744,29 @@ fn write_save_out(cli: &Cli, app: &App) -> Result<()> {
 
 /// `--save-out` updates the container of `--save`: without one there is nothing to update,
 /// and a fresh container's opaque blocks (quest log, monsters, grotto maps, zone) are not
-/// modelled, so writing them would zero real data. The output must be another file: the
-/// input is never written.
+/// modelled, so writing them would zero real data. The same holds for `--suspend-out`, the
+/// Quick Save's destination. Either output must be another file: the input is never written.
 fn require_input_save(cli: &Cli) -> Result<()> {
-    let Some(out) = &cli.save_out else {
-        return Ok(());
-    };
-    let Some(input) = &cli.save else {
-        bail!(
-            "--save-out needs --save <file>: a fresh container's opaque blocks (quest log, \
-             monsters, grotto maps, zone) are not modelled yet, so writing one would zero them"
-        );
-    };
-    if same_file(input, out) {
-        bail!(
-            "--save-out must name another file than --save: the input save is never written \
-             ({} is both)",
-            input.display()
-        );
+    for (option, out) in [
+        ("--save-out", &cli.save_out),
+        ("--suspend-out", &cli.suspend_out),
+    ] {
+        let Some(out) = out else {
+            continue;
+        };
+        let Some(input) = &cli.save else {
+            bail!(
+                "{option} needs --save <file>: a fresh container's opaque blocks (quest log, \
+                 monsters, grotto maps, zone) are not modelled yet, so writing one would zero them"
+            );
+        };
+        if same_file(input, out) {
+            bail!(
+                "{option} must name another file than --save: the input save is never written \
+                 ({} is both)",
+                input.display()
+            );
+        }
     }
     Ok(())
 }
@@ -1434,6 +1451,24 @@ mod tests {
             assert!(error.contains("never written"), "{error}");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn suspend_out_follows_the_same_container_rules() {
+        let cli = Cli::try_parse_from(["dq9-app", "--suspend-out", "out.sav"]).unwrap();
+        let error = require_input_save(&cli).unwrap_err().to_string();
+        assert!(error.contains("--suspend-out needs --save"), "{error}");
+        assert!(error.contains("opaque blocks"), "{error}");
+        let cli = Cli::try_parse_from(["dq9-app", "--save", "in.sav", "--suspend-out", "out.sav"])
+            .unwrap();
+        assert!(require_input_save(&cli).is_ok());
+        let error = require_input_save(
+            &Cli::try_parse_from(["dq9-app", "--save", "in.sav", "--suspend-out", "./in.sav"])
+                .unwrap(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("never written"), "{error}");
     }
 
     #[test]

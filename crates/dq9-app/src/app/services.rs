@@ -77,6 +77,10 @@ pub enum Effect {
     /// The church's Confession said "Yes": the application writes the adventure log and
     /// reports back through [`Services::confession_written`].
     Save,
+    /// The field menu's Misc. → Quick Save said "Yes": the application writes the suspend
+    /// slot (`ov_002::02169efc`, `docs/re/save.md` § "The suspend slot") and reports back
+    /// through [`Services::quick_save_done`] or [`Services::quick_save_refused`].
+    Suspend,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -90,6 +94,9 @@ enum Screen {
     EquipChoice(EquipSlot),
     Stats,
     Spells,
+    /// The field menu's Misc. list (`ov_002::02166168`): the nine entries of the original,
+    /// of which only Quick Save is modelled.
+    Misc,
     Targets,
     Shop,
     Inn,
@@ -132,6 +139,9 @@ enum NoticeNext {
     Rested,
     /// Nothing more: the facility closes.
     Close,
+    /// The Quick Save's question (message 4700): "Yes" asks for [`Effect::Suspend`], "No"
+    /// returns to the Misc. list (`ov_002::02169efc`, state 0).
+    QuickSave,
 }
 
 #[derive(Debug, Clone)]
@@ -328,6 +338,8 @@ pub struct Services {
     rules: Option<BTreeMap<u16, ItemRule>>,
     /// The equipment screen's words (`data/bin/menu/str_eq.gp2`), by message number.
     equipment_messages: Option<BTreeMap<u16, Vec<u8>>>,
+    /// The field menu's Misc. words (`data/bin/menu/str_tm.gp2`), by message number.
+    misc: Option<BTreeMap<u16, Vec<u8>>>,
     screen: Screen,
     cursor: usize,
     /// The bag item waiting for its held slot.
@@ -427,6 +439,20 @@ impl Services {
         Ok(())
     }
 
+    /// Loads the Misc. screen's words (`data/bin/menu/str_tm.gp2`) once: the field menu's
+    /// Misc. entry and the Quick Save's three lines (`ov_002::02166168`, `ov_002::02169efc`).
+    fn ensure_misc(&mut self, rom: &[u8]) -> Result<()> {
+        if self.misc.is_none() {
+            let data =
+                self::tables::archive_member(rom, "data/bin/menu/str_tm.gp2", "str_tm_en.nat")?;
+            let table = dq9_formats::battle::text::MessageTable::parse(&data)?;
+            self.misc = Some(self::tables::copy_messages(table.numbers(), |id| {
+                table.message(id)
+            }));
+        }
+        Ok(())
+    }
+
     /// Whether the leader may wear `item`, from the item record's vocation mask
     /// (`func_020dd4c4`, EU `0x020dd4d4`): the worn armour categories 2 to 7 refuse when bit
     /// `vocation − 1` is clear, and the Guardian (0) wears anything. Weapons and shields
@@ -508,6 +534,8 @@ impl Services {
                 }
             }
             NoticeNext::Close => self.close(),
+            // A question, not a line: `press` answers it and returns the effect.
+            NoticeNext::QuickSave => self.screen = notice.return_screen,
         }
     }
 
@@ -521,14 +549,21 @@ impl Services {
     ) -> Effect {
         if let Some(notice) = self.notice.clone() {
             if matches!(button, Button::Confirm) {
+                // The Quick Save's question (4700): "Yes" is the write.
+                if notice.next == NoticeNext::QuickSave {
+                    self.notice = None;
+                    self.screen = notice.return_screen;
+                    return Effect::Suspend;
+                }
                 self.finish_notice(notice);
                 return Effect::None;
             }
             if matches!(button, Button::Cancel) {
                 self.notice = None;
                 match notice.next {
-                    // Back to the screen the notice belongs to.
-                    NoticeNext::Return => {
+                    // Back to the screen the notice belongs to ("No" to the Quick Save's
+                    // question included).
+                    NoticeNext::Return | NoticeNext::QuickSave => {
                         self.screen = notice.return_screen;
                         if self.screen == Screen::Church {
                             self.cursor = self.church.as_ref().map_or(0, |church| church.cursor);
@@ -552,30 +587,50 @@ impl Services {
                 Effect::None
             }
             Screen::Menu => {
-                let rows = 5;
+                let rows = MENU.len();
                 match button {
                     Button::Up => self.cursor = (self.cursor + rows - 1) % rows,
                     Button::Down => self.cursor = (self.cursor + 1) % rows,
-                    Button::Confirm => match self.cursor {
-                        0 => {
+                    Button::Confirm => {
+                        let (_, screen) = MENU[self.cursor.min(rows - 1)];
+                        if screen == Screen::Closed {
+                            self.close();
+                        } else {
                             self.cursor = 0;
-                            self.screen = Screen::Items;
+                            self.screen = screen;
                         }
-                        1 => {
-                            self.cursor = 0;
-                            self.screen = Screen::Equip;
-                        }
-                        2 => {
-                            self.cursor = 0;
-                            self.screen = Screen::Stats;
-                        }
-                        3 => {
-                            self.cursor = 0;
-                            self.screen = Screen::Spells;
-                        }
-                        _ => self.close(),
-                    },
+                    }
                     Button::Cancel => self.screen = Screen::Menu,
+                }
+                Effect::None
+            }
+            Screen::Misc => {
+                if self.cursor == misc_line::QUICK_SAVE_ROW && matches!(button, Button::Confirm) {
+                    let text = self.misc_message(misc_line::ASK);
+                    self.notice = Some(Notice {
+                        text,
+                        values: Vec::new(),
+                        target: None,
+                        vocation: None,
+                        next: NoticeNext::QuickSave,
+                        return_screen: Screen::Misc,
+                    });
+                    self.screen = Screen::Notice;
+                    return Effect::None;
+                }
+                match button {
+                    Button::Up => self.cursor = (self.cursor + MISC_ROWS - 1) % MISC_ROWS,
+                    Button::Down => self.cursor = (self.cursor + 1) % MISC_ROWS,
+                    Button::Cancel => {
+                        self.cursor = MENU
+                            .iter()
+                            .position(|(_, screen)| *screen == Screen::Misc)
+                            .unwrap_or(0);
+                        self.screen = Screen::Menu;
+                    }
+                    // The other eight entries have no handler in this build: they draw greyed
+                    // and a key on them changes nothing.
+                    Button::Confirm => {}
                 }
                 Effect::None
             }
@@ -1277,6 +1332,54 @@ impl Services {
             })
     }
 
+    /// One line of the Misc. file, empty when the ROM table has no such message.
+    pub(crate) fn misc_message(&self, id: u16) -> Vec<u8> {
+        self.misc
+            .as_ref()
+            .and_then(|messages| messages.get(&id))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The Misc. screen's rows, in the original's order: the ROM's label, whether the entry
+    /// has a handler in this build (only Quick Save does) and its description (4020 + code,
+    /// the file having no 4026).
+    pub(super) fn misc_rows(&self) -> Vec<(Vec<u8>, bool, Vec<u8>)> {
+        (0..MISC_ROWS)
+            .map(|code| {
+                let code = code as u16;
+                (
+                    self.misc_message(misc_line::LABEL_BASE + code),
+                    usize::from(code) == misc_line::QUICK_SAVE_ROW,
+                    self.misc_message(misc_line::DESCRIPTION_BASE + code),
+                )
+            })
+            .collect()
+    }
+
+    /// The Quick Save wrote its slot: the original shows 4702 and returns to the title screen
+    /// (`ov_002::02169efc`); this build has no title screen, so the menu closes and the field
+    /// goes on.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn quick_save_done(&mut self) {
+        let text = self.misc_message(misc_line::DONE);
+        self.notice = Some(Notice {
+            text,
+            values: Vec::new(),
+            target: None,
+            vocation: None,
+            next: NoticeNext::Close,
+            return_screen: Screen::Misc,
+        });
+        self.screen = Screen::Notice;
+    }
+
+    /// The Quick Save could not write: the port's own words (the ROM's 4703 is the
+    /// multiplayer refusal, which has no wireless session to apply to).
+    pub(crate) fn quick_save_refused(&mut self, reason: &str) {
+        self.show_text(reason);
+    }
+
     fn show_text(&mut self, text: &str) {
         self.notice = Some(Notice {
             text: text.as_bytes().to_vec(),
@@ -1394,13 +1497,45 @@ const SLOTS: [(EquipSlot, &[u8]); 8] = [
     (EquipSlot::Accessory, b"Accessory"),
 ];
 
-const MENU: [(&[u8], Screen); 5] = [
+/// The port's field menu, in the order the window draws: its own five rows, then the
+/// original's Misc. list. `Close` stays the fifth row (the equip screen leaves its slot index
+/// as the cursor, so the rows the other screens return to keep their index).
+const MENU: [(&[u8], Screen); 6] = [
     (b"Items", Screen::Items),
     (b"Equipment", Screen::Equip),
     (b"Attributes", Screen::Stats),
     (b"Spells", Screen::Spells),
     (b"Close", Screen::Closed),
+    (b"Misc.", Screen::Misc),
 ];
+
+/// The Misc. screen's entries, in the original's order: `ov_002::02166168` switches on the
+/// chosen entry code, 0 to 8, and the labels are messages 4001..=4009 of
+/// `data/bin/menu/str_tm.gp2` (4000 is the list's title). Only code 7, **Quick Save**, has a
+/// handler in this build; the others draw greyed.
+const MISC_ROWS: usize = 9;
+
+/// The Misc. file's message numbers (`data/bin/menu/str_tm.gp2`, `str_tm_en.nat`).
+pub(crate) mod misc_line {
+    /// The list's title: "Misc.".
+    pub const TITLE: u16 = 4000;
+    /// The first row's label; entry code `c` reads `LABEL_BASE + c`.
+    pub const LABEL_BASE: u16 = 4001;
+    /// The first row's description; entry code `c` reads `DESCRIPTION_BASE + c` (code 6 has
+    /// no description: the file skips 4026).
+    pub const DESCRIPTION_BASE: u16 = 4020;
+    /// Entry code of Quick Save: 7, label 4008, description 4027.
+    pub const QUICK_SAVE_ROW: usize = 7;
+    /// The question the entry asks (`ov_002::02169efc`, sub-state 0).
+    pub const ASK: u16 = 4700;
+    /// Shown while the slot is written (sub-state 1); the window is the native application's.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub const WRITING: u16 = 4701;
+    /// Shown once it is written, before the title screen (sub-state 0x65); native only, like
+    /// the write itself.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub const DONE: u16 = 4702;
+}
 
 fn service_name(service: Service) -> &'static str {
     match service {

@@ -71,6 +71,102 @@ fn a_notice_returns_to_its_screen_and_a_final_one_closes_the_facility() {
     assert!(!services.is_open());
 }
 
+/// The field menu's sixth row opens the original's Misc. list; only Quick Save (entry code
+/// 7) has a handler, it asks 4700 first, "No" returns to the list and "Yes" is the write.
+#[test]
+fn the_misc_list_asks_before_the_quick_save_writes() {
+    let mut services = Services {
+        screen: Screen::Menu,
+        cursor: MENU
+            .iter()
+            .position(|(_, screen)| *screen == Screen::Misc)
+            .unwrap(),
+        ..Services::default()
+    };
+    let mut party = party();
+    let mut rng = Random::new(1);
+    let mut clock = DayClock::new(0.0, true);
+    assert_eq!(
+        services.press(Button::Confirm, &mut party, &mut rng, &mut clock),
+        Effect::None
+    );
+    assert_eq!(services.screen, Screen::Misc);
+    assert_eq!(services.cursor, 0);
+
+    // The eight entries this build does not model change nothing.
+    assert_eq!(
+        services.press(Button::Confirm, &mut party, &mut rng, &mut clock),
+        Effect::None
+    );
+    assert_eq!(services.screen, Screen::Misc);
+    for _ in 0..misc_line::QUICK_SAVE_ROW {
+        services.press(Button::Down, &mut party, &mut rng, &mut clock);
+    }
+    assert_eq!(services.cursor, misc_line::QUICK_SAVE_ROW);
+
+    // Quick Save asks first (4700) and "No" goes back to the list.
+    assert_eq!(
+        services.press(Button::Confirm, &mut party, &mut rng, &mut clock),
+        Effect::None
+    );
+    assert_eq!(services.screen, Screen::Notice);
+    assert_eq!(
+        services.notice.as_ref().map(|notice| notice.next),
+        Some(NoticeNext::QuickSave)
+    );
+    assert_eq!(
+        services.press(Button::Cancel, &mut party, &mut rng, &mut clock),
+        Effect::None
+    );
+    assert_eq!(services.screen, Screen::Misc);
+
+    // "Yes" returns the write to the application.
+    services.press(Button::Confirm, &mut party, &mut rng, &mut clock);
+    assert_eq!(
+        services.press(Button::Confirm, &mut party, &mut rng, &mut clock),
+        Effect::Suspend
+    );
+    assert!(services.notice.is_none());
+    assert_eq!(services.screen, Screen::Misc);
+
+    // X on the list returns to the field menu with the Misc. row selected.
+    services.press(Button::Cancel, &mut party, &mut rng, &mut clock);
+    assert_eq!(services.screen, Screen::Menu);
+    assert_eq!(
+        MENU[services.cursor].1,
+        Screen::Misc,
+        "the cursor comes back to the row that was opened"
+    );
+}
+
+/// The Misc. list's words are the ROM's (`str_tm`: 4000 the title, 4001..=4009 the labels,
+/// 4020..=4028 the descriptions), and only Quick Save is enabled.
+#[test]
+fn the_misc_list_reads_the_roms_own_rows() {
+    let Some(rom) = testrom::load() else {
+        eprintln!("skipped: no ROM");
+        return;
+    };
+    let mut services = Services::default();
+    let mut party = party();
+    services.open_menu(rom, &mut party).unwrap();
+    assert_eq!(services.misc_message(misc_line::TITLE), b"Misc.");
+    assert!(!services.misc_message(misc_line::ASK).is_empty());
+    let rows = services.misc_rows();
+    assert_eq!(rows.len(), MISC_ROWS);
+    assert_eq!(rows[0].0, b"Heal All");
+    assert_eq!(rows[misc_line::QUICK_SAVE_ROW].0, b"Quick Save");
+    assert_eq!(
+        rows.iter().filter(|(_, enabled, _)| *enabled).count(),
+        1,
+        "only Quick Save has a handler"
+    );
+    assert!(
+        String::from_utf8_lossy(&rows[misc_line::QUICK_SAVE_ROW].2).contains("suspends"),
+        "the description is the ROM's 4027"
+    );
+}
+
 #[test]
 fn the_item_list_keeps_bag_order_then_the_held_slots() {
     let mut party = party();

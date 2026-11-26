@@ -115,6 +115,75 @@ impl App {
         Ok(state)
     }
 
+    /// The live pose of the leader, as the suspend save's `Warp` block wants it: the world
+    /// position in `fx32` (`dq9_core::field::to_fx`, 4096 = 1.0) and the heading as the
+    /// object angle of `Object3D+0x54` (`Save_Serialize` writes the low halfword of it, so the
+    /// value is an `i16`).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn suspend_pose(&self) -> anyhow::Result<dq9_core::state::HeroPose> {
+        use anyhow::Context as _;
+        let hero = self
+            .hero
+            .context("no hero is on the field: there is no position to suspend")?;
+        Ok(dq9_core::state::HeroPose {
+            position: field::to_fx(hero.position()),
+            angle: (field::angle_of_yaw(hero.yaw()) * 4096.0) as i16,
+        })
+    }
+
+    /// `--suspend-out`: writes the session's state into the input save's **suspend** slot,
+    /// the original's Quick Save (`ov_002::02169efc` calls `Save_WriteStep`,
+    /// `0x020aad2c`, with its intermission argument set, state 1 writing at `0x8010`): the
+    /// modelled state, the intermission header byte and the live pose in the `Warp` block.
+    /// The normal slot is left alone; the whole container goes through a temporary file and
+    /// a rename, and the input file is never touched.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn write_suspend_out(&self, out: &std::path::Path) -> anyhow::Result<GameState> {
+        use anyhow::Context as _;
+        let input = self.options.save.as_deref().context(
+            "--suspend-out needs --save <file>: a fresh container's opaque blocks (quest log, \
+             monsters, grotto maps, zone) are not modelled, so they cannot be written",
+        )?;
+        let (state, _) = self.save_state()?;
+        let pose = self.suspend_pose()?;
+        let mut save = Save::parse(input).context("parsing the input save")?;
+        let ranges = {
+            let mut slot = save
+                .slot_mut(dq9_formats::save::SUSPEND_SLOT)
+                .context("the suspend slot is out of range")?;
+            let ranges = state.write_suspend(&mut slot, pose)?;
+            // A setter leaves the checksums stale: an image the game rejects is not a save.
+            slot.seal();
+            ranges
+        };
+        write_atomically(out, save.as_bytes())?;
+        let changed = input
+            .iter()
+            .zip(save.as_bytes())
+            .filter(|(before, after)| before != after)
+            .count();
+        status(&format!(
+            "suspend: wrote {} (slot {}, map {}, story {}.{}.{}, {} member(s), {} gold, \
+             position ({}, {}, {}) fx32, heading {}; {} byte(s) differ from the input; \
+             {} field range(s))",
+            out.display(),
+            dq9_formats::save::SUSPEND_SLOT,
+            state.map,
+            state.scenario.chapter,
+            state.scenario.step,
+            state.scenario.substep,
+            state.party.members.len(),
+            state.party.gold,
+            pose.position[0],
+            pose.position[1],
+            pose.position[2],
+            pose.angle,
+            changed,
+            ranges.len(),
+        ));
+        Ok(state)
+    }
+
     /// Places the hero at `(x, z)` on the current map (`--start`), on the collision's ground.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn place_hero(&mut self, x: f32, z: f32) -> anyhow::Result<()> {
@@ -660,6 +729,77 @@ mod tests {
         }
         assert!(changed > 0, "the mutation changed nothing");
         let _ = std::fs::remove_file(&out);
+    }
+
+    /// The Quick Save's write: the **live** pose goes into slot 1's `Warp` block with the
+    /// intermission header, slot 0 keeps every byte, and the file resumes at that pose.
+    #[test]
+    fn a_suspend_write_keeps_the_normal_slot_and_resumes_at_the_live_pose() {
+        use dq9_formats::save::{SLOT_SIZE, SlotStatus};
+        let bytes = save_bytes();
+        let base = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let mut app = App::new_headless(options(Some(bytes.clone())), None);
+        app.party = base.party.clone();
+        app.state = dq9_core::field::saved_state(&base);
+        app.current = Some((
+            MapEntry {
+                id: 109,
+                code: "C01M09".into(),
+                byte_c: 0,
+            },
+            "C01M09".into(),
+        ));
+        app.day = DayClock::new(300.0, true);
+        app.state.flags.insert(11);
+        // The run walked away from where the input save put the party: the suspend save must
+        // carry this pose, not the base state's placement.
+        let hero = dq9_core::Hero::at(Vec3::new(1.5, 0.0, -2.25), 0.5);
+        app.hero = Some(hero);
+        let out = temp_path("suspend");
+        let _ = std::fs::remove_file(&out);
+        let written = app.write_suspend_out(&out).unwrap();
+        let file = std::fs::read(&out).unwrap();
+        assert_eq!(
+            file[..SLOT_SIZE],
+            bytes[..SLOT_SIZE],
+            "the normal slot is untouched"
+        );
+        let save = Save::parse(&file).unwrap();
+        let slot = save.slot(dq9_formats::save::SUSPEND_SLOT).unwrap();
+        assert_eq!(slot.status(), SlotStatus::Intermission);
+        assert!(slot.checksums_valid(), "the written slot is sealed");
+        let pose = dq9_core::state::HeroPose {
+            position: dq9_core::field::to_fx(hero.position()),
+            angle: (dq9_core::field::angle_of_yaw(hero.yaw()) * 4096.0) as i16,
+        };
+        assert_eq!(
+            slot.warp(),
+            Some(dq9_formats::save::Warp {
+                map: 109,
+                angle: pose.angle,
+                position: pose.position,
+            })
+        );
+        let resumed = GameState::from_slot(&slot).unwrap();
+        assert_eq!(resumed.map, 109);
+        assert_eq!(resumed.scenario, written.scenario);
+        assert_eq!(resumed.party, written.party);
+        assert_eq!(resumed.clock.seconds(), 300.0);
+        assert_eq!(resumed.events().as_bytes(), written.events().as_bytes());
+        assert_eq!(resumed.placement, dq9_core::state::Placement::At(pose));
+        assert!(!out.with_extension("sav.tmp").exists());
+        let _ = std::fs::remove_file(&out);
+    }
+
+    /// Without `--save` the suspend write refuses too: there is no container to mark.
+    #[test]
+    fn a_suspend_write_without_an_input_save_is_refused() {
+        let mut app = App::new_headless(options(None), None);
+        app.hero = Some(dq9_core::Hero::at(Vec3::ZERO, 0.0));
+        let out = temp_path("suspend-refused");
+        let error = app.write_suspend_out(&out).unwrap_err().to_string();
+        assert!(error.contains("--suspend-out needs --save"), "{error}");
+        assert!(!out.exists());
     }
 
     /// Without `--save` there is no container to update: the write refuses instead of

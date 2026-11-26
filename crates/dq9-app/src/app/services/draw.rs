@@ -155,6 +155,31 @@ impl Services {
                 cursor = Some(self.cursor);
                 footer.extend_from_slice(b"Enter: choose   X: close");
             }
+            Screen::Misc => {
+                // The original's own list (`ov_002::02166168`): the title and the nine labels
+                // of `str_tm`, the selected row's description in the footer. The eight entries
+                // this build does not model draw greyed (`draw_rows`' `enabled`).
+                let title_line = self.misc_message(super::misc_line::TITLE);
+                title.extend_from_slice(if title_line.is_empty() {
+                    b"Misc.".as_slice()
+                } else {
+                    &title_line
+                });
+                let misc = self.misc_rows();
+                for (label, enabled, _) in &misc {
+                    rows.push((label.clone(), *enabled));
+                }
+                cursor = Some(self.cursor);
+                let mut description = misc
+                    .get(self.cursor)
+                    .map(|(_, _, description)| description.clone())
+                    .unwrap_or_default();
+                // The file writes the typographic apostrophe and comma as glyph tags; this
+                // window draws bytes, so they become their ASCII forms.
+                replace_tag(&mut description, b"<1>", b"'");
+                replace_tag(&mut description, b"<,>", b",");
+                footer = description;
+            }
             Screen::Items => {
                 title.extend_from_slice(
                     format!("Items  bag {}  gold {}", self.bag_rows(party), party.gold).as_bytes(),

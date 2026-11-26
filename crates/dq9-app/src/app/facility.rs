@@ -128,6 +128,9 @@ impl App {
             let result = self.confess();
             self.services.confession_written(result);
         }
+        if effect == services::Effect::Suspend {
+            self.quick_save();
+        }
         self.after_service(effect);
     }
 
@@ -142,6 +145,13 @@ impl App {
     ) {
         self.save_path = save;
         self.save_out = out;
+    }
+
+    /// The `--suspend-out` destination of the field menu's Quick Save (`--save` itself when
+    /// it is absent).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_suspend_out(&mut self, out: Option<std::path::PathBuf>) {
+        self.suspend_out = out;
     }
 
     /// The Confession's write (`ov_003::02159d0c`: message 100, then `Save_WriteStep` at
@@ -184,6 +194,71 @@ impl App {
             state.party.gold,
         ));
         Ok(())
+    }
+
+    /// The field menu's Misc. → Quick Save (`ov_002::02169efc`): the live state into the
+    /// container's **suspend** slot (slot 1), sealed, with the leader's current position and
+    /// heading in the `Warp` block, through the CLI's temporary file and rename. The
+    /// destination is `--suspend-out` when it is given and the `--save` container itself
+    /// otherwise, as the DS writes its own cartridge. The normal slot is never touched.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn quick_save(&mut self) {
+        let (path, container) = match (&self.suspend_out, &self.save_path) {
+            (Some(out), _) => (out.clone(), false),
+            (None, Some(save)) => (save.clone(), true),
+            (None, None) => {
+                self.services.quick_save_refused(
+                    "The quick save log cannot be recorded: no save file is open. Start the \
+                     session with --save <file> (and --suspend-out <file> to leave it untouched).",
+                );
+                status("quick save: no save file is open");
+                return;
+            }
+        };
+        // Sub-state 1 shows 4701 ("Recording quick save log. Do not turn the power OFF…")
+        // while the slot is written; the write is instantaneous here, so the line is logged.
+        let writing = self.services.misc_message(services::misc_line::WRITING);
+        if !writing.is_empty() {
+            status(&format!(
+                "quick save: {}",
+                String::from_utf8_lossy(&writing).replace('\n', " ")
+            ));
+        }
+        match self.write_suspend_out(&path) {
+            Ok(state) => {
+                status(&format!(
+                    "quick save: {} written{} (map {}, story {}.{}.{}, {} member(s), {} gold)",
+                    path.display(),
+                    if container {
+                        ", the --save container itself"
+                    } else {
+                        ", --save untouched"
+                    },
+                    state.map,
+                    state.scenario.chapter,
+                    state.scenario.step,
+                    state.scenario.substep,
+                    state.party.members.len(),
+                    state.party.gold,
+                ));
+                self.services.quick_save_done();
+            }
+            Err(e) => {
+                status(&format!("quick save: not written: {e:#}"));
+                self.services.quick_save_refused(&format!(
+                    "The quick save log was not recorded: {e}. The adventure goes on without it."
+                ));
+            }
+        }
+    }
+
+    /// The Quick Save without a container: this build has no save file at all (`App`'s save
+    /// fields are the native options).
+    #[cfg(target_arch = "wasm32")]
+    fn quick_save(&mut self) {
+        self.services.quick_save_refused(
+            "The quick save log cannot be recorded here: this build has no save file.",
+        );
     }
 
     /// The Confession without a container: the page has no save file at all (`App`'s save

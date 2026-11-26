@@ -1,13 +1,30 @@
 # Field menu and facility screens
 
 `I` on the field opens the game's menu — **Items**, **Equipment**, **Attributes**, **Spells**,
-**Close** — unless a conversation, an event or a battle holds the player. A talk line carrying
+**Close** (the port's own five rows), then **Misc.** — unless a conversation, an event or a
+battle holds the player. A talk line
+carrying
 `<INN=n>`, `<CHURCH=n>` or `<SHOP=n>` opens that facility when its message window closes; the
 conversation ends (trigger event 1, talk counters) only after the screen closes, in the order
 of the game's talk task. Movement and roaming freeze while any of these screens is open, `R`
 still switches the layout, and a map change closes them. `Enter`/`Space`/`Z` confirm,
 `Backspace`/`X` cancel, arrows or `WASD` move, `H` puts a bag item into a held slot, `T` takes
 a held item back, `Left`/`Right` switch the shop between buying and selling.
+
+**Misc. → Quick Save** is the suspend save (`ov_002::02166168` entry code 7,
+`ov_002::02169efc`). The list is the original's: the title and nine labels/descriptions of
+`data/bin/menu/str_tm.gp2` (4000, 4001..4009, 4020..4028), drawn with the selected row's
+description in the footer. It is the menu's sixth row, after the port's own **Close**: the
+overlay's top-level menu is not read, and the five rows above are the port's, so the original's
+list is appended rather than moved into a position it has not been shown to occupy. Only
+Quick Save has a handler in this build; the other eight rows
+draw greyed and do nothing. Choosing it asks message 4700 ("Do you want to make a quick save
+log and suspend your game for the moment?"): "Yes" writes the suspend slot through
+`App::quick_save` into `--suspend-out`, or into the `--save` container itself when that option
+is absent, then shows 4702; "No" returns to the list. Without `--save` the entry says it has no
+file and writes nothing. The original shows 4701 while the slot is written and returns to the
+title screen after 4702; the port logs 4701 and keeps the field, having no title screen
+([`re/save.md`](../re/save.md), § "The suspend slot").
 
 The rules live in `dq9_core::facility` and `dq9_core::party`;
 `crates/dq9-app/src/app/services.rs` adds the ROM tables, the cursors and the transfer into

@@ -138,6 +138,10 @@ pub struct App {
     save_path: Option<std::path::PathBuf>,
     #[cfg(not(target_arch = "wasm32"))]
     save_out: Option<std::path::PathBuf>,
+    /// The `--suspend-out` destination: the field menu's Quick Save writes the suspend slot
+    /// there, or into the `--save` container itself when it is absent.
+    #[cfg(not(target_arch = "wasm32"))]
+    suspend_out: Option<std::path::PathBuf>,
     /// The church's Confession ended the adventure (110 is the original's last line, state 9
     /// staying on it): the window's loop leaves, since this build has no title screen.
     session_over: bool,
@@ -260,6 +264,8 @@ impl App {
             save_path: None,
             #[cfg(not(target_arch = "wasm32"))]
             save_out: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            suspend_out: None,
             session_over: false,
             services: Services::default(),
             containers: Containers::default(),

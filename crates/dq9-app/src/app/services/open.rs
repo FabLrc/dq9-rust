@@ -65,6 +65,7 @@ impl Services {
     pub fn open_menu(&mut self, rom: &[u8], party: &mut Party) -> Result<()> {
         self.ensure_data(rom)?;
         self.ensure_rules(rom)?;
+        self.ensure_misc(rom)?;
         self.apply_levels(party);
         self.screen = Screen::Menu;
         self.cursor = 0;

@@ -568,6 +568,39 @@ impl GameState {
         ranges.dedup();
         Ok(ranges)
     }
+
+    /// Writes this state into `slot` as a **suspend** (intermission) save: the original's
+    /// `Save_Serialize` (`0x020a9ec8`) with its `intermission` argument set by the field
+    /// menu's Quick Save (`ov_002::02169efc`, `Save_WriteStep` state 1 at `0x8010`).
+    ///
+    /// The header's intermission and exists bytes are set, the modelled state goes at the
+    /// offsets a normal save writes (the `Main` block's own map word included), and the
+    /// `Warp` block carries `pose` — the position and heading `Save_UnpackWarp`
+    /// (`0x020a9d88`) stands the party at on the next load. `pose` is the **live** pose of
+    /// the leader, not this state's [`placement`](Self::placement): that one is where a
+    /// previous load put the party, and a run moves away from it.
+    ///
+    /// The caller writes this into [`dq9_formats::save::SUSPEND_SLOT`]; the normal slot is
+    /// left alone. Checksums stay stale ([`SlotMut::seal`]); the ranges returned are
+    /// slot-relative, sorted and deduplicated.
+    pub fn write_suspend(
+        &self,
+        slot: &mut SlotMut<'_>,
+        pose: HeroPose,
+    ) -> Result<Vec<Range<usize>>, StateError> {
+        let mut state = self.clone();
+        state.placement = Placement::At(pose);
+        // `SlotMut::set_area` picks its offset from the header: a slot that already held a
+        // suspend save must be addressed as a normal one first, so that the `Main` block's
+        // own map word (`11476`) is written too, as `Save_Serialize` does for both kinds.
+        let mut ranges = vec![slot.set_intermission(false)];
+        ranges.extend(state.write_into(slot)?);
+        ranges.push(slot.set_intermission(true));
+        ranges.push(slot.set_exists(true));
+        ranges.sort_by_key(|range| (range.start, range.end));
+        ranges.dedup();
+        Ok(ranges)
+    }
 }
 
 /// The bytes of a flag set that a track holds: bit `index` of `bytes` bytes, least significant
@@ -841,6 +874,107 @@ mod tests {
             slot.seal();
         }
         assert_eq!(rewritten.as_bytes(), &bytes[..]);
+    }
+
+    /// The field menu's Quick Save (`ov_002::02169efc`, intermission 1 to `Save_WriteStep`):
+    /// slot 1 gets the intermission header byte, the modelled state and the warp block of the
+    /// **live** pose; slot 0 keeps every byte, and the file resumes at that pose.
+    #[test]
+    fn a_suspend_write_marks_slot_one_and_resumes_at_its_pose() {
+        use dq9_formats::save::SlotStatus;
+        let bytes = played_save();
+        let state = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let pose = HeroPose {
+            position: [4096, 8192, -4096],
+            angle: 12_866,
+        };
+        let mut written = Save::parse(&bytes).unwrap();
+        let ranges = {
+            let mut slot = written.slot_mut(dq9_formats::save::SUSPEND_SLOT).unwrap();
+            let ranges = state.write_suspend(&mut slot, pose).unwrap();
+            slot.seal();
+            ranges
+        };
+        for (at, what) in [(20, "intermission"), (21, "exists"), (27104, "warp")] {
+            assert!(
+                ranges.iter().any(|range| range.contains(&at)),
+                "{what} ({at}) outside the written ranges"
+            );
+        }
+        assert_eq!(
+            written.as_bytes()[..dq9_formats::save::SLOT_SIZE],
+            bytes[..dq9_formats::save::SLOT_SIZE],
+            "the normal slot is untouched"
+        );
+        let slot = written.slot(1).unwrap();
+        assert_eq!(slot.status(), SlotStatus::Intermission);
+        assert!(slot.checksums_valid());
+        assert_eq!(
+            slot.warp(),
+            Some(Warp {
+                map: state.map,
+                angle: pose.angle,
+                position: pose.position,
+            })
+        );
+        // A reader that does not look at the warp block (the editor, a normal-save read of
+        // the bytes) finds the current map at the `Main` block's own word too.
+        assert_eq!(
+            u16::from_le_bytes([slot.bytes()[11476], slot.bytes()[11477]]),
+            state.map
+        );
+        let resumed = GameState::from_slot(&slot).unwrap();
+        assert_eq!(resumed.map, state.map);
+        assert_eq!(resumed.scenario, state.scenario);
+        assert_eq!(resumed.party, state.party);
+        assert_eq!(resumed.clock.seconds(), state.clock.seconds());
+        assert_eq!(resumed.events().as_bytes(), state.events().as_bytes());
+        assert_eq!(resumed.placement, Placement::At(pose));
+        assert_eq!(resumed.hero_pose(StartPoint::default()), pose);
+    }
+
+    /// Writing a slot that already holds a suspend save: the header's intermission byte is
+    /// already 1, so `set_area` would aim at the warp block; the walk must still write the
+    /// `Main` block's map word (11476) like `Save_Serialize` does.
+    #[test]
+    fn a_second_suspend_write_updates_the_block_map_of_an_intermission_slot() {
+        let bytes = played_save();
+        let state = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let mut written = Save::parse(&bytes).unwrap();
+        let first = HeroPose {
+            position: [1, 2, 3],
+            angle: 4,
+        };
+        {
+            let mut slot = written.slot_mut(dq9_formats::save::SUSPEND_SLOT).unwrap();
+            state.write_suspend(&mut slot, first).unwrap();
+            slot.seal();
+        }
+        let mut moved = state.clone();
+        moved.map = 1112;
+        let second = HeroPose {
+            position: [5, 6, 7],
+            angle: -9,
+        };
+        {
+            let mut slot = written.slot_mut(dq9_formats::save::SUSPEND_SLOT).unwrap();
+            moved.write_suspend(&mut slot, second).unwrap();
+            slot.seal();
+        }
+        let slot = written.slot(dq9_formats::save::SUSPEND_SLOT).unwrap();
+        assert_eq!(
+            u16::from_le_bytes([slot.bytes()[11476], slot.bytes()[11477]]),
+            1112
+        );
+        assert_eq!(
+            slot.warp(),
+            Some(Warp {
+                map: 1112,
+                angle: second.angle,
+                position: second.position,
+            })
+        );
+        assert_eq!(GameState::from_slot(&slot).unwrap().map, 1112);
     }
 
     #[test]

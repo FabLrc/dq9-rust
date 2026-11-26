@@ -19,6 +19,12 @@ pub const SLOT_SIZE: usize = 0x8000;
 /// Number of slots in the image.
 pub const SLOT_COUNT: usize = 2;
 
+/// Index of the **suspend** (intermission) slot: `Save_LoadSlot` (`0x020aaf94`) receives
+/// `intermission` 1 for it and `Save_WriteStep` (`0x020aad2c`) writes it at `0x8010`, while a
+/// normal save goes to slot 0. The field menu's Quick Save is its only writer
+/// (`ov_002::02169efc`, `docs/re/save.md` § "The suspend slot").
+pub const SUSPEND_SLOT: usize = 1;
+
 /// First 15 bytes of the file, followed by a zero byte. Only at offset 0 of the image.
 pub const MAGIC: &[u8; 15] = b"DRAGON QUEST IX";
 

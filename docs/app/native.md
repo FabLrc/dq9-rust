@@ -84,6 +84,18 @@ naming the input. What the state does not model (the record's base attributes, c
 opaque blocks) stays byte for byte; the written container is one melonDS loads and continues from
 (`re/save.md`, § "Writing a session"; evidence `build/evidence/v3-save-bind/`).
 
+`--suspend-out <file>` (needs `--save <file>`) names the destination of the field menu's **Misc.
+→ Quick Save**: the session's state into the save's **suspend** slot (slot 1), with the
+intermission header byte and the leader's current position and heading in the `Warp` block,
+sealed and written through a temporary file and a rename. Slot 0 is never written, so the
+normal adventure log the next "Continue" reads stays as it was. The destination is the `--save`
+container **itself** when the option is absent, the way the DS writes its own cartridge; without
+`--save` the entry says it has no file and writes nothing. It is a destination, not an
+end-of-run write: nothing happens unless the entry is answered "Yes". Resuming it is the ROM
+reader's rule (`GameState::from_slot` of slot 1 gives the saved map, story, party, gold and the
+`Warp` pose); `--save` itself still resumes the first valid **normal** slot, so a quick save is
+not yet a start-up path (`re/save.md`, § "The suspend slot").
+
 `--time`: time of
 day `night`, `morning`, `day`, `evening` or 0 to 3 (`LightingManager+0x98`: selection of
 variants, of visible instances and of the lighting entry), by default the phase of the save's

@@ -64,7 +64,10 @@ to the other slot in this function.
 A normal save therefore writes **two identical copies** (slot 0 then 1), which
 explains the demo (slot 1 = copy of 0). The header's intermission byte is only 1
 in the copy written by a suspend save; only `Save_SlotStatus` reads it.
-`Save::current_slot` takes the first slot with a valid status (0 before 1).
+`Save::current_slot` takes the first slot with a valid status (0 before 1). The only caller
+that passes `intermission` 1 — `Save_WriteStep`'s fourth argument — is the field menu's
+Quick Save (`ov_002::02169efc`, § "The suspend slot"); the church's Confession
+(`ov_003::02159d0c`) passes 0.
 
 ## Serialization (`Save_Serialize`, `0x020a9ec8`)
 
@@ -97,8 +100,11 @@ reserve; `7573` party order (4); `7577` party size; `7578 + 18 n` held items
 (8 × u16 + 2 bytes); `11448` gold on hand; `11452` gold in bank; `11460` mini medals;
 `11476` current map id (109 in the demo; `Save_LoadSlot` copies it to
 `GameState+0x7e74`, and the observed map `C01M09` has id 109); `7652` bag (0x1d4 bytes,
-see "Unknown"); settings and starting data `11488..11519`; intermission flag
-`11530` (buffer `+0x2ca2`).
+see "Unknown"); settings and starting data `11488..11519`; the byte `11562` (buffer
+`+0x2ca2`) `Save_UnpackMain` (`0x020a95b4`) hands back to its caller, which
+`Save_Serialize` sets to 1 only for a normal save whose flags carry `0x10` (the church's
+Confession passes 1, or `0x15` in another's world) — never for a suspend save (§ "The
+suspend slot").
 
 Checksum C (`40..132`) does not cover these blocks: it protects the small block copied to
 `GameState+0x6380` (with the CRC word itself).
@@ -155,6 +161,89 @@ Test: `dq9-core/tests/real_rom.rs`, `save_start_matches_melonds_ram` and
 can still replace the hero's position (`ov_017::021a01f4`, table indexed by map and
 time of day) **[unknown: which maps]**; a map without a `0x6e` record
 places the party at (0, 0, 0).
+
+## The suspend slot
+
+Slot 1 is the **suspend** ("intermission") save. Its writer is the field menu's
+**Misc. → Quick Save**, and its reader is a normal load with `intermission` 1.
+
+**The trigger.** `I` on the field opens the menu; its Misc. list is built and run by
+`ov_002::02166168`, which switches on the chosen entry code: 0 Heal All, 1 Tactics,
+2 Allocate Skill Points, 3 Assign Party Tricks, 4 Profile Settings, 5 Volume Settings,
+6 Quest List, **7 Quick Save**, 8 Call to Arms. The labels and descriptions are the ROM's
+own, `data/bin/menu/str_tm.gp2` (`str_tm_en.nat`): 4000 "Misc.", 4001..4009 the labels,
+4020..4028 the descriptions — entry 7 is 4008 "Quick Save", described by 4027 "Temporarily
+suspends your adventure in its current state." Choosing it sets the menu's step to `0x24`,
+whose handler in the overlay's step table (`0x0216cd74`, entry `0x24`, filled through the
+lazy-init path of `func_ov002_02155960`) is `ov_002::02169efc`.
+
+**The task.** `ov_002::02169efc` runs on its own sub-state (`+0x1bc0`):
+
+| Sub-state | Action |
+|---:|---|
+| 0 | message **4700** "Do you want to make a quick save log and suspend your game for the moment?" with its answer window; in multiplayer (`func_0202b7d8`) message **4703** instead, no question |
+| 1 | message **4701** "Recording quick save log. Do not turn the power OFF…" and starts loading a file |
+| 2 | waits for that load |
+| 99 | `func_020a9ea4` (the save buffer's own init, the same call the Confession makes before its write) |
+| 100 | `Save_WriteStep(buf, …, 0, 1)` — **intermission 1** (`0x020aad2c`) |
+| 0x65 | message **4702** "Quick save log successfully created. Returning to title screen." |
+| 3, 4 | the fade and the return to the title screen |
+
+**What the write does.** `Save_WriteStep` state 0 reads the **whole** slot 1 (`0x8000` bytes
+at `0x8000`) into its buffer, so what serialization does not rewrite is kept from the
+previous image — a mirror of slot 0 on a cartridge that has only ever seen normal saves.
+State 1 calls `Save_Serialize` (`0x020a9ec8`) with its fourth argument (intermission) set,
+then writes `0x6fe4` bytes at `0x8010`. With that argument:
+
+- the header A gets the **intermission byte 1** (slot+20) and the **exists byte 1**
+  (slot+21) — `local_1464`/`local_1463` in the decompilation, the two bytes
+  `Save_SlotStatus` (`0x020ab9d0`) reads;
+- the `Warp` block (`slot+27104`) is filled from the **live leader object**
+  (`GameState::GetUnknownGameObject`): `+0` = the object's map id (its field 6), `+2` = the
+  low halfword of its angle `+0x54`, `+4`/`+8`/`+0xc` = its position `+0x44` (3 × fx32);
+  `+0x10`/`+0x12` come from the zone/return record (`func_02027ca4`, `func_02028bd0`),
+  `+0x14` from a zone byte's bit 2 and `+0x15` plus the three words `+0x16`, `+0x18`, `+0x1a`
+  from `func_0203e524` (their meanings stay **[unknown]**, as on the read side);
+- the `Suspend` block (`slot+28112`) carries suspend data instead of a normal save's short
+  list: `0x200` bytes from `GameState+0x6fcc`, 10 from `+0x5cd0`, and the word `+0x71cc`
+  (`| 1` when the grotto struct's byte 3 is set);
+- the `Main` block's byte at `11562` stays **0** (`local_1508` is only set for
+  a *normal* save whose flags carry `0x10`, see § "Serialization").
+
+State 2 only completes: `Save_WriteStep`'s mirror copy (`0x8010`) is the **normal** save's
+second step, so a suspend write leaves slot 0 untouched. States 3/4 release the lock.
+
+**The resume.** `Save_LoadSlot` (`0x020aaf94`) with `intermission` 1 reads the header at
+`0x8010` and the blocks at `0x8084`; `Save_UnpackWarp` copies the block to `Save_Warp` and
+sets its byte `+7`, the "use this position" flag. `Party_Place` (`ov_017::0219c598`) then
+stands the party at `Save_Warp+0x10` with the angle `+0x1c` instead of the map's start point
+(§ "Position on resume"), and `Slot::area` reads the warp block's map for such a slot. On the
+title screen the quick save is its own entry: `str_op` 38 "Load quick save data.", 57/58
+"Your adventure will begin from the quick save location" / "When you restart your adventure,
+the quick save log will be deleted.", 60/61 the confirmation and 82/92 the corrupted-log
+refusal. **[hypothesis]** the deletion is the next normal save overwriting slot 0 (or a
+clearing write of slot 1); the function that clears it was not read.
+
+**In the port.** `dq9_core::state::GameState::write_suspend(&mut SlotMut, HeroPose)` is the
+writer: the modelled state at the offsets `write_into` uses (`Main`'s own map word included),
+the header's intermission and exists bytes, and the `Warp` block of the **live** pose
+(`App::write_suspend_out` takes it from the hero: `dq9_core::field::to_fx` of the position and
+`angle_of_yaw` as an `i16`, the low halfword the original stores). The whole container goes
+through a temporary file and a rename; slot 0 is never written; the input is untouched when
+the destination is another file. The field menu's Misc. row lists the ROM's nine entries with
+Quick Save as the only one with a handler (the others draw greyed, their description in the
+footer), asks 4700, and writes into `--suspend-out`, or into the `--save` container itself
+when that option is absent — the way the DS writes its own cartridge.
+
+Not modelled: the `Suspend` block's payload (the port keeps the input slot 1's bytes, which
+on a mirrored cartridge are a normal save's list — the original's is the field's own state),
+the `Warp` block's extra fields `+0x10..+0x1b` (they keep the input's bytes), the jingle and
+the fade, and the return to a title screen, which this build does not have: after 4702 the
+field goes on. **DS acceptance of the suspend slot is not attempted**: the written slot 1 has
+the right header, checksums, state and `Warp` block (`build/evidence/v3-suspend-save/reload.txt`,
+its `Suspend` block kept from the input), but whether the cartridge's title screen offers the
+quick save and resumes at that position is **[hypothesis]** — melonDS was not driven through
+its title menu for this batch.
 
 ## Clock and time of day
 
@@ -426,6 +515,15 @@ a valid slot 0. Without `--save` the port has no container, so the entry shows i
 `crates/dq9-app/src/app/facility.rs`, `App::confess`). A refused confession writes nothing, but a
 window run with `--save-out` still writes the session's state when it exits, as it always did.
 
+**The Quick Save** writes the suspend slot mid-session through the same temporary file and
+rename: `GameState::write_suspend(&mut SlotMut, HeroPose)` (the state, the intermission header
+bytes and the live pose's `Warp` block), `slot.seal()`, and the whole image out — slot 0 is
+never written, so no mirror step. The destination is `--suspend-out` when it is given and the
+`--save` container itself otherwise; without `--save` the entry says so and writes nothing
+(`App::write_suspend_out`, `App::quick_save`, § "The suspend slot"). The command line needs no
+new run mode: the option only names the destination, and the write happens when the field
+menu's Misc. → Quick Save is answered "Yes".
+
 **Tests** (`dq9-core` state module; `dq9-app` `app/headless.rs`): a state read from a save and
 written back is byte-identical, including the demo (`DQ9_SAVE`); a mutated state — map, story,
 clock, gold, bag, a member's name, vocation, level, experience, weapon and maxima — changes
@@ -433,7 +531,15 @@ only bytes inside the ranges `write_into` reports (plus the three checksum words
 write, checked against the same ranges on a synthetic mirrored save, stays inside them and
 its mirror copy; `from_play` round-trips through `field::saved_state`; a party that would fall
 outside the 13 records is refused; a real ROM + `DQ9_SAVE` headless run (bag and a maximum
-mutated) reloads to the state the run held. Evidence: `build/evidence/v3-save-bind/`.
+mutated) reloads to the state the run held. Evidence: `build/evidence/v3-save-bind/`. The
+suspend writer's own tests: a normal save's slot 0 stays byte-identical while slot 1 becomes
+an `Intermission` slot whose `Warp` block holds the given pose and whose reload
+(`GameState::from_slot`) gives back the same map, story, party, gold, clock, flags and
+`Placement::At`; a second write over an existing intermission slot still writes the `Main`
+block's map word (`dq9-core` state module); the app's write on a synthetic mirrored container
+keeps slot 0 and the input file byte-identical and its reload lands at the live hero's
+position (`app/headless.rs`); the Misc. list is the ROM's and only Quick Save answers
+(`app/services/tests.rs`). Evidence: `build/evidence/v3-suspend-save/`.
 
 **DS acceptance: the original loads the written container.** melonDS with the written file as
 `dq9.sav` shows its adventure log on the title screen (the four members with their vocations
