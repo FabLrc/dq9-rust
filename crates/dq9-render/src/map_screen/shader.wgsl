@@ -1,0 +1,36 @@
+// The field's map screen: textured quads of the 256x192 top LCD, from the map picture and the
+// party sprite sheet (two textures selected by the vertex's layer).
+
+struct Vertex {
+    @location(0) pos: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) layer: f32,
+}
+
+struct Varying {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) layer: f32,
+}
+
+@group(0) @binding(0) var picture: texture_2d<f32>;
+@group(0) @binding(1) var sprites: texture_2d<f32>;
+@group(0) @binding(2) var sprite_sampler: sampler;
+
+@vertex
+fn vs_main(v: Vertex) -> Varying {
+    var out: Varying;
+    // Screen pixels to clip space, y down (the DS screen is 256x192).
+    out.clip = vec4<f32>(v.pos.x / 128.0 - 1.0, 1.0 - v.pos.y / 96.0, 0.0, 1.0);
+    out.uv = v.uv;
+    out.layer = v.layer;
+    return out;
+}
+
+@fragment
+fn fs_main(v: Varying) -> @location(0) vec4<f32> {
+    if v.layer > 0.5 {
+        return textureSample(sprites, sprite_sampler, v.uv);
+    }
+    return textureSample(picture, sprite_sampler, v.uv);
+}

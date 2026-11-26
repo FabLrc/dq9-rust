@@ -4,13 +4,17 @@
 use super::App;
 use super::fight;
 use super::status;
+use crate::gpu::Gpu;
 use crate::hud::HudInfo;
 use crate::hud::time_label;
 use crate::screens;
 use crate::screens::Layout;
 use crate::screens::ScreenMode;
+use crate::talk::Talk;
 use dq9_core::cutscene::TexelOp;
 use dq9_core::field;
+use dq9_core::movement::Hero;
+use dq9_core::party::Party;
 use dq9_core::state::{WINGED_TINT, hero_winged};
 use dq9_render::AnimatedScene;
 use dq9_render::Camera;
@@ -19,6 +23,10 @@ use dq9_render::EnhancedOptions;
 use dq9_render::Panel;
 use dq9_render::Renderer;
 use dq9_render::TexelTint;
+use dq9_render::Viewport;
+use dq9_render::map_screen;
+use dq9_render::map_screen::{Content, Layers, MapScreen};
+use dq9_render::ui::{Atlas, Quad};
 use glam::Vec3;
 
 /// How the frame is presented: where the DS screens go, the enhanced effects and the bottom
@@ -35,6 +43,16 @@ pub(super) struct Presentation {
     pub(super) fx: EnhancedOptions,
     /// Placeholder of the bottom DS screen, created with the surface format.
     pub(super) panel: Option<Panel>,
+    /// The original's map screen (its pipeline), created with the surface format on the first
+    /// field drawn in `original` mode.
+    pub(super) map_screen: Option<MapScreen>,
+    /// The map screen's two textures for the loaded map.
+    pub(super) map_layers: Option<Layers>,
+    /// The decoded map screen of the loaded map, kept until the map changes.
+    pub(super) map_data: Option<MapScreenData>,
+    /// The map the map screen failed for, with the reason the status line gave: the
+    /// placeholder stays and the failure is not retried every frame.
+    pub(super) map_error: Option<(u16, String)>,
 }
 
 impl Presentation {
@@ -43,11 +61,73 @@ impl Presentation {
             screens: ScreenMode::default(),
             fx: EnhancedOptions::DEFAULT,
             panel: None,
+            map_screen: None,
+            map_layers: None,
+            map_data: None,
+            map_error: None,
         }
     }
 }
 
+/// The map screen's data for one map, decoded once per map load (`dq9_render::map_screen`).
+pub(super) struct MapScreenData {
+    /// `MapEntry::id` of the map the data was decoded for.
+    id: u16,
+    content: Content,
+}
+
 impl App {
+    /// Decodes and uploads the original's map screen for the loaded map, once per map, when
+    /// `--screens original` draws the field on the bottom LCD and the top one gets the map
+    /// (`re/bottom-screen.md` § 2.1). A map whose data is missing leaves the placeholder and
+    /// prints the reason once (the failure is remembered for that map).
+    fn prepare_map_screen(&mut self) {
+        if self.presentation.screens != ScreenMode::Original {
+            return;
+        }
+        let Some((entry, _)) = &self.current else {
+            return;
+        };
+        let (id, code) = (entry.id, entry.code.clone());
+        if self
+            .presentation
+            .map_data
+            .as_ref()
+            .is_some_and(|data| data.id == id)
+        {
+            return;
+        }
+        if self
+            .presentation
+            .map_error
+            .as_ref()
+            .is_some_and(|(failed, _)| *failed == id)
+        {
+            return;
+        }
+        let (Some(rom), Some(gpu)) = (&self.rom, &self.gpu) else {
+            return;
+        };
+        match load_map_screen(rom, &code) {
+            Ok(content) => {
+                let screen = self
+                    .presentation
+                    .map_screen
+                    .get_or_insert_with(|| MapScreen::new(&gpu.device, gpu.config.format));
+                self.presentation.map_layers =
+                    Some(screen.layers(&gpu.device, &gpu.queue, &content));
+                self.presentation.map_data = Some(MapScreenData { id, content });
+                self.presentation.map_error = None;
+            }
+            Err(e) => {
+                status(&format!("map screen ({code}): {e}"));
+                self.presentation.map_data = None;
+                self.presentation.map_layers = None;
+                self.presentation.map_error = Some((id, e));
+            }
+        }
+    }
+
     /// The hero's Celestrian form in the field: while [`hero_winged`] holds for the map and the
     /// story point, his models' palettes get [`WINGED_TINT`] added, the operation the game
     /// applies with trigger action `0x97(1)` (`ov_017::021bdb78`, `0218fcf8`, `0218fd34`: the
@@ -268,6 +348,9 @@ impl App {
     /// screen, and the message window when the field draws one. `swapped` is the script's
     /// screen swap (natives 109/110); the battle keeps the default layout.
     fn present_frame(&mut self, camera: &Camera, swapped: bool, messages: bool) {
+        // The original's map screen is decoded and uploaded before the frame's GPU state is
+        // borrowed (once per map).
+        self.prepare_map_screen();
         let (Some(gpu), Some(renderer)) = (&mut self.gpu, &mut self.renderer) else {
             return;
         };
@@ -296,10 +379,6 @@ impl App {
             self.presentation.screens
         };
         let field = screens.field_for(mode, swapped);
-        let panel = self
-            .presentation
-            .panel
-            .get_or_insert_with(|| Panel::new(&gpu.device, gpu.config.format));
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -314,7 +393,30 @@ impl App {
             camera,
         );
         if let Some(overlay) = screens.overlay_for(mode, swapped) {
-            panel.draw(&mut encoder, &view, overlay);
+            // The original's map screen fills the top LCD while the field shows (free control
+            // and field cutscenes, `re/bottom-screen.md` § 2.1); the placeholder only when its
+            // data is missing, which the status line named when the map loaded.
+            let mut drawn = false;
+            if mode == ScreenMode::Original && self.encounter.battle.is_none() {
+                drawn = draw_map_screen(
+                    &self.presentation,
+                    &self.party,
+                    self.hero.as_ref(),
+                    self.current.as_ref().map(|(_, label)| label.as_str()),
+                    &mut self.talk,
+                    gpu,
+                    &mut encoder,
+                    &view,
+                    overlay,
+                );
+            }
+            if !drawn {
+                let panel = self
+                    .presentation
+                    .panel
+                    .get_or_insert_with(|| Panel::new(&gpu.device, gpu.config.format));
+                panel.draw(&mut encoder, &view, overlay);
+            }
         }
         if messages && self.options.layout.fills_window() {
             if let Some((entry, label)) = &self.current {
@@ -697,4 +799,130 @@ mod tests {
             assert!(WingedForm::find(runtime).is_none(), "story {story:?}");
         }
     }
+}
+
+/// Reads the four files the field's map screen loads and decodes it for `code` (a map code such
+/// as `M01` or a room such as `M01M01`, `docs/re/minimap.md`).
+fn load_map_screen(rom: &[u8], code: &str) -> Result<Content, String> {
+    fn file<'a>(rom: &'a nds_rom::Rom<'a>, path: &str) -> Result<&'a [u8], String> {
+        rom.file_by_path(path).map_err(|e| format!("{path}: {e}"))
+    }
+    let parsed = nds_rom::Rom::parse(rom).map_err(|e| format!("ROM: {e}"))?;
+    map_screen::content(
+        file(&parsed, map_screen::ARCHIVE)?,
+        file(&parsed, map_screen::SPRITE_CELLS)?,
+        file(&parsed, map_screen::SPRITE_CHARS)?,
+        file(&parsed, map_screen::SPRITE_PALETTE)?,
+        code,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Draws the original's map screen into `region`: the picture, the party strips and dots
+/// (`dq9_render::map_screen`), then the area tab and the names from the game's font. Returns
+/// whether anything was drawn; `false` leaves the placeholder (`prepare_map_screen` said why).
+#[allow(clippy::too_many_arguments)]
+fn draw_map_screen(
+    presentation: &Presentation,
+    party: &Party,
+    hero: Option<&Hero>,
+    label: Option<&str>,
+    talk: &mut Talk,
+    gpu: &Gpu,
+    encoder: &mut wgpu::CommandEncoder,
+    target: &wgpu::TextureView,
+    region: Viewport,
+) -> bool {
+    let (Some(screen), Some(layers), Some(data)) = (
+        &presentation.map_screen,
+        &presentation.map_layers,
+        &presentation.map_data,
+    ) else {
+        return false;
+    };
+    // The party shares the hero's position in the port (members' own field positions are not
+    // modelled), so their dots coincide.
+    let at = hero.map_or((0.0, 0.0), |hero| {
+        let position = hero.position();
+        (position.x, position.z)
+    });
+    let members = party.members.len().min(map_screen::MEMBERS);
+    let frame = map_screen::Frame::new(&data.content, &vec![at; members], (0.0, 0.0));
+    screen.draw(&gpu.device, encoder, target, region, layers, &frame);
+    let names: Vec<&[u8]> = party
+        .members
+        .iter()
+        .take(map_screen::MEMBERS)
+        .map(|member| member.name())
+        .collect();
+    let strip = data.content.strip;
+    if let Some(quads) = talk.with_ui(|atlas, font| map_text(atlas, font, label, &names, strip))
+        && !quads.is_empty()
+    {
+        talk.draw_screens(
+            &gpu.device,
+            &gpu.queue,
+            gpu.config.format,
+            encoder,
+            target,
+            &[(region, quads)],
+        );
+    }
+    true
+}
+
+/// The map screen's text and its tab, in screen pixels: the area's name right-aligned in the
+/// dark tab at `map_screen::TAB`, and each member's name centred in its strip.
+fn map_text(
+    atlas: &Atlas,
+    font: &dq9_formats::font::Font<'_>,
+    label: Option<&str>,
+    names: &[&[u8]],
+    strip: (u32, u32),
+) -> Vec<Quad> {
+    let mut out = Vec::new();
+    let [tab_x, y, tab_w, h] = map_screen::TAB;
+    let (y, h) = (y as i32, h as i32);
+    // The tab keeps its right edge and grows left when the name is wider than the capture's
+    // "Stornway" (the original's own fit is [unknown]).
+    let width = label.map_or(0, |label| font.measure(label.as_bytes()) + 6);
+    let w = tab_w.max(width as u32) as i32;
+    let x = (tab_x + tab_w) as i32 - w;
+    out.push(atlas.solid([x, y, w, h], map_screen::TAB_EDGE));
+    out.push(atlas.solid([x + 1, y + 1, w - 2, h - 2], map_screen::TAB_FILL));
+    if let Some(label) = label {
+        let width = font.measure(label.as_bytes());
+        let tx = (x + w - 4 - width).max(x + 2);
+        let ty = y + (h - atlas.font_height() as i32) / 2;
+        let (glyphs, _) = font.layout(label.as_bytes());
+        atlas.text(&glyphs, tx, ty, map_screen::TAB_TEXT, &mut out);
+    }
+    for (slot, name) in names.iter().take(map_screen::MEMBERS).enumerate() {
+        let glyphs = name_glyphs(font, name);
+        if glyphs.is_empty() {
+            continue;
+        }
+        let width = atlas.line_width(&glyphs);
+        let sx = (slot as u32 * map_screen::STRIP_PITCH) as i32 + (strip.0 as i32 - width) / 2;
+        let sy = map_screen::STRIP_Y as i32 + (strip.1 as i32 - atlas.font_height() as i32) / 2;
+        atlas.text(&glyphs, sx, sy, [1.0; 4], &mut out);
+    }
+    out
+}
+
+/// Places a character record's name, which is a list of glyph indices, not text
+/// (`dq9_core::party::Character::name`): `(glyph, x)` as [`Atlas::text`] takes them.
+fn name_glyphs(font: &dq9_formats::font::Font<'_>, name: &[u8]) -> Vec<(u8, i32)> {
+    let mut out = Vec::new();
+    let (mut x, mut previous) = (0i32, u8::MAX);
+    for &glyph in name {
+        let Some(entry) = font.glyphs.get(usize::from(glyph)) else {
+            continue;
+        };
+        x += i32::from(font.kerning(previous, glyph));
+        out.push((glyph, x));
+        x += i32::from(entry.width) + 1;
+        previous = glyph;
+    }
+    out
 }

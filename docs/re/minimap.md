@@ -127,8 +127,14 @@ are re-measured (`the_position_formula_lands_where_the_wiki_says`):
 | layout | mark (x, z) | scale | corner | row | picture height |
 |---|---|---|---|---|---|
 | `M01` (village), the road's mark | −7.16, 16.31 | 3.2 | −18, −12 | **148** (148.19) | 152 |
-| `S01M01` (pass), first mark | −18.52, 41.69 | 2 | −10, −13 | **4** (3.62) | 200 |
-| `S01M01` (pass), second mark | 14.33, −50.19 | 2 | −10, −13 | **187** (187.38) | 200 |
+| `S01M01` (pass), first mark | −18.52, 41.69 | 2 | −10, −13 | **187** (187.38) | 200 |
+| `S01M01` (pass), second mark | 14.33, −50.19 | 2 | −10, −13 | **4** (3.62) | 200 |
+
+The last two rows were swapped here, not by the reader: `marks()` returns the file's records in
+order, so `(−18.52, 41.69)` lands on 187.38 (→ 187) and `(14.33, −50.19)` on 3.62 (→ 4); each
+mark sits nearest its own doorway in `S01M0000.bmbl` (`dq9re doors S01M01`: `F01` at −14.3,
+32.5, `F02` at 10.9, −44.2). The reader's test asserts only the sorted set {4, 187}, which is
+why the note's pairing survived; `Layout::pixel` and `marks` were right.
 
 **The row is rounded, not truncated**: 3.62 must land on 4, which truncation would put on 3.
 The wiki's own table (rows 4 and 187) therefore selects rounding; the other two examples do
@@ -173,7 +179,8 @@ panel's attribute is 23.
   positive case justifies it, an independent proof is missing; colour 0 is clear (the count is
   established, the engine's treatment is the DS rule); scale in pixels per unit and corner in
   tiles.
-- **Corrected here**: the pass's first mark lands on row 4 only if the pixel row is rounded;
+- **Corrected here**: the pass's mark at (14.33, −50.19) lands on row 4 only if the pixel row
+  is rounded (§ 4's table had the two pass rows swapped);
   the `.pac` end marker of the effect packs carries `0xFFFFFFFF` in the data-size and step
   words (head size stays `0x50`); `.pac` names can be Shift-JIS; 33 `.pac` files are NARCs, so
   the wiki's 468 is 501 not 468; the "16" first word of four `.bmmp` files is their record

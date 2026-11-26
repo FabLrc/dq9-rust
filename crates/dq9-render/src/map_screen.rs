@@ -1,0 +1,733 @@
+//! The field's map screen: the original's top LCD during the field (`re/bottom-screen.md` § 2.1),
+//! drawn over the finished panel in screen pixels. Layer split: this module decodes the map
+//! screen's data from file bytes and lays out its quads; the application reads the ROM, passes
+//! the party's positions and names and draws the result (`app/draw.rs`).
+//!
+//! What is drawn, and what establishes it:
+//!
+//! - the picture: the `.obg` the map's `.bmmp` names (`docs/re/minimap.md` § 2), at one pixel
+//!   per texel with its top-left at the screen's top-left — the original scroll of a picture
+//!   larger than 256×192 is not established ([`picture_dst`]);
+//! - the party strips: cell 2 of `obj_minimap.NCER`, rows 0..15, 64×16 at y 176, one per member
+//!   in party order, palette slot 0..3 (blue, green, pink, orange in the file);
+//! - the party dots: cells 3..7 (8×8, palette slot 4) at the member's projected position
+//!   (`pixel = position × scale − corner × 8`, rounded);
+//! - the area tab is the application's (`Atlas`), from the capture's geometry.
+//!
+//! The dot and strip colours of a real party are not the file's (`docs/re/minimap.md` § 5,
+//! `tools/wiki/Mini-Map.md`): the file's slots are used, a **[hypothesis]**.
+
+use std::fmt;
+
+use dq9_formats::Gpc2;
+use dq9_formats::minimap::{Layout, Picture, party_strip};
+use nds_rom::nitro2d::{Ncer, Ncgr, Nclr};
+use wgpu::util::DeviceExt as _;
+
+use crate::renderer::Viewport;
+
+/// The archive the field's map screen loads (mode 0, `MapScreen_Load`'s `func_02020b98`).
+pub const ARCHIVE: &str = "data/pack_lv5/minimap.gp2";
+/// The loose Nitro 2D files the party strips and dots come from.
+pub const SPRITE_CELLS: &str = "data/ani/obj_minimap.NCER";
+pub const SPRITE_CHARS: &str = "data/ani/obj_minimap.NCGR";
+pub const SPRITE_PALETTE: &str = "data/ani/obj_minimap.NCLR";
+
+/// Width and height of the DS screen this layer draws on.
+pub const SCREEN: (u32, u32) = (256, 192);
+/// The party strip's slot pitch, width and top edge (`re/bottom-screen.md` § 2.1).
+pub const STRIP_PITCH: u32 = 64;
+pub const STRIP_Y: u32 = 176;
+/// The dots' size: one 8×8 part each.
+pub const DOT_SIZE: u32 = 8;
+/// Member slots a party can fill (`dq9_core::party::PARTY_MAX`).
+pub const MEMBERS: usize = 4;
+/// The area tab's rectangle and colours, measured on the original's capture (a dark tab with a
+/// light edge at the picture's top right); the original's own palette source is [unknown].
+pub const TAB: [u32; 4] = [200, 0, 54, 16];
+pub const TAB_EDGE: [f32; 4] = [211.0 / 255.0, 146.0 / 255.0, 48.0 / 255.0, 1.0];
+pub const TAB_FILL: [f32; 4] = [97.0 / 255.0, 65.0 / 255.0, 40.0 / 255.0, 1.0];
+pub const TAB_TEXT: [f32; 4] = [1.0; 4];
+
+/// An RGBA8 image, rows top to bottom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+impl Image {
+    /// Size in pixels.
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+}
+
+/// Why the map screen cannot be drawn: the placeholder stays and the application says why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Error {
+    /// No `.bmmp` layout names this map code.
+    NoLayout(String),
+    /// The layout's picture is not in `minimap.gp2`.
+    NoPicture(String),
+    /// An archive, picture or sprite file does not parse.
+    Format(String),
+    /// `obj_minimap` has no party panel cell to cut the strip from.
+    NoStrip,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoLayout(code) => write!(f, "no .bmmp layout for {code}"),
+            Self::NoPicture(name) => write!(f, "no {name} picture in {ARCHIVE}"),
+            Self::Format(what) => write!(f, "{what}"),
+            Self::NoStrip => write!(f, "{SPRITE_CELLS} has no party panel cell"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// What the top screen draws for one map: the decoded picture, the party sprite sheet and the
+/// layout's projection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Content {
+    /// The `.obg` picture, colour 0 transparent.
+    pub picture: Image,
+    /// The sprite sheet: the four 64-pixel strips at rows 0..16, the five dots at row 16.
+    pub sprites: Image,
+    /// The strip cut from the party panel (64×16).
+    pub strip: (u32, u32),
+    /// Pixels per map unit (`.bmmp` tag 0x69).
+    pub scale: f32,
+    /// The picture's corner in tiles (`.bmmp` tag 0x64).
+    pub corner: (f32, f32),
+}
+
+/// Decodes the map screen of `map` (a map code such as `M01` or `M01M01`) from the four files
+/// the original loads. `archive` is `minimap.gp2`, the three others the `obj_minimap` files.
+///
+/// The layout is `<map>.bmmp`, else the layout listing `map` among its `0x70` codes (a room of
+/// an area draws the area's picture, `docs/re/minimap.md` § 3).
+///
+/// # Errors
+/// [`Error`] with the datum that is missing; nothing is drawn then.
+pub fn content(
+    archive: &[u8],
+    ncer: &[u8],
+    ncgr: &[u8],
+    nclr: &[u8],
+    map: &str,
+) -> Result<Content, Error> {
+    let archive = Gpc2::parse(archive).map_err(|e| Error::Format(format!("{ARCHIVE}: {e}")))?;
+    let (name, data) = find_layout(&archive, map)?;
+    let layout = Layout::parse(&data).map_err(|e| Error::Format(format!("{name}: {e}")))?;
+    let picture_name = layout
+        .picture()
+        .ok_or_else(|| Error::Format(format!("{name} names no picture")))?;
+    let scale = layout
+        .scale()
+        .ok_or_else(|| Error::Format(format!("{name} has no scale")))?;
+    let corner = layout
+        .corner()
+        .ok_or_else(|| Error::Format(format!("{name} has no corner")))?;
+    let entry = archive
+        .find(picture_name)
+        .or_else(|| archive.find(&format!("{picture_name}.obg")))
+        .ok_or_else(|| Error::NoPicture(picture_name.to_owned()))?;
+    let bytes = archive
+        .member(entry)
+        .map_err(|e| Error::Format(format!("{picture_name}: {e}")))?;
+    let decoded = Picture::parse(&bytes)
+        .map_err(|e| Error::Format(format!("{picture_name}: {e}")))?
+        .image();
+    if decoded.width == 0 || decoded.height == 0 {
+        return Err(Error::Format(format!("{picture_name} has no pixels")));
+    }
+    let picture = Image {
+        width: decoded.width as u32,
+        height: decoded.height as u32,
+        rgba: decoded.rgba.into_iter().flatten().collect(),
+    };
+    let (sprites, strip) = sprite_sheet(ncer, ncgr, nclr)?;
+    Ok(Content {
+        picture,
+        sprites,
+        strip,
+        scale,
+        corner,
+    })
+}
+
+/// Finds the layout of a map: `<map>.bmmp`, else the layout listing `map` among its codes.
+fn find_layout<'a>(
+    archive: &'a Gpc2<'a>,
+    map: &str,
+) -> Result<(String, std::borrow::Cow<'a, [u8]>), Error> {
+    if let Some(entry) = archive.find(&format!("{map}.bmmp")) {
+        let data = archive
+            .member(entry)
+            .map_err(|e| Error::Format(format!("{}: {e}", entry.name)))?;
+        return Ok((entry.name.clone(), data));
+    }
+    for entry in archive.entries.iter().filter(|e| e.name.ends_with(".bmmp")) {
+        let data = archive
+            .member(entry)
+            .map_err(|e| Error::Format(format!("{}: {e}", entry.name)))?;
+        let layout =
+            Layout::parse(&data).map_err(|e| Error::Format(format!("{}: {e}", entry.name)))?;
+        if layout
+            .codes()
+            .iter()
+            .any(|(_, code)| code.eq_ignore_ascii_case(map))
+        {
+            return Ok((entry.name.clone(), data));
+        }
+    }
+    Err(Error::NoLayout(map.to_owned()))
+}
+
+/// The party sprite sheet: the four name strips (palette slots 0..3 of the panel part) and the
+/// five dots (cells 3..7, palette slot 4).
+fn sprite_sheet(ncer: &[u8], ncgr: &[u8], nclr: &[u8]) -> Result<(Image, (u32, u32)), Error> {
+    let cells = Ncer::parse(ncer).map_err(|e| Error::Format(format!("{SPRITE_CELLS}: {e}")))?;
+    let chars = Ncgr::parse(ncgr).map_err(|e| Error::Format(format!("{SPRITE_CHARS}: {e}")))?;
+    let palette = Nclr::parse(nclr).map_err(|e| Error::Format(format!("{SPRITE_PALETTE}: {e}")))?;
+    let strip = party_strip(&cells.cells).ok_or(Error::NoStrip)?;
+    let (strip_w, strip_h) = (u32::from(strip.width), u32::from(strip.height));
+    if strip_w == 0 || strip_h == 0 {
+        return Err(Error::NoStrip);
+    }
+    let height = strip_h + DOT_SIZE;
+    let width = STRIP_PITCH * MEMBERS as u32;
+    let mut rgba = vec![0u8; (width * height * 4) as usize];
+    let panel = cells
+        .cells
+        .get(dq9_formats::minimap::PARTY_PANEL_CELL)
+        .and_then(|cell| cell.parts.first())
+        .ok_or(Error::NoStrip)?;
+    // The panel is eight tiles across, sixteen tall.
+    let pitch = strip_w / 8;
+    for slot in 0..MEMBERS as u32 {
+        let Some(colours) = palette.palette(slot as u16) else {
+            continue;
+        };
+        for y in 0..strip_h {
+            for x in 0..strip_w {
+                let tile = panel.tile + ((y / 8) * pitch + x / 8) as u16;
+                let Some(colour) = pixel(&chars, colours, tile, x % 8, y % 8) else {
+                    continue;
+                };
+                blit(&mut rgba, width, (STRIP_PITCH * slot + x, y), *colour);
+            }
+        }
+    }
+    // The dots follow the strips: cells 3..7, their own palette slot, one 8×8 tile each.
+    let first_dot = *dq9_formats::minimap::DOT_CELLS.start();
+    for (index, cell) in cells.cells.iter().skip(first_dot).take(MEMBERS).enumerate() {
+        let Some(part) = cell.parts.first() else {
+            continue;
+        };
+        let Some(colours) = palette.palette(u16::from(part.palette)) else {
+            continue;
+        };
+        for y in 0..DOT_SIZE {
+            for x in 0..DOT_SIZE {
+                let Some(colour) = pixel(&chars, colours, part.tile, x, y) else {
+                    continue;
+                };
+                blit(
+                    &mut rgba,
+                    width,
+                    (index as u32 * DOT_SIZE + x, strip_h + y),
+                    *colour,
+                );
+            }
+        }
+    }
+    Ok((
+        Image {
+            width,
+            height,
+            rgba,
+        },
+        (strip_w, strip_h),
+    ))
+}
+
+/// The RGBA of a 4-bit tile pixel, or `None` for colour 0 (transparent).
+fn pixel<'a>(
+    chars: &Ncgr<'_>,
+    colours: &'a [[u8; 4]],
+    tile: u16,
+    x: u32,
+    y: u32,
+) -> Option<&'a [u8; 4]> {
+    let data = chars.tile(usize::from(tile))?;
+    let byte = *data.get((y * 4 + x / 2) as usize)?;
+    let nibble = if x.is_multiple_of(2) {
+        byte & 0x0F
+    } else {
+        byte >> 4
+    };
+    if nibble == 0 {
+        return None;
+    }
+    colours.get(usize::from(nibble))
+}
+
+fn blit(rgba: &mut [u8], width: u32, at: (u32, u32), colour: [u8; 4]) {
+    let offset = ((at.1 * width + at.0) * 4) as usize;
+    if let Some(dst) = rgba.get_mut(offset..offset + 4) {
+        dst.copy_from_slice(&colour);
+    }
+}
+
+/// Where a map position falls on the picture: `pixel = position × scale − corner × 8`, x across
+/// and z down, rounded to the nearest pixel (the wiki's pass mark lands on row 4).
+pub fn project(position: (f32, f32), scale: f32, corner: (f32, f32)) -> (f32, f32) {
+    (
+        (position.0 * scale - corner.0 * 8.0).round(),
+        (position.1 * scale - corner.1 * 8.0).round(),
+    )
+}
+
+/// The picture's rectangle in screen pixels: its top-left at `offset`, one pixel per texel.
+/// The original's scroll of a picture larger than the screen is [unknown]
+/// (`docs/re/minimap.md` § 6): the caller passes (0, 0), the picture's top-left.
+pub fn picture_dst(size: (u32, u32), offset: (f32, f32)) -> [f32; 4] {
+    [offset.0, offset.1, size.0 as f32, size.1 as f32]
+}
+
+/// The strip of party slot `slot`: 64 wide at y 176, `content.strip` tall.
+pub fn strip_dst(content: &Content, slot: usize) -> [f32; 4] {
+    [
+        (slot as u32 * STRIP_PITCH) as f32,
+        STRIP_Y as f32,
+        content.strip.0 as f32,
+        content.strip.1 as f32,
+    ]
+}
+
+/// A dot of 8×8 centred on the projected pixel.
+pub fn dot_dst(pixel: (f32, f32)) -> [f32; 4] {
+    let half = DOT_SIZE as f32 / 2.0;
+    [
+        pixel.0 - half,
+        pixel.1 - half,
+        DOT_SIZE as f32,
+        DOT_SIZE as f32,
+    ]
+}
+
+/// The strip's rectangle in [`Content::sprites`].
+pub fn strip_src(content: &Content, slot: usize) -> [u32; 4] {
+    [
+        slot as u32 * STRIP_PITCH,
+        0,
+        content.strip.0,
+        content.strip.1,
+    ]
+}
+
+/// The dot's rectangle in [`Content::sprites`]; `DOT_CELLS` 3..7 in order.
+pub fn dot_src(content: &Content, slot: usize) -> [u32; 4] {
+    [slot as u32 * DOT_SIZE, content.strip.1, DOT_SIZE, DOT_SIZE]
+}
+
+/// One textured rectangle of the frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sprite {
+    /// Source in [`Content::sprites`].
+    pub src: [u32; 4],
+    /// Destination on the 256×192 screen.
+    pub dst: [f32; 4],
+}
+
+/// What the top screen shows this frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Frame {
+    /// The picture's top-left on the screen: (0, 0), its own top-left.
+    pub picture_offset: (f32, f32),
+    /// The picture's size in texels.
+    pub picture: (u32, u32),
+    /// The sprite sheet's size in texels, for the sprites' texture coordinates.
+    pub sheet: (u32, u32),
+    /// The party strips and dots, hero first.
+    pub sprites: Vec<Sprite>,
+}
+
+impl Frame {
+    /// The frame of `content` for the party at `party` (map positions `x, z`), hero first: one
+    /// strip and one dot per member, up to [`MEMBERS`]. The members share the party's position
+    /// in the port (their own field positions are not modelled), so their dots coincide.
+    pub fn new(content: &Content, party: &[(f32, f32)], picture_offset: (f32, f32)) -> Self {
+        let mut sprites = Vec::with_capacity(party.len().min(MEMBERS) * 2);
+        for (slot, &position) in party.iter().take(MEMBERS).enumerate() {
+            sprites.push(Sprite {
+                src: strip_src(content, slot),
+                dst: strip_dst(content, slot),
+            });
+            let pixel = project(position, content.scale, content.corner);
+            sprites.push(Sprite {
+                src: dot_src(content, slot),
+                dst: dot_dst(pixel),
+            });
+        }
+        Self {
+            picture_offset,
+            picture: content.picture.size(),
+            sheet: content.sprites.size(),
+            sprites,
+        }
+    }
+}
+
+const VERTEX_FLOATS: usize = 5;
+
+/// Two triangles per rectangle: position, texture coordinate, layer (0 picture, 1 sprites).
+fn vertices(frame: &Frame) -> Vec<[f32; VERTEX_FLOATS]> {
+    let quad = |dst: [f32; 4], uv: [f32; 4], layer: f32, out: &mut Vec<[f32; VERTEX_FLOATS]>| {
+        let [x, y, w, h] = dst;
+        let [u0, v0, u1, v1] = uv;
+        let corner = |dx: f32, dy: f32| {
+            [
+                x + dx * w,
+                y + dy * h,
+                u0 + dx * (u1 - u0),
+                v0 + dy * (v1 - v0),
+                layer,
+            ]
+        };
+        let (tl, tr, bl, br) = (
+            corner(0.0, 0.0),
+            corner(1.0, 0.0),
+            corner(0.0, 1.0),
+            corner(1.0, 1.0),
+        );
+        out.extend([tl, tr, bl, tr, br, bl]);
+    };
+    let mut out = Vec::with_capacity((1 + frame.sprites.len()) * 6);
+    let (w, h) = (frame.picture.0 as f32, frame.picture.1 as f32);
+    if w > 0.0 && h > 0.0 {
+        quad(
+            picture_dst(frame.picture, frame.picture_offset),
+            [0.0, 0.0, 1.0, 1.0],
+            0.0,
+            &mut out,
+        );
+    }
+    let sheet_uv = |sprite: &Sprite, size: (u32, u32)| {
+        let [sx, sy, sw, sh] = sprite.src;
+        [
+            sx as f32 / size.0 as f32,
+            sy as f32 / size.1 as f32,
+            (sx + sw) as f32 / size.0 as f32,
+            (sy + sh) as f32 / size.1 as f32,
+        ]
+    };
+    for sprite in &frame.sprites {
+        let uv = sheet_uv(sprite, frame.sheet);
+        quad(sprite.dst, uv, 1.0, &mut out);
+    }
+    out
+}
+
+/// GPU side: the pipeline and the sampler; the textures are per map ([`Layers`]).
+#[derive(Debug)]
+pub struct MapScreen {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+}
+
+/// The two textures of one map's screen and their bind group.
+#[derive(Debug)]
+pub struct Layers {
+    _picture: wgpu::Texture,
+    _sprites: wgpu::Texture,
+    bind: wgpu::BindGroup,
+}
+
+fn texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    image: &Image,
+    label: &str,
+) -> wgpu::Texture {
+    device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: image.width.max(1),
+                height: image.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &image.rgba,
+    )
+}
+
+impl MapScreen {
+    /// Creates the pipeline for targets of `color_format`.
+    pub fn new(device: &wgpu::Device, color_format: wgpu::TextureFormat) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("dq9 map screen shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("map_screen/shader.wgsl").into()),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("map screen"),
+            entries: &[
+                texture_entry(0),
+                texture_entry(1),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("map screen"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let attributes = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32];
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("map screen"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: (VERTEX_FLOATS * 4) as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &attributes,
+                })],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("map screen"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        Self {
+            pipeline,
+            layout,
+            sampler,
+        }
+    }
+
+    /// Uploads one map's picture and sprite sheet.
+    pub fn layers(&self, device: &wgpu::Device, queue: &wgpu::Queue, content: &Content) -> Layers {
+        let picture = texture(device, queue, &content.picture, "map picture");
+        let sprites = texture(device, queue, &content.sprites, "map sprites");
+        let picture_view = picture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sprites_view = sprites.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("map screen"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&picture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&sprites_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        Layers {
+            _picture: picture,
+            _sprites: sprites,
+            bind,
+        }
+    }
+
+    /// Draws `frame` inside `region` of `target`, keeping what the target holds elsewhere.
+    pub fn draw(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        region: Viewport,
+        layers: &Layers,
+        frame: &Frame,
+    ) {
+        if frame.picture.0 == 0 || frame.picture.1 == 0 || frame.sheet.0 == 0 {
+            return;
+        }
+        let data = vertices(frame);
+        if data.is_empty() {
+            return;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("map screen vertices"),
+            contents: bytes,
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let mut pass = crate::gpu::load_pass(encoder, "map screen", target);
+        pass.set_viewport(
+            region.x as f32,
+            region.y as f32,
+            region.width as f32,
+            region.height as f32,
+            0.0,
+            1.0,
+        );
+        pass.set_scissor_rect(region.x, region.y, region.width, region.height);
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &layers.bind, &[]);
+        pass.set_vertex_buffer(0, buffer.slice(..));
+        pass.draw(0..data.len() as u32, 0..1);
+    }
+}
+
+fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(scale: f32, corner: (f32, f32)) -> Content {
+        Content {
+            picture: Image {
+                width: 280,
+                height: 152,
+                rgba: vec![0; 280 * 152 * 4],
+            },
+            sprites: Image {
+                width: 256,
+                height: 32,
+                rgba: vec![0; 256 * 32 * 4],
+            },
+            strip: (64, 16),
+            scale,
+            corner,
+        }
+    }
+
+    #[test]
+    fn the_position_formula_lands_where_the_wiki_says() {
+        // docs/re/minimap.md § 4: the village's road mark, the pass's two ends.
+        assert_eq!(project((-7.16, 16.31), 3.2, (-18.0, -12.0)), (121.0, 148.0));
+        assert_eq!(project((-18.52, 41.69), 2.0, (-10.0, -13.0)), (43.0, 187.0));
+        assert_eq!(project((14.33, -50.19), 2.0, (-10.0, -13.0)), (109.0, 4.0));
+    }
+
+    #[test]
+    fn the_strips_sit_in_four_slots_at_the_foot_of_the_screen() {
+        let c = sample(3.2, (-18.0, -12.0));
+        for slot in 0..MEMBERS {
+            assert_eq!(strip_dst(&c, slot), [(slot * 64) as f32, 176.0, 64.0, 16.0]);
+            assert_eq!(strip_src(&c, slot), [(slot * 64) as u32, 0, 64, 16]);
+        }
+    }
+
+    #[test]
+    fn a_dot_is_centred_on_the_projected_pixel() {
+        assert_eq!(dot_dst((121.0, 148.0)), [117.0, 144.0, 8.0, 8.0]);
+        let c = sample(3.2, (-18.0, -12.0));
+        assert_eq!(dot_src(&c, 2), [16, 16, 8, 8]);
+    }
+
+    #[test]
+    fn a_picture_larger_than_the_screen_keeps_its_top_left() {
+        // The village's picture is 280×152 on a 256×192 screen: 24 pixels fall off the right.
+        assert_eq!(
+            picture_dst((280, 152), (0.0, 0.0)),
+            [0.0, 0.0, 280.0, 152.0]
+        );
+        assert_eq!(
+            picture_dst((168, 200), (0.0, 0.0)),
+            [0.0, 0.0, 168.0, 200.0]
+        );
+    }
+
+    #[test]
+    fn the_frame_has_a_strip_and_a_dot_per_member() {
+        let c = sample(2.0, (-10.0, -13.0));
+        let frame = Frame::new(&c, &[(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)], (0.0, 0.0));
+        assert_eq!(frame.sprites.len(), 6);
+        assert_eq!(frame.sheet, (256, 32));
+        for slot in 0..3 {
+            let strip = frame.sprites[2 * slot];
+            assert_eq!(strip.src, strip_src(&c, slot));
+            assert_eq!(strip.dst, strip_dst(&c, slot));
+            let dot = frame.sprites[2 * slot + 1];
+            assert_eq!(dot.src, dot_src(&c, slot));
+            // (0, 0) projects to (80, 104): the dot's top-left is four pixels up and left.
+            assert_eq!(dot.dst, [76.0, 100.0, 8.0, 8.0]);
+        }
+        // More than four members would leave the sheet: only four strips and dots exist.
+        let frame = Frame::new(&c, &[(0.0, 0.0); 6], (0.0, 0.0));
+        assert_eq!(frame.sprites.len(), 8);
+    }
+
+    #[test]
+    fn vertices_cover_the_picture_then_the_sprites() {
+        let c = sample(1.0, (0.0, 0.0));
+        let frame = Frame::new(&c, &[(0.0, 0.0)], (0.0, 0.0));
+        let data = vertices(&frame);
+        // One picture, one strip and one dot: three quads.
+        assert_eq!(data.len(), 18);
+        assert_eq!(&data[0][2..5], &[0.0, 0.0, 0.0]);
+        assert_eq!(&data[6][2..5], &[0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn an_unknown_map_is_a_named_error() {
+        // Not a layout name and no layout lists it.
+        let error = content_of(b"not a GPC2", "M01");
+        assert!(matches!(error, Err(Error::Format(_))), "{error:?}");
+    }
+
+    fn content_of(archive: &[u8], map: &str) -> Result<Content, Error> {
+        content(archive, &[], &[], &[], map)
+    }
+}

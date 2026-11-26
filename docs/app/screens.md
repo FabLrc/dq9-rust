@@ -13,9 +13,14 @@ field in the `enhanced` presentation:
   `?screens=port`) draws the field on the top screen, the port's own assignment. `--screens
   original` (Web: `?screens=original`) puts the 3D view and the message window on the bottom
   (touch) screen, as the original runs with `POWCNT1` bit 15 set (`ov_017::021b17ec`), and the
-  top screen shows the plain placeholder (`dq9_render::Panel`, `panel.wgsl`): the map screen
-  needs the map picture and the party strips (`re/bottom-screen.md` § 4, steps 2 and 3), so no
-  ROM data is read or drawn there yet. No invented element stands in for it. A field cutscene
+  top screen shows the original's map screen (`re/bottom-screen.md` § 2.1), drawn by
+  `dq9_render::map_screen` from the map's `.bmmp`/`.obg` picture and the `obj_minimap` party
+  strips and dots, with the area name in a dark tab from the game's font; what is implemented
+  and what stays **[unknown]** (the scroll of a larger picture, the backdrop, the party's
+  colours) is listed there. A map whose layout or picture is missing keeps the plain
+  placeholder (`dq9_render::Panel`, `panel.wgsl`) and the status line names the missing datum
+  (`map screen (B08M03): no .bmmp layout for B08M03`); nothing stands in for an element the
+  data does not establish. A field cutscene
   keeps the bottom screen as the note states; the script's 109/110 swap is not applied in
   `original` mode **[hypothesis]** (§ [Events](events.md), Screen swap). A battle is unchanged in both
   modes: 3D and battle text on the top screen, panels and command windows at the bottom. The
@@ -47,6 +52,16 @@ Hugo's window on the bottom screen with the 3D view), `original-conversation-top
 `battle-original.png` (`dd025965b166`, identical to `battle-port.png`: a fight ignores the
 option) and `wide-original.png` (`7867f9fee551`, identical to `wide-port.png`: one 16:9 field
 has no second screen to move; those two files keep their names from that batch).
+
+The map screen (this batch, `build/evidence/v3-map-screen-draw/`, local): `original-M01.png`
+(`13d50e43d010`), `original-F01.png` (`b97b361c63cf`) and `original-S01M01.png`
+(`08033af76f1e`), window captures of `--map <code> --save … --layout stacked --screens
+original`; the portrait of the two screens compared with the original is
+`re/bottom-screen.md` § 2.1. `port-m01.png` (`b6bd79252785`) and `battle-port.png`
+(`019c69584c9d`) are the headless `--screenshot` references, byte-identical to the same
+captures built from the parent commit `3475c61` (the port and a battle do not draw the map
+screen). The sweep log `sweep.txt` (`9c1ec9f9e913`) is the map screen test: 283 layouts and
+418 of the map list's 1,010 maps resolve, 592 fall back with `no .bmmp layout for <code>`.
 
 ## Enhanced 16:9
 

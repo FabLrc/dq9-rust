@@ -1,7 +1,7 @@
 //! The WGSL sources are part of the renderer's contract: parse and validate them without a GPU
 //! so a shader typo fails the normal test run (CI has no adapter).
 
-const SHADERS: [(&str, &str); 7] = [
+const SHADERS: [(&str, &str); 8] = [
     ("shader", include_str!("../src/shader.wgsl")),
     ("edge", include_str!("../src/edge.wgsl")),
     ("background", include_str!("../src/background.wgsl")),
@@ -9,6 +9,7 @@ const SHADERS: [(&str, &str); 7] = [
     ("panel", include_str!("../src/panel.wgsl")),
     ("ui", include_str!("../src/ui.wgsl")),
     ("post", include_str!("../src/post.wgsl")),
+    ("map_screen", include_str!("../src/map_screen/shader.wgsl")),
 ];
 
 #[test]

@@ -15,6 +15,7 @@ pub mod enhanced;
 mod gpu;
 mod hero;
 pub mod lighting;
+pub mod map_screen;
 pub mod panel;
 mod pose;
 mod post;
