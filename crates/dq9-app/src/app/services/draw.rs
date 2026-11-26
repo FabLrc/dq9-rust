@@ -424,6 +424,7 @@ impl Services {
                 cursor = Some(self.church.as_ref().map_or(0, |church| church.confirm));
                 footer.extend_from_slice(b"Enter: answer   X: back");
             }
+            Screen::Confession => return Some(self.confession_quads(atlas, font)),
             Screen::Notice => {}
             Screen::Priest => {}
         }
@@ -461,6 +462,65 @@ impl Services {
             atlas.text(line, WINDOW[0] + MARGIN[0], y, WHITE, &mut out);
         }
         let footer = b"Enter: continue";
+        atlas_text(
+            atlas,
+            font,
+            footer,
+            WINDOW[0] + MARGIN[0],
+            WINDOW[1] + WINDOW[3] - MARGIN[1] - 8,
+            GREY,
+            &mut out,
+        );
+        out
+    }
+
+    /// The Confession: the `str_ch` line through the game's layout, with the Yes/No rows of a
+    /// question under it (`func_ov003_02159d0c`; the window geometry is the field window's,
+    /// **[hypothesis]** like every facility screen).
+    fn confession_quads(&self, atlas: &Atlas, font: &Font<'_>) -> Vec<Quad> {
+        let mut out = Vec::new();
+        atlas.window(WINDOW, crate::talk::FILL, &mut out);
+        let Some((_, text)) = self.confession_line_text() else {
+            return out;
+        };
+        let lines = glyph_lines(font, text, WINDOW[2] - 2 * MARGIN[0]);
+        let asks = self
+            .confession
+            .as_ref()
+            .is_some_and(|state| state.step.asks());
+        // A question keeps the two bottom rows for Yes/No: its text starts one row higher and
+        // takes six lines, so 1015's second page ("Are you sure this is what you want?")
+        // is not cut by the answer rows.
+        let room = if asks { VISIBLE_ROWS - 1 } else { VISIBLE_ROWS };
+        let top = WINDOW[1] + MARGIN[1] + if asks { 14 } else { 20 };
+        for (index, line) in lines.iter().take(room).enumerate() {
+            let y = top + index as i32 * ROW;
+            atlas.text(line, WINDOW[0] + MARGIN[0], y, WHITE, &mut out);
+        }
+        if asks {
+            let cursor = self.confession.as_ref().map_or(0, |state| state.choice);
+            let base = WINDOW[1] + WINDOW[3] - MARGIN[1] - 8 - 2 * ROW;
+            for (row, label) in [b"Yes".as_slice(), b"No".as_slice()].iter().enumerate() {
+                let y = base + row as i32 * ROW;
+                if row == cursor {
+                    atlas_text(atlas, font, b">", WINDOW[0] + MARGIN[0], y, WHITE, &mut out);
+                }
+                atlas_text(
+                    atlas,
+                    font,
+                    label,
+                    WINDOW[0] + MARGIN[0] + 12,
+                    y,
+                    WHITE,
+                    &mut out,
+                );
+            }
+        }
+        let footer = if asks {
+            b"Enter/X: answer".as_slice()
+        } else {
+            b"Enter: continue".as_slice()
+        };
         atlas_text(
             atlas,
             font,

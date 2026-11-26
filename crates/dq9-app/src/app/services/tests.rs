@@ -994,3 +994,43 @@ fn benediction_takes_the_cursed_worn_piece_off_through_the_church() {
         "the plain clothes stay worn"
     );
 }
+
+/// The Confession's numbers and words are the European church file's own (`str_ch0`): the
+/// cure's 1061/1062/1063/1070 are not part of it (`docs/re/facility.md`, § "The Confession").
+#[test]
+fn the_confession_lines_are_the_church_files_own() {
+    let Some(rom) = testrom::load() else {
+        eprintln!("skipping: DQ9_ROM missing");
+        return;
+    };
+    let bytes = super::tables::archive_member(rom, "data/scenario/str_ch0.gp2", "str_ch0_en.nat")
+        .expect("the European str_ch0");
+    let church =
+        dq9_formats::facility::inn_church::Church::parse(&bytes).expect("the church table");
+    for (line, words) in [
+        (100u16, "Saving adventure log"),
+        (110, "Please turn the power OFF"),
+        (1010, "would you permit me to record"),
+        (1011, "I have successfully recorded your adventure log"),
+        (1012, "You would prefer not to create a record"),
+        (1013, "Do you intend to continue on your adventure"),
+        (1014, "peaceful respite"),
+        (
+            1015,
+            "restarting your adventure from the point of your last confession",
+        ),
+        (1016, "would you permit me to record"),
+        (1090, "May the Almighty be with you"),
+    ] {
+        let text = church
+            .message(line)
+            .unwrap_or_else(|| panic!("str_ch0 holds no {line}"))
+            .to_vec();
+        let text = String::from_utf8_lossy(&text);
+        assert!(text.contains(words), "{line}: {text}");
+    }
+    // The cure's lines exist in the same file and stay the cure's.
+    for line in [1061u16, 1062, 1063, 1070] {
+        assert!(church.message(line).is_some(), "str_ch0 holds no {line}");
+    }
+}

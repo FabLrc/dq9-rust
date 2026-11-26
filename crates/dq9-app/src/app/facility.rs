@@ -124,7 +124,82 @@ impl App {
             &mut self.combat.world.random,
             &mut self.day,
         );
+        if effect == services::Effect::Save {
+            let result = self.confess();
+            self.services.confession_written(result);
+        }
         self.after_service(effect);
+    }
+
+    /// The `--save` container's file and the `--save-out` destination. The Confession writes
+    /// into `--save-out` when it is given and into the container itself otherwise (`--save`),
+    /// the way the DS writes the cartridge's own normal slot.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_save_files(
+        &mut self,
+        save: Option<std::path::PathBuf>,
+        out: Option<std::path::PathBuf>,
+    ) {
+        self.save_path = save;
+        self.save_out = out;
+    }
+
+    /// The Confession's write (`ov_003::02159d0c`: message 100, then `Save_WriteStep` at
+    /// `0x020aad2c`): the live state into the container's current normal slot, sealed,
+    /// mirrored when it is slot 0, through the CLI's temporary file and rename. The input image
+    /// is the base of the write; the file named by `--save-out`, or the `--save` container
+    /// itself when no output was named, is the one replaced — never any other file.
+    ///
+    /// The error is the reason the window shows: the port has no container without `--save`,
+    /// and no destination when neither option names a file.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn confess(&mut self) -> Result<(), String> {
+        let (path, container) = match (&self.save_out, &self.save_path) {
+            (Some(out), _) => (out.clone(), false),
+            (None, Some(save)) => (save.clone(), true),
+            (None, None) => {
+                return Err(
+                    "The adventure log cannot be recorded: no save file is open. Start the \
+                     session with --save <file> (and --save-out <file> to leave it untouched)."
+                        .to_owned(),
+                );
+            }
+        };
+        let state = self.write_save_out(&path).map_err(|e| {
+            format!("The adventure log was not recorded: {e}. The adventure goes on without it.")
+        })?;
+        status(&format!(
+            "confession: {} written{} (map {}, story {}.{}.{}, {} member(s), {} gold)",
+            path.display(),
+            if container {
+                ", the --save container itself"
+            } else {
+                ", --save untouched"
+            },
+            state.map,
+            state.scenario.chapter,
+            state.scenario.step,
+            state.scenario.substep,
+            state.party.members.len(),
+            state.party.gold,
+        ));
+        Ok(())
+    }
+
+    /// The Confession without a container: the page has no save file at all (`App`'s save
+    /// fields are the native options).
+    #[cfg(target_arch = "wasm32")]
+    fn confess(&mut self) -> Result<(), String> {
+        Err("The adventure log cannot be recorded here: this build has no save file.".to_owned())
+    }
+
+    /// Ends the session: the original's 110 ("Bless you, my child. Please turn the power OFF.")
+    /// is its last line — state 9 shows it and stays there, its words telling the player to
+    /// switch the console off. This build has no title screen, so the window's loop leaves
+    /// (headless runs keep their steps, and no pilot reaches a confession).
+    pub(super) fn end_session(&mut self) {
+        self.session_over = true;
+        status("session over: the Confession said its last line (110)");
     }
 
     pub(super) fn service_side(&mut self, right: bool) {
@@ -143,6 +218,9 @@ impl App {
     /// lighting follows an inn's clock and the field's scene is rebuilt once equipment
     /// changed and the menu is gone.
     pub(super) fn after_service(&mut self, effect: services::Effect) {
+        if self.services.take_end_session() {
+            self.end_session();
+        }
         if !self.services.is_open() {
             self.talk.finish_service();
         }

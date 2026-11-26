@@ -132,6 +132,15 @@ pub struct App {
     doors: Doors,
     /// NPC conversations and the message window.
     talk: Talk,
+    /// The `--save` container's file and the `--save-out` destination (`app/facility.rs`): the
+    /// church's Confession writes the adventure log there.
+    #[cfg(not(target_arch = "wasm32"))]
+    save_path: Option<std::path::PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
+    save_out: Option<std::path::PathBuf>,
+    /// The church's Confession ended the adventure (110 is the original's last line, state 9
+    /// staying on it): the window's loop leaves, since this build has no title screen.
+    session_over: bool,
     /// The field menu and the facility screens (`app/services.rs`).
     services: Services,
     /// The current map's treasure containers (`app/services/containers.rs`).
@@ -247,6 +256,11 @@ impl App {
             pilot_dir: None,
             doors: Doors::new(),
             talk: Talk::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            save_path: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            save_out: None,
+            session_over: false,
             services: Services::default(),
             containers: Containers::default(),
             events: EventPlayer::new(),

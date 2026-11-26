@@ -48,7 +48,7 @@ Map ids: Angel Falls `M01M01` to `M01M12` are 1100 to 1112, the Mountain Pass `S
 |---|---|---|---|
 | shop | **32**, 18 items, rate 100, kind 3 | — | — |
 | inn | `<INN=1>` → `str_in0`, `<INN=2>` → `str_in1`, 5 a living head; greeting 1000/1001, menu 0/1/2, too poor 1020, resting 1010, rested 1011, leave 1090; style 0 | — | — |
-| church | `<CHURCH=1>` → `str_ch0`: Confession, Divination, Resurrection, Purification, Benediction, Nothing; prices 1061, too poor 1063, done 1070 | — | — |
+| church | `<CHURCH=1>` → `str_ch0`: Confession, Divination, Resurrection, Purification, Benediction, Nothing; prices 1061, too poor 1063, done 1070; Confession 1010/1011/1012/1013/1014/1015/1016/1090, saving 100, power off 110 | — | — |
 | containers | 12, all drawing: 4 cupboards, 4 barrels, 3 pots, 1 blue chest | 1 red chest (gold ring) | 9: 5 red chests, 2 blue chests, 2 pots |
 
 The village shop's 18 items and what it asks (rate 100, so the ask word as it stands), in stock
@@ -256,12 +256,98 @@ The status word is `[member+0x130]+0`: bit 0 dead, 1 poisoned, 2 cursed;
 death is the member's HP being 0, and what sets the other two is **not established**. The
 caller keeps the two bits beside the party (`facility::church::MemberStatus`).
 
-**Confession is v0.3** (it saves the adventure log, and "No" ends the game): `church::offer`
-returns `Offer::Unavailable("not available in this build")`.
+**Confession** saves the adventure log: `ov_003::02159d0c` (state 3) is the whole flow, in
+§ "The Confession" below. `church::offer` still returns `Offer::Unavailable(NOT_AVAILABLE)` and
+its own test asserts it; the port no longer asks it — the saving is the application's — so that
+core copy is a leftover for its owner to remove.
 
 **Divination**: free; line 1021 with the experience wanted when the next level's row is above
 the member's experience, 1022 at level 99, **[hypothesis]** 1023 when the experience for the
 next level is already held (the level is taken after the battle, `func_ov023_021f0a5c`).
+
+### The Confession — `ov_003::02159d0c`
+
+The menu's first row does not open a member list: it runs the church's own state 3, whose
+lines the **same `str_ch` file** holds. Read from the European `str_ch0`
+(`dq9re msg data/scenario/str_ch0.gp2 str_ch0_en.nat`, dump `build/evidence/v3-save-menu/str_ch0.txt`
+`9e8411c6ede4`):
+
+| line | words (English file) | where |
+|---|---|---|
+| 1010 | "Confess all that you have done before the Almighty, child. / And would you permit me to record your works in the adventure log?" | the greeting (`iRam0215a594`; `+8` = **1018** in another's world, not modelled) |
+| 1012 | "You would prefer not to create a record of your adventure? Very well, if that is your decision..." | No at 1010 (`0x3f4`) |
+| 1013 | "Do you intend to continue on your adventure at this point, my child?" | after 1012 and after a write (`0x3f5`, `uRam0215a5a0 + 2`) |
+| 1015 | "By the Almighty! You intend to take a rest from your adventures without recording what you have done ... Are you sure this is what you want?" | No at 1013 (`uRam0215a5a4`) |
+| 1016 | the words of 1010 again | No at 1015 (`0x3f8`), which asks 1010 again |
+| 100 | "Saving adventure log. Do not turn the power OFF or remove the DS Game Card!" | while the slot is written |
+| 1011 | "I have successfully recorded your adventure log." | after the write (`uRam0215a5a0`) |
+| 1014 | "O merciful Almighty, please grant this child a peaceful respite." | the rest accepted (`uRam0215a5ac`) |
+| 110 | "Bless you, my child. Please turn the power OFF." | state 9, the adventure ends (`0x6e`) |
+| 1090 | "May the Almighty be with you. I hope to see you in our church again soon." | "continue" (`uRam0215a5b0`) |
+
+**None of 1061, 1062, 1063 or 1070 belongs to it**: 1061/1062/1063 are the cure's price,
+refusal and too-poor lines, and 1070 is the cure's "anything else?" back to the menu. The
+Confession does **not** return to the menu: every branch ends in 1090 (back to the field) or
+110 (the adventure ends).
+
+The flow, substate `+0x580` of state 3 (`+0x588`):
+
+1. **0**: shows 1010 and opens the answer window on **row 0, Yes**
+   (`func_ov003_0215bf18(param_1, 0)`: its `param_2` is the preselected label, `func_020e29a8`
+   storing it at `+0x16` for `+0x14`, the highlighted row). Row 0 is Yes because the same window
+   pays a cure on `iVar5 == 0` (`func_ov003_0215a740`).
+2. **Yes** (**2**): the confession trigger 0xC fires, line **100** is shown, **jingle 60**
+   (`Bgm_UpdateJingle` = `func_0209c830`, `0x3c`), a 60-frame wait (`func_020bc0a4(0x3c)`)
+   that sets `0x59c = 1` ("this visit wrote the log"), then `Save_WriteStep`
+   (`func_020aad1c` USA = EU `0x020aad2c`) with mode 1 (0x15 in a link session): **the normal
+   slot** is written, then the same image again at `0x8010` (the mirror, § "Role of the two
+   slots" of `re/save.md`). When it completes, **1011** then **1013** (window on row 0).
+3. **1013 Yes** → **1090**, the visit ends (substate 7 → state 0xb): the field resumes.
+   **1013 No** → **1015** when `0x59c` is clear, and **1014 + state 9** when it is set: a log
+   just recorded cannot be "restarted from your last confession", so the game does not ask the
+   rest's question after a write.
+4. **1015** opens on **row 1, No** (`func_ov003_0215bf18(param_1, 1)`): **Yes** → **1014**, then
+   state 9; **No** → **1016** and back to state 1, whose window then asks with 1016's words.
+5. **No at 1010** → **1012** + **1013** (state 4): Yes farewells with 1090, No walks into the
+   1015 question (with `0x59c` clear, as no write happened).
+6. **State 9** (`ov_003::0215b1dc`): the screen darkens, **1014** is shown, then **110** —
+   and stays there: `0x588` is never 0xb, so the church task does not end and no title screen of
+   the game's own follows. 110's words are the instruction to switch the console off.
+
+In another's world (`func_0202b7d8` + `func_0202c540`) the greeting is 1018, the rest shows
+1017 and no slot is written (`func_0x021d1118`); no link session exists in the port.
+
+The port (`app/services.rs`, `Screen::Confession`) runs the same lines in the same order with
+the file's own words, the same initial rows (Yes at 1010/1013/1016, No at 1015), the same
+`0x59c` branch after a write, and X on a question answers No (`func_ov003_0215bf18` returns -2
+for the cancel and every branch of state 3 reads `-2 || 1` as No); the write is `App::confess`
+(`app/facility.rs`): `GameState::from_play`
+over the live state with the input slot as base, `write_into`, `SlotMut::seal`,
+`Save::mirror_normal_slot`, then a temporary file and a rename (`re/save.md`, § "Writing a
+session"). The port decisions, documented rather than silent:
+
+- **the destination**: `--save-out` when it is given, else the `--save` container **itself**
+  (the DS writes its own cartridge's slot); with neither option — or without `--save` — there is
+  no container, so the entry says why (a port line, not a ROM one) and writes nothing. The write
+  updates `Save::current_slot` (the first valid normal slot), which is slot 0 for every ordinary
+  container: the original writes slot 0 unconditionally.
+- **the ending**: 110 is shown, then the session ends (`App::end_session`: the window's loop
+  leaves). The original stays on 110; this build has no console to switch off and no title
+  screen of its own, so the adventure stops there.
+- **not modelled**: the confession trigger 0xC (no consumer of it is known: **[unknown]**), the
+  60-frame hold before the write (the write is synchronous and 100 stays up until a key), the
+  link-session variants (1018/1017), and the jingle 60 — no facility code path plays jingles
+  (only event scripts do), and the cures' 59 is not played either.
+
+Tests: `app/facility/tests.rs` drives the flow through the real church on the ROM — the exact
+line sequence, the initial rows (1015 opens on No, its Enter answers No), the post-write 1013
+No going to 1014 without 1015, Yes writing a file whose reload equals the state the run held
+and leaving `--save` byte for byte with slot 1 proved equal to slot 0's mirror, No writing
+nothing and ending the session, 1015's No asking with 1016, X answering No, the refusal without
+a container naming `--save`, and the container itself replaced when no `--save-out` is named,
+still reloading. Evidence: `build/evidence/v3-save-menu/` — the flow log `confession.log`
+(`dc81ea6db300`), the write's byte ranges `confession-diff.txt` (`ddfd2b93169a`), the numbers
+and words `message-ids.txt` (`11c227fbdac6`) and the whole file `str_ch0.txt` (`9e8411c6ede4`).
 
 ## Treasure — `data/scenario/treasure.nsarc`
 
@@ -528,8 +614,12 @@ row; `<TARGET>` is the member's name, and `<str_2>` takes the church file's voca
 (message 30 + vocation) when it exists — the Guardian's message 30 is in no European file,
 so its tag stays visibly unknown. Resurrection, Purification and Benediction ask the member
 and its price (1061), then execute `church::cure` with the caller's `MemberStatus` bits
-(dead = HP 0) and charge the party; a NotNeeded refusal also names the member. Confession
-shows the core's "not available in this build" and nothing is saved (v0.3).
+(dead = HP 0) and charge the party; a NotNeeded refusal also names the member. The Confession
+runs its own state 3 with the file's lines 1010 to 1090 (`re/facility.md`, § "The Confession"
+above): "Yes" writes the live state into the save's current normal slot, sealed and mirrored,
+to `--save-out` or the `--save` container itself; "No" records nothing. Without `--save` there
+is no container, so the window says why and nothing is written. 110, the original's last line,
+ends the session (this build has no console to switch off and no title screen of its own).
 
 **Benediction's unequipping** — `Church_CureFlow` = `func_ov003_0215a740` (overlay 3), state 5,
 read on the ROM. After `func_02048418(member, 4)` clears the cursed bit it walks the eleven

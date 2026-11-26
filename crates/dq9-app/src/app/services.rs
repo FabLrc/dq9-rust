@@ -13,6 +13,13 @@
 //! back until the screen is over ([`crate::talk::Talk::finish_service`]), so trigger event 1
 //! and the talk counters keep the order the game's talk task gives them.
 //!
+//! The church's Confession is the one facility that writes. Its state 3 (`ov_003::02159d0c`)
+//! runs on the church file's own lines: "Yes" to 1010 returns [`Effect::Save`], the application
+//! writes the live state into the save's current normal slot (`App::confess`), and 1011 then
+//! 1013 follow; "No" walks through 1012/1015 and ends the adventure with 110, which the port
+//! turns into the end of the session (`Services::take_end_session`). Nothing of it belongs to
+//! the cures' 1061/1062/1063/1070.
+//!
 //! Using an item or a spell runs the game's action on a party member with
 //! `dq9_core::battle::resolve_action`: the same range table, the same MP cost and the same
 //! healing cap as a battle. An item is taken from the source the player chose (a bag stack or
@@ -67,6 +74,9 @@ pub enum Effect {
     None,
     /// The inn moved the day clock: the application follows with its lighting.
     Clock,
+    /// The church's Confession said "Yes": the application writes the adventure log and
+    /// reports back through [`Services::confession_written`].
+    Save,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -86,6 +96,9 @@ enum Screen {
     Church,
     ChurchMembers,
     ChurchConfirm,
+    /// The church's Confession: its own lines and the "Yes"/"No" answers between them
+    /// (`func_ov003_02159d0c`, state 3).
+    Confession,
     /// The church in mode 2 after a wipe-out: the priest's line 1082, no menu.
     Priest,
     Notice,
@@ -170,6 +183,114 @@ struct PriestState {
     text: Vec<u8>,
 }
 
+/// The Confession's lines in the European `str_ch0` (`dq9re msg`, `build/evidence/v3-save-menu`).
+/// The cure prices and "back to the menu" lines (1061, 1062, 1063, 1070) belong to the other
+/// services: the Confession never shows them. The numbers are the ones the overlay's state 3
+/// loads (`ov_003::02159d0c`): `iRam0215a594` 1010, `100`, `uRam0215a5a0` 1011 and `+2` 1013,
+/// `0x3f4`/`0x3f5` 1012/1013, `uRam0215a5a4` 1015, `0x3f8` 1016, `uRam0215a5ac` 1014,
+/// `0x6e` 110, `uRam0215a5b0` 1090.
+mod confession_line {
+    /// "Saving adventure log. Do not turn the power OFF or remove the DS Game Card!" — shown
+    /// while `Save_WriteStep` runs.
+    pub const SAVING: u16 = 100;
+    /// "Bless you, my child. Please turn the power OFF." — the end of the adventure.
+    pub const POWER_OFF: u16 = 110;
+    /// The greeting: confess, and permit the recording (the base the `+8` guest variant
+    /// starts from; 1018 is not modelled, no link session exists here).
+    pub const GREETING: u16 = 1010;
+    /// "I have successfully recorded your adventure log."
+    pub const RECORDED: u16 = 1011;
+    /// "You would prefer not to create a record of your adventure? Very well…"
+    pub const REFUSED: u16 = 1012;
+    /// "Do you intend to continue on your adventure at this point, my child?"
+    pub const CONTINUE: u16 = 1013;
+    /// The priest's blessing as the adventure ends.
+    pub const RESTING: u16 = 1014;
+    /// "You intend to take a rest from your adventures without recording… Are you sure?"
+    pub const REST_UNSURE: u16 = 1015;
+    /// The greeting again, after "No" to the rest (the file's copy of 1010's words).
+    pub const GREETING_AGAIN: u16 = 1016;
+    /// "May the Almighty be with you. I hope to see you in our church again soon."
+    pub const FAREWELL: u16 = 1090;
+}
+
+/// Where the Confession is: a line, then the answer that line takes (`ov_003::02159d0c`'s
+/// substates 0 to 7). The three question steps draw the Yes/No window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum ConfessionStep {
+    /// 1010: permit the recording. Yes writes the log, No shows 1012.
+    #[default]
+    Greeting,
+    /// 100 while the log is written; a key goes on to 1011 or to the refusal's reason.
+    Saving,
+    /// 1011, the log was recorded; a key asks 1013.
+    Recorded,
+    /// 1012, the refusal to record; a key asks 1013.
+    Refused,
+    /// 1013: continue the adventure? Yes farewells, No offers the rest.
+    Continue,
+    /// 1015: rest without recording? It opens on No (its `func_ov003_0215bf18` argument is 1);
+    /// Yes ends the adventure, No shows 1016.
+    Rest,
+    /// 1016, the greeting's words again as a **question** (state 5's No shows it and re-enters
+    /// state 1): Yes writes the log, No refuses.
+    Retry,
+    /// 1014, the priest's blessing before the adventure ends.
+    Resting,
+    /// 110, "Please turn the power OFF": the port ends the session here.
+    PowerOff,
+    /// 1090, the farewell; the visit ends.
+    Farewell,
+}
+
+impl ConfessionStep {
+    /// The `str_ch` message the step shows.
+    fn line(self) -> u16 {
+        match self {
+            Self::Greeting => confession_line::GREETING,
+            Self::Saving => confession_line::SAVING,
+            Self::Recorded => confession_line::RECORDED,
+            Self::Refused => confession_line::REFUSED,
+            Self::Continue => confession_line::CONTINUE,
+            Self::Rest => confession_line::REST_UNSURE,
+            Self::Retry => confession_line::GREETING_AGAIN,
+            Self::Resting => confession_line::RESTING,
+            Self::PowerOff => confession_line::POWER_OFF,
+            Self::Farewell => confession_line::FAREWELL,
+        }
+    }
+
+    /// Whether the line waits for a Yes/No answer rather than a key (`func_ov003_0215bf18`).
+    fn asks(self) -> bool {
+        matches!(
+            self,
+            Self::Greeting | Self::Continue | Self::Rest | Self::Retry
+        )
+    }
+
+    /// The row the answer window opens on: `func_ov003_0215bf18`'s `param_2`, the window's
+    /// preselected label (`func_020e29a8`, `+0x16` → the highlighted `+0x14`). States 1 and 4
+    /// pass 0 (Yes), states 5 and 6 pass 1 (No) — the destructive "rest" questions.
+    fn first_row(self) -> usize {
+        match self {
+            Self::Rest => 1,
+            _ => 0,
+        }
+    }
+}
+
+/// The Confession's state (`ov_003::02159d0c`'s fields `+0x580` and `+0x582`).
+#[derive(Debug, Clone)]
+struct ConfessionState {
+    step: ConfessionStep,
+    /// The answer cursor: row 0 is Yes and row 1 No (`func_ov003_0215a740` pays on
+    /// `iVar5 == 0`).
+    choice: usize,
+    /// What the application's write reported, kept until the "Saving adventure log" line is
+    /// left. `None` until `Effect::Save` is answered.
+    written: Option<Result<(), String>>,
+}
+
 /// What the equipment screen and the church read from an item's record (`itemdt_*`).
 ///
 /// The record's `+0x08` word holds the category in its low nibble and the cursed bit at 18
@@ -218,6 +339,9 @@ pub struct Services {
     shop_number: u16,
     inn: Option<InnState>,
     church: Option<ChurchState>,
+    confession: Option<ConfessionState>,
+    /// The Confession reached 110: the application ends the session once it is taken.
+    end_session: bool,
     priest: Option<PriestState>,
     notice: Option<Notice>,
     statuses: Vec<MemberStatus>,
@@ -237,10 +361,25 @@ impl Services {
         self.screen = Screen::Closed;
         self.notice = None;
         self.priest = None;
+        self.confession = None;
         self.pending = None;
         self.held_item = None;
         self.cursor = 0;
         self.cursor_reset();
+    }
+
+    /// Whether the Confession ended the session (the application then leaves its loop, 110).
+    pub fn take_end_session(&mut self) -> bool {
+        std::mem::take(&mut self.end_session)
+    }
+
+    /// What the application's write of the adventure log reported for the Confession's "Yes"
+    /// (`Effect::Save`). The line 100 stays up until the player leaves it, then 1011 or the
+    /// reason.
+    pub fn confession_written(&mut self, result: Result<(), String>) {
+        if let Some(confession) = &mut self.confession {
+            confession.written = Some(result);
+        }
     }
 
     fn cursor_reset(&mut self) {
@@ -782,16 +921,12 @@ impl Services {
                         match service {
                             Service::Nothing => self.close(),
                             Service::Confession => {
-                                let text = church::NOT_AVAILABLE.as_bytes().to_vec();
-                                self.notice = Some(Notice {
-                                    text,
-                                    values: Vec::new(),
-                                    target: None,
-                                    vocation: None,
-                                    next: NoticeNext::Return,
-                                    return_screen: Screen::Church,
+                                self.confession = Some(ConfessionState {
+                                    step: ConfessionStep::Greeting,
+                                    choice: 0,
+                                    written: None,
                                 });
-                                self.screen = Screen::Notice;
+                                self.screen = Screen::Confession;
                             }
                             Service::Divination
                             | Service::Resurrection
@@ -958,7 +1093,135 @@ impl Services {
                 }
                 effect
             }
+            Screen::Confession => self.confession_press(button),
         }
+    }
+
+    /// One key on the Confession: the question steps move the Yes/No cursor and take the
+    /// answer, the others are pages (`ov_003::02159d0c`).
+    fn confession_press(&mut self, button: Button) -> Effect {
+        let Some(confession) = self.confession.clone() else {
+            // The state went away with its church: nothing is left to show.
+            self.close();
+            return Effect::None;
+        };
+        if confession.step.asks() {
+            match button {
+                Button::Up | Button::Down => {
+                    if let Some(state) = &mut self.confession {
+                        state.choice ^= 1;
+                    }
+                    Effect::None
+                }
+                Button::Cancel => {
+                    // X is the answer window's cancel (`func_ov003_0215bf18` returns -2), and
+                    // every caller of `ov_003::02159d0c` folds -2 into "No" (`-2 || 1`): it is
+                    // not a way back to the menu.
+                    self.confession_answer(false)
+                }
+                Button::Confirm => self.confession_answer(confession.choice == 0),
+            }
+        } else if matches!(button, Button::Confirm | Button::Cancel) {
+            self.confession_page(confession.step)
+        } else {
+            Effect::None
+        }
+    }
+
+    /// The answer a question step takes: Yes is the first row (`func_ov003_0215a740` pays on
+    /// `iVar5 == 0`). The row a window opens on is the `param_2` of `func_ov003_0215bf18`
+    /// ([`ConfessionStep::first_row`]): the greeting and 1013 pass 0, the rest's two questions
+    /// pass 1.
+    fn confession_answer(&mut self, yes: bool) -> Effect {
+        let Some(step) = self.confession.as_ref().map(|state| state.step) else {
+            return Effect::None;
+        };
+        let next = match (step, yes) {
+            // After a write, `0x59c` is set: substate 4's No goes straight to 1014 and state 9
+            // instead of offering the rest (which would say the log was not recorded).
+            (ConfessionStep::Continue, false) if self.confession_written_ok() => {
+                ConfessionStep::Resting
+            }
+            (ConfessionStep::Greeting | ConfessionStep::Retry, true) => ConfessionStep::Saving,
+            (ConfessionStep::Greeting | ConfessionStep::Retry, false) => ConfessionStep::Refused,
+            (ConfessionStep::Continue, true) => ConfessionStep::Farewell,
+            (ConfessionStep::Continue, false) => ConfessionStep::Rest,
+            (ConfessionStep::Rest, true) => ConfessionStep::Resting,
+            (ConfessionStep::Rest, false) => ConfessionStep::Retry,
+            _ => step,
+        };
+        if let Some(state) = &mut self.confession {
+            state.step = next;
+            state.choice = next.first_row();
+        }
+        // `ov_003::02159d0c` substate 2: the greeting's Yes shows 100 ("Saving adventure
+        // log") and fires the confession trigger while `Save_WriteStep` writes the slot.
+        if next == ConfessionStep::Saving {
+            Effect::Save
+        } else {
+            Effect::None
+        }
+    }
+
+    /// Whether this visit wrote the log (`0x59c`).
+    fn confession_written_ok(&self) -> bool {
+        self.confession
+            .as_ref()
+            .is_some_and(|state| matches!(state.written, Some(Ok(()))))
+    }
+
+    /// A page's key: the next line, the end of the adventure, or the refusal's reason.
+    fn confession_page(&mut self, step: ConfessionStep) -> Effect {
+        let next = match step {
+            ConfessionStep::Saving => match self
+                .confession
+                .as_ref()
+                .and_then(|state| state.written.clone())
+            {
+                Some(Ok(())) => ConfessionStep::Recorded,
+                Some(Err(reason)) => {
+                    // The port has no container or could not write it: the reason replaces the
+                    // line and the visit ends (the log was not recorded, so there is nothing
+                    // for the priest to bless).
+                    self.confession = None;
+                    self.notice = Some(Notice {
+                        text: reason.into_bytes(),
+                        values: Vec::new(),
+                        target: None,
+                        vocation: None,
+                        next: NoticeNext::Close,
+                        return_screen: Screen::Church,
+                    });
+                    self.screen = Screen::Notice;
+                    return Effect::None;
+                }
+                // The write reports in the same command (`Effect::Save`): stay on the line.
+                None => step,
+            },
+            ConfessionStep::Recorded | ConfessionStep::Refused => ConfessionStep::Continue,
+            ConfessionStep::Resting => ConfessionStep::PowerOff,
+            ConfessionStep::PowerOff => {
+                // 110 is the original's last line: state 9 shows it and stays there (`0x588`
+                // never reaches 0xb), its words telling the player to switch the console off.
+                // This build has no title screen to leave for, so the session ends here
+                // (`App::end_session`).
+                self.end_session = true;
+                self.close();
+                return Effect::None;
+            }
+            ConfessionStep::Farewell => {
+                self.close();
+                return Effect::None;
+            }
+            ConfessionStep::Greeting
+            | ConfessionStep::Continue
+            | ConfessionStep::Rest
+            | ConfessionStep::Retry => step,
+        };
+        if let Some(state) = &mut self.confession {
+            state.step = next;
+        }
+        Effect::None
     }
 
     /// Left/right on a screen: switches the shop between buying and selling.
@@ -1094,6 +1357,28 @@ impl Services {
             return_screen: Screen::Church,
         });
         self.screen = Screen::Notice;
+    }
+
+    /// The Confession's current line: its number and the `str_ch` file's own words.
+    fn confession_line_text(&self) -> Option<(u16, &[u8])> {
+        let confession = self.confession.as_ref()?;
+        let line = confession.step.line();
+        let text = self.church.as_ref()?.messages.get(&line)?;
+        Some((line, text.as_slice()))
+    }
+
+    /// The Confession's current line number (tests).
+    #[cfg(all(test, windows))]
+    pub fn confession_line(&self) -> Option<u16> {
+        self.confession_line_text().map(|(line, _)| line)
+    }
+
+    /// The notice's bytes as the window resolves them (tests).
+    #[cfg(all(test, windows))]
+    pub fn notice_text(&self) -> Option<Vec<u8>> {
+        self.notice
+            .as_ref()
+            .map(|notice| self.resolved_notice_text(notice))
     }
 }
 

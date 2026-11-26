@@ -24,15 +24,24 @@ scene model and instance slots, at its live pose and gait; the field's cast, tal
 doors, events and generators are untouched and no map trigger replays. The inn moves the day
 clock (time, lighting and the trigger's `time_of_day` follow) and heals the living only; the
 church's Resurrection, Purification and Benediction charge the price the core computes and name
-the member, Divination is free and returns to its row, and Confession is refused as unavailable
-(v0.3).
+the member, Divination is free and returns to its row, and Confession runs the church's own state 3
+(`ov_003::02159d0c`): the greeting 1010 asks to record the adventure log, "Yes" shows 100 while the
+live state is written into the save's current normal slot (sealed, mirrored, through a temporary
+file and a rename — `--save-out` when it is given, else the `--save` container itself), then 1011
+and 1013; "Yes, continue" farewells with 1090 and returns to the field, while the rest (1015, which
+opens on No) ends with 1014 and 110 and **ends the session** (`App::end_session`: the window
+closes — the original's 110 is its last line, with no title screen of its own). Without `--save`
+there is no container: the entry says so in its own words and nothing is written. The lines, their
+initial rows and their order are in [`re/facility.md`](../re/facility.md), § "The Confession".
 
 Known limits: the window geometry, colours and title/footer are **[hypothesis]** (the field
 message window's rectangle grown to the DS screen, on the screen the field does not use);
 vocation restrictions on equipment are not modelled; a field item used at full HP still spends
 the copy; the church's coffin line, Benediction's unequipping and the inn's guest lines are not
 modelled; buying or selling is one copy per command and a partial purchase is not offered; a
-sale at the gold cap is the documented **[hypothesis]**.
+sale at the gold cap is the documented **[hypothesis]**; the Confession's 1018 (another's
+world) variant, its trigger 0xC and its jingle 60 are not modelled, and after 110 the session
+ends rather than staying on the line.
 
 Evidence (`build/evidence/j4-field-services/`, native windows on the European ROM, sha256
 prefixes): menu `field-menu.png` (`6669e1ad98e4`), held-item swap and use `held-swap.png`,
@@ -45,7 +54,11 @@ resurrection `revival-done.png` (`39dc17c14e4d`, 0 → 30 HP for 60 gold), Divin
 `dead-actor-refusal.png` (`f9f2c74e00c2`). The same transitions are covered without a window in
 `app/services/tests.rs`, including the bounded hero replacement (alternating outfits keep the
 model, instance and texture counts and the texel storage stable, and a failed resource leaves
-the old rig drawn).
+the old rig drawn). The Confession has no window capture: its flow log
+`build/evidence/v3-save-menu/confession.log` (`dc81ea6db300`) prints the line sequence the run
+walked and names the file written with `--save` untouched, its byte-level shape is
+`confession-diff.txt` (`ddfd2b93169a`), and the drawing itself is the compiled
+`Screen::Confession` window, not captured.
 
 Controls here absorb the field's: `T` is "take a held item back" while a screen is open and the
 next time of day otherwise.

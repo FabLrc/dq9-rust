@@ -503,6 +503,7 @@ pub fn main() -> Result<()> {
             play: Default::default(),
         };
         let mut app = App::new_headless(options, Some(rom));
+        app.set_save_files(cli.save.clone(), cli.save_out.clone());
         app.walk_pose().context("cannot walk: no map loaded")?;
         if let Some((x, z)) = cli.start {
             app.place_hero(x, z)?;
@@ -599,6 +600,7 @@ pub fn main() -> Result<()> {
         Some(event_loop) => App::new(event_loop.create_proxy(), options, Some(rom)),
         None => App::new_headless(options, Some(rom)),
     };
+    app.set_save_files(cli.save.clone(), cli.save_out.clone());
     app.set_screens(cli.screens);
     app.set_text_speed(cli.text_speed);
     app.set_fx(cli.enhanced()?);

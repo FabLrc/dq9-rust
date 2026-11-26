@@ -414,6 +414,18 @@ input, through any spelling, is refused). Without `--save` the command refuses: 
 container's opaque blocks are not modelled, so they would be zeroed. The run logs one line
 with the map, story, party and gold written and how many bytes differ from the input.
 
+**In game** the church's Confession writes the same container, mid-session, when the greeting's
+1010 is answered "Yes" (the write is state 1's Yes; 1013 only asks whether to go on): the live
+state through `write_into`, the slot `seal`ed, slot 0 mirrored, and the whole image through the
+same temporary file and rename. The destination is `--save-out` when it is given and the
+`--save` container **itself** otherwise, as the DS writes its own cartridge's slot; the input is
+only replaced when no output was named. The slot updated is `Save::current_slot` (the first
+valid normal slot) rather than slot 0 unconditionally; the two coincide for every container with
+a valid slot 0. Without `--save` the port has no container, so the entry shows its own reason
+(a port line, not a ROM one) and writes nothing (`docs/re/facility.md`, § "The Confession";
+`crates/dq9-app/src/app/facility.rs`, `App::confess`). A refused confession writes nothing, but a
+window run with `--save-out` still writes the session's state when it exits, as it always did.
+
 **Tests** (`dq9-core` state module; `dq9-app` `app/headless.rs`): a state read from a save and
 written back is byte-identical, including the demo (`DQ9_SAVE`); a mutated state — map, story,
 clock, gold, bag, a member's name, vocation, level, experience, weapon and maxima — changes

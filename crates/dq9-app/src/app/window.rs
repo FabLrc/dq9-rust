@@ -203,7 +203,10 @@ impl ApplicationHandler<UserEvent> for App {
                             }
                             _ => {}
                         }
-                    } else if self.key(code, pressed) {
+                    } else if self.key(code, pressed) || self.session_over {
+                        // `self.key` asks for the escape/close; `session_over` is the church's
+                        // Confession having said its last line, 110 (state 9's power-off
+                        // instruction). This build has no title screen to stay on.
                         event_loop.exit();
                     }
                 }
@@ -268,7 +271,11 @@ impl ApplicationHandler<UserEvent> for App {
         }
     }
 
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.session_over {
+            event_loop.exit();
+            return;
+        }
         if let Some(window) = &self.window {
             window.request_redraw();
         }
