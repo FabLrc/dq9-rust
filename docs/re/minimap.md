@@ -83,6 +83,11 @@ Eight-byte head, sixteen BGR555 colours, `tile count` tiles of 32 bytes, then a 
   `a_picture_decodes_to_rgba`). Nothing in the data proves the engine draws index 0 as clear
   rather than as its stored colour; the count is what is established.
 
+Besides the maps, the archive holds the screen's other `.obg` pieces: `minimapbg` and
+`minimapbg2`–`4` (8×8 cells of paper, `minimapbg4` one cell) and `marker0`–`4` (one 8×8 tile
+each, the five coloured dots), plus the `name*` members — the wiki's list, all present on our
+ROM (`cargo dq9re -- gp2 data/pack_lv5/minimap.gp2`).
+
 The decode (`Picture::image`) gives RGBA8 rows, transparent for index 0; `dq9re minimap M01
 --out …` writes it as a PNG (`M01M0001.png`, 280×152, 36,593 bytes: Stornway's plan with the
 road along the bottom edge and its torn paper margin).
@@ -109,6 +114,9 @@ the 283 layouts (files / records):
   the scales seen are 3.2 (village), 1 (field), 2 (the pass), 4, 8, 2.67, 0.67.
 - **244 of the 268 pictures are named by a layout**, 283 of 283 layouts name a picture that
   exists in the archive. Names are the base name plus `.obg` (`0x66` stores the base name).
+- **A mark record holds no marker index**: its two floats are the position, its integers the
+  map ids it stands for (`S01M01`'s two marks: 20001 and 20002). The 273 records over 91
+  layouts therefore say where a mark is, not which of the five markers draws it.
 - `0x66` also carries the picture's short name inside `M01M0001_MG`-style members in
   `D01M01`'s extra `0x6e` record; not reused.
 
@@ -145,6 +153,30 @@ Marks are in the map's own units, the units of a doorway (`docs/re/map-archive.m
 village's nine marks stand within four units of their doorways, eight of nine within three
 (wiki's measurement, plausible against the numbers above). The party's position uses the same
 formula; that the engine uses this exact expression is [hypothesis].
+
+### 4.1 What the port draws (batch `v3-map-screen-details`)
+
+`dq9_render::map_screen` draws the picture and, under it, the backdrop the layout names:
+
+- **Backdrop**: `0x6a`'s name resolved as a member of `minimap.gp2` (the base name, or the
+  name plus `.obg`). The three patterns are 8×8 cells of paper — 64×64 pixels, except
+  `minimapbg4`, one cell (8×8) — and 221 of the 283 layouts name one. The port repeats the
+  pattern at one texel per pixel over **the picture's own rectangle**, starting at its
+  top-left. **How the DS lays the backdrop out is [unknown]** (§ 6): that rectangle and
+  top-left are a stated choice, not the engine's rule.
+- **Marks**: the 91 layouts' 273 records are decoded and projected with the formula above,
+  but not drawn. `marker0` to `4`, one 8×8 tile each, are blue, green, pink, yellow and red
+  in that order (§ 1); a `0x6c` record carries only its position and the map ids it stands
+  for, **so which marker an ordinary door or house mark takes is [unknown]**, as is what
+  `obj_mappoint.pac` holds. No colour is invented.
+- **Scrolling**: a picture wider or taller than 256×192 is cropped at its top-left, as
+  before (§ 6).
+
+Captures of the three states are in `build/evidence/v3-map-screen-details/`
+(`original-M01.png`, `b319a0f1adbd`: the village, its backdrop outside the torn paper;
+`original-S01M01.png`, `72ddf077c467`: the pass; `original-F01M01.png`, `127ab848910c`: a map
+without a layout, the placeholder). The port mode is unchanged: `port-m01.png`
+(`b6bd79252785`) is byte-identical to the previous batch's reference.
 
 ## 5. `obj_minimap` — the party strip and the dots
 
@@ -187,9 +219,11 @@ panel's attribute is 23.
   count.
 - **[unknown]**: `0x65`/`0x67`/`0x68`/`0x6d`, `0x6e`/`0x6f` on `D01M01`, `0x66`'s first
   value, `unknown_03` of `.obg`, `CEBK`'s `unknown_0x10` and a cell's attribute, the `z` sets
-  and `pd_ab_*`, how the DS scrolls a picture larger than 256×192, how a character's dot colour
-  is chosen (the wiki could not tie it to these palettes), and the tab at the picture's top
-  right.
+  and `pd_ab_*`, how the DS scrolls a picture larger than 256×192, how it lays out the
+  backdrop (the port repeats it over the picture's rectangle, § 4.1), which of the five
+  markers a `.bmmp` mark takes (§ 3, § 4.1), `obj_mappoint.pac`'s role, how a character's dot
+  colour is chosen (the wiki could not tie it to these palettes), and the tab at the picture's
+  top right.
 
 ## 7. Tools
 
@@ -208,3 +242,18 @@ panel's attribute is 23.
 - `M01M0001.png` (`c75bfb0c1e99`): the village's picture, 280×152.
 - `tests.txt` (`f59158135276`): the four test runs (nitro2d, nitro2d_rom, minimap, minimap_rom).
 - `verify.log` (`5aa906f145b8`): `verify.ps1 -RequireRom`, all five steps ok.
+
+`build/evidence/v3-map-screen-details/` (this batch, manifest `manifest.json`):
+
+- `backdrops.txt` (`db3f23c110a2`): `dq9re minimap` of `M01`, `S01M01` and `F01` — the
+  backdrop names and the mark records.
+- `obg-members.txt` (`9538d3e5c321`): the `.obg` members `minimapbg*` and `marker0`-`4` in
+  `minimap.gp2`, with their stored and decompressed sizes.
+- `original-M01.png` (`b319a0f1adbd`), `original-S01M01.png` (`72ddf077c467`),
+  `original-F01M01.png` (`127ab848910c`): window captures in `original` mode (`--map <code>
+  --save … --layout stacked --screens original`, client area 1024×768).
+- `port-m01.png` (`b6bd79252785`): the headless `--screens port` reference, byte-identical to
+  `v3-map-screen-draw`'s.
+- `sweep.txt` (`b25081e83a2a`): `map_screen_rom` — 283 layouts resolve, 221 with a backdrop,
+  418 of the map list's 1,010 maps draw, 592 named fallbacks.
+- `verify.log` (`79d28a45393c`): `verify.ps1 -RequireRom`, all five steps ok.

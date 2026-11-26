@@ -220,4 +220,50 @@ mod tests {
     fn rejects_a_broken_table() {
         assert!(Layout::parse(b"not a table").is_err());
     }
+
+    /// The backdrop names and the marks of the ROM's 283 layouts (skipped without the ROM).
+    #[test]
+    fn the_rom_names_the_backdrop_and_the_marks() {
+        let Some(bytes) = testrom::load() else { return };
+        let rom = nds_rom::Rom::parse(bytes).unwrap();
+        let archive =
+            crate::Gpc2::parse(rom.file_by_path("data/pack_lv5/minimap.gp2").unwrap()).unwrap();
+        let mut layouts = 0;
+        let mut backdrops = std::collections::BTreeMap::new();
+        let mut marks = 0;
+        for entry in archive.entries.iter().filter(|e| e.name.ends_with(".bmmp")) {
+            let data = archive.member(entry).unwrap();
+            let layout = Layout::parse(&data).unwrap();
+            layouts += 1;
+            if let Some(name) = layout.backdrop() {
+                *backdrops.entry(name.to_owned()).or_insert(0) += 1;
+            }
+            marks += layout.marks().len();
+        }
+        assert_eq!(layouts, 283);
+        assert_eq!(marks, 273);
+        assert_eq!(
+            backdrops,
+            [
+                ("minimapbg2".to_owned(), 207),
+                ("minimapbg3".to_owned(), 13),
+                ("minimapbg4".to_owned(), 1)
+            ]
+            .into_iter()
+            .collect()
+        );
+        // The pass's first mark stands for map 20001, its second for 20002 (§ 4).
+        let data = archive
+            .member(archive.find("S01M01.bmmp").unwrap())
+            .unwrap();
+        let pass = Layout::parse(&data).unwrap();
+        let marks = pass.marks();
+        assert_eq!((marks[0].x, marks[0].z), (-18.52, 41.69));
+        assert_eq!(marks[0].maps, [20001]);
+        assert_eq!(marks[1].maps, [20002]);
+        // The fields have no backdrop.
+        let data = archive.member(archive.find("F01.bmmp").unwrap()).unwrap();
+        let field = Layout::parse(&data).unwrap();
+        assert_eq!(field.backdrop(), None);
+    }
 }

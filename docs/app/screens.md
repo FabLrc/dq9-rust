@@ -14,10 +14,11 @@ field in the `enhanced` presentation:
   original` (Web: `?screens=original`) puts the 3D view and the message window on the bottom
   (touch) screen, as the original runs with `POWCNT1` bit 15 set (`ov_017::021b17ec`), and the
   top screen shows the original's map screen (`re/bottom-screen.md` § 2.1), drawn by
-  `dq9_render::map_screen` from the map's `.bmmp`/`.obg` picture and the `obj_minimap` party
-  strips and dots, with the area name in a dark tab from the game's font; what is implemented
-  and what stays **[unknown]** (the scroll of a larger picture, the backdrop, the party's
-  colours) is listed there. A map whose layout or picture is missing keeps the plain
+  `dq9_render::map_screen` from the map's `.bmmp`/`.obg` picture, the layout's backdrop
+  (`.bmmp` `0x6a`, tiled under the picture) and the `obj_minimap` party strips and dots, with
+  the area name in a dark tab from the game's font; what is implemented and what stays
+  **[unknown]** (the scroll of a larger picture, the backdrop's own layout, the marks' colours,
+  the party's colours) is listed there. A map whose layout or picture is missing keeps the plain
   placeholder (`dq9_render::Panel`, `panel.wgsl`) and the status line names the missing datum
   (`map screen (B08M03): no .bmmp layout for B08M03`); nothing stands in for an element the
   data does not establish. A field cutscene

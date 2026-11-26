@@ -25,6 +25,8 @@ fn every_layout_names_a_picture_the_archive_holds() {
     );
     let layout_bytes = read(&rom, map_screen::ARCHIVE);
     let mut layouts = 0;
+    let mut backdrops = 0;
+    let mut fields = 0;
     for entry in archive.entries.iter().filter(|e| e.name.ends_with(".bmmp")) {
         let code = entry.name.trim_end_matches(".bmmp");
         let content = map_screen::content(layout_bytes, ncer, ncgr, nclr, code)
@@ -36,6 +38,19 @@ fn every_layout_names_a_picture_the_archive_holds() {
         assert_eq!(content.strip, (64, 16), "{code}");
         assert_eq!(content.sprites.size(), (256, 24), "{code}");
         assert!(content.scale > 0.0, "{code}");
+        // The backdrop the layout names is in the same archive: `minimapbg2`-`4`, 8×8 cells
+        // (the one-cell `minimapbg4`, 8×8 pixels); the fields name none.
+        match &content.backdrop {
+            Some(backdrop) => {
+                assert!(backdrop.width > 0 && backdrop.height > 0, "{code}");
+                assert_eq!(
+                    backdrop.rgba.len(),
+                    (backdrop.width * backdrop.height * 4) as usize
+                );
+                backdrops += 1;
+            }
+            None => fields += 1,
+        }
         // The four strips and the dots have drawn pixels in their sheet cells.
         for slot in 0..4 {
             let src = map_screen::strip_src(&content, slot);
@@ -45,8 +60,10 @@ fn every_layout_names_a_picture_the_archive_holds() {
         }
         layouts += 1;
     }
-    println!("{layouts} layouts resolve their picture and sprite sheet");
-    assert!(layouts > 200, "only {layouts} layouts");
+    println!("{layouts} layouts resolve their picture, backdrop and sprite sheet");
+    assert_eq!(layouts, 283);
+    assert_eq!(backdrops, 221);
+    assert_eq!(fields, 62);
 }
 
 #[test]

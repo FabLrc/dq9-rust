@@ -5,6 +5,10 @@
 //!
 //! What is drawn, and what establishes it:
 //!
+//! - the backdrop: the `minimapbg2`-`4` `.obg` (8×8-cell paper) the layout's tag `0x6a` names
+//!   (`docs/re/minimap.md` § 1, § 3), tiled at one texel per pixel under the picture's own
+//!   rectangle — how the DS lays it out is [unknown], so the picture's rectangle and top-left
+//!   stand ([`backdrop_tiles`]);
 //! - the picture: the `.obg` the map's `.bmmp` names (`docs/re/minimap.md` § 2), at one pixel
 //!   per texel with its top-left at the screen's top-left — the original scroll of a picture
 //!   larger than 256×192 is not established ([`picture_dst`]);
@@ -16,11 +20,17 @@
 //!
 //! The dot and strip colours of a real party are not the file's (`docs/re/minimap.md` § 5,
 //! `tools/wiki/Mini-Map.md`): the file's slots are used, a **[hypothesis]**.
+//!
+//! The layout's marks (tag `0x6c`) are decoded and projected ([`Content::marks`]) but not
+//! drawn: the five `marker0`-`4` dots are blue, green, pink, yellow and red in that order
+//! (`docs/re/minimap.md` § 1), and nothing establishes which marker an ordinary door or house
+//! mark takes — no record carries an index, and the note leaves the other dots' meaning
+//! [unknown] (§ 6). A colour is not invented ([`Frame::new`]).
 
 use std::fmt;
 
 use dq9_formats::Gpc2;
-use dq9_formats::minimap::{Layout, Picture, party_strip};
+use dq9_formats::minimap::{Layout, Mark, Picture, party_strip};
 use nds_rom::nitro2d::{Ncer, Ncgr, Nclr};
 use wgpu::util::DeviceExt as _;
 
@@ -96,6 +106,9 @@ impl std::error::Error for Error {}
 pub struct Content {
     /// The `.obg` picture, colour 0 transparent.
     pub picture: Image,
+    /// The backdrop the layout names (tag `0x6a`), drawn under the picture; `None` when the
+    /// layout has none or the archive does not hold it.
+    pub backdrop: Option<Image>,
     /// The sprite sheet: the four 64-pixel strips at rows 0..16, the five dots at row 16.
     pub sprites: Image,
     /// The strip cut from the party panel (64×16).
@@ -104,6 +117,9 @@ pub struct Content {
     pub scale: f32,
     /// The picture's corner in tiles (`.bmmp` tag 0x64).
     pub corner: (f32, f32),
+    /// The layout's marks (`.bmmp` tag 0x6c), projected but not drawn: which of the five
+    /// markers a mark takes is [unknown].
+    pub marks: Vec<Mark>,
 }
 
 /// Decodes the map screen of `map` (a map code such as `M01` or `M01M01`) from the four files
@@ -140,24 +156,59 @@ pub fn content(
     let bytes = archive
         .member(entry)
         .map_err(|e| Error::Format(format!("{picture_name}: {e}")))?;
-    let decoded = Picture::parse(&bytes)
-        .map_err(|e| Error::Format(format!("{picture_name}: {e}")))?
-        .image();
-    if decoded.width == 0 || decoded.height == 0 {
-        return Err(Error::Format(format!("{picture_name} has no pixels")));
-    }
-    let picture = Image {
-        width: decoded.width as u32,
-        height: decoded.height as u32,
-        rgba: decoded.rgba.into_iter().flatten().collect(),
-    };
+    let picture = decode(
+        Picture::parse(&bytes)
+            .map_err(|e| Error::Format(format!("{picture_name}: {e}")))?
+            .image(),
+        picture_name,
+    )?;
+    let backdrop = backdrop(&archive, layout.backdrop())?;
     let (sprites, strip) = sprite_sheet(ncer, ncgr, nclr)?;
     Ok(Content {
         picture,
+        backdrop,
         sprites,
         strip,
         scale,
         corner,
+        marks: layout.marks(),
+    })
+}
+
+/// The backdrop the layout names: the `.obg` member of the same archive, `None` when the layout
+/// has no tag `0x6a` or the archive does not hold the name (no draw, not an error).
+fn backdrop(archive: &Gpc2<'_>, name: Option<&str>) -> Result<Option<Image>, Error> {
+    let Some(name) = name else { return Ok(None) };
+    let entry = archive
+        .find(name)
+        .or_else(|| archive.find(&format!("{name}.obg")));
+    let Some(entry) = entry else { return Ok(None) };
+    let bytes = archive
+        .member(entry)
+        .map_err(|e| Error::Format(format!("{name}: {e}")))?;
+    let image = Picture::parse(&bytes)
+        .map_err(|e| Error::Format(format!("{name}: {e}")))?
+        .image();
+    if image.width == 0 || image.height == 0 {
+        return Ok(None);
+    }
+    let image = Image {
+        width: image.width as u32,
+        height: image.height as u32,
+        rgba: image.rgba.into_iter().flatten().collect(),
+    };
+    Ok(Some(image))
+}
+
+/// The RGBA8 image of a decoded `.obg`, as the screen's [`Image`].
+fn decode(image: dq9_formats::minimap::Image, label: &str) -> Result<Image, Error> {
+    if image.width == 0 || image.height == 0 {
+        return Err(Error::Format(format!("{label} has no pixels")));
+    }
+    Ok(Image {
+        width: image.width as u32,
+        height: image.height as u32,
+        rgba: image.rgba.into_iter().flatten().collect(),
     })
 }
 
@@ -301,6 +352,36 @@ pub fn picture_dst(size: (u32, u32), offset: (f32, f32)) -> [f32; 4] {
     [offset.0, offset.1, size.0 as f32, size.1 as f32]
 }
 
+/// The backdrop's quads under the picture: the 8×8-cell paper pattern ([`Content::backdrop`],
+/// 64×64 pixels) repeated at one texel per pixel over `picture`'s rectangle, top-left first.
+/// The DS's own layout of the backdrop is [unknown] (`docs/re/minimap.md` § 6): the picture's
+/// rectangle and top-left are the rule, the last column and row are cut to fit.
+///
+/// Each entry is `(destination, texture coordinate)` in the screen's pixels and the backdrop's
+/// texels.
+pub fn backdrop_tiles(pattern: (u32, u32), picture: [f32; 4]) -> Vec<([f32; 4], [f32; 4])> {
+    let (mut quads, pw, ph) = (Vec::new(), pattern.0 as f32, pattern.1 as f32);
+    if pw <= 0.0 || ph <= 0.0 || picture[2] <= 0.0 || picture[3] <= 0.0 {
+        return quads;
+    }
+    let [x, y, w, h] = picture;
+    let mut top = 0.0;
+    while top < h {
+        let tile_h = (h - top).min(ph);
+        let mut left = 0.0;
+        while left < w {
+            let tile_w = (w - left).min(pw);
+            quads.push((
+                [x + left, y + top, tile_w, tile_h],
+                [0.0, 0.0, tile_w / pw, tile_h / ph],
+            ));
+            left += pw;
+        }
+        top += ph;
+    }
+    quads
+}
+
 /// The strip of party slot `slot`: 64 wide at y 176, `content.strip` tall.
 pub fn strip_dst(content: &Content, slot: usize) -> [f32; 4] {
     [
@@ -353,6 +434,8 @@ pub struct Frame {
     pub picture_offset: (f32, f32),
     /// The picture's size in texels.
     pub picture: (u32, u32),
+    /// The backdrop's size in texels, tiled under the picture; `None` when the layout has none.
+    pub backdrop: Option<(u32, u32)>,
     /// The sprite sheet's size in texels, for the sprites' texture coordinates.
     pub sheet: (u32, u32),
     /// The party strips and dots, hero first.
@@ -379,6 +462,7 @@ impl Frame {
         Self {
             picture_offset,
             picture: content.picture.size(),
+            backdrop: content.backdrop.as_ref().map(Image::size),
             sheet: content.sprites.size(),
             sprites,
         }
@@ -387,7 +471,8 @@ impl Frame {
 
 const VERTEX_FLOATS: usize = 5;
 
-/// Two triangles per rectangle: position, texture coordinate, layer (0 picture, 1 sprites).
+/// Two triangles per rectangle: position, texture coordinate, layer (0 backdrop, 1 picture,
+/// 2 sprites, bottom to top).
 fn vertices(frame: &Frame) -> Vec<[f32; VERTEX_FLOATS]> {
     let quad = |dst: [f32; 4], uv: [f32; 4], layer: f32, out: &mut Vec<[f32; VERTEX_FLOATS]>| {
         let [x, y, w, h] = dst;
@@ -412,12 +497,13 @@ fn vertices(frame: &Frame) -> Vec<[f32; VERTEX_FLOATS]> {
     let mut out = Vec::with_capacity((1 + frame.sprites.len()) * 6);
     let (w, h) = (frame.picture.0 as f32, frame.picture.1 as f32);
     if w > 0.0 && h > 0.0 {
-        quad(
-            picture_dst(frame.picture, frame.picture_offset),
-            [0.0, 0.0, 1.0, 1.0],
-            0.0,
-            &mut out,
-        );
+        let picture = picture_dst(frame.picture, frame.picture_offset);
+        if let Some(pattern) = frame.backdrop {
+            for (dst, uv) in backdrop_tiles(pattern, picture) {
+                quad(dst, uv, 0.0, &mut out);
+            }
+        }
+        quad(picture, [0.0, 0.0, 1.0, 1.0], 1.0, &mut out);
     }
     let sheet_uv = |sprite: &Sprite, size: (u32, u32)| {
         let [sx, sy, sw, sh] = sprite.src;
@@ -430,7 +516,7 @@ fn vertices(frame: &Frame) -> Vec<[f32; VERTEX_FLOATS]> {
     };
     for sprite in &frame.sprites {
         let uv = sheet_uv(sprite, frame.sheet);
-        quad(sprite.dst, uv, 1.0, &mut out);
+        quad(sprite.dst, uv, 2.0, &mut out);
     }
     out
 }
@@ -443,9 +529,11 @@ pub struct MapScreen {
     sampler: wgpu::Sampler,
 }
 
-/// The two textures of one map's screen and their bind group.
+/// The map screen's textures and their bind group: the backdrop (a 1×1 clear pixel when the
+/// layout has none), the picture and the sprite sheet.
 #[derive(Debug)]
 pub struct Layers {
+    _backdrop: wgpu::Texture,
     _picture: wgpu::Texture,
     _sprites: wgpu::Texture,
     bind: wgpu::BindGroup,
@@ -496,6 +584,7 @@ impl MapScreen {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                texture_entry(3),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -546,10 +635,22 @@ impl MapScreen {
         }
     }
 
-    /// Uploads one map's picture and sprite sheet.
+    /// Uploads one map's backdrop, picture and sprite sheet.
     pub fn layers(&self, device: &wgpu::Device, queue: &wgpu::Queue, content: &Content) -> Layers {
+        let clear = Image {
+            width: 1,
+            height: 1,
+            rgba: vec![0; 4],
+        };
+        let backdrop = texture(
+            device,
+            queue,
+            content.backdrop.as_ref().unwrap_or(&clear),
+            "map backdrop",
+        );
         let picture = texture(device, queue, &content.picture, "map picture");
         let sprites = texture(device, queue, &content.sprites, "map sprites");
+        let backdrop_view = backdrop.create_view(&wgpu::TextureViewDescriptor::default());
         let picture_view = picture.create_view(&wgpu::TextureViewDescriptor::default());
         let sprites_view = sprites.create_view(&wgpu::TextureViewDescriptor::default());
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -568,9 +669,14 @@ impl MapScreen {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&backdrop_view),
+                },
             ],
         });
         Layers {
+            _backdrop: backdrop,
             _picture: picture,
             _sprites: sprites,
             bind,
@@ -633,6 +739,7 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dq9_formats::minimap::layout::{TAG_CORNER, TAG_MARK, TAG_SCALE};
 
     fn sample(scale: f32, corner: (f32, f32)) -> Content {
         Content {
@@ -641,6 +748,7 @@ mod tests {
                 height: 152,
                 rgba: vec![0; 280 * 152 * 4],
             },
+            backdrop: None,
             sprites: Image {
                 width: 256,
                 height: 32,
@@ -649,6 +757,7 @@ mod tests {
             strip: (64, 16),
             scale,
             corner,
+            marks: Vec::new(),
         }
     }
 
@@ -716,8 +825,84 @@ mod tests {
         let data = vertices(&frame);
         // One picture, one strip and one dot: three quads.
         assert_eq!(data.len(), 18);
-        assert_eq!(&data[0][2..5], &[0.0, 0.0, 0.0]);
-        assert_eq!(&data[6][2..5], &[0.0, 0.0, 1.0]);
+        assert_eq!(&data[0][2..5], &[0.0, 0.0, 1.0]);
+        assert_eq!(&data[6][2..5], &[0.0, 0.0, 2.0]);
+    }
+
+    #[test]
+    fn a_backdrop_is_tiled_under_the_picture() {
+        // The village's 280×152 picture over a 64×64 paper pattern: 5 columns, 3 rows, the
+        // last column and row cut to the picture's rectangle.
+        let picture = picture_dst((280, 152), (0.0, 0.0));
+        let tiles = backdrop_tiles((64, 64), picture);
+        assert_eq!(tiles.len(), 15);
+        assert_eq!(tiles[0], ([0.0, 0.0, 64.0, 64.0], [0.0, 0.0, 1.0, 1.0]));
+        assert_eq!(
+            tiles[4],
+            ([256.0, 0.0, 24.0, 64.0], [0.0, 0.0, 24.0 / 64.0, 1.0])
+        );
+        let last = tiles[14];
+        assert_eq!(last.0, [256.0, 128.0, 24.0, 24.0]);
+        assert_eq!(last.1, [0.0, 0.0, 24.0 / 64.0, 24.0 / 64.0]);
+        // An exact multiple has no cut tile, and no backdrop has no quads.
+        assert_eq!(backdrop_tiles((64, 64), [0.0, 0.0, 128.0, 64.0]).len(), 2);
+        assert!(backdrop_tiles((0, 0), picture).is_empty());
+        assert!(backdrop_tiles((64, 64), [0.0, 0.0, 0.0, 0.0]).is_empty());
+    }
+
+    #[test]
+    fn the_backdrop_quads_are_drawn_first() {
+        let mut c = sample(1.0, (0.0, 0.0));
+        c.backdrop = Some(Image {
+            width: 64,
+            height: 64,
+            rgba: vec![0; 64 * 64 * 4],
+        });
+        let frame = Frame::new(&c, &[(0.0, 0.0)], (0.0, 0.0));
+        assert_eq!(frame.backdrop, Some((64, 64)));
+        let data = vertices(&frame);
+        // 15 backdrop quads, then the picture, the strip and the dot.
+        assert_eq!(data.len(), (15 + 3) * 6);
+        for vertex in &data[..15 * 6] {
+            assert_eq!(vertex[4], 0.0);
+        }
+        assert_eq!(data[15 * 6][4], 1.0);
+        assert_eq!(data[16 * 6][4], 2.0);
+    }
+
+    #[test]
+    fn a_mark_is_projected_but_not_drawn() {
+        // The pass's first mark, projected by the layout's own scale and corner (§ 4), and the
+        // record's maps kept: no marker is chosen, so no quad is added.
+        let data = synthetic_layout();
+        let layout = Layout::parse(&data).unwrap();
+        let mark = &layout.marks()[0];
+        assert_eq!(
+            project((mark.x, mark.z), 2.0, (-10.0, -13.0)),
+            (43.0, 187.0)
+        );
+        assert_eq!(mark.maps, [20001]);
+        let mut c = sample(2.0, (-10.0, -13.0));
+        c.marks = layout.marks();
+        let frame = Frame::new(&c, &[(0.0, 0.0)], (0.0, 0.0));
+        assert_eq!(vertices(&frame).len(), 18);
+    }
+
+    #[test]
+    fn the_backdrop_resolves_to_an_obg_or_is_not_drawn() {
+        let archive = build_archive(&[("minimapbg2.obg", &one_cell_picture())]);
+        let archive = Gpc2::parse(&archive).unwrap();
+        let found = backdrop(&archive, Some("minimapbg2")).unwrap().unwrap();
+        assert_eq!(found.size(), (8, 8));
+        // The base name resolves through `.obg`; a layout without the tag and an absent member
+        // both draw nothing.
+        assert!(backdrop(&archive, Some("minimapbg2")).unwrap().is_some());
+        assert_eq!(backdrop(&archive, None).unwrap(), None);
+        assert_eq!(backdrop(&archive, Some("minimapbg3")).unwrap(), None);
+    }
+
+    fn content_of(archive: &[u8], map: &str) -> Result<Content, Error> {
+        content(archive, &[], &[], &[], map)
     }
 
     #[test]
@@ -727,7 +912,101 @@ mod tests {
         assert!(matches!(error, Err(Error::Format(_))), "{error:?}");
     }
 
-    fn content_of(archive: &[u8], map: &str) -> Result<Content, Error> {
-        content(archive, &[], &[], &[], map)
+    /// A 1×1-cell `.obg`, one tile (`docs/re/minimap.md` § 2).
+    fn one_cell_picture() -> Vec<u8> {
+        let mut out = vec![1, 1, 0, 137, 1, 0, 0, 0];
+        for i in 0..16 {
+            out.extend((i as u16 * 0x0421).to_le_bytes());
+        }
+        out.extend([0x11; 32]);
+        out.extend(0u16.to_le_bytes());
+        out
+    }
+
+    /// A GPC2 archive of stored members, hashed with the archive's CRC-32 (`gpc2.rs`).
+    fn build_archive(members: &[(&str, &[u8])]) -> Vec<u8> {
+        let stored = |body: &[u8]| {
+            let mut b = ((body.len() as u32) << 3).to_le_bytes().to_vec();
+            b.extend(body);
+            b.resize(b.len().next_multiple_of(4), 0);
+            b
+        };
+        let (mut names, mut blobs, mut index) = (Vec::new(), Vec::new(), Vec::new());
+        for (name, body) in members {
+            let name_offset = names.len() as u32;
+            names.extend(name.as_bytes());
+            names.push(0);
+            let blob = stored(body);
+            let location = (blobs.len() / 4) as u32 | (name_offset & 0xFF) << 24;
+            let size = blob.len() as u32 | (name_offset >> 8) << 24;
+            index.push((crc32(name.as_bytes()), location, size));
+            blobs.extend(&blob);
+            blobs.resize(blobs.len().next_multiple_of(4), 0);
+        }
+        index.sort_by_key(|e| e.0);
+        let index: Vec<u8> = index
+            .iter()
+            .flat_map(|(h, l, s)| [h.to_le_bytes(), l.to_le_bytes(), s.to_le_bytes()].concat())
+            .collect();
+        let (index, names) = (stored(&index), stored(&names));
+        let (header, names_offset) = (0x14usize, 0x14 + index.len());
+        let data_offset = names_offset + names.len();
+        let mut out = b"GPC2".to_vec();
+        out.extend((members.len() as u16).to_le_bytes());
+        for words in [header / 4, names_offset / 4, data_offset / 4, 0, 0] {
+            out.extend((words as u16).to_le_bytes());
+        }
+        out.extend(((blobs.len() / 4) as u32).to_le_bytes());
+        out.extend(index);
+        out.extend(names);
+        out.extend(blobs);
+        out
+    }
+
+    /// The archive's name hash: CRC-32 (IEEE), as `gpc2.rs` computes it.
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+            }
+        }
+        !crc
+    }
+
+    /// A `.bmmp` with the pass's scale, corner and two marks (85 bytes of table).
+    fn synthetic_layout() -> Vec<u8> {
+        let mut records = Vec::new();
+        let mut push = |tag: u16, types: &[u8], values: &[u32]| {
+            let mut out = tag.to_le_bytes().to_vec();
+            out.push(types.len() as u8);
+            for chunk in types.chunks(4) {
+                out.push(
+                    chunk
+                        .iter()
+                        .enumerate()
+                        .fold(0, |acc, (i, t)| acc | t << (2 * i)),
+                );
+            }
+            out.resize(out.len().next_multiple_of(4), 0xFF);
+            values.iter().for_each(|v| out.extend(v.to_le_bytes()));
+            records.extend(out);
+        };
+        push(TAG_SCALE, &[2], &[2.0f32.to_bits()]);
+        push(TAG_CORNER, &[1, 1], &[(-10i32) as u32, (-13i32) as u32]);
+        push(
+            TAG_MARK,
+            &[2, 2, 1],
+            &[(-18.52f32).to_bits(), 41.69f32.to_bits(), 20001],
+        );
+        let body: Vec<u8> = records.clone();
+        let mut out = Vec::new();
+        for word in [3u32, (0x10 + body.len() as u32), 0, 2] {
+            out.extend(word.to_le_bytes());
+        }
+        out.extend(body);
+        out.resize(out.len().next_multiple_of(16), 0);
+        out
     }
 }

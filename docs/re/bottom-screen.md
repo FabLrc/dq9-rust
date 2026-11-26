@@ -85,7 +85,7 @@ field task's indirect calls and were not resolved.
 | Party strips | one name strip per party slot | the 64×64 panel of `obj_mm.pac` (cell 2 of `obj_minimap.NCER`, name strip = rows 0..15 only) | 4 × **64×16** at **y = 176**, x = **0, 64, 128, 192**; only as many as the party holds | party order `GameState+0x397c`, count `+0x3980`; per-member colour | capture + decomp; colour source **[unknown]**; the port uses the file's palette slots 0–3 (blue, green, pink, orange) **[hypothesis]** |
 | Party dots | one coloured dot per member on the map | `obj_minimap.NCER` cells 3..7 / the dots of `obj_mm.pac` | on the party's position, projected by the `.bmmp` scale/corner | hero and members' x/z | wiki + capture; colour choice **[unknown]**; the port draws cells 3..7 and the members' positions coincide (only the hero's is modelled) **[hypothesis]** |
 | Floor badge | a small box with the floor (`1` in the Observatory capture) | `tmap_field_obj.NCER`/`.NCGR`/`.NCLR` **or** the same cells as the tab **[hypothesis]** | x≈0..24, y≈3..19 (Observatory capture) | map id | capture only |
-| Map markers | doors, houses, marks | `.bmmp` marks (`0x6c`), `obj_mappoint.pac` | from the map position × scale − corner × 8 | `.bmmp` | wiki |
+| Map markers | doors, houses, marks | `.bmmp` marks (`0x6c`), `obj_mappoint.pac` | from the map position × scale − corner × 8 | `.bmmp` | wiki; which `marker0`–`4` a mark takes **[unknown]** |
 | Clock / time of day | **nothing** is drawn in the field HUD; the day clock only drives lighting, rosters and encounters | — | — | `GameState` clock | capture |
 
 The party strips measured in `field-church.png`: row 176 is the black border, rows 177-190
@@ -94,15 +94,20 @@ are 64 px wide each, in party order, irrespective of colour.
 
 **What the port draws** (`dq9_render::map_screen`, wired in `app/draw.rs` for `--screens
 original`): the `.obg` picture the map's `.bmmp` names, one pixel per texel with its top-left
-at the screen's top-left; the name strips cut from cell 2 of `obj_minimap.NCER` (rows 0..15)
-with palette slots 0..3 and each member's name from the record's glyph indices in the message
-font, centred in the slot; one dot per member (cells 3..7, palette slot 4) at the projected
-hero position, so a full party's dots coincide; and the `maplist9` label in the tab, right
-aligned. Not drawn, because the data does not establish them: the scrolling of a picture larger
-than 256×192, the backdrop (`.bmmp` `0x6a`, how the DS lays it out is **[unknown]**), the
-original's palette source for the strips and dots, and the floor badge. A map without a `.bmmp`
-layout (592 of the map list's 1,010 records, mostly dungeons) leaves the placeholder and the
-status line says so. Captures: `build/evidence/v3-map-screen-draw/`.
+at the screen's top-left; under it, the backdrop the layout's `0x6a` names (`minimapbg2`–`4`,
+8×8 cells of paper) repeated at one texel per pixel over the picture's own rectangle, from its
+top-left — how the DS lays it out is **[unknown]**, so the rectangle is a stated choice; the
+name strips cut from cell 2 of `obj_minimap.NCER` (rows 0..15) with palette slots 0..3 and each
+member's name from the record's glyph indices in the message font, centred in the slot; one
+dot per member (cells 3..7, palette slot 4) at the projected hero position, so a full party's
+dots coincide; and the `maplist9` label in the tab, right aligned. Not drawn, because the data
+does not establish them: the scrolling of a picture larger than 256×192, the `.bmmp` marks
+(`0x6c`; decoded and projected, but no record says which of the five `marker0`–`4` dots —
+blue, green, pink, yellow, red — an ordinary door or house mark takes, and
+`obj_mappoint.pac`'s role is **[unknown]**), the original's palette source for the strips and
+dots, and the floor badge. A map without a `.bmmp` layout (592 of the map list's 1,010
+records, mostly dungeons) leaves the placeholder and the status line says so. Captures:
+`build/evidence/v3-map-screen-draw/` and, with the backdrop, `build/evidence/v3-map-screen-details/`.
 
 ### 2.2 Bottom LCD (engine A): the 3D view and the touch UI
 
