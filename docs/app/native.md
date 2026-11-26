@@ -74,7 +74,17 @@ map read from `--save`. Without either option, the map stays `M01`. `--save` rea
 local `.sav` and selects the map of the first valid normal slot; no data is sent
 over the network. The hero starts at the position and heading the game gives after "Continue" (the
 map's start point, `re/save.md` § "Position on resume"), placed on the ground; the
-`--screenshot` output prints this pose (`hero: …`) and centers the camera on it. `--time`: time of
+`--screenshot` output prints this pose (`hero: …`) and centers the camera on it.
+
+`--save-out <file>` (needs `--save <file>`) writes the session's state into the save's current
+normal slot at the end of any run with an application (`--headless-steps`, `--auto`, `--replay`,
+`--walk`, `--play-record`, the window): the whole container goes through a temp file and a rename,
+the input is never modified, and the option refuses to run without an input save or with an output
+naming the input. What the state does not model (the record's base attributes, current HP/MP, the
+opaque blocks) stays byte for byte; the written container is one melonDS loads and continues from
+(`re/save.md`, § "Writing a session"; evidence `build/evidence/v3-save-bind/`).
+
+`--time`: time of
 day `night`, `morning`, `day`, `evening` or 0 to 3 (`LightingManager+0x98`: selection of
 variants, of visible instances and of the lighting entry), by default the phase of the save's
 clock, otherwise night; `--clock S`: second of the 420 s day (night 0, morning 180, day 210,

@@ -31,7 +31,7 @@ file below.
 
 | Topic | File | What it covers |
 |---|---|---|
-| Running natively | [`app/native.md`](app/native.md) | `cargo run -p dq9-app`, `--map`, `--save`, `--time`/`--clock`, `--layout`, `--screens`, `--screenshot`, `--walk`, `--input`, conversations, controls, sound. |
+| Running natively | [`app/native.md`](app/native.md) | `cargo run -p dq9-app`, `--map`, `--save`, `--save-out`, `--time`/`--clock`, `--layout`, `--screens`, `--screenshot`, `--walk`, `--input`, conversations, controls, sound. |
 | Field menu, shops, inn, church | [`app/field-menu.md`](app/field-menu.md) | The field menu (`I`) and the facility screens, held-item transfer, the equip rule, the core rules and their known limits. |
 | Events (`.stb` cutscenes) | [`app/events.md`](app/events.md) | Playing a cutscene (`--stage`, `--event`, `--events-report`), the architecture, the cadence, the camera, captions, fades and the report of the prologue and chapter 2. |
 | Battle scene | [`app/battle-scene.md`](app/battle-scene.md) | A stage, the grid and formation, monsters and motions, the battle cameras, the swirl transition and the way back to the field. |
