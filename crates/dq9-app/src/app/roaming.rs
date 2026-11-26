@@ -427,22 +427,6 @@ impl Roaming {
         if contact.is_some() {
             self.contacts += 1;
         }
-        // A defeated roamer leaves once its 125 ms fade has run out (state 11); the slot can
-        // then spawn another. The array is fixed: twelve slots, no per-update allocation.
-        if let Some(roamers) = &mut self.roamers {
-            let mut done = [false; SLOTS];
-            for (slot, finished) in done.iter_mut().enumerate() {
-                *finished = roamers.roamer(slot).is_some_and(|roamer| {
-                    roamer.state == dq9_core::encounter::roamer::state::DEFEATED
-                        && roamer.alpha == 0
-                });
-            }
-            for (slot, finished) in done.into_iter().enumerate() {
-                if finished {
-                    roamers.remove(slot);
-                }
-            }
-        }
         contact
     }
 
@@ -552,22 +536,24 @@ impl Roaming {
         runtime.scene.instances.get(bound.instance).map(|i| i.world)
     }
 
-    /// The battle in play came from `slot`; its settlement resumes or fades that roamer.
+    /// The battle in play came from `slot`; its settlement removes or keeps that roamer.
     pub(super) fn set_pending(&mut self, slot: usize) {
         self.pending = Some(slot);
     }
 
-    /// The end of the battle that started from a contact: a won roamer fades out (the slot is
-    /// removed once the fade ends), a fled one stands startled and resumes wandering; the
-    /// recent list keeps it from touching the party again immediately. **[hypothesis]** for
-    /// the fled/lost states (see `Roamers::settle`).
+    /// The end of the battle that started from a contact: a monster the party did not escape is
+    /// reset and hidden by the battle's exit, so its slot is released here and [`Self::sync`]
+    /// frees its model; a flight leaves the roamer standing in `FOUGHT` (see `Roamers::settle`).
+    /// Either way its id leaves `+0x44b8`, so it can be touched again.
     fn settle(&mut self, result: Option<BattleResult>, hero: dq9_core::fx::Fx3) {
         let Some(slot) = self.pending.take() else {
             return;
         };
-        let won = !matches!(result, Some(BattleResult::Fled | BattleResult::Lost));
+        // `ov_000::02163c80` is 0 for a won fight and for a wiped party (only the party's
+        // escape keeps the monster), so only a flight leaves it on the field.
+        let leaves = !matches!(result, Some(BattleResult::Fled));
         if let Some(roamers) = &mut self.roamers {
-            roamers.settle(slot, won, hero);
+            roamers.settle(slot, leaves, hero);
         }
     }
 
@@ -813,7 +799,8 @@ impl App {
     /// The end of a battle tells the roaming layer once; the party, the drops and the story
     /// were already settled by `App::settle_battle`. The battle's generators are handed back
     /// to the field (a scripted battle too, so its stream is not replayed), and the contacted
-    /// roamer gets its outcome (fade out on a win, startled resumption on a flight or loss).
+    /// roamer gets its outcome (out of its slot at once unless the party escaped, standing in
+    /// `FOUGHT` after a flight: `Roamers::settle`).
     pub(super) fn settle_roaming(&mut self, result: Option<BattleResult>) {
         let hero = self
             .hero
@@ -844,7 +831,7 @@ impl App {
         self.roaming.slot_world(slot, runtime)
     }
 
-    /// The scene instance currently bound to a slot (tests: the model released by a fade).
+    /// The scene instance currently bound to a slot (tests: the model a release frees).
     #[cfg_attr(not(all(test, windows)), allow(dead_code))]
     pub(crate) fn roaming_slot_instance(&self, slot: usize) -> Option<usize> {
         self.roaming

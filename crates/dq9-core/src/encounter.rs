@@ -151,8 +151,12 @@ pub struct Roamers {
     stepped: bool,
     next_id: u16,
     hero_node: Option<usize>,
-    /// Ids of roamers the encounter check skips (`+0x44b8`, four of them).
+    /// `+0x44b8`: the four ids the encounter check skips (`func_ov017_0219735c`). A ring: the
+    /// next insertion overwrites the entry the cursor names (`func_ov017_021972f8`), and field
+    /// entry zeroes all four (`func_ov017_021972cc`).
     recent: [u16; 4],
+    /// `+0x44c0`: the entry the next insertion writes, `& 3` after each one.
+    recent_cursor: u8,
     crand: CRand,
     world: Random,
 }
@@ -183,6 +187,7 @@ impl Roamers {
             next_id: 1,
             hero_node: None,
             recent: [0; 4],
+            recent_cursor: 0,
             crand,
             world,
         }
@@ -216,32 +221,49 @@ impl Roamers {
         self.world = world;
     }
 
-    /// Ends the contact in `slot` with the battle's verdict: a won monster fades out
-    /// (state 11, [`state::DEFEATED`], and the engine's own update drops the slot at alpha
-    /// 0); a fled or lost one stands startled for three seconds and then resumes wandering
-    /// (state 12), its id already in the recent list from the touch. **[hypothesis]** for the
-    /// fled and lost states: the original field log only shows won contacts, each followed by
-    /// the slot's next spawn; the three-second resumption is the model's own STARTLED rule.
-    pub fn settle(&mut self, slot: usize, won: bool, hero: Fx3) {
-        let Some(roamer) = self.slots.get_mut(slot).and_then(Option::as_mut) else {
+    /// The battlefield's verdict for the roamer in `slot`, `leaves` unless the party escaped the
+    /// fight. `ov_000::021688dc` (the battle overlay's exit) finds the roamer by the battle's id
+    /// (`0x021a278c`) and, when `ov_000::02163c80` returns 0, resets its object (`0x02076a8c`,
+    /// which also clears its `+0x16a` id) and hides it (`Object3D::MakeHidden`): the monster
+    /// **leaves the field at once**, in no state 11 or 12. `02163c80` returns 1 only when no
+    /// field character is alive, a battle member is, and the battle record's `+0x24`/`+0x25` is
+    /// set — read as the party's escape, so a won fight and a wiped party both leave 0 and hide
+    /// the monster. A fled monster keeps its object untouched: it stays where it stood, in state
+    /// 9 (`FOUGHT`, which the contact check and the 25-unit release `ov_017::021a1ad0` both
+    /// skip), and only a field rebuild ends it. Both cases end in `ov_017::021c8c44` (field message
+    /// 83, posted by the exit), which drops the battle's id from `+0x44b8` (`0x02197324`) — the
+    /// same id the battle's start put there.
+    pub fn settle(&mut self, slot: usize, leaves: bool, hero: Fx3) {
+        let Some(mut roamer) = self.slots.get_mut(slot).and_then(Option::take) else {
             return;
         };
-        if won {
-            roamer.enter(state::DEFEATED, hero);
-        } else {
-            roamer.enter(state::STARTLED, hero);
+        self.forget_recent(roamer.id);
+        if !leaves {
+            roamer.enter(state::FOUGHT, hero);
+            self.slots[slot] = Some(roamer);
         }
     }
 
-    /// Ids the encounter check ignores (`func_ov017_0219735c`).
-    pub fn set_recent(&mut self, ids: [u16; 4]) {
-        self.recent = ids;
+    /// Whether the encounter check skips `id` (`func_ov017_0219735c`).
+    fn is_recent(&self, id: u16) -> bool {
+        self.recent.contains(&id)
     }
 
-    /// Removes a roamer (it was defeated or fled the map).
-    pub fn remove(&mut self, slot: usize) {
-        if let Some(entry) = self.slots.get_mut(slot) {
-            *entry = None;
+    /// `func_ov017_021972f8`: the id is written at the cursor and the cursor moves on, so the
+    /// fifth insertion overwrites the first. Both of its call sites test `0219735c` first, so
+    /// an id already in the list is not written again and the cursor does not move.
+    fn remember_recent(&mut self, id: u16) {
+        if self.is_recent(id) {
+            return;
+        }
+        self.recent[usize::from(self.recent_cursor)] = id;
+        self.recent_cursor = (self.recent_cursor + 1) & 3;
+    }
+
+    /// `func_ov017_02197324`: the entry naming `id` becomes 0 (the battle's end does this).
+    fn forget_recent(&mut self, id: u16) {
+        if let Some(entry) = self.recent.iter_mut().find(|entry| **entry == id) {
+            *entry = 0;
         }
     }
 
@@ -803,32 +825,22 @@ impl Roamers {
         let hero = input.position;
         let slot = (0..SLOTS).find(|&i| {
             self.slots[i].as_ref().is_some_and(|r| {
-                !self.recent.contains(&r.id)
+                !self.is_recent(r.id)
                     && r.alpha == OPAQUE
                     && !matches!(r.state, state::APPEAR | state::TOUCHED | state::FOUGHT)
                     && touches(r.field.size, r.scale, r.position, hero, input.radius)
             })
         })?;
         let hero_state = self.slots[slot].as_ref()?.clone();
-        // `+0x44b8`: the four recent ids the touch skips. The touch is the list's natural
-        // writer (the game fills it so a contact is not immediate again).
-        self.recent.rotate_right(1);
-        self.recent[0] = hero_state.id;
+        // `+0x44b8`: the four ids the check skips. The battle's start is the list's writer in
+        // the game (field message 61 → `ov_017::021c530c` inserts the battle's id); the touch
+        // is that battle's cause here, so it inserts when the contact is made.
+        self.remember_recent(hero_state.id);
         // The roamer stops and faces the party.
         if let Some(r) = self.slots[slot].as_mut() {
             r.enter(state::TOUCHED, hero);
         }
-        let facing = if Roamer::angle_to(hero_state.position, hero_state.angle, hero) as f32
-            > Roamer::BACK_TURNED
-        {
-            1
-        } else if Roamer::angle_to(hero, input.angle, hero_state.position) as f32
-            > Roamer::BACK_TURNED
-        {
-            2
-        } else {
-            0
-        };
+        let facing = contact_facing(hero_state.position, hero_state.angle, hero, input.angle);
         let roll = pick::surprise_roll(facing, input.deftness, &mut self.crand);
         let monster = hero_state.number;
         let opening = match roll {
@@ -901,6 +913,22 @@ pub fn touches(size: i16, scale: i32, roamer: Fx3, hero: Fx3, hero_radius: i32) 
     }
     let distance = fx::distance(hero, roamer);
     distance <= reach && distance != 0
+}
+
+/// The contact's facing case (`ov_017::02196430`, `021a4754`): **1** when the monster's back is
+/// turned — the bearing from it to the party is more than [`Roamer::BACK_TURNED`] off its
+/// heading; else **2** when the party's is (the leader's heading more than that off its bearing
+/// to the monster); else **0**, face to face. The monster's test comes first, so a monster that
+/// looks away is case 1 whatever the leader's heading; the threshold is the float
+/// `0x460cbe66` (9007.6 `fx32` angle units = 0.7 π = 126°), compared against `|signed|`.
+pub fn contact_facing(roamer: Fx3, roamer_angle: i32, hero: Fx3, hero_angle: i32) -> u8 {
+    if Roamer::angle_to(roamer, roamer_angle, hero) as f32 > Roamer::BACK_TURNED {
+        1
+    } else if Roamer::angle_to(hero, hero_angle, roamer) as f32 > Roamer::BACK_TURNED {
+        2
+    } else {
+        0
+    }
 }
 
 /// The stage of the ground under `position`: the record of the floor under it in the last piece

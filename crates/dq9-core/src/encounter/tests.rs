@@ -69,6 +69,50 @@ fn surprise_roll_draws_are_the_partys_first() {
     let mut a = CRand::new(3);
     pick::surprise_roll(2, 0, &mut a);
     assert_eq!(a, b);
+    // Face to face: the party's `rand_below(100)` first, the monsters' only when it missed, so
+    // the two draws are exactly what a manual two-draw sequence produces on the same seed.
+    for seed in 1..=64u32 {
+        let mut got = CRand::new(seed);
+        let rolled = pick::surprise_roll(0, 0, &mut got);
+        let mut want = CRand::new(seed);
+        let first = rand_below(&mut want, 100);
+        let expected = if first < 2 {
+            1
+        } else if rand_below(&mut want, 100) < 2 {
+            2
+        } else {
+            0
+        };
+        assert_eq!(rolled, expected, "seed {seed}, first draw {first}");
+        assert_eq!(got, want, "seed {seed}: the draws diverged");
+    }
+}
+
+/// The contact's three facing cases (`ov_017::02196430`): the monster's own bearing is tested
+/// first, against `0x460cbe66` = 9007.6 `fx32` angle units, so a monster looking away is case
+/// 1 whatever the leader does; then the leader's, 2; else 0. A monster at the origin and the
+/// party at +z: heading 0 faces the party, `0x3244` (π) faces away.
+#[test]
+fn the_facing_case_tests_the_monster_then_the_party() {
+    use super::contact_facing;
+    let monster = [0, 0, 0];
+    let hero = [0, 0, 0x1000];
+    let at = |roamer_angle: i32, hero_angle: i32| {
+        contact_facing(monster, roamer_angle, hero, hero_angle)
+    };
+    assert_eq!(at(0, 0x3244), 0, "face to face");
+    assert_eq!(at(0x3244, 0x3244), 1, "the monster's back turned");
+    // The same monster heading with the leader looking away: the monster's test wins.
+    assert_eq!(at(0x3244, 0), 1);
+    assert_eq!(at(0, 0), 2, "the party caught from behind");
+    // The threshold is 0.7 π, not the wiki's 49.48°: 9008 units is past it, 9007 is not.
+    assert_eq!(at(9008, 0x3244), 1);
+    assert_eq!(at(9007, 0x3244), 0);
+    assert_eq!(at(-9008, 0x3244), 1, "the test is the absolute value");
+    // The party's own threshold, the same 9007.6: its bearing to the monster is π, so a
+    // heading of 3861 is 9007 off it and 3860 is 9008 off.
+    assert_eq!(at(0, 3860), 2);
+    assert_eq!(at(0, 3861), 0);
 }
 
 fn zone(id: u16, word: u32, weights: &[(u16, u32)]) -> ZoneDef {
@@ -377,11 +421,49 @@ fn a_flee_ends_on_its_run_not_on_a_fixed_time() {
     assert_eq!(a_flee(4), 20);
 }
 
-/// A contact puts the touched id at the head of `+0x44b8` (the touch skips it from then on),
-/// and a flight settles it into STARTLED: after the state's three seconds it wanders again,
-/// still skipped while its id is recent.
+/// The recent list is `+0x44b8`'s ring: four ids written at a cursor (`func_ov017_021972f8`),
+/// no reordering, and the fifth insertion overwrites the first. An id already there is not
+/// written again, so the cursor does not move (both call sites test `0219735c` first), and the
+/// battle's end zeroes the entry that names its id (`02197324`).
 #[test]
-fn a_touch_fills_recent_and_a_flight_resumes_the_roamer() {
+fn the_recent_list_is_a_four_entry_ring() {
+    let mut roamers = Roamers::new(
+        1,
+        one_zone(),
+        Some(two_nodes()),
+        CRand::new(1),
+        Random::new(1),
+    );
+    assert_eq!(roamers.recent, [0; 4]);
+    for id in 1..=4u16 {
+        roamers.remember_recent(id);
+    }
+    assert_eq!(roamers.recent, [1, 2, 3, 4]);
+    assert_eq!(roamers.recent_cursor, 0);
+    // An id already present: no write, no cursor move.
+    roamers.remember_recent(2);
+    assert_eq!(roamers.recent, [1, 2, 3, 4]);
+    assert_eq!(roamers.recent_cursor, 0);
+    // The fifth overwrites the first (the oldest), not a shift.
+    roamers.remember_recent(5);
+    assert_eq!(roamers.recent, [5, 2, 3, 4]);
+    assert_eq!(roamers.recent_cursor, 1);
+    assert!(!roamers.is_recent(1) && roamers.is_recent(5));
+    // Forgetting an id zeroes its entry and leaves the cursor alone; the next insertion takes
+    // the cursor's slot (2 here), so two zeroed entries can coexist.
+    roamers.forget_recent(3);
+    assert_eq!(roamers.recent, [5, 2, 0, 4]);
+    roamers.remember_recent(6);
+    assert_eq!(roamers.recent, [5, 6, 0, 4]);
+    assert_eq!(roamers.recent_cursor, 2);
+    roamers.forget_recent(9);
+    assert_eq!(roamers.recent, [5, 6, 0, 4], "an absent id changes nothing");
+}
+
+/// A roamer whose id is recent is not touched, and the list is what says so: the same two
+/// objects give a contact once the entry is gone. The battle's end is the game's own remover.
+#[test]
+fn a_recent_id_is_not_touched_until_the_list_forgets_it() {
     let world = empty_world();
     let field = one_zone().monster(3).copied().unwrap();
     let mut roamers = Roamers::new(
@@ -393,37 +475,26 @@ fn a_touch_fills_recent_and_a_flight_resumes_the_roamer() {
     );
     let mut r = Roamer::spawn(3, 7, 5, field, 0x1000, [0x800, 0, 0], 0, 0, 0);
     assert!(r.enter(state::IDLE, [0; 3]));
-    r.started = true;
-    r.destination = 1;
     roamers.slots[0] = Some(r);
-    let mut input = StepInput::at([0; 3], 0);
-    let contact = roamers.step(&input, &world, &NoList).expect("a touch");
-    assert_eq!(roamers.recent[0], 7);
-    assert_eq!(roamers.roamer(0).unwrap().state, state::TOUCHED);
-    roamers.settle(contact.roamer, false, input.position);
-    assert_eq!(roamers.roamer(0).unwrap().state, state::STARTLED);
-    // The three seconds of `0x02078d94`, then the walk of wander type 1; the recent id keeps
-    // the party from touching it again in this short run.
-    let mut settled = false;
-    for _ in 0..120 {
-        input.moving = true;
-        roamers.step(&input, &world, &NoList);
-        if roamers
-            .roamer(0)
-            .is_some_and(|r| r.state != state::STARTLED)
-        {
-            settled = true;
-            break;
-        }
-    }
-    assert!(settled, "STARTLED resumes after its three seconds");
-    assert!(roamers.recent.contains(&7));
+    let input = StepInput::at([0; 3], 0);
+    roamers.remember_recent(7);
+    assert!(
+        roamers.step(&input, &world, &NoList).is_none(),
+        "a recent roamer is skipped"
+    );
+    roamers.forget_recent(7);
+    assert!(
+        roamers.step(&input, &world, &NoList).is_some(),
+        "the id is out of the list: the roamer is touched"
+    );
 }
 
-/// A won contact fades the roamer (state 11) and leaves its id recent; the state's own fade
-/// reaches alpha 0, which is what lets the application remove the slot and hide the model.
+/// A won fight ends with the roamer **gone**: `ov_000::021688dc` resets its object
+/// (`0x02076a8c`) and hides it at the battle's exit, so no state 11 or 12 runs — the field log
+/// of `build/oracle/field-F02` has no state change after any of its 19 contacts — and
+/// `ov_017::021c8c44` drops its id from `+0x44b8`.
 #[test]
-fn a_won_contact_fades_out_and_stays_recent() {
+fn a_won_fight_removes_the_roamer_and_its_recent_id() {
     let world = empty_world();
     let field = one_zone().monster(3).copied().unwrap();
     let mut roamers = Roamers::new(
@@ -438,14 +509,46 @@ fn a_won_contact_fades_out_and_stays_recent() {
     roamers.slots[0] = Some(r);
     let input = StepInput::at([0; 3], 0);
     let contact = roamers.step(&input, &world, &NoList).expect("a touch");
+    assert!(roamers.is_recent(9));
     roamers.settle(contact.roamer, true, input.position);
-    assert_eq!(roamers.roamer(0).unwrap().state, state::DEFEATED);
-    for _ in 0..10 {
-        roamers.step(&input, &world, &NoList);
-    }
     assert!(
         roamers.roamer(0).is_none(),
-        "the defeated object leaves its slot at alpha 0"
+        "the object leaves the field at the battle's exit, not after a fade"
     );
-    assert!(roamers.recent.contains(&9));
+    assert!(!roamers.is_recent(9), "message 83 forgets the battle's id");
+    assert!(roamers.roamers().next().is_none());
+}
+
+/// A flight leaves the monster's object untouched (`ov_000::021688dc` only resets the object it
+/// is done with): it stands where it was, in state 9 (`FOUGHT`), which the contact check skips,
+/// and its id leaves the recent list so a rebuilt field may touch it again. `STARTLED` is not a
+/// battle's end: the notice decision's flee type 0 enters it (`0x020789a8`).
+#[test]
+fn a_flight_leaves_the_roamer_standing_and_forgets_its_id() {
+    let world = empty_world();
+    let field = one_zone().monster(3).copied().unwrap();
+    let mut roamers = Roamers::new(
+        1,
+        one_zone(),
+        Some(two_nodes()),
+        CRand::new(1),
+        Random::new(1),
+    );
+    let mut r = Roamer::spawn(3, 7, 5, field, 0x1000, [0x800, 0, 0], 0, 0, 0);
+    assert!(r.enter(state::IDLE, [0; 3]));
+    roamers.slots[0] = Some(r);
+    let mut input = StepInput::at([0; 3], 0);
+    let contact = roamers.step(&input, &world, &NoList).expect("a touch");
+    let at = roamers.roamer(0).unwrap().position;
+    roamers.settle(contact.roamer, false, input.position);
+    let roamer = roamers.roamer(0).expect("a flight keeps the roamer");
+    assert_eq!(roamer.state, state::FOUGHT);
+    assert_eq!(roamer.id, 7);
+    assert_eq!(roamer.position, at, "it stays where it stood");
+    assert!(!roamers.is_recent(7), "the id leaves the list all the same");
+    // State 9 is skipped by the contact check, so the party cannot touch it again in place.
+    for _ in 0..5 {
+        input.moving = true;
+        assert!(roamers.step(&input, &world, &NoList).is_none());
+    }
 }

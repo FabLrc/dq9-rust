@@ -35,9 +35,12 @@ pub mod state {
     pub const FOUGHT: u8 = 9;
     /// Has seen the party: after 226 ms it decides to fight or flee (`0x020789a8`).
     pub const NOTICE: u8 = 10;
-    /// Defeated: fading out.
+    /// Defeated: fading out. The field's own battle path does not use it (a won fight's object
+    /// is reset and hidden by the battle's exit, `ov_000::021688dc`); scripts and the
+    /// multiplayer sync set it (`021d46a4`).
     pub const DEFEATED: u8 = 11;
-    /// Startled, stands 3 s then resumes wandering (`0x02078d94`).
+    /// Startled: stands 3 s then resumes wandering (`0x02078cd0` / `0x02078d94`). Entered by
+    /// the notice decision's flee type 0 (`ov_017::021789a8`), not by a battle's end.
     pub const STARTLED: u8 = 12;
 }
 

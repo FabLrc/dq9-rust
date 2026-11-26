@@ -200,10 +200,86 @@ more than that off its heading has its **back turned** (case 1); else a leader w
 off the bearing to the monster is **caught from behind** (case 2); else face to face (0).
 
 **Surprise roll** (`ov_017::021970a0`, draws: the C `rand` through `func_02032370(100)`): with `D` = the highest deftness
-(`+4 & 0x3ff` of the party member record) the party wins when the draw is below `int(2.0 + D × 0.05 (+10 if case 1))`
+(`+4 & 0x3ff` of the party member record, the record `Character::fighter` returns while
+`0x02053c6c` succeeds and the member is alive) the party wins when the draw is below `int(2.0 + D × 0.05 (+10 if case 1))`
 (not asked in case 2), then the monsters when below `int(2.0 (+10 if case 2))` (not asked in case 1): two draws face to face
-when the first misses. Monsters 38–40 never surprise (`0x021d6438`: bytes 38, 39, 40). The result becomes the opening
+when the first misses. The two floats are `0x021971bc` = 10.0 and `0x021971c0` = 0.05 in the ROM, and the
+2.0 is the literal `0x40000000`; the sum is truncated by `_ffix` (the integer compare). Monsters 38–40 never
+surprise (`0x021d6438`: bytes 38, 39, 40). The result becomes the opening
 (`[battle+0x8e49]`, `ov_017::021b848c`): 1 party first, 2 monsters first.
+Tests: `the_facing_case_tests_the_monster_then_the_party` (three cases, the order, and the
+9007/9008 boundary on both sides) and `surprise_roll_draws_are_the_partys_first` (the manual
+two-draw sequence reproduced on 64 seeds: `rand_below(100)` for the party, then for the
+monsters only when the first missed).
+
+### The four-id recent list (`+0x44b8`)
+
+Four `u16` at `GameResources + 0x44b8` and a cursor byte at `+0x44c0` — a **ring**, not a queue:
+
+| what | function (EU) | rule |
+|---|---|---|
+| clear | `ov_017::021972cc` | all four to 0 and the cursor to 0; the corpus shows its only callers `021c35ac` and `021c36a0`, routines that also reset the scene, but not *their* caller (**[hypothesis]**: the field entry) |
+| insert | `ov_017::021972f8` | `list[cursor] = id; cursor = (cursor + 1) & 3` — the fifth id overwrites the first, nothing is shifted or reordered |
+| remove | `ov_017::02197324` | the entry that names the id becomes 0 |
+| test | `ov_017::0219735c` | is the id one of the four |
+
+Its only writer is `ov_017::021c530c` — **field message type 61**, the handler table
+`0x021d7f98 + 61 × 4`, run by the field message pump `ov_017::021d48f0` (`func_0205e41c` pops,
+`func_0205e830` gates the type). The message is posted by `ov_017::021c5284` from
+`ov_017::021b7284`, which the battle task calls on its first update (`ov_017::021b790c`), with the
+task's battle number (`+0x24`) in its first half-word: for a contact that is the roamer's `+0x16a`
+id (`Field_CheckEncounter` fills the request's `+4` with it), for a scripted `0x78` battle it is
+`arg + 0x8005`. The handler inserts the id **if it is absent** (both of its call sites test
+`0219735c` first, so the cursor does not move for a repeat) and binds the party members'
+`+0x1b2` to it.
+
+Its only remover is `ov_017::021c8c44` — **field message type 83**, posted at the battle's exit
+(`ov_000::021688dc`) with the same id, so an id is in the list from the battle's start to its end
+(the exit posts 83 only when `func_0202b7d8` is nonzero, and a field entry's clear also empties it). The encounter check (`ov_017::02196430`) reads it with `0219735c` and skips a roamer
+whose `+0x16a` matches, as does the message-61 handler itself.
+
+## (d2) The end of the fight
+
+`ov_000::021688dc` (the battle overlay's exit) finds the roamer by the battle's id
+(`ov_017::021a278c`, which scans the 48 objects `0x70…0x9f` for `+0x16a`) and asks
+`ov_000::02163c80`, which is 1 only when **the party escaped** the battle: all three conditions
+hold — `func_02086b98` finds no living member in the battle's party list (`+0xf78`/`+0xf7c`; it
+returns 1 only when the loop runs out), some party slot is a living member **not** in the battle
+(`func_020a35e0(record, i)` = 0 and bit 0 of its `+0x130` clear, i.e. not dead), and the battle
+record's `+0x24` or `+0x25` is nonzero. A won fight gives 0, and so does a wiped party (its members
+are still in the battle and dead, so no living non-participant exists). Which flags `+0x24`/`+0x25`
+are is **[unknown]**: "escape" is the reading of the whole condition, not a named flag, and the
+challenger could not decide whether the escape empties the battle's party list (that is what would
+make `func_02086b98` return 1), so the reading stays **[hypothesis]**. The port's
+`BattleResult::Won`/`Fled`/`Lost` carries the verdict, and only `Fled` keeps the monster. Then:
+
+| outcome | the object | the recent list |
+|---|---|---|
+| won, or a wiped party (`02163c80` = 0) | `func_02076a8c` (every field reset, state byte to 1) then `Object3D::MakeHidden`: the monster **leaves the field at once** | the id is removed (`02197324`) |
+| fled (the party escaped) | left untouched: it stands where it stood, in state 9 (`FOUGHT`, set by message 61 at the battle's start and measured in `after_contact`), which the encounter check skips and which the 25-unit release also skips (`ov_017::021a1ad0` excludes 8 and 9); only a field rebuild ends it | the id is removed all the same |
+
+**Measured** (`build/oracle/field-F02/run/w.tsv` `ff9c9ceb1c75`, `run/w.jsonl`): each of the 19
+contacts logs its own touch `T` (`1→8` 15 times, `2→8` 3, `10→8` 1), and the `after_contact` poll
+420 frames (7 s) later finds the contacted roamer **in the same slot, same monster, state 9** in
+all 19 — the state the message-61 handler set at the battle's start (`func_02076ccc(obj, 9)`). The log never shows the battle's exit: the run restores an
+earlier RAM snapshot right after that poll, so its later timeline is a replay of frames from before
+the fight, and the `T` rows there belong to other monsters of the slot or to the restored state. No
+`T` pair of the whole log involves state 11 or 12 (only 0/1/2/3/6/7/8/10 exist), so the original
+does not fade a defeated roamer through 11 or stand it in 12. The won monster's reset and hide at
+the exit is therefore the code of `ov_000::021688dc`, not a capture; its reset **frees** the
+object — `func_02076a8c` → `func_02032e58` → `Object3D::Initialize` writes `+2` = `0xffff`, the
+spawner's free test, and every group-0 row at the field entry of `f02-enter-ram.bin` carries the
+post-reset signature (flags `0x23`, monster −1, state 1, id 0) — so the model's slot release is the
+same state, not an abstraction. The fled cell is the code's reading too, and the only one that keeps
+the object; the "stands in 9" state is not measured after the exit.
+
+The state-11 handlers, for the record: enter (`0x0207853c`) stops the object, fades it over
+125 ms (`TransitionInheritedAlpha(obj, 0, 0x7d)`), plays effect `+0x178` and, with a battle
+running, posts field message `0x87` (`ov_017::021c95ec`) with the map, the slot, the monster number
+and `0xb`; update (`0x02078660`) resets and hides it at alpha 0. State 12: enter (`0x02078cc0`)
+needs the party member at `+0x166` (false without it), faces it, `func_02032fd0(obj, 0xcc,
+0xaf0)`; update (`0x02078d84`) waits `> 3000` ms (`0x02078e6c` = 3000) then wanders by type
+(0 → stand, 2 → blink, else walk).
 
 ## (e) The company (`ov_017::021b7284`, `0x0209afe4`)
 
@@ -248,6 +324,26 @@ touched, and the list read at `+0xf78` of the battle context is not filled by an
   of level 29–66) and every map met by a party other than level 91, so states 4, 5, 11, 12, the
   chase and dash speeds and the losing side of the notice decision never occurred; the surprise
   roll and the facing threshold; the company; the others in the fight.
+- **The recent list is never seen full**: the field log records no `+0x44b8` (the reader does not
+  read the game resources' ids), so the ring's eviction (the fifth id overwriting the first), its
+  clearance at a map change and the removal at a battle's end are the code's rules
+  (§ (d), "The four-id recent list"), tested on the model only. Every contact of the log was won,
+  and its `after_contact` still shows the roamer in state 9, in its slot; the run restores an
+  earlier snapshot right after that poll, so the exit itself (the reset + hide and the removal of
+  the id) is never in a capture — it is the code's reading (§ (d2)).
+- **A fled fight** never happened in the oracle runs, so the roamer's own state after one
+  (kept as it was, in state 9, which message 61 set at the battle's start) is the code's reading of
+  `ov_000::021688dc`, not a capture; the app uses it and does not model a resumption. The escape
+  reading of `02163c80` is a **[hypothesis]** too.
+  **[hypothesis]**
+- **The party members' `+0x1b2`** (the battle id a field character is bound to, written by the
+  message-61 handler and cleared at the battle's end) is not modelled: the port has no field
+  character to bind, and nothing it renders depends on it.
+- **Scripted battles write the same list**: `0x78` puts `arg + 0x8005` through the same
+  message 61, so a scripted battle's id occupies one of the four slots. The port's roamers never
+  carry such an id (`+0x16a` starts at 1), so the model inserts only a touch's id and a scripted
+  fight cannot evict a roamer's entry; the difference is unobservable in the port and would need
+  a roamer id in the `0x8005` range to matter.
 - The leader's node (`+0xb8`): the model recomputes the nearest node each update; the game's own
   value equals it on 89–91 % of the spawns (228/257 author's; 179/202, 208/222, 353/388, 91/100,
   53/56 challenger's), so **the game keeps it differently** (**[unknown]** how: it changes while
@@ -348,6 +444,7 @@ All four give 11 passed; this batch's logs are `build/evidence/j4-roaming-fix/te
 | (b) spawn tick, node, point, count limit | node and point **confirmed given the game's node `+0xb8`**; tick **weaker** | The node is among `spawn_candidates` and the point equals the model's (the node, or the point brought onto the path) to 2 `fx32` on **every** spawn when the game's own node is replayed as the draw: 257/257, 202/202, 222/222, 100/100, 388/388, 56/56, 22/22; the most-ahead candidate is taken whenever one is ahead (201/201, 143/143, 143/143, 253/253, 31/31) and no spawn went behind the party while one was ahead; the leader's own node is taken only above 5.0 in **3-D** (11 spawns over the runs have x-z ≤ 5.0 and 3-D > 5.0, none the reverse); 0 spawns within 3.5 of the leader, 0 in another roamer's box, 0 with three roamers in the leader's box. Tick: spawns only at slot-timer updates whose timer reached a second (min reading 990 with `dt` 33 = 1023, none below), but the step is 33 **or 50 ms** and the threshold is only bounded to (990, 1023]; and the model's conditions are **necessary, not sufficient**: on `F38` run E 39 updates allowed a spawn and 17 did not — one episode of 17 ticks (leader at y −0.89 on node 11, its own node the only candidate, two roamers near) where the game did not spawn; the unmodelled clauses are the probable cause. The earlier "2 of 257 [unknown]" and its 2 % tolerance were a flaw of the test's draw 0, not a game behaviour: the game's node reproduces all of them |
 | (c) roamer states | **confirmed** for 0, 1, 2, 3, 6, 7, 10 with each update's own `dt`; **[hypothesis]** for 4, 5, 11, 12 (never seen) | 0→1 only at an update with reading + `dt` ≥ 1001 (author 252 changes, readings 974–990); 1→2/3 only with reading + `dt` ≥ 4001 (author, A, B2, C, D: 0 violations — the literal 3960 ms readings of B2 and C were 50 ms updates, 3960 + 50 = 4010); 3→1 after 462 ms (every one of 56); 10→6/7 at reading 198 (every one); the post-update values are 1007–1023 and 4010–4059, so the thresholds are only bounded to **(990, 1007]** and **(3993, 4010]**: consistent with 1001/4001, **not pinned** to them. "6→1 after 1386–1452 ms" holds **only for the author's run** (17/17): the challenger measured A 18/20, C 29/32, B2 90/113, D 12/17, the others shorter (792, 957, 990 and 0 ms): a flee ends when its 10.0 run is done **or on a wall**, not at a fixed time (the model ends it on the distance; test `a_flee_ends_on_its_run_not_on_a_fixed_time`) |
 | (d) contact | **confirmed**, radial, necessary and sufficient at one update | ≈100 contacts (A 23, C 15, F 12, B2 30, D 40 of 13 distinct after the replays, E a subset): the leader is inside the model's `touches` (the roamer's `touch_reach` plus half the leader's, on x, on z and in distance) at the frame the roamer entered state 8 — 0 outside, with no slack (`logged_contacts_are_within_the_models_reach`). The converse, from `near.tsv`: no roamer of state other than 0, 8 or 9 stays in that reach more than one update (2 frames) without a touch — 0 episodes in D, B2, F; 1 in C, a roamer already in state 9 (the one fought, outside the claim); the touch follows the first in-reach row by exactly 2 frames. The box test (|dx|, |dz| ≤ reach) is **not** sufficient: 7 in-reach untouched episodes of 65 in D, 12/236 in B2, 3/94 in C, 1/41 in F. The author's log has no `near.tsv`, so only the first half runs on it. **[hypothesis]** for the 126° facing threshold and the surprise roll: of the author's 19 first battle screens, 6 show a party-first message ("doesn't notice the party's presence", "is too stunned to move") and none a monsters-first one; the other screens had not shown theirs |
+| (d2) the recent list and the battle's end | **confirmed** that the fight holds the roamer in state 9 and that no state 11/12 exists in the log; the exit (won → reset + hide, id removed) and the fled cell are the code's reading, and the ring's eviction is the model's | The 19 contacts of `build/oracle/field-F02` (`w.tsv` `ff9c9ceb1c75`) each log their touch `T` (`1→8`, `2→8`, `10→8`), and `w.jsonl`'s `after_contact` 420 frames later still has the same slot and monster in state 9 in all 19 (message 61's `func_02076ccc(obj, 9)`); the run then restores an earlier snapshot, so the exit is never captured — `ov_000::021688dc`'s `func_02076a8c` + `MakeHidden` (`02163c80` = 0) is the corpus's rule. The move to state 9 in the log is not a `T` row: the table is only polled after the battle segment. The writer/remover chain (messages 61/83 → `021c530c`/`021c8c44` → `021972f8`/`02197324`) is read in the corpus and in the ROM's handler table (`0x021d7f98 + type × 4` = `0x021c530c`, `0x021c8c44`); the list itself is not in any log. Model tests: `the_recent_list_is_a_four_entry_ring`, `a_recent_id_is_not_touched_until_the_list_forgets_it`, `a_won_fight_removes_the_roamer_and_its_recent_id`, `a_flight_leaves_the_roamer_standing_and_forgets_its_id` |
 | (e) company | **[hypothesis]** | all 19 fights of the author's run show one monster (`battles.png`); the challenger's fights likewise; the model's draw for these roamers was not compared |
 | (f) stage | **[hypothesis]** | not checked on `F02` or `F38` (the screens show the field backdrop) |
 | (g) others in the fight | **[unknown]** | no fight had a second monster, so there was nothing to pull in |
@@ -412,15 +509,20 @@ movement, notice decision, contact, surprise roll, company and stage are `dq9_co
   step copies the roamers' `CRand` and world generator into `World`, a battle starts from that state
   (contact or scripted), and `App::settle_roaming` copies the advanced state back through
   `Roamers::set_generators`. No pre-battle draw is replayed after a map change or a scripted battle.
-- **Settlement.** A contact stores its slot. A won monster enters state 11 and fades out; the
-  engine's own update drops the slot at alpha 0 and the application releases its field model. A
-  fled or lost monster enters state 12 (STARTLED): it stands three seconds and resumes wandering.
-  The touch that starts the battle also puts the roamer's id at the head of the four-entry recent
-  list (`+0x44b8`), so the same roamer is not touched again while it is recent. The party, drops
-  and story triggers are settled only by `settle_battle`, so a contact pays once. **[hypothesis]**:
-  the field log only has won contacts (each followed by the slot's next spawn), so the fled/lost
-  resumption is the engine's STARTLED rule, not a measured post-battle state; filling `+0x44b8` at
-  the contact is the only place its four ids can come from without inventing a second writer.
+- **Settlement.** A contact stores its slot. `Roamers::settle` follows `ov_000::021688dc` and
+  `ov_017::021c8c44`: a won monster's slot is **released at once** (the original resets and hides
+  its object at the battle's exit; no state 11 or 12 and no fade), and the application releases its
+  field model on the next `sync`; a fled monster keeps its object standing in state 9
+  (`FOUGHT`, which the contact check and the 25-unit release both skip) where it was; the port
+  enters 9 in `settle`, the original at the battle's start, and the field is not stepped during
+  the battle, so the difference is unobservable. Both cases drop the battle's id from
+  `+0x44b8`. The touch inserts it (the original's own writer is field message 61 at the battle's
+  start, § (d)), so the same roamer is not touched again while its id is in the ring, and the ring
+  ages by overwriting. The party, drops and story triggers are settled only by `settle_battle`, so
+  a contact pays once. **[hypothesis]**: the field log has only won contacts, whose
+  `after_contact` still shows the roamer in state 9 in its slot (the log never reaches the exit),
+  so the monster's release and the fled cell — the object kept, in state 9 — are the code's
+  reading, not a capture; the app reproduces it and does not invent a resumption.
 - **Party numbers.** The notice decision and the surprise roll read the first living member's
   attack plus defence and the highest deftness among living members from
   `Character::fighter` with the cached `ItemStats` and `BattleParams`: level table and worn

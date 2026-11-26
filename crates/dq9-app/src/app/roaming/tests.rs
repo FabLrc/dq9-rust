@@ -131,7 +131,7 @@ fn a_contact_fights_on_the_same_field_and_removes_its_roamer_once() {
         .expect("a roamer must be past its appear state");
     let map = app.current.as_ref().map(|(entry, _)| entry.id);
     let gold = app.party().gold;
-    let mut fought = false;
+    let mut contacted: Option<(usize, u16, usize)> = None;
     for _ in 0..8 {
         // Stand on it: the touch is `touches`, the very function the original tick uses.
         let Some(current) = app
@@ -151,13 +151,35 @@ fn a_contact_fights_on_the_same_field_and_removes_its_roamer_once() {
             ),
             0.0,
         ));
+        // The touch picks the first eligible slot, so the contacted roamer is the one the
+        // settle takes out of the list, whichever the loop aimed at.
+        let before: Vec<(usize, u16, Option<usize>)> = app
+            .roaming_roamers()
+            .into_iter()
+            .map(|(slot, roamer)| (slot, roamer.id, app.roaming_slot_instance(slot)))
+            .collect();
         app.run_steps(1);
         if app.roaming_contacts() > 0 {
-            fought = true;
+            let after: Vec<u16> = app
+                .roaming_roamers()
+                .into_iter()
+                .map(|(_, roamer)| roamer.id)
+                .collect();
+            contacted = before
+                .into_iter()
+                .find(|(_, id, _)| !after.contains(id))
+                .map(|(slot, id, instance)| {
+                    (
+                        slot,
+                        id,
+                        instance.expect("the contacted roamer had a field model"),
+                    )
+                });
             break;
         }
     }
-    assert!(fought, "the hero must touch the roamer");
+    let (_contact_slot, contact_id, contact_instance) =
+        contacted.expect("the won monster leaves its slot at the battle's exit, not after a fade");
     assert_eq!(app.roaming_contacts(), 1);
     assert!(
         !app.battle_is_active(),
@@ -180,39 +202,18 @@ fn a_contact_fights_on_the_same_field_and_removes_its_roamer_once() {
         map,
         "the field is back, on the same map"
     );
-    // The won monster is in its fade (state 11) when the battle settles; the field's next
-    // steps finish it and release the model. The touch picks the first eligible slot, which
-    // need not be the one the test stood on.
-    let (contact_slot, contact_id) = {
-        let (slot, roamer) = app
-            .roaming_roamers()
-            .into_iter()
-            .find(|(_, roamer)| roamer.state == dq9_core::encounter::roamer::state::DEFEATED)
-            .expect("the contacted roamer fades first");
-        (slot, roamer.id)
-    };
-    let contact_instance = app
-        .roaming_slot_instance(contact_slot)
-        .expect("the contacted roamer has a field model");
-    // The slot's spawn timer may already be near its second, so wait for the fade to end and
-    // check the released model on the first step the old id is gone, before the slot can be
-    // given another roamer.
-    for _ in 0..40 {
-        app.run_steps(1);
-        if !app
-            .roaming_roamers()
-            .iter()
-            .any(|(_, roamer)| roamer.id == contact_id)
-        {
-            break;
-        }
-    }
+    // The battle's exit resets and hides a won monster's object (`ov_000::021688dc`), so the
+    // roamer is already out of its slot when the fight settles, and the next field update's
+    // `sync` releases its model; there is no state 11 and no fade.
     assert!(
         !app.roaming_roamers()
             .iter()
             .any(|(_, roamer)| roamer.id == contact_id),
-        "the defeated roamer left its slot after the fade"
+        "the won monster left its slot at the battle's exit"
     );
+    // The field runs every other fixed step: the next one syncs the released slot before its
+    // spawn timer can give it another roamer.
+    app.run_steps(2);
     let released = app
         .runtime
         .as_ref()
@@ -260,10 +261,11 @@ fn encounter_free_maps_spawn_no_roamers() {
     }
 }
 
-/// A flight does not delete the live roamer: the settlement puts it in STARTLED, its model
-/// stays drawn, and its id is recent so the party cannot touch it at once.
+/// A flight leaves the monster's object untouched (`ov_000::021688dc` only resets the one the
+/// party beat): it stands where it stood in `FOUGHT` (state 9, which the contact check skips)
+/// and its model stays drawn; there is no startled resumption.
 #[test]
-fn a_flight_keeps_and_resumes_the_roamer() {
+fn a_flight_leaves_the_roamer_standing() {
     let Some(rom) = testrom::load() else { return };
     let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
     a_winning_party(&mut app);
@@ -277,13 +279,14 @@ fn a_flight_keeps_and_resumes_the_roamer() {
         .into_iter()
         .find(|(slot_now, _)| *slot_now == slot)
         .map(|(_, roamer)| roamer)
-        .expect("a flight leaves the roamer alive");
+        .expect("a flight leaves the roamer on the field");
     assert_eq!(roamer.id, id);
-    assert_eq!(roamer.state, dq9_core::encounter::roamer::state::STARTLED);
+    assert_eq!(roamer.state, dq9_core::encounter::roamer::state::FOUGHT);
+    assert_eq!(roamer.position, found.position, "it stays where it stood");
     let instance = app
         .roaming_slot_instance(slot)
         .expect("the fled roamer keeps its model");
-    for _ in 0..6 {
+    for _ in 0..120 {
         app.run_steps(1);
     }
     assert_eq!(
@@ -303,7 +306,38 @@ fn a_flight_keeps_and_resumes_the_roamer() {
             > 0.0,
         "the fled roamer stays drawn"
     );
-    assert!(app.roaming_roamers().iter().any(|(_, r)| r.id == id));
+    let still = app
+        .roaming_roamers()
+        .into_iter()
+        .find(|(_, r)| r.id == id)
+        .map(|(_, roamer)| roamer)
+        .expect("no resumption removes it");
+    assert_eq!(
+        still.state,
+        dq9_core::encounter::roamer::state::FOUGHT,
+        "no STARTLED"
+    );
+    assert_eq!(still.position, found.position, "state 9 stands still");
+    assert_eq!(app.roaming_contacts(), 0, "state 9 is skipped by the touch");
+}
+
+/// A wiped party's battle also ends with `ov_000::02163c80` at 0 (only the party's escape keeps
+/// the monster), so the exit resets and hides it: the slot is released like a win.
+#[test]
+fn a_lost_fight_leaves_no_roamer() {
+    let Some(rom) = testrom::load() else { return };
+    let mut app = App::new_headless(roaming_options("F01"), Some(rom.to_vec()));
+    a_winning_party(&mut app);
+    app.set_roaming_enabled(true);
+    let (slot, found) = wait_for_roamer(&mut app, 2_000).expect("F01 spawns");
+    app.roaming.set_pending(slot);
+    app.settle_roaming(Some(BattleResult::Lost));
+    assert!(
+        app.roaming_roamers()
+            .into_iter()
+            .all(|(_, roamer)| roamer.id != found.id),
+        "the lost fight's monster is hidden by the battle's exit"
+    );
 }
 
 /// The original draws a roamer at its own heading: `Object3D::PopulateRenderConfigWorld`
