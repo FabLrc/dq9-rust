@@ -2,8 +2,8 @@
 //! them, scaled to fit. The enhanced layouts show one field only, without the DS screen shape:
 //! `enhanced` is a 16:9 rectangle centred in the window, `enhanced-reactive` fills the window
 //! at its own aspect. Where the field and its message window (`talk.rs`) go is a [`ScreenMode`]:
-//! the port's own assignment (top, the bottom one a placeholder) or the original's (bottom,
-//! `docs/re/bottom-screen.md`).
+//! the port's own assignment (top, the bottom one the placeholder panel) or the original's
+//! (bottom, the top one the map screen drawn from `minimap.gp2`, `docs/re/bottom-screen.md`).
 
 use dq9_render::Viewport;
 
@@ -87,8 +87,10 @@ impl Layout {
 }
 
 /// Which screen holds the field's 3D view and its message window (`--screens`, the page's
-/// "Screens" select, `?screens=`). The other screen shows the placeholder panel; where the
-/// original draws its map screen, nothing is read or drawn yet (`re/bottom-screen.md` § 4).
+/// "Screens" select, `?screens=`). The other screen shows the placeholder panel, except the
+/// original's map screen on the top one: its picture, backdrop, name strips and party dots are
+/// drawn from `minimap.gp2` (`dq9_render::map_screen`, `docs/re/minimap.md`), with the
+/// placeholder and a status line when a map has no layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScreenMode {
     /// The port's own assignment: the field on the top screen. A cutscene's natives 109/110
