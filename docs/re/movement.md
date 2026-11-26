@@ -203,6 +203,77 @@ onto the character (`02033f6c`), cave mode (`+0x23b8`), vehicle branch of `0x020
 snapping on oriented zones (`0x0201e90c`), stylus, ladders (`0x020385a8`), events
 that take control, animations (states other than idle and walk), widened wall radius of flag `0x20`.
 
+## The party's companions (`0x020391ac`)
+
+The other members follow the leader through a queue of positions. Facts read in the ARM9 code
+(EU addresses) and checked on a melonDS state:
+
+- **Who follows whom.** `PartyMember_Update` (`0x02037d98`) runs the generic update and, for an
+  object whose `+0x1c9` is not 0, `0x020391ac` (followers); the object at 0 (the leader) reads
+  the d-pad instead. `+0x1c8` is the **index of the member it follows**, `+0x1ca` the leader's,
+  `+0x1c9` its own (`0x02039858`/`0x0203986c`/`0x02039880`). `ov_017::02190884` (party
+  formation) and `ov_017::0218f064` set the chain as each member of the party list following
+  the previous one. **Observed**: `build/melonds/dq9.ml1` has four members, order
+  `[0, 3, 2, 1]`, and objects 3, 2, 1 hold `+0x1c8` = 0, 3, 2 (chain `0 ← 3 ← 2 ← 1`).
+- **The queue.** Sixteen (x, z) pairs at `+0x1d0` (8 bytes each), head `+0x1cb`, tail `+0x1cc`
+  (indices modulo 16), started `+0x1cd`. Every member is created at `Save_Warp+0x10`, the point
+  the party arrives at (`ov_017::0218f064`), then placed by `Object_Place` (`0x020399c0`), which
+  **empties the queue** (`func_02039d24`, `0x02039d34`: head = tail = 0, started = 0, the
+  0x80 bytes of points zeroed) and sets bit 2 of `+0x1ce` on a follower; the queue of the four
+  is therefore empty and they stand on one pose in the state above. (`func_02037d10` alone
+  writes head = −1; that is the transient value the placement then clears.)
+- **Feeding it.** The first update in which the followed member's animation kind `+0xc0` is 1
+  to 5 starts the queue and records its position; after that, a point is appended whenever the
+  followed member is farther than **`0x800` (0.5 unit)** from the newest one. While the
+  follower **and** the member it follows are both down (bit 0 of the status word `+0x130`) and
+  fewer than three points wait, the spacing becomes **`0xe66` (0.90 unit)**
+  (`iRam02039714`).
+- **Walking it.** The follower walks to the **oldest** point (queue's tail) and consumes it
+  within **`0x801`**; it stands when nothing is queued and **the member it follows** is within
+  `spacing + 0xb33` (**1.2 units**, 1.6 while both are down) — beyond, an empty queue still
+  walks.
+- **Speed.** `+0xb4` is set by the queue's length `(head − tail) & 15`: **`0x9d`** under two
+  points (2.30 units/s), **`0x189`** at two (5.76 units/s, `0x02039710` — the same as the
+  leader), **`0x24d`** at three or more (8.63 units/s, `0x02039718`): a companion further behind
+  runs faster. The acceleration `0x28` and the turn `0x324` are the character's own
+  (`0x02032e68`); the facing is `Character_SetFacing(atan2(target − position))` (`0x02033844`),
+  an exact angle, not one of the eight d-pad headings.
+- **Freezing.** Bit 0 of `+0x1ce` (set by `0x02039894`, cleared by `0x020398a4`) makes the
+  follower rule return without moving; bit 2 is set on followers in a party of four.
+
+**Modelled** (`dq9_core::party::{Trail, PartyField, Follower}`, `Hero::step_toward`): the
+queue, the chain (member *i* follows *i − 1*, the leader being 0), the spacing (the down pair's
+too), the arrival, the three speeds and the catch-up; the field update runs on the same 30 Hz
+update as the hero (`App::step_field_party`, `app/map.rs`) and in the original's order
+(`0x02037d88`: the generic update first, then the rule, which sets the facing and `+0xb4` for
+the next one), each follower placed by `CollisionWorld::resolve` like the leader. A party of
+one has no companion and its path is unchanged. Tests:
+`dq9-core` `party::trail_tests` (spacing, stop, sharp turns, speeds, catch-up, the chain on a
+flat floor) and `app/map/tests.rs` `the_party_follows_the_leader_and_a_party_of_one_does_not`.
+Evidence (`build/evidence/v3-party-companions/`): `trail-tests.txt` (`880b33f6f306`, the rule's
+seven tests and the member's rig test), `four-member-trace.txt` (`996109dd0f76`, the leader's
+`--walk` path and the three
+companions' poses, 314 fx moved per update at queue gap 1), `m01-four-walking.png`
+(`5343c16b9a17`, the four members in line on `M01`, 33 scene instances against 30 solo) and
+`m01-solo.png` = `m01-solo-after.png` (`1bb6b7def044`: a party of one is pixel-identical to
+the build before this batch).
+
+**Not modelled** (each is marked where it would show):
+
+- The scene formation: while the party leader's `+0x26c` is set (`func_020399a8`, modes 3–5
+  snap a member onto the leader, modes 0–2 fade it in walking to him) a script places the
+  members; a cutscene is not played with the queue. `[unknown]`: which scripts set it (the
+  setters are `0x020398b4`/`0x0203983c`, called from `ov_017`).
+- A follower that is airborne (fall speed `+0xac` ≠ 0) copies the followed member's angle and
+  stands instead of walking; a member in state 2 makes its followers take state 2. This port
+  keeps the queue running in both cases (a companion off a ledge walks in the air).
+- The gate `func_02046b08(...) != 0` in front of the catch-up branch is taken as true: the
+  rule only runs on the field. `[hypothesis]` (its argument, `GameResources+0x36fc`, is not
+  named).
+- The wall-push of `0x0218df50`/`0x0218dfd8` (leader) and of the companions against each other,
+  as for the hero. The "down" flags come from the party's HP (`hp == 0`), not from the live
+  status word `+0x130` bit 0.
+
 ## Starting position
 
 A normal save does not store the hero's position: it gives the map (id `11476`,

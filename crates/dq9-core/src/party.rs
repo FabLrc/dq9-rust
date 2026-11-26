@@ -25,7 +25,7 @@
 //! [`Party::apply_level_tables`] runs.
 
 use dq9_formats::battle::equipment::BattleParams;
-use dq9_formats::hero::Sex;
+use dq9_formats::hero::{HeroLook, Sex};
 use dq9_formats::item::ItemStats;
 use dq9_formats::level::{LevelStat, LevelTables};
 use dq9_formats::save::{
@@ -33,6 +33,9 @@ use dq9_formats::save::{
 };
 
 use crate::battle::model::{Fighter, Side};
+use crate::collision::CollisionWorld;
+use crate::fx::Fx3;
+use crate::movement::Hero;
 
 /// Characters a party holds (`cmp r0, #4`, `ov_003::021621a4` and its neighbours).
 pub const PARTY_MAX: usize = 4;
@@ -300,6 +303,10 @@ pub struct Character {
     pub skill_panels: [u8; SKILL_PANELS_BYTES],
     /// The eight held items of the party slot (`7578 + 18 i`), [`NO_ITEM`] or 0 empty.
     pub held_items: [Option<u16>; HELD_ITEMS],
+    /// Face, hair, appearance bits and the worn item bands, as the hero rig builds them
+    /// (`HeroLook::from_character`, `docs/re/characters.md` § "The hero"). It is read once,
+    /// from the same record as the equipment, by [`Character::from_record`].
+    pub look: HeroLook,
 }
 
 impl Character {
@@ -335,6 +342,7 @@ impl Character {
             skill_points: record.unallocated_skill_points(),
             skill_panels,
             held_items: held.map(worn),
+            look: HeroLook::from_character(record),
         }
     }
 
@@ -369,6 +377,7 @@ impl Character {
             skill_points: 0,
             skill_panels: [0; SKILL_PANELS_BYTES],
             held_items: [None; HELD_ITEMS],
+            look: HeroLook::new_game(),
         }
     }
 
@@ -612,6 +621,8 @@ pub struct Party {
     /// Gold on hand (`Main+0x2c30`, `GameState+0x3970`).
     pub gold: u32,
     pub bag: Bag,
+    /// The other members on the field, behind the leader ([`PartyField`]).
+    pub field: PartyField,
 }
 
 impl Party {
@@ -621,6 +632,7 @@ impl Party {
             members: vec![Character::hero()],
             gold: 0,
             bag: Bag::empty(BAG_CAPACITY),
+            field: PartyField::default(),
         }
     }
 
@@ -643,6 +655,7 @@ impl Party {
             members,
             gold: slot.gold_on_hand(),
             bag: Bag::from_main(slot.block(Block::Main))?,
+            field: PartyField::default(),
         })
     }
 
@@ -766,6 +779,274 @@ impl Party {
             }
         }
         level_ups
+    }
+}
+
+/// Slots of a follower's queue of its followed member's positions (`0x020391ac`: the queue at
+/// `+0x1d0`, eight bytes per (x, z); the head `+0x1cb` and the tail `+0x1cc` are indices modulo
+/// 16).
+pub const TRAIL_SLOTS: usize = 16;
+/// The followed member must be this far from the queue's newest point for one to be appended
+/// (`0x020391ac`'s `iVar8 = 0x800`): 0.5 world unit.
+pub const TRAIL_SPACING: i32 = 0x800;
+/// The spacing while the follower **and** the member it follows are both down (bit 0 of the
+/// status word `+0x130`) and fewer than three points wait (`iRam02039714` = `0xe66`, 0.90
+/// unit): a corpse trails further behind.
+pub const TRAIL_SPACING_DOWN: i32 = 0xe66;
+/// The follower consumes the queue's oldest point within this distance of it (`0x801`).
+pub const TRAIL_ARRIVE: i32 = 0x801;
+/// Top speeds `+0xb4` by the queue's length (`0x020391ac`): `0x9d` under two queued points
+/// (2.30 units/s), `0x189` at two (`0x02039710`, the leader's own, 5.76 units/s) and `0x24d`
+/// beyond (`0x02039718`, 8.63 units/s: a companion further behind runs faster).
+pub const TRAIL_SLOW_SPEED: i32 = 0x9d;
+pub const TRAIL_TOP_SPEED: i32 = 0x189;
+pub const TRAIL_FAST_SPEED: i32 = 0x24d;
+/// Added to the spacing for the catch-up test of `0x020391ac` (`0xb33`, 0.70 unit): a follower
+/// whose queue is empty still walks while the member it follows is more than spacing + `0xb33`
+/// away (1.2 units at the normal spacing, 1.6 while both are down).
+pub const TRAIL_CATCH_UP: i32 = 0xb33;
+
+/// One follower's queue of the member it follows (`0x020391ac`): up to sixteen (x, z) pairs,
+/// a head and a tail. The rule appends the followed member's position when it is more than
+/// [`TRAIL_SPACING`] from the newest point, walks to the oldest one and consumes it within
+/// [`TRAIL_ARRIVE`], so the companion traces the followed member's steps half a unit apart.
+///
+/// The queue is empty (head = tail = 0, nothing recorded) until the followed member moves:
+/// that is what a melonDS state of a party of four shows after the party is placed on a map
+/// (`build/melonds/dq9.ml1`, all four at the same pose).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Trail {
+    points: [[i32; 2]; TRAIL_SLOTS],
+    head: u8,
+    tail: u8,
+    started: bool,
+}
+
+impl Default for Trail {
+    fn default() -> Self {
+        Self {
+            points: [[0; 2]; TRAIL_SLOTS],
+            head: 0,
+            tail: 0,
+            started: false,
+        }
+    }
+}
+
+/// What one update of the follower rule asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrailStep {
+    /// The queue's oldest point, to walk to; `None` leaves the member standing.
+    pub target: Option<[i32; 2]>,
+    /// `+0xb4`, the top speed of this update.
+    pub max_speed: i32,
+    /// Points waiting, `(head − tail) & 15`.
+    pub gap: u8,
+}
+
+impl Trail {
+    /// Points waiting in the queue.
+    pub fn gap(&self) -> u8 {
+        self.head.wrapping_sub(self.tail) & 0x0f
+    }
+
+    /// The newest point recorded, for the reports.
+    pub fn newest(&self) -> [i32; 2] {
+        self.points[usize::from(self.head)]
+    }
+
+    /// `0x020391ac` on one update, after the follower's own generic update. `own` and
+    /// `followed` are x and z in `fx32`; `moving` is the followed member's animation kind 1..5
+    /// (its walking state), the gate that starts the queue the first time;
+    /// `followed_distance` is the horizontal distance to the member it follows, which makes a
+    /// companion with an empty queue keep walking while that member is far; `both_down` is bit
+    /// 0 of the status word `+0x130` on both of them.
+    pub fn step(
+        &mut self,
+        own: [i32; 2],
+        followed: [i32; 2],
+        moving: bool,
+        followed_distance: i32,
+        both_down: bool,
+    ) -> TrailStep {
+        if !self.started {
+            if !moving {
+                return TrailStep {
+                    target: None,
+                    max_speed: TRAIL_SLOW_SPEED,
+                    gap: 0,
+                };
+            }
+            self.started = true;
+            self.points[usize::from(self.head)] = followed;
+        }
+        // The spacing the queue is fed at, and the one the catch-up test adds `0xb33` to: a
+        // wider one while both members are down and fewer than three points wait.
+        let spacing = if both_down && self.gap() < 3 {
+            TRAIL_SPACING_DOWN
+        } else {
+            TRAIL_SPACING
+        };
+        if planar(followed, self.points[usize::from(self.head)]) > spacing {
+            self.head = (self.head + 1) & 0x0f;
+            self.points[usize::from(self.head)] = followed;
+        }
+        let gap = self.gap();
+        let max_speed = match gap {
+            0 | 1 => TRAIL_SLOW_SPEED,
+            2 => TRAIL_TOP_SPEED,
+            _ => TRAIL_FAST_SPEED,
+        };
+        let target = self.points[usize::from(self.tail)];
+        // `iVar6 = func_02046b08(...)`: the field runs this rule, so the gate is taken as true.
+        let walking = gap > 0 || spacing + TRAIL_CATCH_UP < followed_distance;
+        if !walking {
+            return TrailStep {
+                target: None,
+                max_speed,
+                gap,
+            };
+        }
+        if self.tail != self.head && planar(own, target) < TRAIL_ARRIVE {
+            self.tail = (self.tail + 1) & 0x0f;
+        }
+        TrailStep {
+            target: Some(target),
+            max_speed,
+            gap,
+        }
+    }
+}
+
+/// Horizontal `VEC_Distance` of two (x, z) pairs (`fx::mag` of the 3D vector with y = 0).
+fn planar(a: [i32; 2], b: [i32; 2]) -> i32 {
+    crate::fx::mag([a[0] - b[0], 0, a[1] - b[1]])
+}
+
+/// One companion on the field: its body, its queue of the positions of the member it follows,
+/// the distance it covered on the last update and what the rule asked for at its end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Follower {
+    hero: Hero,
+    trail: Trail,
+    moved: i32,
+    /// `+0xae`: the heading the rule set at the end of the last update, used by the next one.
+    heading: i32,
+    /// `+0xb4`: the top speed the rule set at the end of the last update.
+    max_speed: i32,
+}
+
+impl Follower {
+    /// The follower's body (`+0x44`, `+0x54`; see [`Hero`]).
+    pub fn hero(&self) -> &Hero {
+        &self.hero
+    }
+
+    /// Horizontal distance covered on the last update, `fx32`; the application turns it into
+    /// the gait (`Gait::from_speed`).
+    pub fn moved(&self) -> i32 {
+        self.moved
+    }
+
+    /// The queue of the followed member's positions.
+    pub fn trail(&self) -> &Trail {
+        &self.trail
+    }
+}
+
+/// The party's other members on the field, behind the leader. Each one follows the member
+/// before it in the party order through its own [`Trail`] (`0x020391ac` reads the followed
+/// index at `+0x1c8` and the leader's at `+0x1ca`; `ov_017::02190884` and `0x020391ac`'s
+/// formation set the chain, and a melonDS state of a save's party of four shows it as
+/// `0 ← 3 ← 2 ← 1` in the order `[0, 3, 2, 1]`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PartyField {
+    followers: Vec<Follower>,
+}
+
+impl PartyField {
+    pub fn is_empty(&self) -> bool {
+        self.followers.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.followers.len()
+    }
+
+    pub fn followers(&self) -> &[Follower] {
+        &self.followers
+    }
+
+    /// The (x, z) of every companion in world units, hero excluded: the map screen's dots.
+    pub fn positions(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
+        self.followers.iter().map(|f| {
+            let at = f.hero.position();
+            (at.x, at.z)
+        })
+    }
+
+    /// `count` companions standing on the leader's pose. `ov_017::0218f064` creates every
+    /// member at `Save_Warp+0x10`, the point the party arrives at, so they start together and
+    /// the queues fill from the leader's steps.
+    pub fn place(&mut self, leader: Fx3, angle: i32, count: usize) {
+        let count = count.min(PARTY_MAX - 1);
+        self.followers.clear();
+        self.followers.extend((0..count).map(|_| Follower {
+            hero: Hero::place(leader, angle),
+            trail: Trail::default(),
+            moved: 0,
+            heading: angle,
+            max_speed: 0,
+        }));
+    }
+
+    /// One field update of every companion, leader first. `down` is the status bit 0 of each
+    /// party member (`+0x130`), leader first: two members both down space their queue at
+    /// [`TRAIL_SPACING_DOWN`]. The order is the original's (`0x02037d8`: the generic update,
+    /// then the rule): the companion moves with the heading and top speed the rule asked for at
+    /// the end of the previous update, and the rule then reads the pose it has now.
+    pub fn step(
+        &mut self,
+        world: &CollisionWorld,
+        leader: Fx3,
+        leader_walking: bool,
+        down: &[bool],
+        ticks: i32,
+    ) {
+        let mut followed = [leader[0], leader[2]];
+        let mut moving = leader_walking;
+        let mut followed_down = down.first().copied().unwrap_or(false);
+        for (index, follower) in self.followers.iter_mut().enumerate() {
+            let before = follower.hero.position_fx();
+            follower
+                .hero
+                .step_toward(world, follower.heading, follower.max_speed, ticks);
+            let after = follower.hero.position_fx();
+            let own = [after[0], after[2]];
+            follower.moved = planar(own, [before[0], before[2]]);
+            let own_down = down.get(index + 1).copied().unwrap_or(false);
+            let step = follower.trail.step(
+                own,
+                followed,
+                moving,
+                planar(own, followed),
+                own_down && followed_down,
+            );
+            match step.target {
+                Some(target) => {
+                    let delta = crate::fx::normalize([target[0] - own[0], 0, target[1] - own[1]]);
+                    follower.heading = crate::fx::atan2(delta[0], delta[2]);
+                    follower.max_speed = step.max_speed;
+                }
+                None => {
+                    follower.heading = follower.hero.angle();
+                    follower.max_speed = 0;
+                }
+            }
+            followed = own;
+            moving = follower.hero.is_walking();
+            followed_down = own_down;
+        }
     }
 }
 
@@ -941,6 +1222,16 @@ mod tests {
         assert_eq!(party.bag.count(22000), 1);
         assert_eq!(party.bag.count(20004), 0);
         assert_eq!(party.bag.slots()[2], ItemStack::default());
+        // The look the rig builds is the record's own (`HeroLook::from_character`), read from
+        // the same record as the equipment: the two cannot drift apart at the parse.
+        for (i, member) in party.members.iter().enumerate() {
+            let record = save.slot(0).unwrap().character(1 + i).unwrap();
+            assert_eq!(member.look, HeroLook::from_character(&record));
+            assert_eq!(member.look.armour, Some(13007));
+            assert_eq!(member.look.sex, Sex::Woman, "+372 bit 0");
+        }
+        // A party restored from a save places no companion until its map loads.
+        assert!(party.field.is_empty());
     }
 
     #[test]
@@ -1352,5 +1643,183 @@ mod tests {
         out.extend(body);
         out.resize(pool_offset, 0xFF);
         out
+    }
+}
+
+#[cfg(test)]
+mod trail_tests {
+    use super::*;
+
+    /// `u(1.0)` in `fx32`.
+    fn u(v: f32) -> i32 {
+        (v * 4096.0) as i32
+    }
+
+    /// A queue started by one step of the followed member at the origin.
+    fn started() -> Trail {
+        let mut trail = Trail::default();
+        trail.step([0, 0], [0, 0], true, 0, false);
+        trail
+    }
+
+    #[test]
+    fn an_idle_followed_member_records_nothing_until_it_moves() {
+        let mut trail = Trail::default();
+        // The animation kind is 0 (standing): the queue does not start and the member stands.
+        for _ in 0..5 {
+            let step = trail.step([0, 0], [0, 0], false, 0, false);
+            assert_eq!(step.target, None);
+            assert_eq!(step.gap, 0);
+        }
+        // A walking followed member starts it on its own position, one point; the follower has
+        // nothing to walk to yet and stands.
+        let step = trail.step([0, 0], [u(1.0), 0], true, 0, false);
+        assert_eq!(step.target, None);
+        assert_eq!(step.gap, 0);
+        assert_eq!(trail.newest(), [u(1.0), 0]);
+    }
+
+    #[test]
+    fn a_point_is_appended_every_half_unit_and_the_follower_consumes_them() {
+        // 0x020391ac: the newest point moves on when the followed member is more than 0x800
+        // away from it, and the follower consumes the oldest within 0x801.
+        let mut trail = started();
+        let away = [u(-5.0), 0];
+        // Under half a unit: nothing appended.
+        trail.step(away, [u(0.49), 0], true, 0, false);
+        assert_eq!(trail.gap(), 0);
+        // Beyond half a unit: one point, the target is the old one.
+        trail.step(away, [u(0.51), 0], true, 0, false);
+        assert_eq!(trail.gap(), 1);
+        assert_eq!(trail.newest(), [u(0.51), 0]);
+        // Two points queued, the oldest one is the target.
+        let step = trail.step(away, [u(1.2), 0], true, 0, false);
+        assert_eq!(step.target, Some([0, 0]));
+        assert_eq!(trail.gap(), 2);
+        // Within 0.5+1 of the oldest point it is consumed: this update's target was still it,
+        // the next one is the point after it.
+        let step = trail.step([u(0.4), 0], [u(1.2), 0], true, 0, false);
+        assert_eq!(step.target, Some([0, 0]));
+        assert_eq!(trail.gap(), 1);
+        let step = trail.step([u(0.6), 0], [u(1.2), 0], true, 0, false);
+        assert_eq!(step.target, Some([u(0.51), 0]));
+        assert_eq!(trail.gap(), 0);
+    }
+
+    #[test]
+    fn the_top_speed_rises_with_the_queue() {
+        // A follower one point behind walks at 0x9d, two points at 0x189, three or more at
+        // 0x24d (`0x020391ac`, constants `0x02039710`/`0x02039718`).
+        let mut trail = started();
+        let speed = |trail: &mut Trail, at: f32| {
+            trail
+                .step([u(-10.0), 0], [u(at), 0], true, 0, false)
+                .max_speed
+        };
+        assert_eq!(speed(&mut trail, 0.6), TRAIL_SLOW_SPEED);
+        assert_eq!(speed(&mut trail, 1.2), TRAIL_TOP_SPEED);
+        assert_eq!(speed(&mut trail, 1.8), TRAIL_FAST_SPEED);
+        assert_eq!(speed(&mut trail, 2.4), TRAIL_FAST_SPEED);
+        assert_eq!(TRAIL_SLOW_SPEED, 0x9d);
+        assert_eq!(TRAIL_TOP_SPEED, 0x189);
+        assert_eq!(TRAIL_FAST_SPEED, 0x24d);
+    }
+
+    #[test]
+    fn the_queue_holds_sixteen_points_and_stops_on_a_sharp_turn() {
+        // The ring is sixteen slots: a seventeenth point overwrites the oldest, and a follower
+        // that turns back walks the points in the order they were recorded.
+        let mut trail = started();
+        let away = [u(-5.0), 0];
+        for i in 1..=20 {
+            trail.step(away, [u(i as f32), 0], true, 0, false);
+        }
+        // Twenty points recorded in sixteen slots: the oldest four were overwritten, and the
+        // target is the oldest one left (16.0), not the newest (20.0).
+        assert_eq!(trail.gap(), 4);
+        // A U-turn: the followed member comes back; every point keeps the place it was
+        // recorded at, so the follower walks them one by one instead of cutting the corner.
+        let step = trail.step(away, [u(20.0), u(0.5)], true, 0, false);
+        assert_eq!(step.target, Some([u(16.0), 0]));
+        assert_eq!(trail.gap(), 4);
+    }
+
+    #[test]
+    fn an_empty_queue_still_walks_while_the_followed_member_is_far() {
+        // 0x020391ac: with nothing queued, a companion more than `spacing + 0xb33` (0x1333,
+        // 1.2 units) from the member it follows keeps walking towards the newest point;
+        // nearer, it stands.
+        let mut trail = started();
+        let catch_up = TRAIL_SPACING + TRAIL_CATCH_UP;
+        let far = trail.step([0, 0], [0, 0], false, catch_up + 1, false);
+        assert!(far.target.is_some());
+        assert_eq!(far.gap, 0);
+        let near = trail.step([0, 0], [0, 0], false, catch_up, false);
+        assert_eq!(near.target, None);
+        assert_eq!(PARTY_MAX, 4);
+        assert_eq!(TRAIL_SPACING, 0x800);
+        assert_eq!(TRAIL_ARRIVE, 0x801);
+        assert_eq!(catch_up, 0x1333);
+    }
+
+    #[test]
+    fn two_down_members_space_their_queue_at_the_wider_threshold() {
+        // 0x020391ac: when the follower and the followed member are both down and fewer than
+        // three points wait, the spacing is `iRam02039714` (0xe66) instead of 0x800, and the
+        // catch-up test adds 0xb33 to that.
+        let mut trail = started();
+        let away = [u(-20.0), 0];
+        // 0.8 unit away: below 0xe66 (0.90), nothing appended while both are down…
+        trail.step(away, [u(0.8), 0], true, 0, true);
+        assert_eq!(trail.gap(), 0);
+        // …and appended at the normal spacing when they are not (0.8 > 0.5).
+        trail.step(away, [u(0.8), 0], true, 0, false);
+        assert_eq!(trail.gap(), 1);
+        // 1.4 units from the newest point: appended even with both down (1.4 > 0.90).
+        trail.step(away, [u(2.2), 0], true, 0, true);
+        assert_eq!(trail.gap(), 2);
+        // Two points waiting still take the wide spacing: 0.6 unit more is not enough.
+        trail.step(away, [u(2.8), 0], true, 0, true);
+        assert_eq!(trail.gap(), 2);
+        // One more point at the normal spacing; with three waiting the gate `gap < 3` fails,
+        // so 0.6 more appends even with both down.
+        trail.step(away, [u(2.8), 0], true, 0, false);
+        assert_eq!(trail.gap(), 3);
+        trail.step(away, [u(3.4), 0], true, 0, true);
+        assert_eq!(trail.gap(), 4);
+        assert_eq!(TRAIL_SPACING_DOWN, 0xe66);
+    }
+
+    #[test]
+    fn the_companions_chain_on_the_leader_and_follow_the_queue() {
+        // A party of four on a flat floor: each companion follows the one before it, so the
+        // last one lags behind the first, and none stands on the leader.
+        use crate::collision::STAND_HEIGHT;
+        use crate::testing::{floor, world};
+        let w = world(&floor(30_000, 0));
+        let mut field = PartyField::default();
+        let start = [0, STAND_HEIGHT, 0];
+        field.place(start, 0, 3);
+        assert_eq!(field.len(), 3);
+        // The leader walks 4 units north at full speed (0x189 per tick, two ticks a step).
+        let mut leader = [0, STAND_HEIGHT, 0];
+        for _ in 0..120 {
+            leader[2] -= 0x189 * 2;
+            field.step(&w, leader, true, &[], 2);
+        }
+        let zs: Vec<i32> = field
+            .followers()
+            .iter()
+            .map(|f| f.hero().position_fx()[2])
+            .collect();
+        assert!(zs[0] < -0x1000, "the first companion moved: {zs:?}");
+        assert!(zs[0] > leader[2], "and stays behind the leader");
+        assert!(zs[1] >= zs[0] && zs[2] >= zs[1], "each one behind: {zs:?}");
+        // Party of one: nothing to step.
+        let mut solo = PartyField::default();
+        solo.place(start, 0, 0);
+        assert!(solo.is_empty());
+        solo.step(&w, leader, true, &[], 2);
+        assert!(solo.followers().is_empty());
     }
 }

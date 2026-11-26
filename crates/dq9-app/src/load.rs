@@ -324,6 +324,23 @@ pub fn load(
     state: Option<&GameState>,
     look: &HeroLook,
 ) -> Result<LoadedMap> {
+    load_party(rom, key, time, story, spawn, state, look, &[])
+}
+
+/// [`load`] with the party's other members: the scene carries one rig per look, in party
+/// order behind the leader, and the application places each of them every field update
+/// (`app/map.rs`, `dq9_core::party::PartyField`).
+#[allow(clippy::too_many_arguments)]
+pub fn load_party(
+    rom: &[u8],
+    key: &str,
+    time: u32,
+    story: &Story,
+    spawn: Option<(Vec3, f32)>,
+    state: Option<&GameState>,
+    look: &HeroLook,
+    companions: &[HeroLook],
+) -> Result<LoadedMap> {
     let rom = Rom::parse(rom).context("parsing the ROM")?;
     let table = Table::parse(rom.file_by_path(maplist::PATH)?).context("parsing the map list")?;
     let list = MapList::parse(&table)?;
@@ -365,6 +382,13 @@ pub fn load(
         .context("building the hero model")?;
     runtime.scene.instances[hero_instance].world =
         runtime.hero_world(hero.position(), field::angle_of_yaw(hero.yaw()));
+    // The party's other members (`ov_017::0218f064` builds one character per member; the
+    // application then moves them each field update).
+    for companion in companions {
+        runtime
+            .add_companion(companion, |p| map::rom_file(&rom, p))
+            .context("building a party companion's model")?;
+    }
     let trigger_file = field::trigger_path(&text(record.code))
         .and_then(|path| map::rom_file(&rom, &path))
         .map(<[u8]>::to_vec);

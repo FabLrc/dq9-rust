@@ -613,6 +613,9 @@ impl App {
                 // original's follow runs per VBlank, not per game update.
                 self.view.camera.follow_hero(hero.position());
             }
+            if field_due && !menu_open {
+                self.step_field_party();
+            }
             if self.apply_events(events) {
                 continue;
             }

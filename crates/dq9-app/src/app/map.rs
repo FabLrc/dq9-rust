@@ -50,11 +50,29 @@ impl App {
     ) -> bool {
         let story = self.current_story(key);
         let Some(rom) = &self.rom else { return false };
+        // The party's other members: one model per member, in party order behind the leader
+        // (`ov_017::0218f064`).
+        let companions: Vec<dq9_formats::hero::HeroLook> = self
+            .party
+            .members
+            .iter()
+            .skip(1)
+            .map(|member| member.look.clone())
+            .collect();
         // A map load tears the talk and menu tasks down; a facility screen does not survive it.
         self.services.close();
         self.talk.abort_service();
         let started = Instant::now();
-        let mut loaded = match load::load(rom, key, self.time, &story, spawn, state, &self.look) {
+        let mut loaded = match load::load_party(
+            rom,
+            key,
+            self.time,
+            &story,
+            spawn,
+            state,
+            &self.look,
+            &companions,
+        ) {
             Ok(l) => l,
             Err(e) => {
                 status(&format!("{e:#}"));
@@ -97,6 +115,17 @@ impl App {
             .enter_map(loaded.npcs, &mut self.state.talk_counts);
         self.hero = Some(loaded.hero);
         self.hero_instance = Some(loaded.hero_instance);
+        // Every member starts on the point the party arrives at (`ov_017::0218f064` places
+        // each character at `Save_Warp+0x10`); the queues fill from the leader's steps.
+        let companions = loaded.runtime.companion_count();
+        self.party
+            .field
+            .place(loaded.hero.position_fx(), loaded.hero.angle(), companions);
+        let start = loaded.hero.position();
+        let angle = field::angle_of_yaw(loaded.hero.yaw());
+        for index in 0..companions {
+            loaded.runtime.set_companion_world(index, start, angle);
+        }
         let s = &loaded.runtime.scene;
         let milliseconds = started.elapsed().as_secs_f64() * 1000.0;
         // The scene line gets the load time, then the warnings; same bytes as `summary`.
@@ -255,6 +284,39 @@ impl App {
             self.events.queue(entry);
         }
         loaded
+    }
+
+    /// One field update of the party's companions (`0x020391ac`, `dq9_core::party::PartyField`):
+    /// each one follows the member before it on the same 30 Hz update as the hero, then its
+    /// model instance takes its pose and motion. A party of one has nothing to do.
+    pub(super) fn step_field_party(&mut self) {
+        if self.party.field.is_empty() {
+            return;
+        }
+        let Some((leader, walking)) = self
+            .hero
+            .as_ref()
+            .map(|hero| (hero.position_fx(), hero.is_walking()))
+        else {
+            return;
+        };
+        let Some(runtime) = self.runtime.as_mut() else {
+            return;
+        };
+        const TICKS: i32 = 2;
+        // Bit 0 of a member's status word (`+0x130`): down; two down members space their
+        // queues wider (`TRAIL_SPACING_DOWN`).
+        let down: Vec<bool> = self.party.members.iter().map(|m| m.hp == 0).collect();
+        self.party
+            .field
+            .step(&self.collision, leader, walking, &down, TICKS);
+        for (index, follower) in self.party.field.followers().iter().enumerate() {
+            let position = follower.hero().position();
+            let angle = field::angle_of_yaw(follower.hero().yaw());
+            runtime.set_companion_world(index, position, angle);
+            let speed = follower.moved() as f32 / 4096.0 / (TICKS as f32 * super::STEP);
+            runtime.set_companion_gait(index, dq9_render::Gait::from_speed(speed));
+        }
     }
 
     pub(super) fn cycle_map(&mut self, delta: isize) {

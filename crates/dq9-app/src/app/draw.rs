@@ -839,14 +839,17 @@ fn draw_map_screen(
     ) else {
         return false;
     };
-    // The party shares the hero's position in the port (members' own field positions are not
-    // modelled), so their dots coincide.
+    // The leader's dot is the hero's, then each companion's own field position
+    // (`dq9_core::party::PartyField`, `0x020391ac`); a party of one keeps the hero's alone.
     let at = hero.map_or((0.0, 0.0), |hero| {
         let position = hero.position();
         (position.x, position.z)
     });
     let members = party.members.len().min(map_screen::MEMBERS);
-    let frame = map_screen::Frame::new(&data.content, &vec![at; members], (0.0, 0.0));
+    let mut positions = vec![at];
+    positions.extend(party.field.positions());
+    positions.truncate(members);
+    let frame = map_screen::Frame::new(&data.content, &positions, (0.0, 0.0));
     screen.draw(&gpu.device, encoder, target, region, layers, &frame);
     let names: Vec<&[u8]> = party
         .members

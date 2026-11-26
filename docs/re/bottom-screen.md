@@ -84,7 +84,7 @@ field task's indirect calls and were not resolved.
 | Backdrop | paper pattern under the map picture | the layout's `.bmmp` `0x6a` name → `minimapbg2`–`4` `.obg` of `minimap.gp2` (8×8 cells) | the port repeats it at one texel per pixel over the picture's own rectangle, from its top-left (stated choice, DS layout **[unknown]**) | `.bmmp` `0x6a` | data + code; `221 of 283` layouts name one (`re/minimap.md` § 4.1) |
 | Area tab | the map section's name ("Stornway", "Western Stornway", "Observatory - L1") | text; `TMAP_SEC` is the same name inside dialogue (`MsgSubst_TMAP_SEC`, `0x020691d0`) | x 200..253, y 0..15 on `field-church.png` (dark tab, light edge); the port keeps the right edge and grows the tab left when the name is wider | map id → map list name (`maplist9` label, the port's `loaded.label`) | capture; drawing function and palette source **[unknown]** |
 | Party strips | one name strip per party slot | the 64×64 panel of `obj_mm.pac` (cell 2 of `obj_minimap.NCER`, name strip = rows 0..15 only) | 4 × **64×16** at **y = 176**, x = **0, 64, 128, 192**; only as many as the party holds | party order `GameState+0x397c`, count `+0x3980`; per-member colour | capture + decomp; colour source **[unknown]**; the port uses the file's palette slots 0–3 (blue, green, pink, orange) **[hypothesis]** |
-| Party dots | one coloured dot per member on the map | `obj_minimap.NCER` cells 3..7 / the dots of `obj_mm.pac` | on the party's position, projected by the `.bmmp` scale/corner | hero and members' x/z | wiki + capture; colour choice **[unknown]**; the port draws cells 3..7 and the members' positions coincide (only the hero's is modelled) **[hypothesis]** |
+| Party dots | one coloured dot per member on the map | `obj_minimap.NCER` cells 3..7 / the dots of `obj_mm.pac` | on the party's position, projected by the `.bmmp` scale/corner | hero and members' x/z | wiki + capture; colour choice **[unknown]**; the port draws cells 3..7 at the leader's position then each companion's own (`Party::field::positions`, `characters.md` § "The party's other members on the field") |
 | Floor badge | a small box with the floor (`1` in the Observatory capture) | `tmap_field_obj.NCER`/`.NCGR`/`.NCLR` **or** the same cells as the tab **[hypothesis]** | x≈0..24, y≈3..19 (Observatory capture) | map id | capture only |
 | Map markers | doors, houses, marks | `.bmmp` marks (`0x6c`), `obj_mappoint.pac` | from the map position × scale − corner × 8 | `.bmmp` | wiki; which `marker0`–`4` a mark takes **[unknown]** |
 | Clock / time of day | **nothing** is drawn in the field HUD; the day clock only drives lighting, rosters and encounters | — | — | `GameState` clock | capture |
@@ -100,8 +100,9 @@ at the screen's top-left; under it, the backdrop the layout's `0x6a` names (`min
 top-left — how the DS lays it out is **[unknown]**, so the rectangle is a stated choice; the
 name strips cut from cell 2 of `obj_minimap.NCER` (rows 0..15) with palette slots 0..3 and each
 member's name from the record's glyph indices in the message font, centred in the slot; one
-dot per member (cells 3..7, palette slot 4) at the projected hero position, so a full party's
-dots coincide; and the `maplist9` label in the tab, right aligned. Not drawn, because the data
+dot per member (cells 3..7, palette slot 4) at the projected position of the leader and then of
+each companion on the field (`Party::field::positions`); and the `maplist9` label in the tab,
+right aligned. Not drawn, because the data
 does not establish them: the scrolling of a picture larger than 256×192, the `.bmmp` marks
 (`0x6c`; decoded and projected, but no record says which of the five `marker0`–`4` dots —
 blue, green, pink, yellow, red — an ordinary door or house mark takes, and
@@ -239,8 +240,8 @@ Ghidra queries (cache under `build/ghidra-cache/`): `decomp ov_017::021b1564`,
 - The field's map-screen mode (0 assumed) and which element draws the area tab, the floor
   badge and the "X Menu" text/hand (asset and function).
 - How the `.obg` picture scrolls (the port crops a larger one at its top-left) and the
-  colours of the party's dots; their placement is the projection of § 2.1 (the members'
-  own positions are not modelled, only the hero's, so their dots coincide).
+  colours of the party's dots; their placement is the projection of § 2.1, of the
+  companions' own field positions (`Party::field::positions`).
 - How the DS lays out the backdrop (`0x6a`): the port tiles it over the picture's own
   rectangle (`re/minimap.md` § 4.1, § 6).
 - Which of `marker0`–`4` an ordinary door or house mark takes, and what `obj_mappoint.pac`

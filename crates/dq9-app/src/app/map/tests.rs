@@ -15,6 +15,7 @@ use dq9_core::state::GameState;
 use dq9_core::state::TimeOfDay;
 use dq9_core::trigger::Raw;
 use dq9_formats::save::Save;
+use glam::Vec3;
 
 /// The web bug: after "New game", picking a save must load that save, not start
 /// the prologue again. Exercises the same `set_save` path with a real save and ROM,
@@ -408,4 +409,74 @@ fn only_a_trigger_warp_starts_its_entry_event() {
         Some(21597),
         "a trigger warp starts its entry event"
     );
+}
+
+/// The party's other members walk behind the leader (`0x020391ac`): each one follows the one
+/// before it on the field update, the map screen's dots take their positions, and a party of
+/// one has no companion at all (its path is the hero's alone).
+#[test]
+fn the_party_follows_the_leader_and_a_party_of_one_does_not() {
+    let Some(rom) = testrom::load() else { return };
+    let mut solo = App::new_headless(map_options("M01", (1, 1, 1, true)), Some(rom.to_vec()));
+    assert!(
+        solo.party.field.is_empty(),
+        "a party of one has no companion"
+    );
+    solo.walk_step(Vec3::NEG_Z);
+    assert!(solo.party.field.is_empty());
+    assert_eq!(solo.runtime.as_ref().unwrap().companion_count(), 0);
+
+    // Three members: the map load builds one rig each (`ov_017::0218f064`).
+    let mut app = App::new_headless(map_options("M01", (1, 1, 1, true)), Some(rom.to_vec()));
+    let base = app.party.members[0].clone();
+    for _ in 0..3 {
+        app.party.members.push(base.clone());
+    }
+    assert!(app.load("M01", true, None, None));
+    assert_eq!(app.party.field.len(), 3);
+    assert_eq!(app.runtime.as_ref().unwrap().companion_count(), 3);
+    let start = app.hero.unwrap().position();
+    for _ in 0..90 {
+        app.walk_step(Vec3::NEG_Z);
+    }
+    let hero = app.hero.unwrap().position();
+    assert!(
+        hero.z < start.z - 1.0,
+        "the leader walked north: {start:?} -> {hero:?}"
+    );
+    let at: Vec<Vec3> = app
+        .party
+        .field
+        .followers()
+        .iter()
+        .map(|f| f.hero().position())
+        .collect();
+    assert!(
+        at[0].z > hero.z + 0.3,
+        "the first companion stays behind the leader: {at:?} vs {hero:?}"
+    );
+    assert!(
+        at[1].z >= at[0].z && at[2].z >= at[1].z,
+        "each one behind the one before: {at:?}"
+    );
+    // The trace the batch keeps as evidence of the rule (run with `--nocapture`).
+    for (index, follower) in app.party.field.followers().iter().enumerate() {
+        let at = follower.hero().position();
+        println!(
+            "member {}: ({:.3}, {:.3}, {:.3}) yaw {:+.3} moved {} fx this update, queue gap {}",
+            index + 1,
+            at.x,
+            at.y,
+            at.z,
+            follower.hero().yaw(),
+            follower.moved(),
+            follower.trail().gap()
+        );
+    }
+    // The map screen's dots: the leader's position then the companions' own.
+    let dots: Vec<(f32, f32)> = app.party.field.positions().collect();
+    assert_eq!(dots.len(), 3);
+    for (dot, follower) in dots.iter().zip(&at) {
+        assert!((dot.0 - follower.x).abs() < 1e-3 && (dot.1 - follower.z).abs() < 1e-3);
+    }
 }

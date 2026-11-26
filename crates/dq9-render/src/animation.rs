@@ -119,6 +119,9 @@ pub struct AnimatedScene {
     models: Vec<ModelAnimation>,
     sprites: Vec<SpriteAnimation>,
     hero: Option<HeroRig>,
+    /// The party's other members on the field, in party order behind the leader; the
+    /// application places each one every field update (`party::PartyField`).
+    companions: Vec<HeroRig>,
     actors: Vec<actor::ActorRig>,
     /// The model NPCs of the cast and the motions an event can make them play.
     npc_rigs: Vec<actor::NpcRig>,
@@ -201,6 +204,7 @@ impl AnimatedScene {
             models: Vec::new(),
             sprites: Vec::new(),
             hero: None,
+            companions: Vec::new(),
             actors: Vec::new(),
             frame: 0,
             npc_rigs: Vec::new(),
@@ -573,6 +577,42 @@ impl AnimatedScene {
         Ok(instance)
     }
 
+    /// Adds a party companion (`look`: another member of the save's party) at the origin and
+    /// returns its index, the party order behind the leader. The application places it each
+    /// field update with [`AnimatedScene::set_companion_world`].
+    pub fn add_companion<'a>(
+        &mut self,
+        look: &dq9_formats::hero::HeroLook,
+        file: impl Fn(&str) -> Option<&'a [u8]>,
+    ) -> Result<usize> {
+        let rig = HeroRig::build(&mut self.scene, look, file)?;
+        self.companions.push(rig);
+        Ok(self.companions.len() - 1)
+    }
+
+    /// Companions the scene carries: the party's members behind the leader.
+    pub fn companion_count(&self) -> usize {
+        self.companions.len()
+    }
+
+    /// Places companion `index` at `position`, facing the game's object `angle` (0 faces +z).
+    pub fn set_companion_world(&mut self, index: usize, position: Vec3, angle: f32) {
+        let Some(rig) = self.companions.get(index) else {
+            return;
+        };
+        let world = rig.world(position, angle);
+        if let Some(instance) = self.scene.instances.get_mut(rig.instance) {
+            instance.world = world;
+        }
+    }
+
+    /// Chooses companion `index`'s motion (idle, walk, run).
+    pub fn set_companion_gait(&mut self, index: usize, gait: Gait) {
+        if let Some(rig) = self.companions.get_mut(index) {
+            rig.set_gait(gait);
+        }
+    }
+
     /// Replaces the protagonist with `look` in the **same** scene model and instance slots,
     /// keeping the world instance and gait the caller keeps. The new rig is built in a
     /// detached scene first: a malformed resource leaves the old hero and its storage
@@ -711,6 +751,9 @@ impl AnimatedScene {
         if let Some(hero) = &mut self.hero {
             hero.step(&mut self.scene)?;
         }
+        for companion in &mut self.companions {
+            companion.step(&mut self.scene)?;
+        }
         self.step_pivots();
         self.evaluate()
     }
@@ -847,6 +890,23 @@ impl AnimatedScene {
         if let Some(hero) = &self.hero {
             for (i, material) in self.scene.models[hero.model].materials.iter().enumerate() {
                 renderer.update_material(device, queue, hero.model, i, material)?;
+            }
+        }
+        for index in 0..self.companions.len() {
+            if self.companions[index].dirty {
+                let model = &self.scene.models[self.companions[index].model];
+                upload_geometry(
+                    renderer,
+                    queue,
+                    self.companions[index].model,
+                    model,
+                    "companion GPU vertex count",
+                )?;
+                self.companions[index].dirty = false;
+            }
+            let model = self.companions[index].model;
+            for (i, material) in self.scene.models[model].materials.iter().enumerate() {
+                renderer.update_material(device, queue, model, i, material)?;
             }
         }
         for sprite in &self.sprites {

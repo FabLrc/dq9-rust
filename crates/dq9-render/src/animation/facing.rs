@@ -316,6 +316,7 @@ mod tests {
             models: Vec::new(),
             sprites,
             hero: None,
+            companions: Vec::new(),
             actors: Vec::new(),
             npc_rigs: Vec::new(),
             cast: Vec::new(),

@@ -489,9 +489,40 @@ pixels relative to a capture taken before it.
   (§ "Skin, eyes and brows"); the `kind` of the other body parts, part 4's byte-16 write and
   hair colours stay **[unknown]** (see there).
 - Lighting: fixed character light (`app/rendering.md`), not the DS lights.
-- Item parts without a model (see above); party companions outside cutscenes (the guest of
-  the scenes is drawn: § The guest); the hero during
-  cutscenes (script `walk`, event scale and camera).
+- Item parts without a model (see above); the party's other members **inside a cutscene** (a
+  script places them there, `movement.md` § "The party's companions"); the guest of the scenes
+  is drawn (§ The guest); the hero during cutscenes (script `walk`, event scale and camera).
+
+## The party's other members on the field
+
+The party's members behind the leader are drawn from their own save records
+(`ov_017::0218f064` builds one character per member; `0x020391ac` moves it,
+`movement.md` § "The party's companions"):
+
+- **Look.** `dq9_core::party::Character` keeps the `HeroLook` of the record it was parsed from
+  (`HeroLook::from_character`: face and hair items, `+372`/`+373` appearance bits, body build,
+  and the worn item bands of the armour, legwear, gloves, footwear and headgear), so a companion
+  wears its own equipment and its own face and palette; `HeroRig::build` is the same rig as the
+  hero's. The look is read once, by the same parse as the equipment (test
+  `a_slot_restores_its_members_in_order_with_held_items_and_bag` asserts the two agree), and
+  the rig's face and palette are checked by
+  `a_party_member_builds_its_own_face_hair_and_skin` (face 9027 → `p_f007`, hair 9008 →
+  `p_h080…`, the face palette recoloured with the member's tone).
+- **Placement.** `AnimatedScene::add_companion` builds one rig and instance per member at the
+  map load, in party order; `set_companion_world` places it, `set_companion_gait` plays
+  `stand`/`run` from the distance it covered (`Gait::from_speed`, `Hero::moved`).
+- **The map screen's dots.** `dq9_render::map_screen::Frame` already took one position per
+  member; `app/draw.rs::draw_map_screen` now passes the leader's position followed by
+  `Party::field::positions()`, so a full party's dots no longer coincide. A party of one
+  gives the same single dot as before. No capture of the composite (the batch's `--screenshot`
+  renders the field view only): the positions are the test's
+  (`build/evidence/v3-party-companions/four-member-trace.txt`, `996109dd0f76`).
+- **Capture.** `m01-four-walking.png` (`5343c16b9a17`): the melonDS save's party of four
+  walking on `M01`, the three companions in line behind the leader; a party of one is
+  byte-identical to the build before the batch (`m01-solo.png`, `1bb6b7def044`).
+- **Not done.** The scene formation (`+0x26c`), a companion in the air and the state-2 mirror
+  of `0x020391ac` (`movement.md` § "The party's companions"); weapons and shields as for the
+  hero.
 
 ## The guest (cast mode 10 of native 566)
 

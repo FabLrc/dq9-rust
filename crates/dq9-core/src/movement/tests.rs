@@ -256,3 +256,55 @@ fn directions_of_the_scripts_press_the_matching_keys() {
     assert!(diagonal.up && diagonal.right && !diagonal.down && !diagonal.left);
     assert_eq!(keys(0.0, 0.0), NONE);
 }
+
+#[test]
+fn a_follower_turns_exactly_to_the_heading_it_is_given() {
+    // `Character_SetFacing` (`0x02033844`): the wanted heading is the follower rule's atan2
+    // itself, not one of the eight d-pad headings (`0x020e90b8`).
+    let w = flat();
+    let mut h = Hero::place([0, STAND_HEIGHT, 0], 0);
+    for _ in 0..20 {
+        h.step_toward(&w, PI, WALK_SPEED, 1);
+    }
+    assert_eq!(h.target_angle(), PI);
+    assert_eq!(h.angle(), PI);
+    let at = h.position_fx();
+    assert_eq!(at[0], 0, "straight north has no sideways motion: {at:?}");
+    assert!(at[2] < -0x1000, "{at:?}");
+    // A heading the d-pad cannot give (36.7° = `0x0a3d`) is reached to the unit and followed.
+    let heading = 0x0a3d;
+    let mut h = Hero::place([0, STAND_HEIGHT, 0], 0);
+    for _ in 0..16 {
+        h.step_toward(&w, heading, WALK_SPEED, 1);
+    }
+    assert_eq!(h.target_angle(), heading);
+    assert_eq!(h.angle(), heading);
+    let at = h.position_fx();
+    assert!(at[0] > 0x800 && at[2] > 0x800, "{at:?}");
+}
+
+#[test]
+fn a_follower_keeps_the_top_speed_the_rule_gives_it() {
+    // `0x020391ac` writes `+0xb4` each update: `0x9d` under two queued points, `0x189` at two,
+    // `0x24d` beyond (constants read at `0x02039710`/`0x02039714`/`0x02039718`).
+    let w = flat();
+    for &(top, ticks) in &[(0x9d, 6), (WALK_SPEED, 12), (0x24d, 18)] {
+        let mut h = hero();
+        for _ in 0..ticks {
+            h.step_toward(&w, PI, top, 1);
+        }
+        assert_eq!(h.speed(), top, "top speed {top:#x}");
+    }
+    // Speed 0 stands the member: it decelerates by `0x28` per tick and its facing stays.
+    let mut h = hero();
+    for _ in 0..10 {
+        h.step_toward(&w, PI, WALK_SPEED, 1);
+    }
+    let facing = h.angle();
+    for _ in 0..14 {
+        h.step_toward(&w, facing, 0, 1);
+    }
+    assert_eq!(h.speed(), 0);
+    assert_eq!(h.angle(), facing);
+    assert!(!h.is_walking());
+}

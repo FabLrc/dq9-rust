@@ -741,3 +741,85 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod companion_tests {
+    use super::*;
+
+    fn empty_scene() -> Scene {
+        Scene {
+            textures: Vec::new(),
+            models: Vec::new(),
+            instances: Vec::new(),
+            unbound_textures: Vec::new(),
+            placements: Vec::new(),
+            undrawn_placements: Vec::new(),
+            warnings: Vec::new(),
+            billboards: Default::default(),
+        }
+    }
+
+    /// A party member's record decides the rig's parts: its own face and hair models, not the
+    /// new game's presets, and its face palette takes its own skin tone.
+    #[test]
+    fn a_party_member_builds_its_own_face_hair_and_skin() {
+        use nds_rom::g3d::tex::decode_texture;
+
+        let Some(bytes) = testrom::load() else { return };
+        let rom = nds_rom::Rom::parse(bytes).unwrap();
+        let file = |path: &str| dq9_formats::map::rom_file(&rom, path);
+        let pc = dq9_formats::Gpc2::parse(file("data/pack_lv5/chara_pc.gp2").unwrap()).unwrap();
+        let defs = dq9_formats::Gpc2::parse(file("data/prm/itemdt_def.gp2").unwrap()).unwrap();
+        let def = defs.member(defs.find("itemdt_def.nat").unwrap()).unwrap();
+        let models = ItemModels::parse(&def).unwrap();
+
+        let mut look = HeroLook::new_game();
+        look.face_item = 9027;
+        look.hair_item = 9008;
+        look.armour = Some(13010);
+        look.skin_tone = 1;
+        let outfit = Outfit::resolve(&look, &models, |n| pc.find(n).is_some());
+        assert_eq!(outfit.face.as_deref(), Some("p_f007"));
+        assert!(outfit.hair.as_ref().unwrap().model.starts_with("p_h080"));
+
+        let mut scene = empty_scene();
+        let rig = HeroRig::build(&mut scene, &look, file).unwrap();
+        assert!(!scene.models[rig.model].vertices.is_empty());
+
+        // The face part's own palette, recoloured with this member's tone (`func_02099e18`).
+        let part = pc.member(pc.find("p_f007.nsbmd").unwrap()).unwrap();
+        let g3d = G3dFile::parse(&part).unwrap();
+        let tex0 = g3d.tex.as_ref().unwrap();
+        let mut data = tex0.palettes[0].data.to_vec();
+        let colours = CharacterColours::parse(file("data/chara/palette.bin").unwrap()).unwrap();
+        assert!(colours.recolour_block(ColourRule::Face, &look, &mut data));
+        let expected = decode_texture(
+            &tex0.textures[0],
+            Some(&Palette {
+                name: tex0.palettes[0].name,
+                offset: tex0.palettes[0].offset,
+                data: &data,
+            }),
+        )
+        .unwrap();
+        let built = scene
+            .textures
+            .iter()
+            .find(|t| t.name == tex0.textures[0].name.to_string())
+            .map(|t| t.rgba.clone())
+            .unwrap_or_else(|| panic!("no face texture"));
+        assert_eq!(built, expected);
+        // The new game's face is not this member's.
+        let mut other = HeroLook::new_game();
+        other.skin_tone = 1;
+        let mut scene = empty_scene();
+        let rig = HeroRig::build(&mut scene, &other, file).unwrap();
+        assert!(!scene.models[rig.model].vertices.is_empty());
+        assert!(
+            scene
+                .textures
+                .iter()
+                .all(|t| t.name != tex0.textures[0].name.to_string())
+        );
+    }
+}

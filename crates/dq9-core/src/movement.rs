@@ -171,9 +171,44 @@ impl Hero {
     /// update, 2 when it runs at 30 Hz) with `input` held and the camera at `camera_yaw`
     /// (`fx32`, 0 looks towards `-z`).
     pub fn step(&mut self, world: &CollisionWorld, input: Input, camera_yaw: i32, ticks: i32) {
+        self.advance(world, ticks, WALK_SPEED, |hero| {
+            hero.read_input(input, camera_yaw);
+        });
+    }
+
+    /// One update of `ticks` frames of a party member that is not the leader: the same
+    /// generic update, collision, slide and bounds as [`Hero::step`], but its wanted heading
+    /// comes from the follower rule (`0x020391ac`, `Character_SetFacing` `0x02033844`
+    /// `ReduceAngle(atan2(target − position))`) and its top speed `+0xb4` is the one that rule
+    /// picks for the queue's length (`0x02039710`…`0x18`), not the leader's `0x189`.
+    ///
+    /// `max_speed` of 0 stands the member (`Character_SetState(0)` `0x02033b78`) while it
+    /// decelerates, facing `heading` unchanged: the rule keeps the facing it had.
+    pub fn step_toward(
+        &mut self,
+        world: &CollisionWorld,
+        heading: i32,
+        max_speed: i32,
+        ticks: i32,
+    ) {
+        self.advance(world, ticks, max_speed, |hero| {
+            hero.target = reduce_angle(heading);
+            hero.walking = max_speed > 0;
+        });
+    }
+
+    /// [`Hero::step`] and [`Hero::step_toward`]: the generic update with `max_speed`, the
+    /// caller's facing/state, then the collision, the slide and the bounds of `ov_017::0218e210`.
+    fn advance(
+        &mut self,
+        world: &CollisionWorld,
+        ticks: i32,
+        max_speed: i32,
+        after: impl FnOnce(&mut Self),
+    ) {
         let previous = self.body.position;
-        self.update(ticks);
-        self.read_input(input, camera_yaw);
+        self.update(ticks, max_speed);
+        after(self);
         let travelled = fx::distance(previous, self.body.position);
         let mode = if travelled > FAST_MOVE {
             Mode::Halves
@@ -199,8 +234,10 @@ impl Hero {
         }
     }
 
-    /// `Character_Update` (`0x020332bc`) for the hero: turn, speed, motion, gravity.
-    fn update(&mut self, ticks: i32) {
+    /// `Character_Update` (`0x020332bc`) for the hero: turn, speed, motion, gravity. `+0xb4`
+    /// (the top speed) and `+0xb6` (the acceleration) are the caller's: `0x189`/`0x28` for the
+    /// leader (`ov_017::0218f064`), the follower rule's for a companion.
+    fn update(&mut self, ticks: i32, max_speed: i32) {
         // `0x02033720`: the model turns to the target at `TURN_SPEED` per tick, stopping on it.
         let turn = TURN_SPEED * ticks;
         let distance = fx::signed_angle_distance(self.angle, self.target);
@@ -223,10 +260,10 @@ impl Hero {
         let before = self.speed;
         let gain = (ACCELERATION * ticks) as i16;
         self.speed = i32::from(if self.walking {
-            if before < WALK_SPEED {
+            if before < max_speed {
                 (before as i16).wrapping_add(gain)
-            } else if before - WALK_SPEED < ACCELERATION * ticks {
-                WALK_SPEED as i16
+            } else if before - max_speed < ACCELERATION * ticks {
+                max_speed as i16
             } else {
                 (before as i16).wrapping_sub(gain)
             }
@@ -240,7 +277,7 @@ impl Hero {
             // direction followed is the target's (the hero's `0x100` flag).
             let left = fx::abs(fx::signed_angle_distance(self.angle, self.target));
             let ratio = fx::div(left, PI);
-            let limit = ((i64::from(WALK_SPEED) * i64::from(0x1000 - ratio) + 0x800) >> 12) as i32;
+            let limit = ((i64::from(max_speed) * i64::from(0x1000 - ratio) + 0x800) >> 12) as i32;
             let speed = before.min(limit);
             let direction = [fix32_sin(self.target), 0, fix32_cos(self.target)];
             self.body.position = fx::add(self.body.position, fx::scale(direction, speed * ticks));

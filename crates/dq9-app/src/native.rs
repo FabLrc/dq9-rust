@@ -814,7 +814,16 @@ fn prepare(cli: &Cli, rom: &[u8], save: Option<&[u8]>) -> Result<Prepared> {
     } else {
         cli.story()
     };
-    let mut loaded = load::load(
+    // The party's other members, with their own looks, so a capture of a full party shows the
+    // companions behind the leader (`docs/re/characters.md`).
+    let companions: Vec<dq9_formats::hero::HeroLook> = start
+        .party
+        .members
+        .iter()
+        .skip(1)
+        .map(|member| member.look.clone())
+        .collect();
+    let mut loaded = load::load_party(
         rom,
         &map,
         time,
@@ -822,6 +831,7 @@ fn prepare(cli: &Cli, rom: &[u8], save: Option<&[u8]>) -> Result<Prepared> {
         spawn,
         start.state.as_ref(),
         &start.look,
+        &companions,
     )?;
     let script = cli.walk.as_deref().map(walk::parse_script).transpose()?;
     let mut hero = loaded.hero;
@@ -941,6 +951,18 @@ fn play_event_or_walk(
         // requested frame at `ticks = 1`, for inspecting poses and the animation clock. It
         // deliberately does not implement the game's 30 Hz field cadence; gameplay (window,
         // Web, pilot, replay) runs through `App::run_steps`, which gates it.
+        //
+        // The party's other members follow with the field's own rule (`0x020391ac`,
+        // `PartyField`), one game update per requested frame, so a capture shows them walking
+        // behind the leader.
+        let mut field = dq9_core::party::PartyField::default();
+        let companions = loaded.runtime.companion_count();
+        field.place(hero.position_fx(), hero.angle(), companions);
+        for index in 0..companions {
+            let position = hero.position();
+            let angle = dq9_core::field::angle_of_yaw(hero.yaw());
+            loaded.runtime.set_companion_world(index, position, angle);
+        }
         for frame in 0..cli.frame {
             let direction = script
                 .as_deref()
@@ -953,6 +975,23 @@ fn play_event_or_walk(
             let moved = hero.position() - before;
             let speed = Vec3::new(moved.x, 0.0, moved.z).length() / crate::app::STEP;
             loaded.runtime.set_hero_gait(Gait::from_speed(speed));
+            // A preview does not fight: no member is down (`+0x130` bit 0).
+            field.step(
+                &loaded.collision,
+                hero.position_fx(),
+                hero.is_walking(),
+                &[],
+                1,
+            );
+            for (index, follower) in field.followers().iter().enumerate() {
+                let position = follower.hero().position();
+                let angle = dq9_core::field::angle_of_yaw(follower.hero().yaw());
+                loaded.runtime.set_companion_world(index, position, angle);
+                let speed = follower.moved() as f32 / 4096.0 / crate::app::STEP;
+                loaded
+                    .runtime
+                    .set_companion_gait(index, Gait::from_speed(speed));
+            }
             loaded.runtime.step(camera)?;
         }
     }
