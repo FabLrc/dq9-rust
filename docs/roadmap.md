@@ -503,6 +503,12 @@ saving and loading.
 ## J5 — Progressing: **v0.3**
 
 - Title screen, character creation, loading/saving in DS format (J0); church Confession.
+  **Saving**: the format's writer edits every field the reader exposes (`dq9re save --set/--out`,
+  `v3-save-writer`), the game state binds to a normal slot and `--save-out` writes it from any run
+  (`v3-save-bind`), and melonDS loaded the written container and continued into Stornway — the DS
+  acceptance is proven once, not per field. Not written: the record's base attributes and current
+  HP/MP (derived at load). Remaining for the milestone: the in-game save/quick-save menu, the title
+  screen, character creation and Confession.
 - Menus beyond what chapter 2 needs: tactics, skills (overlays 2, 4, 5, 11, 13).
 - Facilities beyond Angel Falls: bank, other shops (overlay 3; wiki Inns-and-Churches,
   Items `shopdata1.bin`).
