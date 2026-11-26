@@ -29,12 +29,15 @@ struct Cli {
     /// Explicit map code (`M01`) or id (`1100`); overrides the map from `--save`.
     #[arg(long)]
     map: Option<String>,
-    /// DS save image; selects its current map when `--map` is absent.
+    /// DS save image: when `--map` is absent, the start resumes the slot a start-up reads
+    /// (`Save::resume_slot`: the normal adventure log, else the suspend save, at its warp
+    /// pose). Resuming a quick save deletes its log in the file, as the original does.
     #[arg(long)]
     save: Option<PathBuf>,
     /// Writes the session's state into the save's current normal slot and into this file
-    /// (needs `--save`, which is never modified): the whole container, sealed and mirrored
-    /// like the game's own normal save. What the state does not carry stays as it was.
+    /// (needs `--save`): the whole container, sealed and mirrored like the game's own normal
+    /// save. What the state does not carry stays as it was; `--save` itself is only written
+    /// by the game's own edits (a quick save, the deletion of a resumed one).
     #[arg(
         long,
         value_name = "FILE",
@@ -42,9 +45,9 @@ struct Cli {
     )]
     save_out: Option<PathBuf>,
     /// The field menu's Misc. → Quick Save writes the session's state into the save's
-    /// **suspend** slot (slot 1) and into this file (needs `--save`, which is never
-    /// modified); the normal slot stays as it was. Given once, it is the destination of the
-    /// in-play write, not a write at exit.
+    /// **suspend** slot (slot 1) and into this file (needs `--save`); the normal slot stays
+    /// as it was. Given once, it is the destination of the in-play write, not a write at
+    /// exit.
     #[arg(
         long,
         value_name = "FILE",
@@ -486,6 +489,11 @@ pub fn main() -> Result<()> {
         .as_ref()
         .map(|p| fs::read(p).with_context(|| format!("reading save {}", p.display())))
         .transpose()?;
+    if resumes_save_state(&cli)
+        && let Some(bytes) = &save
+    {
+        consume_suspend_log(&cli, bytes)?;
+    }
     if let Some(out) = &cli.screenshot {
         return screenshot(&cli, &rom, save.as_deref(), out);
     }
@@ -734,7 +742,8 @@ fn play_record(cli: &Cli, rom: Vec<u8>, save: Option<Vec<u8>>, path: &Path) -> R
 
 /// `--save-out`: the session's state into the file it names, at the end of any run that has
 /// an application to read it from (`--walk`, `--headless`, `--auto`, `--replay`,
-/// `--play-record`, the window). The input save is never modified.
+/// `--play-record`, the window). `--save` is only written by the game's own edits, the quick
+/// save and the deletion of a resumed one.
 fn write_save_out(cli: &Cli, app: &App) -> Result<()> {
     match &cli.save_out {
         Some(out) => app.write_save_out(out).map(|_| ()),
@@ -745,7 +754,8 @@ fn write_save_out(cli: &Cli, app: &App) -> Result<()> {
 /// `--save-out` updates the container of `--save`: without one there is nothing to update,
 /// and a fresh container's opaque blocks (quest log, monsters, grotto maps, zone) are not
 /// modelled, so writing them would zero real data. The same holds for `--suspend-out`, the
-/// Quick Save's destination. Either output must be another file: the input is never written.
+/// Quick Save's destination. Either output must be another file: `--save` is the cartridge a
+/// session reads, not a destination.
 fn require_input_save(cli: &Cli) -> Result<()> {
     for (option, out) in [
         ("--save-out", &cli.save_out),
@@ -762,8 +772,8 @@ fn require_input_save(cli: &Cli) -> Result<()> {
         };
         if same_file(input, out) {
             bail!(
-                "{option} must name another file than --save: the input save is never written \
-                 ({} is both)",
+                "{option} must name another file than --save: that file is the cartridge a \
+                 session reads, not a destination ({} is both)",
                 input.display()
             );
         }
@@ -785,6 +795,78 @@ fn same_file(a: &Path, b: &Path) -> bool {
         Some(fs::canonicalize(parent).ok()?.join(path.file_name()?))
     }
     normalized(a).is_some_and(|a| Some(a) == normalized(b))
+}
+
+/// Whether the run starts from the save's own state, so that the resume's deletion of the
+/// quick save log applies: an explicit map or battle stage overrides the save's map
+/// (`load::start`'s first branch), the events report reads no save, and a recorded run is
+/// checked against the save's hash before it replays, so it must see the container as it was
+/// recorded.
+fn resumes_save_state(cli: &Cli) -> bool {
+    cli.save.is_some()
+        && cli.map.is_none()
+        && cli.battle.is_none()
+        && cli.battle_stage.is_none()
+        && cli.events_report.is_none()
+        && cli.play_record.is_none()
+}
+
+/// The original deletes the quick save log when it resumes it: the title screen's quick-save
+/// entry calls `Save_WriteHeaderA` (`0x020aba6c`) on slot 1 once `Save_LoadSlot`
+/// (`0x020aaf94`) has read it and its header C has been written back (`ov_004::0216e490`),
+/// gated on the menu's confirmation byte (`*pcRam0216e5e0 == 1`, whose writer is not in the
+/// corpus); a step of its own clears the slot before the field starts
+/// (`ov_004::0216e414`); a new game clears both slots (`func_020abb74`). The menu's own
+/// message 58 says so ("When you restart your adventure, the quick save log will be deleted.").
+///
+/// The port has no title screen, so `--save` plays the cartridge: resuming an **intermission**
+/// slot clears that slot's header in the file, through a temporary file and a rename. The
+/// bytes the session was built from keep the log, as the game's `GameState` does. A slot the
+/// state cannot be built from keeps its log too: the original writes the header only after
+/// `Save_LoadSlot` has unpacked the slot.
+fn consume_suspend_log(cli: &Cli, save: &[u8]) -> Result<()> {
+    let Some(path) = &cli.save else {
+        return Ok(());
+    };
+    let mut image = dq9_formats::save::Save::parse(save)
+        .with_context(|| format!("parsing the save {}", path.display()))?;
+    let Some(resumed) = image.resume_slot() else {
+        return Ok(());
+    };
+    // The resumed slot is not necessarily slot 1: a normal save's mirror copy leaves slot 1
+    // `Valid`, and that is an adventure log, not a quick save the resume deletes.
+    let suspend = image
+        .slot(resumed)
+        .is_some_and(|slot| slot.status() == dq9_formats::save::SlotStatus::Intermission);
+    if !suspend || dq9_core::state::GameState::from_save(&image).is_err() {
+        return Ok(());
+    }
+    {
+        let mut slot = image
+            .slot_mut(resumed)
+            .context("the resumed slot is out of range")?;
+        slot.clear_header();
+        // A setter leaves the checksums stale: an image the game rejects is not a save.
+        slot.seal();
+    }
+    write_atomically(path, image.as_bytes())?;
+    eprintln!(
+        "resume: deleted the quick save log (slot {resumed} of {})",
+        path.display()
+    );
+    Ok(())
+}
+
+/// Writes `bytes` to `path` through a sibling temporary file and a rename: an interrupted
+/// write leaves the container as it was (`app/headless.rs::write_atomically`, which is private
+/// to its module).
+fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    let name = path.file_name().context("the path has no file name")?;
+    let mut temp = path.to_path_buf();
+    temp.set_file_name(format!("{}.tmp", name.to_string_lossy()));
+    fs::write(&temp, bytes).with_context(|| format!("writing {}", temp.display()))?;
+    fs::rename(&temp, path)
+        .with_context(|| format!("renaming {} to {}", temp.display(), path.display()))
 }
 
 /// What `--screenshot` prepared before rendering: the loaded map, the hero after the inputs,
@@ -1427,7 +1509,8 @@ mod tests {
         assert!(require_input_save(&cli).is_ok());
     }
 
-    /// The input save is never written: the same file under two spellings is refused.
+    /// `--save` is the cartridge a session reads, not a destination: the same file under two
+    /// spellings is refused.
     #[test]
     fn save_out_may_not_name_the_input_file() {
         let dir = std::env::temp_dir().join(format!("dq9-save-alias-{}", std::process::id()));
@@ -1448,7 +1531,7 @@ mod tests {
             ])
             .unwrap();
             let error = require_input_save(&cli).unwrap_err().to_string();
-            assert!(error.contains("never written"), "{error}");
+            assert!(error.contains("not a destination"), "{error}");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1468,7 +1551,135 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(error.contains("never written"), "{error}");
+        assert!(error.contains("not a destination"), "{error}");
+    }
+
+    /// The resume deletes the quick save log in the container (`Save_WriteHeaderA`, slot 1),
+    /// and only when the start actually read it: a normal log wins the resume and `--map`
+    /// never resumes the save's state.
+    #[test]
+    fn a_suspend_resume_deletes_the_log_in_the_container() {
+        use dq9_formats::save::{FILE_SIZE, MAGIC, SUSPEND_SLOT, SlotStatus};
+        let dir = std::env::temp_dir().join(format!("dq9-suspend-log-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("in.sav");
+
+        // A suspend-only container, as the field menu's Quick Save leaves one behind.
+        let mut bytes = vec![0; FILE_SIZE];
+        bytes[..MAGIC.len()].copy_from_slice(MAGIC);
+        let mut image = dq9_formats::save::Save::parse(&bytes).unwrap();
+        {
+            let mut slot = image.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_exists(true);
+            slot.set_intermission(true);
+            slot.set_warp(dq9_formats::save::Warp {
+                map: 1112,
+                angle: 4,
+                position: [4096, 8192, -4096],
+            });
+            slot.seal();
+        }
+        let suspend_only = image.as_bytes().to_vec();
+        std::fs::write(&path, &suspend_only).unwrap();
+        let cli = Cli::try_parse_from(["dq9-app", "--save", path.to_str().unwrap()]).unwrap();
+        assert!(resumes_save_state(&cli));
+        consume_suspend_log(&cli, &suspend_only).unwrap();
+        let read = std::fs::read(&path).unwrap();
+        let written = dq9_formats::save::Save::parse(&read).unwrap();
+        assert_eq!(
+            written.slot(SUSPEND_SLOT).unwrap().status(),
+            SlotStatus::Empty
+        );
+        assert_eq!(written.resume_slot(), None);
+        assert!(
+            !dir.join("in.sav.tmp").exists(),
+            "no temporary file is left"
+        );
+
+        // A normal adventure log wins the resume: the suspend save stays in the file.
+        let mut both = dq9_formats::save::Save::parse(&suspend_only).unwrap();
+        {
+            let mut slot = both.slot_mut(0).unwrap();
+            slot.set_exists(true);
+            slot.seal();
+        }
+        let both = both.as_bytes().to_vec();
+        std::fs::write(&path, &both).unwrap();
+        consume_suspend_log(&cli, &both).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), both);
+
+        // `--map` ignores the save's state, so nothing is deleted; the events report reads
+        // none either.
+        let mapped =
+            Cli::try_parse_from(["dq9-app", "--save", path.to_str().unwrap(), "--map", "M01"])
+                .unwrap();
+        assert!(!resumes_save_state(&mapped));
+        let reported = Cli::try_parse_from([
+            "dq9-app",
+            "--save",
+            path.to_str().unwrap(),
+            "--events-report",
+            "1.1-3",
+        ])
+        .unwrap();
+        assert!(!resumes_save_state(&reported));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Two containers whose resumed slot is slot 1 but is **not** a quick save the resume may
+    /// delete: a normal save's mirror copy (slot 0 empty, slot 1 `Valid` — `current_slot`
+    /// takes it), and an intermission slot whose state cannot be built (five party members,
+    /// which `Save_LoadSlot` unpacking would fail on, `Party::from_slot`). Both keep their
+    /// bytes.
+    #[test]
+    fn a_resume_that_is_not_a_readable_quick_save_keeps_the_slot() {
+        use dq9_formats::save::{FILE_SIZE, MAGIC, SUSPEND_SLOT};
+        let dir = std::env::temp_dir().join(format!("dq9-suspend-keep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("in.sav");
+        let cli = Cli::try_parse_from(["dq9-app", "--save", path.to_str().unwrap()]).unwrap();
+        let mut bytes = vec![0; FILE_SIZE];
+        bytes[..MAGIC.len()].copy_from_slice(MAGIC);
+
+        // A normal save's mirror: slot 0 empty, slot 1 `Valid`.
+        let mut mirror = dq9_formats::save::Save::parse(&bytes).unwrap();
+        {
+            let mut slot = mirror.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_exists(true);
+            slot.seal();
+        }
+        let mirror = mirror.as_bytes().to_vec();
+        assert_eq!(
+            dq9_formats::save::Save::parse(&mirror)
+                .unwrap()
+                .resume_slot(),
+            Some(SUSPEND_SLOT),
+            "the Valid mirror is the resume point"
+        );
+        std::fs::write(&path, &mirror).unwrap();
+        consume_suspend_log(&cli, &mirror).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), mirror);
+
+        // An intermission slot the state cannot be built from: five party members.
+        let mut broken = dq9_formats::save::Save::parse(&bytes).unwrap();
+        {
+            let mut slot = broken.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_exists(true);
+            slot.set_intermission(true);
+            slot.set_party_count(5);
+            slot.seal();
+        }
+        let broken = broken.as_bytes().to_vec();
+        assert!(
+            dq9_core::state::GameState::from_save(
+                &dq9_formats::save::Save::parse(&broken).unwrap()
+            )
+            .is_err()
+        );
+        std::fs::write(&path, &broken).unwrap();
+        consume_suspend_log(&cli, &broken).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), broken);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

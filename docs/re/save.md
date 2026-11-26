@@ -64,10 +64,11 @@ to the other slot in this function.
 A normal save therefore writes **two identical copies** (slot 0 then 1), which
 explains the demo (slot 1 = copy of 0). The header's intermission byte is only 1
 in the copy written by a suspend save; only `Save_SlotStatus` reads it.
-`Save::current_slot` takes the first slot with a valid status (0 before 1). The only caller
-that passes `intermission` 1 — `Save_WriteStep`'s fourth argument — is the field menu's
-Quick Save (`ov_002::02169efc`, § "The suspend slot"); the church's Confession
-(`ov_003::02159d0c`) passes 0.
+`Save::current_slot` takes the first slot with a valid status (0 before 1); the slot a
+start-up resumes is [`Save::resume_slot`] — the same, else the suspend save (§ "The suspend
+slot"). The only caller that passes `intermission` 1 — `Save_WriteStep`'s fourth argument — is
+the field menu's Quick Save (`ov_002::02169efc`, § "The suspend slot"); the church's
+Confession (`ov_003::02159d0c`) passes 0.
 
 ## Serialization (`Save_Serialize`, `0x020a9ec8`)
 
@@ -221,8 +222,52 @@ stands the party at `Save_Warp+0x10` with the angle `+0x1c` instead of the map's
 title screen the quick save is its own entry: `str_op` 38 "Load quick save data.", 57/58
 "Your adventure will begin from the quick save location" / "When you restart your adventure,
 the quick save log will be deleted.", 60/61 the confirmation and 82/92 the corrupted-log
-refusal. **[hypothesis]** the deletion is the next normal save overwriting slot 0 (or a
-clearing write of slot 1); the function that clears it was not read.
+refusal.
+
+**Which slot a start-up takes.** `Save_LoadSlot` (`0x020aaf94`) decides nothing by itself:
+its **only selector is the intermission argument** — its second argument is 0 in every caller
+and unused in the body — which picks slot 1 (header `0x8010`, blocks `0x8084`, the `Warp` and
+`Suspend` blocks unpacked) or slot 0 (`0x84`). The title screen chooses the value:
+
+| Entry | Function | Call | Boot |
+|---|---|---|---|
+| Continue | `ov_004::0216d504` | `Save_LoadSlot(buf, 0, 0, 0)` | `GameState+4` stays 0 |
+| Load quick save data | `ov_004::0216e490` | `Save_LoadSlot(buf, 0, 1, 0)` | sets `GameState+4` to 5 |
+
+`+4` (`func_0200fb9c` reader, `func_0200fb94` writer) is what the field's entry
+(`ov_017::0218b688`) switches on: 5 → `Save_LoadSlot(buf, 0, 1, 0)`, 0 →
+`Save_LoadSlot(buf, 0, 0, 0)`. The Continue handler's setter call lost its argument in the
+decompilation; it is 0, the field branch that loads slot 0. The adventure log the title
+screen displays for Continue is read by `func_020ab5d4` (`0x020ab5e4`), which loads slot 0
+with intermission 0 and then its header C (`Save_ReadHeaderC`, `0x020ac874`): Continue needs
+all three checksums, the quick save checks the same three.
+
+The title screen's slot check (`ov_004::0216dad0`) reads `Save_SlotStatus` of both slots and
+sets its entry code: **4** (intermission) on slot 1 first — entry code 0, the quick save, and
+it only records whether slot 0 is empty (`*puVar1 = 1` when slot 0 is status 3) —, then 1
+(unreadable) → 6, 2 on slot 1 → 7, 2 on slot 0 → 4, 0 (valid) on slot 0 → 1 (Continue, the
+adventure log it reads for the display), 3 (empty) → 2 (new game). A present suspend save
+therefore ranks **above** a normal one in this check; the function that consumes the code and
+builds the menu is not in the decompilation corpus, so what the menu does with both flags is
+**[unknown]**.
+
+Erasing is the other half: a new game writes an empty header A into **both** slots and clears
+their header C (`func_020abb74`).
+
+**The deletion.** `Save_WriteHeaderA` (`0x020aba6c`) writes an empty header A: the 0x14 bytes
+at `slot+0x10` zeroed (CRC A, intermission, exists, day timer) and the version string kept —
+`Save_SlotStatus` then reads the slot as 3 (empty), and the blocks stay. The quick-save
+handler calls it on slot 1 **after** a good `Save_LoadSlot` (intermission 1) and the header C
+write-back, gated on the menu's confirmation byte (`*pcRam0216e5e0 == 1`, whose writer is not
+in the corpus; `ov_004::0216e490`, message 58 above), and a separate title step does the same
+unconditionally (`ov_004::0216e414`, message `0xd4` when the write fails). So the log is
+deleted **at the resume**, not by the next normal save (which does overwrite slot 1 as the
+mirror copy). `SlotMut::clear_header` is that write; `Slot::status` then answers `Empty`.
+
+Careful with slot 1: on a cartridge that has only seen normal saves it holds the **mirror
+copy** of slot 0 (`Save_WriteStep` state 2), a `Valid` adventure log — `Save::current_slot`
+takes it when slot 0 is empty or unreadable, and it is not a quick save to delete
+(`resume_slot`'s suspend branch requires the intermission header).
 
 **In the port.** `dq9_core::state::GameState::write_suspend(&mut SlotMut, HeroPose)` is the
 writer: the modelled state at the offsets `write_into` uses (`Main`'s own map word included),
@@ -235,6 +280,19 @@ Quick Save as the only one with a handler (the others draw greyed, their descrip
 footer), asks 4700, and writes into `--suspend-out`, or into the `--save` container itself
 when that option is absent — the way the DS writes its own cartridge.
 
+The reader is `Save::resume_slot` (`dq9-formats`): the normal log ([`Save::current_slot`])
+when the container has one, else the slot whose header says intermission with its three
+checksums (slot 1 in a save the game wrote); `GameState::from_save` builds the state from that
+slot, so a suspend save gives its warp map, its `Warp` pose ([`Placement::At`]), story, party,
+gold and clock. The port has no title menu and folds the two entries into one start-up, so it
+takes the Continue slot **first** where the title screen ranks the quick save first — a
+normal+suspend container resumes the older normal log. `--save` is the cartridge, so a resume
+from an intermission slot deletes that log in the file (`SlotMut::clear_header` + `seal`,
+temporary file and rename, `native::main`'s `consume_suspend_log`), but only once
+`GameState::from_save` has read the slot, as the original writes the header after
+`Save_LoadSlot` unpacked it; the Web page keeps its uploaded bytes, having no file. A recorded
+run (`--play-record`) does not delete it: it checks the container's hash before replaying.
+
 Not modelled: the `Suspend` block's payload (the port keeps the input slot 1's bytes, which
 on a mirrored cartridge are a normal save's list — the original's is the field's own state),
 the `Warp` block's extra fields `+0x10..+0x1b` (they keep the input's bytes), the jingle and
@@ -243,7 +301,10 @@ field goes on. **DS acceptance of the suspend slot is not attempted**: the writt
 the right header, checksums, state and `Warp` block (`build/evidence/v3-suspend-save/reload.txt`,
 its `Suspend` block kept from the input), but whether the cartridge's title screen offers the
 quick save and resumes at that position is **[hypothesis]** — melonDS was not driven through
-its title menu for this batch.
+its title menu for this batch. The port's own start-up is checked instead: a suspend-only
+container resumes at the written pose with slot 1's gold and story, a normal+suspend container
+at the normal slot's map start with slot 0's gold, and the resumed log is deleted
+(`build/evidence/v3-suspend-resume/`).
 
 ## Clock and time of day
 

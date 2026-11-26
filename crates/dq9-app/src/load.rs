@@ -34,12 +34,13 @@ pub struct Start {
     pub identity: Option<HeroIdentity>,
 }
 
-/// The appearance and message identity of the hero in the current slot of `save`: the first
-/// character of the party (`standby_count`). The name is glyph indices at `+0x140` (320) and
+/// The appearance and message identity of the hero in the slot a start-up resumes
+/// (`Save::resume_slot`: the normal log, else the suspend save): the first character of the
+/// party (`standby_count`). The name is glyph indices at `+0x140` (320) and
 /// `+0x174` (372) bit 0 says the sex (0 man, 1 woman, `docs/re/characters.md`; the demo save
 /// decodes to "Adenine").
 fn saved_hero(save: &Save) -> Option<(HeroLook, HeroIdentity)> {
-    let slot = save.slot(save.current_slot()?)?;
+    let slot = save.slot(save.resume_slot()?)?;
     let hero = slot.character(usize::from(slot.standby_count()))?;
     let identity = HeroIdentity {
         name: hero.name_raw().try_into().ok()?,
@@ -48,14 +49,15 @@ fn saved_hero(save: &Save) -> Option<(HeroLook, HeroIdentity)> {
     Some((HeroLook::from_character(&hero), identity))
 }
 
-/// The party of a save's current slot, when it parses.
+/// The party of the slot a start-up resumes, when it parses.
 fn saved_party(save: &Save) -> Option<dq9_core::party::Party> {
-    let slot = save.current_slot().and_then(|i| save.slot(i))?;
+    let slot = save.resume_slot().and_then(|i| save.slot(i))?;
     dq9_core::party::Party::from_slot(&slot).ok()
 }
 
 /// Chooses an explicit map (the save is then ignored: its position belongs to its own map),
-/// otherwise the first valid normal slot of the save, then the prologue map.
+/// otherwise the slot a start-up resumes (`Save::resume_slot`: the normal adventure log, else
+/// the suspend save), then the prologue map.
 pub fn start(map: Option<&str>, save: Option<&[u8]>) -> Result<Start> {
     if let Some(map) = map {
         // An explicit map is permissive: a save it cannot read leaves the default hero.
@@ -206,6 +208,52 @@ mod tests {
         let start = start(None, None).unwrap();
         assert_eq!(start.map, "M01");
         assert!(start.state.is_none());
+    }
+
+    /// A slot set as an intermission (suspend) save whose `Warp` block carries `map` and
+    /// `pose` (`Save_Serialize`'s write side, `docs/re/save.md` § "The suspend slot").
+    fn suspend_slot(slot: usize, map: u16, pose: dq9_core::state::HeroPose) -> Vec<u8> {
+        let mut bytes = vec![0; FILE_SIZE];
+        bytes[..MAGIC.len()].copy_from_slice(MAGIC);
+        let mut save = Save::parse(&bytes).unwrap();
+        {
+            let mut slot = save.slot_mut(slot).unwrap();
+            slot.set_exists(true);
+            slot.set_intermission(true);
+            slot.set_warp(dq9_formats::save::Warp {
+                map,
+                angle: pose.angle,
+                position: pose.position,
+            });
+            slot.seal();
+        }
+        save.as_bytes().to_vec()
+    }
+
+    /// A suspend-only container starts on the `Warp` block's map at its written pose, and its
+    /// own hero names the message window; the normal log still wins when both slots hold a
+    /// save (the original's title menu ranks the quick save first, `re/save.md`).
+    #[test]
+    fn a_suspend_only_container_starts_at_its_warp_and_a_normal_slot_wins() {
+        use dq9_core::state::Placement;
+        let pose = dq9_core::state::HeroPose {
+            position: [4096, 8192, -4096],
+            angle: 12_866,
+        };
+        let suspend = suspend_slot(1, 1112, pose);
+        let resumed = start(None, Some(&suspend)).unwrap();
+        assert_eq!(resumed.map, "1112");
+        let state = resumed.state.unwrap();
+        assert_eq!(state.map, 1112);
+        assert_eq!(state.placement, Placement::At(pose));
+
+        // Both slots: the normal adventure log's map and start point, not the suspend pose.
+        let mut both = save_with_area(109);
+        let suspend = Save::parse(&suspend_slot(1, 1112, pose)).unwrap();
+        both[SLOT_SIZE..].copy_from_slice(&suspend.as_bytes()[SLOT_SIZE..]);
+        let resumed = start(None, Some(&both)).unwrap();
+        assert_eq!(resumed.map, "109");
+        assert_eq!(resumed.state.unwrap().placement, Placement::MapStart);
     }
 
     #[test]

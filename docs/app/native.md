@@ -71,17 +71,26 @@ within the area it occupies (`screens.rs`).
 
 `--map`: code (`M01`, `C01M09`) or id (`1100`) from the map list; it takes precedence over the
 map read from `--save`. Without either option, the map stays `M01`. `--save` reads a
-local `.sav` and selects the map of the first valid normal slot; no data is sent
-over the network. The hero starts at the position and heading the game gives after "Continue" (the
-map's start point, `re/save.md` § "Position on resume"), placed on the ground; the
-`--screenshot` output prints this pose (`hero: …`) and centers the camera on it.
+local `.sav` and resumes the slot a start-up takes (`Save::resume_slot`): the first valid
+**normal** slot, else the save's **suspend** slot (the Quick Save's, slot 1) when its header
+says intermission and its checksums hold. A suspend resume starts on the `Warp` block's map,
+at the position and heading the Quick Save wrote, with that slot's story, party, gold and
+clock; no data is sent over the network. A run that resumes the suspend slot **deletes that
+log** in the file, as the original's title screen does when it loads a quick save
+(`Save_WriteHeaderA`, `re/save.md` § "The suspend slot"; temporary file and rename, and a
+`resume: deleted the quick save log` line on stderr). A recorded run (`--play-record`) leaves
+`it, since it checks the container's hash before replaying. With a normal slot the hero starts
+at the position and heading the game gives after "Continue" (the map's start point, `re/save.md`
+§ "Position on resume"), placed on the ground; the `--screenshot` output prints this pose
+(`hero: …`) and centers the camera on it.
 
 `--save-out <file>` (needs `--save <file>`) writes the session's state into the save's current
 normal slot at the end of any run with an application (`--headless-steps`, `--auto`, `--replay`,
 `--walk`, `--play-record`, the window): the whole container goes through a temp file and a rename,
-the input is never modified, and the option refuses to run without an input save or with an output
-naming the input. What the state does not model (the record's base attributes, current HP/MP, the
-opaque blocks) stays byte for byte; the written container is one melonDS loads and continues from
+and the option refuses to run without an input save or with an output naming the input. `--save`
+is only written by the game's own edits, the Quick Save and the deletion of a resumed log
+(above). What the state does not model (the record's base attributes, current HP/MP, the opaque
+blocks) stays byte for byte; the written container is one melonDS loads and continues from
 (`re/save.md`, § "Writing a session"; evidence `build/evidence/v3-save-bind/`).
 
 `--suspend-out <file>` (needs `--save <file>`) names the destination of the field menu's **Misc.
@@ -91,10 +100,9 @@ sealed and written through a temporary file and a rename. Slot 0 is never writte
 normal adventure log the next "Continue" reads stays as it was. The destination is the `--save`
 container **itself** when the option is absent, the way the DS writes its own cartridge; without
 `--save` the entry says it has no file and writes nothing. It is a destination, not an
-end-of-run write: nothing happens unless the entry is answered "Yes". Resuming it is the ROM
-reader's rule (`GameState::from_slot` of slot 1 gives the saved map, story, party, gold and the
-`Warp` pose); `--save` itself still resumes the first valid **normal** slot, so a quick save is
-not yet a start-up path (`re/save.md`, § "The suspend slot").
+end-of-run write: nothing happens unless the entry is answered "Yes". What it writes is also a
+start-up path: the next `--save` on that container resumes it when no normal slot is valid
+(`--save` above, `re/save.md` § "The suspend slot").
 
 `--time`: time of
 day `night`, `morning`, `day`, `evening` or 0 to 3 (`LightingManager+0x98`: selection of

@@ -31,6 +31,10 @@ pub const MAGIC: &[u8; 15] = b"DRAGON QUEST IX";
 const INTERMISSION_FLAG: usize = 20;
 const EXISTS_FLAG: usize = 21;
 const VERSION: usize = 24;
+/// Header A: CRC (4 bytes) then the 0x10 bytes it covers, at `slot+0x10`
+/// (`Save_WriteHeaderA`, `0x020aba6c`).
+const HEADER_A: usize = 16;
+const HEADER_A_LEN: usize = 0x14;
 /// Chapter, step and substep words, then flag data (`Save_Serialize`, block `0x2d30`).
 const PROGRESS: usize = 11568;
 /// Event block: `PROGRESS + 16`, 0x334 bytes (`Save_Serialize`, `func_020a99d0`).
@@ -376,14 +380,39 @@ impl Save {
         self.data[..MAGIC.len()] == MAGIC[..] && self.data[MAGIC.len()] == 0
     }
 
-    /// First slot whose header says [`SlotStatus::Valid`] and whose three checksums hold.
-    ///
-    /// **[hypothesis]** this is the slot a normal load takes; which slot the game loads is
-    /// decided by its callers (`Save_LoadSlot` takes the slot as an argument).
+    /// First slot whose header says [`SlotStatus::Valid`] and whose three checksums hold:
+    /// the normal adventure log. It is the slot the title screen's Continue reads
+    /// (`ov_004::0216d504` passes 0, and 0 for the intermission flag, to `Save_LoadSlot`).
     pub fn current_slot(&self) -> Option<usize> {
         (0..SLOT_COUNT).find(|&i| {
             self.slot(i)
                 .is_some_and(|s| s.status() == SlotStatus::Valid && s.checksums_valid())
+        })
+    }
+
+    /// The slot a start-up resumes: the normal log ([`Save::current_slot`]) when the container
+    /// has one, else the suspend save — [`SUSPEND_SLOT`], when its header says
+    /// [`SlotStatus::Intermission`] and its three checksums hold.
+    ///
+    /// `Save_LoadSlot` (`0x020aaf94`) decides nothing: its only selector is the `intermission`
+    /// argument (its second argument is 0 in every caller and unused in the body), which picks
+    /// slot 1 (header `0x8010`, blocks `0x8084`) or slot 0 (`0x84`). Its callers are the title
+    /// screen's Continue (`ov_004::0216d504`: intermission 0) and its quick-save entry
+    /// (`ov_004::0216e490`: intermission 1). The port has no title menu and folds the two
+    /// entries into one start-up, so the Continue slot wins and the suspend save is the
+    /// fallback; the title screen itself ranks a present suspend save first
+    /// (`docs/re/save.md`, § "The suspend slot").
+    ///
+    /// Note that slot 1 is `Valid` on a cartridge that has only seen normal saves: it holds the
+    /// mirror copy of slot 0, an adventure log, and [`Save::current_slot`] may take it when
+    /// slot 0 is empty or unreadable (`Save_WriteStep` state 2 writes it, `0x020aad2c`).
+    pub fn resume_slot(&self) -> Option<usize> {
+        self.current_slot().or_else(|| {
+            (0..SLOT_COUNT).find(|&index| {
+                self.slot(index).is_some_and(|slot| {
+                    slot.status() == SlotStatus::Intermission && slot.checksums_valid()
+                })
+            })
         })
     }
 
@@ -452,7 +481,10 @@ impl<'a> Slot<'a> {
     }
 
     /// Mirrors `Save_SlotStatus` (`0x020ab9d0`) on the header, minus its I/O and the
-    /// held-key test: header CRC, then the empty flag, then the intermission flag.
+    /// held-key test: header CRC, then the empty flag, then the intermission flag. The two
+    /// flags are read as booleans here (`exists` = byte 21 bit 0, `is_intermission` = byte 20
+    /// non-zero) where the game compares them to 0 and 1 exactly; a save it writes only holds
+    /// those two values.
     pub fn status(&self) -> SlotStatus {
         let crc = crc32fast::hash(&self.0[Checksum::A.range()]);
         if crc != u32_at(self.0, Checksum::A.stored_at()) {
@@ -785,6 +817,24 @@ impl SlotMut<'_> {
     pub fn set_intermission(&mut self, intermission: bool) -> Range<usize> {
         self.0[INTERMISSION_FLAG] = u8::from(intermission);
         INTERMISSION_FLAG..INTERMISSION_FLAG + 1
+    }
+
+    /// Writes an empty header A, as `Save_WriteHeaderA` (`0x020aba6c`) does: the 0x14 bytes at
+    /// `slot+0x10` are zeroed (CRC A, the two flags, the day timer) and the version string is
+    /// kept. [`Save_SlotStatus`](Slot::status) then reads the slot as [`SlotStatus::Empty`];
+    /// the blocks, header C and their checksums stay as they were.
+    ///
+    /// That is the original's deletion of the quick save log: the title screen's quick-save
+    /// entry clears slot 1 once `Save_LoadSlot` (`0x020aaf94`) has read it
+    /// (`ov_004::0216e490`), a second step only clears it (`ov_004::0216e414`), and a new game
+    /// clears both slots (`func_020abb74`). Like every setter it leaves CRC A stale until
+    /// [`SlotMut::seal`].
+    pub fn clear_header(&mut self) -> Range<usize> {
+        let mut version = [0u8; 8];
+        version.copy_from_slice(&self.0[VERSION..VERSION + 8]);
+        self.0[HEADER_A..HEADER_A + HEADER_A_LEN].fill(0);
+        self.0[VERSION..VERSION + 8].copy_from_slice(&version);
+        HEADER_A..HEADER_A + HEADER_A_LEN
     }
 
     /// Byte 21 of the header (`slot+0x15`), read back by [`Slot::exists`].
@@ -1431,6 +1481,85 @@ mod tests {
         save.slot_mut(0).unwrap().seal();
         assert_eq!(save.slot(0).unwrap().status(), SlotStatus::Intermission);
         assert_eq!(save.current_slot(), None);
+    }
+
+    /// A start-up with no title menu resumes the normal log, else the suspend save; the
+    /// suspend fallback needs an intermission header with all three checksums.
+    #[test]
+    fn a_resume_takes_the_normal_slot_then_the_suspend_one() {
+        let mut save = Save::parse(&blank()).unwrap();
+        assert_eq!(save.resume_slot(), Some(0), "the normal log");
+
+        {
+            let mut slot = save.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_intermission(true);
+            slot.set_exists(true);
+            slot.seal();
+        }
+        assert_eq!(
+            save.slot(SUSPEND_SLOT).unwrap().status(),
+            SlotStatus::Intermission
+        );
+        assert_eq!(save.resume_slot(), Some(0), "a normal log outranks it");
+
+        // Empty normal slot: the suspend save is the fallback.
+        {
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.set_exists(false);
+            slot.seal();
+        }
+        assert_eq!(save.current_slot(), None);
+        assert_eq!(save.resume_slot(), Some(SUSPEND_SLOT));
+
+        // A stale checksum makes it no resume point at all, as `Save_LoadSlot`'s CRC B test
+        // rejects it.
+        save.slot_mut(SUSPEND_SLOT).unwrap().set_day_timer(1.0);
+        assert_eq!(save.resume_slot(), None);
+    }
+
+    /// The deletion of the quick save log (`Save_WriteHeaderA`, `0x020aba6c`): header A is
+    /// zeroed with the version kept, so `Save_SlotStatus` reads the slot as empty and
+    /// everything from header C on is untouched.
+    #[test]
+    fn clearing_a_header_empties_the_slot_and_keeps_its_blocks() {
+        let mut save = Save::parse(&blank()).unwrap();
+        {
+            // A suspend-only container: no normal log, so the suspend save is the resume.
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.set_exists(false);
+            slot.seal();
+        }
+        {
+            let mut slot = save.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_intermission(true);
+            slot.set_exists(true);
+            slot.set_day_timer(100.0);
+            slot.set_gold_on_hand(77);
+            slot.seal();
+        }
+        assert_eq!(save.resume_slot(), Some(SUSPEND_SLOT), "slot 0 is empty");
+        let before = save.slot(SUSPEND_SLOT).unwrap();
+        let version = before.version().to_vec();
+        let from_header_c = before.bytes()[HEADER_A + HEADER_A_LEN..].to_vec();
+        let ranges = {
+            let mut slot = save.slot_mut(SUSPEND_SLOT).unwrap();
+            let ranges = slot.clear_header();
+            slot.seal();
+            ranges
+        };
+        assert_eq!(ranges, HEADER_A..HEADER_A + HEADER_A_LEN);
+        let after = save.slot(SUSPEND_SLOT).unwrap();
+        assert_eq!(after.status(), SlotStatus::Empty);
+        assert!(!after.exists() && !after.is_intermission());
+        assert_eq!(after.day_timer(), 0.0, "the 0x10 covered bytes are zeroed");
+        assert_eq!(after.version(), &version[..], "the version string stays");
+        assert_eq!(
+            &after.bytes()[HEADER_A + HEADER_A_LEN..],
+            &from_header_c[..]
+        );
+        assert!(after.checksums_valid(), "the sealed header A recomputes");
+        assert_eq!(after.gold_on_hand(), 77, "the blocks keep their bytes");
+        assert_eq!(save.resume_slot(), None);
     }
 
     #[test]

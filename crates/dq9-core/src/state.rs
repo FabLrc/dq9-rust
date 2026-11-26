@@ -272,7 +272,7 @@ pub enum Placement {
 /// Why no state could be built from a save.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateError {
-    /// Neither slot is a valid normal save.
+    /// Neither slot is a valid normal save nor a readable suspend save.
     NoValidSlot,
     /// The slot's event block is not a whole block (cannot happen on a parsed save).
     BadEventBlock,
@@ -284,7 +284,7 @@ pub enum StateError {
 impl core::fmt::Display for StateError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
-            Self::NoValidSlot => "the save has no valid normal slot",
+            Self::NoValidSlot => "the save has no valid normal or suspend slot",
             Self::BadEventBlock => "the save's event block has the wrong size",
             Self::BadParty => "the save's party block is inconsistent",
         })
@@ -327,10 +327,12 @@ impl GameState {
         }
     }
 
-    /// The state of the first valid normal slot (`Save::current_slot`).
+    /// The state of the slot a start-up resumes ([`Save::resume_slot`]): the normal adventure
+    /// log when the container has one, else the **suspend** save, whose `Warp` block then puts
+    /// the party at the pose it was written with ([`Placement::At`]).
     pub fn from_save(save: &Save) -> Result<Self, StateError> {
         let slot = save
-            .current_slot()
+            .resume_slot()
             .and_then(|i| save.slot(i))
             .ok_or(StateError::NoValidSlot)?;
         Self::from_slot(&slot)
@@ -975,6 +977,82 @@ mod tests {
             })
         );
         assert_eq!(GameState::from_slot(&slot).unwrap().map, 1112);
+    }
+
+    /// A container with no normal slot resumes its **suspend** save at the `Warp` pose
+    /// (`Save_UnpackWarp` `0x020a9d88` + `Party_Place` `ov_017::0219c598`), and deleting the
+    /// log (`Save_WriteHeaderA(1)`, `0x020aba6c`) leaves nothing to resume.
+    #[test]
+    fn a_suspend_save_resumes_when_no_normal_slot_exists() {
+        use dq9_formats::save::{SUSPEND_SLOT, SlotStatus};
+        let bytes = played_save();
+        let base = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let pose = HeroPose {
+            position: [4096, 8192, -4096],
+            angle: 12_866,
+        };
+        let mut written = Save::parse(&bytes).unwrap();
+        {
+            let mut slot = written.slot_mut(SUSPEND_SLOT).unwrap();
+            base.write_suspend(&mut slot, pose).unwrap();
+            slot.seal();
+        }
+        {
+            // The container the original's quick save leaves behind when slot 0 has no log.
+            let mut slot = written.slot_mut(0).unwrap();
+            slot.set_exists(false);
+            slot.seal();
+        }
+        assert_eq!(written.current_slot(), None);
+        assert_eq!(written.resume_slot(), Some(SUSPEND_SLOT));
+        let resumed = GameState::from_save(&written).unwrap();
+        assert_eq!(resumed.map, base.map);
+        assert_eq!(resumed.placement, Placement::At(pose));
+        assert_eq!(resumed.hero_pose(StartPoint::default()), pose);
+        assert_eq!(resumed.scenario, base.scenario);
+        assert_eq!(resumed.party, base.party);
+        assert_eq!(resumed.party.gold, 38_754);
+        assert_eq!(resumed.clock.seconds(), base.clock.seconds());
+        assert_eq!(resumed.events().as_bytes(), base.events().as_bytes());
+
+        // The resume deletes the log: the slot reads as empty and the container is spent.
+        {
+            let mut slot = written.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.clear_header();
+            slot.seal();
+        }
+        assert_eq!(
+            written.slot(SUSPEND_SLOT).unwrap().status(),
+            SlotStatus::Empty
+        );
+        assert_eq!(written.resume_slot(), None);
+        assert_eq!(GameState::from_save(&written), Err(StateError::NoValidSlot));
+    }
+
+    /// Both slots hold a save: the normal adventure log wins, with the map's start point and
+    /// not the suspend save's pose (the port's rule, `docs/re/save.md` § "The suspend slot").
+    #[test]
+    fn a_normal_slot_wins_over_a_suspend_save() {
+        use dq9_formats::save::SUSPEND_SLOT;
+        let bytes = played_save();
+        let base = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let mut suspend = base.clone();
+        suspend.map = base.map + 3;
+        let pose = HeroPose {
+            position: [1, 2, 3],
+            angle: 4,
+        };
+        let mut written = Save::parse(&bytes).unwrap();
+        {
+            let mut slot = written.slot_mut(SUSPEND_SLOT).unwrap();
+            suspend.write_suspend(&mut slot, pose).unwrap();
+            slot.seal();
+        }
+        assert_eq!(written.resume_slot(), Some(0));
+        let resumed = GameState::from_save(&written).unwrap();
+        assert_eq!(resumed.map, base.map);
+        assert_eq!(resumed.placement, Placement::MapStart);
+        assert!(!resumed.events().as_bytes().is_empty());
     }
 
     #[test]
