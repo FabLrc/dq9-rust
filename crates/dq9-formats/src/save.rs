@@ -429,6 +429,39 @@ impl Save {
         self.data.copy_within(16..16 + MIRROR_LEN, SLOT_SIZE + 16);
         true
     }
+
+    /// Prepares the image a **normal** save serializes into and returns the slot it writes,
+    /// as `Save_WriteStep` (`0x020aad2c`) does before `Save_Serialize` (`0x020a9ec8`).
+    ///
+    /// State 0 loads slot 1's bytes (`0x8000`, `0x6fe4` bytes) into the buffer that states 1
+    /// and 2 write back from `+0x10` to slot 0's `0x10` and slot 1's `0x8010`; every block
+    /// serialization does not rewrite therefore keeps slot 1's bytes. A container that has
+    /// an adventure log keeps today's target, [`Save::current_slot`]: the write starts from
+    /// that slot's own bytes (states 1/2 then mirror them). A container that has **only** a
+    /// suspend save — a Quick Save resumed before any Confession — has no log, and the
+    /// original's normal save writes slot 0 whatever the slots hold (state 1's literal
+    /// destination `0x10`): slot 0 is seeded from slot 1's image, so the new log carries the
+    /// suspend slot's opaque blocks (quest log, monsters, grotto maps, zone), which are that
+    /// same live state, and slot 1 becomes the mirror copy afterwards.
+    ///
+    /// `None` when there is neither an adventure log nor a sealed intermission slot to take
+    /// the opaque blocks from: a fresh container's blocks are not modelled.
+    pub fn prepare_normal_write(&mut self) -> Option<usize> {
+        if let Some(index) = self.current_slot() {
+            return Some(index);
+        }
+        let seedable = self.slot(SUSPEND_SLOT).is_some_and(|slot| {
+            slot.status() == SlotStatus::Intermission && slot.checksums_valid()
+        });
+        if !seedable {
+            return None;
+        }
+        // State 0's read at `0x8000` and state 1's write from `+0x10` to `0x10`: the two
+        // images are aligned from header A on, and a slot's first 16 bytes are never written.
+        self.data
+            .copy_within(SLOT_SIZE + 16..SLOT_SIZE + 16 + MIRROR_LEN, 16);
+        Some(0)
+    }
 }
 
 /// Read-only view of one 32 KiB slot.
@@ -1560,6 +1593,73 @@ mod tests {
         assert!(after.checksums_valid(), "the sealed header A recomputes");
         assert_eq!(after.gold_on_hand(), 77, "the blocks keep their bytes");
         assert_eq!(save.resume_slot(), None);
+    }
+
+    /// A normal save into a container that has only a suspend save: `Save_WriteStep`
+    /// (`0x020aad2c`) state 0 loads slot 1's image into the buffer and state 1 writes it at
+    /// slot 0's `0x10`, so the new log inherits slot 1's opaque blocks (here the bank and the
+    /// medals, which `write_into` does not carry). Both slots' first 16 bytes stay put.
+    #[test]
+    fn a_normal_write_seeds_an_empty_slot_from_the_suspend_image() {
+        let mut save = Save::parse(&blank()).unwrap();
+        {
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.set_exists(false);
+            slot.seal();
+        }
+        {
+            let mut slot = save.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_intermission(true);
+            slot.set_exists(true);
+            slot.set_gold_in_bank(777);
+            slot.set_mini_medals(12);
+            slot.seal();
+        }
+        let first16 = save.slot(0).unwrap().bytes()[..16].to_vec();
+        assert_eq!(save.current_slot(), None);
+        assert_eq!(save.prepare_normal_write(), Some(0));
+        {
+            let slot = save.slot(0).unwrap();
+            assert_eq!(slot.status(), SlotStatus::Intermission, "slot 1's header");
+            assert_eq!(slot.gold_in_bank(), 777, "the opaque block was seeded");
+            assert_eq!(slot.mini_medals(), 12);
+            assert_eq!(&slot.bytes()[..16], &first16[..], "the first 16 bytes");
+        }
+        // A caller prepares the same image for the state and for the write: idempotent.
+        assert_eq!(save.prepare_normal_write(), Some(0));
+        assert_eq!(save.slot(0).unwrap().gold_in_bank(), 777);
+    }
+
+    /// A container with an adventure log keeps today's target and its own bytes: the suspend
+    /// image is not mixed into slot 0 (the mirror rewrites slot 1 afterwards).
+    #[test]
+    fn a_normal_write_keeps_the_adventure_log_and_does_not_seed_it() {
+        let mut save = Save::parse(&blank()).unwrap();
+        save.slot_mut(0).unwrap().set_gold_in_bank(111);
+        save.slot_mut(0).unwrap().seal();
+        {
+            let mut slot = save.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_intermission(true);
+            slot.set_exists(true);
+            slot.set_gold_in_bank(777);
+            slot.seal();
+        }
+        assert_eq!(save.prepare_normal_write(), Some(0));
+        assert_eq!(save.slot(0).unwrap().status(), SlotStatus::Valid);
+        assert_eq!(save.slot(0).unwrap().gold_in_bank(), 111);
+    }
+
+    /// A fresh container has no image to take the opaque blocks from, so there is no target.
+    #[test]
+    fn a_fresh_container_has_no_normal_write_target() {
+        let mut save = Save::parse(&blank()).unwrap();
+        {
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.set_exists(false);
+            slot.seal();
+        }
+        assert_eq!(save.current_slot(), None);
+        assert_eq!(save.prepare_normal_write(), None);
     }
 
     #[test]

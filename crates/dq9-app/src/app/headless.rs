@@ -10,7 +10,7 @@ use glam::Vec3;
 use super::{App, status};
 use crate::talk::Button;
 #[cfg(not(target_arch = "wasm32"))]
-use dq9_core::state::GameState;
+use dq9_core::state::{GameState, Placement};
 #[cfg(not(target_arch = "wasm32"))]
 use dq9_formats::save::Save;
 
@@ -47,9 +47,12 @@ impl App {
         self.run_steps(1);
     }
 
-    /// The state the session holds, bound to a save's layout: [`GameState::from_play`] over
-    /// the live trigger state, map, day clock and party, with the input save's own state as
-    /// the base (its placement and the opaque parts of its event block).
+    /// The state the session holds, bound to the layout of the slot [`App::write_save_out`]
+    /// writes: [`GameState::from_play`] over the live trigger state, map, day clock and
+    /// party, with the input save's own state as the base (its opaque block bytes). The
+    /// placement is cleared to [`Placement::MapStart`]: a normal save carries no pose, so a
+    /// state read from a suspend slot must not write its `Warp` block into a slot whose
+    /// reader never takes one (`docs/re/save.md` § "Position on resume").
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn save_state(&self) -> anyhow::Result<(GameState, usize)> {
         use anyhow::Context as _;
@@ -57,24 +60,30 @@ impl App {
             "--save-out needs --save <file>: a fresh container's opaque blocks (quest log, \
              monsters, grotto maps, zone) are not modelled, so they cannot be written",
         )?;
-        let save = Save::parse(input).context("parsing the input save")?;
-        let index = save
-            .current_slot()
-            .context("the input save has no valid normal slot to update")?;
+        let mut save = Save::parse(input).context("parsing the input save")?;
         let base = GameState::from_save(&save).context("restoring the input save")?;
+        let index = save
+            .prepare_normal_write()
+            .context("the input save has no adventure log or suspend save to update")?;
         let map = self
             .current
             .as_ref()
             .map(|(entry, _)| entry.id)
             .context("no map is loaded: there is no state to write")?;
-        let state = GameState::from_play(&self.state, &base, map, self.day, self.party.clone())?;
+        let mut state =
+            GameState::from_play(&self.state, &base, map, self.day, self.party.clone())?;
+        state.placement = Placement::MapStart;
         Ok((state, index))
     }
 
-    /// `--save-out`: writes the session's state into the input save's current normal slot,
-    /// seals it, mirrors it like a normal save (`Save_WriteStep` state 2) and writes the whole
-    /// container atomically. The input file is never touched. Returns the state written, so a
-    /// caller can compare it with the reload.
+    /// `--save-out`: writes the session's state as a normal save, the way `Save_WriteStep`
+    /// (`0x020aad2c`) and `Save_Serialize` (`0x020a9ec8`) do (states 0–2): the target slot is
+    /// [`Save::prepare_normal_write`]'s (the adventure log, else slot 0 seeded with the
+    /// suspend save's image), header A is the normal one (`0x020a9ec8`: intermission 0,
+    /// exists 1), the modelled fields go through [`GameState::write_into`], the slot is
+    /// sealed and slot 0 is mirrored to slot 1. The whole container is written atomically and
+    /// the input file is never touched. Returns the state written, so a caller can compare it
+    /// with the reload.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn write_save_out(&self, out: &std::path::Path) -> anyhow::Result<GameState> {
         use anyhow::Context as _;
@@ -82,13 +91,23 @@ impl App {
             "--save-out needs --save <file>: a fresh container's opaque blocks (quest log, \
              monsters, grotto maps, zone) are not modelled, so they cannot be written",
         )?;
-        let (state, index) = self.save_state()?;
+        let (state, _) = self.save_state()?;
         let mut save = Save::parse(input).context("parsing the input save")?;
+        let index = save
+            .prepare_normal_write()
+            .context("the input save has no adventure log or suspend save to update")?;
         let ranges = {
             let mut slot = save.slot_mut(index).context("slot out of range")?;
-            let ranges = state.write_into(&mut slot)?;
+            // `Save_Serialize` writes header A for a normal save before the blocks. A slot
+            // seeded from the suspend save still holds the intermission byte, which would
+            // also make `SlotMut::set_area` address the `Warp` block instead of `Main`'s own
+            // map word — the one a normal reader takes.
+            let mut ranges = vec![slot.set_intermission(false), slot.set_exists(true)];
+            ranges.extend(state.write_into(&mut slot)?);
             // A setter leaves the checksums stale: an image the game rejects is not a save.
             slot.seal();
+            ranges.sort_by_key(|range| (range.start, range.end));
+            ranges.dedup();
             ranges
         };
         let mirrored = index == 0 && save.mirror_normal_slot();
@@ -788,6 +807,157 @@ mod tests {
         assert_eq!(resumed.events().as_bytes(), written.events().as_bytes());
         assert_eq!(resumed.placement, dq9_core::state::Placement::At(pose));
         assert!(!out.with_extension("sav.tmp").exists());
+        let _ = std::fs::remove_file(&out);
+    }
+
+    /// A container that holds only the quick save log: slot 0's header A is empty (a resumed
+    /// log's deletion, or a cartridge that never confessed) and slot 1 is the suspend save,
+    /// with two markers in blocks `write_into` does not carry (the bank and the medals).
+    fn suspend_only_bytes() -> Vec<u8> {
+        let mut save = Save::parse(&save_bytes()).unwrap();
+        {
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.clear_header();
+            slot.seal();
+        }
+        {
+            let mut slot = save.slot_mut(dq9_formats::save::SUSPEND_SLOT).unwrap();
+            slot.set_intermission(true);
+            slot.set_warp(dq9_formats::save::Warp {
+                map: 109,
+                angle: 0,
+                position: [0; 3],
+            });
+            slot.set_gold_in_bank(777);
+            slot.set_mini_medals(12);
+            slot.seal();
+        }
+        save.as_bytes().to_vec()
+    }
+
+    /// A headless [`App`] parked where the input save resumes (no ROM, so start-up does not
+    /// apply the save itself): the state, party and map of its resumable slot.
+    fn resumed_app(bytes: &[u8]) -> App {
+        let base = GameState::from_save(&Save::parse(bytes).unwrap()).unwrap();
+        let mut app = App::new_headless(options(Some(bytes.to_vec())), None);
+        app.party = base.party.clone();
+        app.state = dq9_core::field::saved_state(&base);
+        app.current = Some((
+            MapEntry {
+                id: base.map,
+                code: "C01M09".into(),
+                byte_c: 0,
+            },
+            "C01M09".into(),
+        ));
+        app.day = DayClock::new(300.0, true);
+        app
+    }
+
+    /// The batch's case: a suspend-only container, a run, `--save-out`. The write is a
+    /// **normal** save into the empty slot 0 (`Save_WriteStep` state 1's destination), seeded
+    /// from the suspend image (state 0) and mirrored to slot 1 (state 2); the reader takes
+    /// slot 0 and restores the state the session held. A normal save carries no pose, so the
+    /// party resumes at the map's start record, as the original's does.
+    #[test]
+    fn a_suspend_only_container_writes_a_normal_slot_that_reloads() {
+        use dq9_formats::save::{SLOT_SIZE, SlotStatus};
+        let bytes = suspend_only_bytes();
+        let mut app = resumed_app(&bytes);
+        app.party.gold = 4321;
+        app.state.flags.insert(11);
+        app.state.tracks[0].chapter = 3;
+        app.state.tracks[0].step = 2;
+        let out = temp_path("suspend-only");
+        let _ = std::fs::remove_file(&out);
+        let written = app.write_save_out(&out).unwrap();
+        let file = std::fs::read(&out).unwrap();
+        assert_eq!(
+            file[..16],
+            bytes[..16],
+            "the first 16 bytes are never written"
+        );
+        assert_eq!(
+            &file[27104..27132],
+            &bytes[SLOT_SIZE + 27104..SLOT_SIZE + 27132],
+            "a normal save does not write the Warp block"
+        );
+        let save = Save::parse(&file).unwrap();
+        let slot = save.slot(0).unwrap();
+        assert_eq!(slot.status(), SlotStatus::Valid, "a normal adventure log");
+        assert!(slot.checksums_valid());
+        assert_eq!(slot.warp(), None);
+        assert_eq!(
+            slot.gold_in_bank(),
+            777,
+            "the opaque block came from slot 1"
+        );
+        assert_eq!(slot.mini_medals(), 12);
+        // `Save_WriteStep` state 2 copies slot 0's 0x10..0x6ff4 (`MIRROR_LEN`), not the whole
+        // slot: the first 16 bytes on each side and the tail past it are never written.
+        let mirror = 16..16 + 0x6fe4;
+        assert_eq!(
+            &save.slot(1).unwrap().bytes()[mirror.clone()],
+            &slot.bytes()[mirror],
+            "slot 1 is the mirror copy"
+        );
+        assert_eq!(save.slot(1).unwrap().status(), SlotStatus::Valid);
+        let reloaded = GameState::from_save(&save).unwrap();
+        assert_eq!(reloaded, written);
+        assert_eq!(reloaded.map, 109);
+        assert_eq!(reloaded.placement, Placement::MapStart);
+        assert_eq!(reloaded.party.gold, 4321);
+        assert_eq!(reloaded.clock.seconds(), 300.0);
+        assert_eq!(
+            (
+                reloaded.scenario.chapter,
+                reloaded.scenario.step,
+                reloaded.scenario.substep
+            ),
+            (3, 2, 1)
+        );
+        assert!(reloaded.events().global_flag(11));
+        // A second write of the same session is the same image.
+        let again = temp_path("suspend-only-again");
+        let _ = std::fs::remove_file(&again);
+        app.write_save_out(&again).unwrap();
+        assert_eq!(
+            std::fs::read(&again).unwrap(),
+            file,
+            "a stable second write"
+        );
+        let _ = std::fs::remove_file(&out);
+        let _ = std::fs::remove_file(&again);
+    }
+
+    /// A container with both slots keeps today's behaviour: the normal log is the target and
+    /// the suspend image is not mixed into it (slot 1 becomes the mirror, so its own markers
+    /// are gone).
+    #[test]
+    fn a_normal_slot_is_updated_without_the_suspend_image() {
+        let mut save = Save::parse(&save_bytes()).unwrap();
+        save.slot_mut(0).unwrap().set_gold_in_bank(111);
+        save.slot_mut(0).unwrap().seal();
+        {
+            let mut slot = save.slot_mut(dq9_formats::save::SUSPEND_SLOT).unwrap();
+            slot.set_intermission(true);
+            slot.set_gold_in_bank(777);
+            slot.seal();
+        }
+        let bytes = save.as_bytes().to_vec();
+        let mut app = resumed_app(&bytes);
+        app.party.gold = 5;
+        let out = temp_path("both-slots");
+        let _ = std::fs::remove_file(&out);
+        app.write_save_out(&out).unwrap();
+        let save = Save::parse(&std::fs::read(&out).unwrap()).unwrap();
+        assert_eq!(save.slot(0).unwrap().gold_in_bank(), 111);
+        assert_eq!(
+            save.slot(1).unwrap().gold_in_bank(),
+            111,
+            "the mirror copy of slot 0"
+        );
+        assert_eq!(save.slot(0).unwrap().gold_on_hand(), 5);
         let _ = std::fs::remove_file(&out);
     }
 

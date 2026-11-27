@@ -269,6 +269,38 @@ copy** of slot 0 (`Save_WriteStep` state 2), a `Valid` adventure log — `Save::
 takes it when slot 0 is empty or unreadable, and it is not a quick save to delete
 (`resume_slot`'s suspend branch requires the intermission header).
 
+**A normal save from a suspend-only container.** A container whose only save is the quick
+save log — slot 0 empty, as a new game leaves both header A blocks (`func_020abb74`) when only
+a quick save has been taken since — has no adventure log for the CLI's `--save-out` or the
+Confession to update. The original has no such problem: `Save_WriteStep` (`0x020aad2c`) state 0
+reads **slot 1's** image (`0x8000`, `0x6fe4` bytes) into its buffer whatever the slots hold, and
+state 1 writes that buffer from `+0x10` at slot 0's `0x10` for a normal save (the literal
+`0x10` of the disassembly; state 2 then writes the same image at `0x8010`). `Save_Serialize`
+(`0x020a9ec8`) rewrites header A — CRC over the 0x10 bytes at `+0x14`, the intermission byte
+(0 for a normal save), the exists byte 1, the `save013` constant and the day timer — and the
+modelled blocks from `GameState`; the `Main` block's own map word (`11476`) is always
+written, from the live map. Everything serialization does not rewrite keeps the bytes the
+buffer took from **slot 1**: `Main`'s remainder (bank, medals, visited places…), `QuestLog`,
+`QuestTimers`, `Hints`, `Monsters`, `Alchemy`, `Accolades`, `Zone`, `DqvcMessages`,
+`TreasureMaps`, `Profile`, `Dqvc`, `Misc` and the `Warp` block (a normal save writes no pose
+there; a normal reader never reads it). Those are the quick save log's blocks, i.e. the live
+state at the time of the quick save. State 2 mirrors the new log onto slot 1, so the suspend
+log is gone afterwards, as after any normal save.
+
+In the port, `Save::prepare_normal_write` is that choice: the container's adventure log
+(`Save::current_slot`) when it has one — today's behaviour, nothing is seeded — else slot 0
+seeded with slot 1's image when the latter is a sealed `Intermission` slot, else `None` (a
+fresh container's opaque blocks are not modelled, so the write refuses rather than zeroing
+them). `App::write_save_out` then writes the normal header (`set_intermission(false)`,
+`set_exists(true)`), the modelled state, seals and mirrors. A normal save carries no pose, so
+the state written this way has `Placement::MapStart` and the party resumes at the map's start
+record (§ "Position on resume") — the live position of the resumed quick save is not carried
+over. **[limit]** the `Suspend` block: the original serializes a normal save's short list
+there, the port keeps the bytes of the image (slot 1's suspend payload for a fresh slot 0);
+its reader in the port does not read that block, but the DS `Save_UnpackSuspend` would.
+[hypothesis] the DS accepts that slot 0 — header, three checksums and modelled blocks match
+what the original writes, melonDS was not driven for this batch.
+
 **In the port.** `dq9_core::state::GameState::write_suspend(&mut SlotMut, HeroPose)` is the
 writer: the modelled state at the offsets `write_into` uses (`Main`'s own map word included),
 the header's intermission and exists bytes, and the `Warp` block of the **live** pose
@@ -556,22 +588,25 @@ the opaque bytes above.
 
 **The CLI.** `dq9-app --save <in.sav> --save-out <out.sav>` (with `--headless-steps`,
 `--auto`, `--replay`, `--walk`, `--play-record` or the window) writes at the end of the run:
-the input's current normal slot is updated, sealed (`SlotMut::seal`) and mirrored when it was
-slot 0 (`Save::mirror_normal_slot`, § "Role of the two slots"), then the whole 64 KiB container
-is written through a sibling `.tmp` file and a rename — a truncated image can never appear
-under the requested name, and the input file is never modified (an `--save-out` that names the
-input, through any spelling, is refused). Without `--save` the command refuses: a fresh
-container's opaque blocks are not modelled, so they would be zeroed. The run logs one line
-with the map, story, party and gold written and how many bytes differ from the input.
+the input's normal-write target is updated (`Save::prepare_normal_write`: the adventure log,
+else slot 0 seeded from the suspend save, § "The suspend slot"), sealed (`SlotMut::seal`) and
+mirrored when it was slot 0 (`Save::mirror_normal_slot`, § "Role of the two slots"), then the
+whole 64 KiB container is written through a sibling `.tmp` file and a rename — a truncated
+image can never appear under the requested name, and the input file is never modified (an
+`--save-out` that names the input, through any spelling, is refused). Without `--save` the
+command refuses: a fresh container's opaque blocks are not modelled, so they would be zeroed.
+The run logs one line with the map, story, party and gold written and how many bytes differ
+from the input.
 
 **In game** the church's Confession writes the same container, mid-session, when the greeting's
 1010 is answered "Yes" (the write is state 1's Yes; 1013 only asks whether to go on): the live
 state through `write_into`, the slot `seal`ed, slot 0 mirrored, and the whole image through the
 same temporary file and rename. The destination is `--save-out` when it is given and the
 `--save` container **itself** otherwise, as the DS writes its own cartridge's slot; the input is
-only replaced when no output was named. The slot updated is `Save::current_slot` (the first
-valid normal slot) rather than slot 0 unconditionally; the two coincide for every container with
-a valid slot 0. Without `--save` the port has no container, so the entry shows its own reason
+only replaced when no output was named. The slot updated is `Save::prepare_normal_write`'s (the
+first valid normal slot, else slot 0 seeded from the suspend save): a Confession after a quick
+save resume therefore writes a normal adventure log, as the original's does whatever slot was
+loaded. Without `--save` the port has no container, so the entry shows its own reason
 (a port line, not a ROM one) and writes nothing (`docs/re/facility.md`, § "The Confession";
 `crates/dq9-app/src/app/facility.rs`, `App::confess`). A refused confession writes nothing, but a
 window run with `--save-out` still writes the session's state when it exits, as it always did.
@@ -601,6 +636,17 @@ block's map word (`dq9-core` state module); the app's write on a synthetic mirro
 keeps slot 0 and the input file byte-identical and its reload lands at the live hero's
 position (`app/headless.rs`); the Misc. list is the ROM's and only Quick Save answers
 (`app/services/tests.rs`). Evidence: `build/evidence/v3-suspend-save/`.
+
+The suspend-only write's tests (`dq9-formats` `save` module; `dq9-app` `app/headless.rs`): a
+container with only a suspend save is seeded from slot 1 (`prepare_normal_write` returns slot
+0, copies header A on, leaves the first 16 bytes, and is idempotent), a container with an
+adventure log keeps its own bytes instead, and a fresh container has no target; the app's
+`--save-out` on a suspend-only container writes a `Valid` slot 0 with its checksums, a `None`
+`Warp`, slot 1 as its mirror, the same bytes on a second write, and a reload
+(`GameState::from_save`) equal to the state written — map, story, party, gold, clock, flags and
+`Placement::MapStart`, with the opaque bank and medal words taken from slot 1; a
+normal+suspend container still updates the normal log without mixing the suspend image in.
+Evidence: `build/evidence/v3-suspend-saveout/`.
 
 **DS acceptance: the original loads the written container.** melonDS with the written file as
 `dq9.sav` shows its adventure log on the title screen (the four members with their vocations

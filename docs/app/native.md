@@ -84,11 +84,16 @@ at the position and heading the game gives after "Continue" (the map's start poi
 § "Position on resume"), placed on the ground; the `--screenshot` output prints this pose
 (`hero: …`) and centers the camera on it.
 
-`--save-out <file>` (needs `--save <file>`) writes the session's state into the save's current
-normal slot at the end of any run with an application (`--headless-steps`, `--auto`, `--replay`,
-`--walk`, `--play-record`, the window): the whole container goes through a temp file and a rename,
-and the option refuses to run without an input save or with an output naming the input. `--save`
-is only written by the game's own edits, the Quick Save and the deletion of a resumed log
+`--save-out <file>` (needs `--save <file>`) writes the session's state as a normal save at the
+end of any run with an application (`--headless-steps`, `--auto`, `--replay`, `--walk`,
+`--play-record`, the window): the target is the save's first valid normal slot, else — after a
+resumed quick save, when no adventure log exists — slot 0 seeded with the suspend log's image
+(`Save_WriteStep` state 0) and slot 1 then written as its mirror, so the session's state and the
+log's blocks (quest log, monsters, grotto maps, zone) both survive. A normal save carries no
+pose, so that log resumes at the map's start point, as the original's does. The whole container
+goes through a temp file and a rename, and the option refuses to run without an input save or
+with an output naming the input. `--save` is only written by the game's own edits, the Quick
+Save and the deletion of a resumed log
 (above). What the state does not model (the record's base attributes, current HP/MP, the opaque
 blocks) stays byte for byte; the written container is one melonDS loads and continues from
 (`re/save.md`, § "Writing a session"; evidence `build/evidence/v3-save-bind/`).
