@@ -130,10 +130,13 @@ fn roll_block(rng: &mut Counted<'_>, target: &Fighter) -> bool {
 
 /// `RollAccuracy` (`ov_000::02156648`): a metal body is missed outright by an action that does not
 /// work on one (`+0x10` bit 24) — before the die, so the miss costs the action's own accuracy
-/// draw; then `NextRandomMax(100)` whatever the accuracy; then a scaling accuracy (a monster's
-/// `+0x14` bits 0–6 chance × the target's resistance to the action's landing element + 0.5,
-/// truncated); then, for an action spoilt by a status (`+0x10` bit 3) on a dazzled attacker, a die
-/// of eight that misses on 0 to 4; it lands under the accuracy.
+/// draw; then `NextRandomMax(100)` whatever the accuracy; then, for a needle blow (`+0x10` bit 18
+/// on an action carrying it, the attacker on the party, his weapon's `func_020851d8` bit),
+/// an unconditional hit **after that die but before the scaling accuracy and the dazzle's die of
+/// eight** (`0x021567fc`–`0x02156830`); then a scaling accuracy (a monster's `+0x14` bits 0–6
+/// chance × the target's resistance to the action's landing element + 0.5, truncated); then, for
+/// an action spoilt by a status (`+0x10` bit 3) on a dazzled attacker, a die of eight that misses
+/// on 0 to 4; it lands under the accuracy.
 fn roll_accuracy(
     rng: &mut Counted<'_>,
     actor: &Fighter,
@@ -144,6 +147,12 @@ fn roll_accuracy(
         return false;
     }
     let die = rng.next_max(100);
+    // The poison needle's auto-hit (`0x02156814`–`0x02156830`): `+0x10` bit 18 tested on the
+    // action, `func_020851d8` on the attacker's weapon record, then `return 1` — the die of 100
+    // was spent, the scaling accuracy and the spoilt die of eight are skipped.
+    if action.weapon_element && actor.side == Side::Party && actor.poison_needle {
+        return true;
+    }
     let accuracy = if action.scales_accuracy {
         let scaled = f32::from(action.accuracy_monster) * target.resistance(action.landing_element);
         (0.5f32 + scaled) as i32

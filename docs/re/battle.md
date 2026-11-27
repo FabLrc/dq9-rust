@@ -234,6 +234,17 @@ decompilation and its disassembly (evidence `build/evidence/v4-metal-rules/accur
    Shot `0x82` sets `1.0` the same way, before the metal rules, and is exempt from the zeroing.
    The needle's `1.0` and the zeroing's `0` are both overwritten by nothing that follows, except
    the combo table.
+   The same bit 10 also **auto-hits** (`RollAccuracy`, `ov_000::02156648`, `0x02156814`–`0x02156830`):
+   after its die of 100 (`NextRandomMax(100)` at `0x021567d4`) and before the scaling accuracy
+   (`0x02156868`) and the spoilt action's die of eight (`0x02156a90`), a party attacker whose
+   weapon has bit 10 and whose action carries `+0x10` bit 18 returns 1 outright — the die of 100
+   is spent, the die of eight is not, and no accuracy comparison happens. The port reads the two
+   existing inputs, `Action::weapon_element` (bit 18) and `Fighter::poison_needle` (the weapon's
+   bit 10), not a new duplication of the same bit. The instruction order in
+   `accuracy.asm` is `ldr r0,[r7,#0x10]` / `tst r0,#0x40000` → `func_020851d8` → `movne r0,#1` →
+   `bne 0x02156ae4` (the function's return), with the `0x10000` trait gate and the accuracy block
+   after it. A dazzled needle user's spoilt (`+0x10` bit 3) action therefore never misses
+   (`build/evidence/v4-needle-accuracy/`).
 7. **What stays refused or absent.** The records of Metal Slash (64), Needle Shot (130),
    Metalicker (126) and Quadraslash (517) carry damage handler 2 / rider 20 / handler 66: they are
    refused by **those** rules now (`Unsupported::DamageHandler`, `Unsupported::Rider`), not by
@@ -246,19 +257,20 @@ decompilation and its disassembly (evidence `build/evidence/v4-metal-rules/accur
    full damage); Needle Shot's `1.0` when the target's guard level is not 3 (its rider is refused
    first); the combo gate's second bit (`+0x2C` bit 26 as well as 27); and the metal-only
    re-multiply by a weapon's element on a metal body, which tension alone reaches (refused).
-   Also absent, found by this batch's challenger pass: the needle's **accuracy auto-hit** —
-   `RollAccuracy` returns 1 for a needle blow after its die of 100 and before the dazzle's die of
-   eight, so a dazzled needle user's `+0x10` bit-3 action never misses; `roll_accuracy` does not
-   model it, and the standing accuracy of 100 leaves only that window
-   (`build/evidence/v4-metal-equipment/challenger.md`).
 
 Tests: `battle/tests.rs` (the miss, the 0/1 the coin leaves, the critical, the two exemptions,
-`1 + random(2)`, the aim gate, the two weapon flags),
+`1 + random(2)`, the aim gate, the two weapon flags, and
+`the_poison_needle_auto_hits_after_the_die_of_one_hundred_before_the_die_of_eight` — a dazzled
+needle bearer lands on every seed where a dazzled copper-sword hero misses on the die of eight,
+with the generator walked by hand: five draws, the die of 100 present, the die of eight absent),
 `tests/battle_rom.rs::the_metal_body_rules_read_the_rom_records` (monster 3 the metal slime and
 monster 1 the slime, Frizz's miss, the four refusals by name, action `0x150`'s miss) and
 `tests/battle_rom.rs::the_equipped_weapon_sets_the_metal_and_needle_flags` (the seven bit-4 ids
 and 19057 over the 1,423 records, the copper sword's two false flags, the metal weapon's and the
-needle's, and the needle's exactly-1 blow through the party's adapter). The assembly of the two
+needle's, and the needle's exactly-1 blow through the party's adapter), and
+`tests/battle_rom.rs::a_dazzled_needle_bearer_auto_hits_before_the_die_of_eight` (an action record
+of the ROM bearing bits 3 and 18, item 19057 through the adapter: it lands on all 64 seeds while
+the copper sword keeps the die of eight). The assembly of the two
 functions and the constants they compare against are kept with the dumps
 (`accuracy.asm`, `final-damage.asm`); the decompiler's `0x47 < number` reading of the
 coin was refuted there by a separate challenger pass and by the disassembly. The item record

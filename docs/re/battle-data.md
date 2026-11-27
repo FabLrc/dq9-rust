@@ -112,7 +112,7 @@ that do not strike, `_b` the attack, defending, fleeing and the monsters' moves.
 | `+0x08` bits 14–21 | the range index |
 | `+0x08` bits 22–26 | the element of what it deals |
 | `+0x08` bit 29 | always a critical |
-| `+0x10` bits 3–6, 11, 13–18, 24 | the flags read by the battle code: spoilt by a status, halved by defending, dodgeable, blockable, wakes, tension, magical might, magical mending, party trait, weakens, weapon element, works on metal |
+| `+0x10` bits 3–6, 11, 13–18, 24 | the flags read by the battle code: spoilt by a status, halved by defending, dodgeable, blockable, wakes, tension, magical might, magical mending, party trait, weakens, weapon element, works on metal (bit 18 also opens the poison needle's accuracy auto-hit: `RollAccuracy`, `docs/re/battle.md` item 6) |
 | `+0x14` bits 0–6 | a monster's chance, in a hundred |
 | `+0x14` bits 7–13, 14–20 | a party member's least and most accuracy |
 | `+0x14` bits 21–27 | the critical chance's multiplier in hundredths |

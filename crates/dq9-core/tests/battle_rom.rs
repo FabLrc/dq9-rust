@@ -1089,3 +1089,79 @@ fn the_equipped_weapon_sets_the_metal_and_needle_flags() {
     assert!(!outcome.targets[0].blocked, "the needle is not blocked");
     assert_eq!(outcome.targets[0].amount, 1);
 }
+
+/// The needle's accuracy auto-hit (`RollAccuracy`, `ov_000::02156648`, `0x02156814`–`0x02156830`):
+/// on an action carrying `+0x10` bit 18, a party attacker whose equipped weapon carries bit 10 of
+/// the `itembtlprm` record hits right after the die of 100 — before the dazzle's die of eight and
+/// before the accuracy comparison. The poison needle (19057) comes from the item table, the spoilt
+/// bit from an action record of the ROM.
+#[test]
+fn a_dazzled_needle_bearer_auto_hits_before_the_die_of_eight() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let spoiled = (0..0x600u16)
+        .filter_map(|number| tables.actions.skill(number))
+        .find(|s| {
+            s.kind == 1
+                && s.action
+                    .as_ref()
+                    .is_ok_and(|a| a.spoilt && a.weapon_element)
+        })
+        .expect("an action whose +0x10 carries bit 3 (spoilt) and bit 18");
+    let action = spoiled.action.unwrap();
+
+    let params = BattleParams::parse(rom.file_by_path("data/prm/itembtlprm.nat").unwrap()).unwrap();
+    let weapons = member(&rom, "data/prm/itemdt_w.gp2", "itemdt_w_en.nat");
+    let items = ItemStats::from_members(&[&weapons]).unwrap();
+    let fighter = |weapon: u16| {
+        let mut character = Character::hero();
+        character.equipment.weapon = Some(weapon);
+        character.fighter(&items, &params)
+    };
+    let mut needle = fighter(19057);
+    needle.dazzled = true;
+    let mut plain = fighter(20004);
+    plain.dazzled = true;
+    assert!(needle.poison_needle && !plain.poison_needle);
+
+    let mut target = Fighter::new(Side::Monster);
+    target.hp = 100;
+    target.max_hp = 100;
+    let mut misses = 0;
+    for seed in 0..64u64 {
+        let auto = resolve_action(
+            &mut Random::new(seed),
+            &needle,
+            &action,
+            &[target.clone()],
+            0,
+        )
+        .unwrap();
+        assert!(
+            auto.targets[0].landed,
+            "seed {seed}: the needle auto-hits through the dazzle"
+        );
+        let spoilt = resolve_action(
+            &mut Random::new(seed),
+            &plain,
+            &action,
+            &[target.clone()],
+            0,
+        )
+        .unwrap();
+        if spoilt.targets[0].landed {
+            // The same die, critical, dodge, block, accuracy and amount draws, plus the die of
+            // eight the auto-hit skipped.
+            assert_eq!(
+                spoilt.draws,
+                auto.draws + 1,
+                "seed {seed}: the die of eight"
+            );
+        } else {
+            misses += 1;
+        }
+    }
+    assert!(misses > 0, "five faces of eight miss: {misses} of 64");
+}

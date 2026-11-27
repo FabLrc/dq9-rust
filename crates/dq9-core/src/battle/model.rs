@@ -116,7 +116,8 @@ pub struct Fighter {
     /// The worn weapon that forces the damage to exactly 1 and cancels the target's dodge and
     /// block: `func_020851d8` tests bit 10 of the same copied `itembtlprm` record
     /// (`docs/re/item.md`, "The weapon words"). Read only for a party attacker on an action
-    /// carrying `+0x10` bit 18.
+    /// carrying `+0x10` bit 18, and there it also **auto-hits** before the spoilt die of eight
+    /// (`RollAccuracy`, `ov_000::02156648`).
     pub poison_needle: bool,
 }
 
@@ -295,8 +296,10 @@ pub struct Action {
     /// against several it is refused.
     pub multi_target_falloff: bool,
     /// `+0x10` bit 18: an elemental weapon of a party attacker multiplies the damage by the
-    /// target's resistance to its element (the plain Attack carries it). See
-    /// [`Fighter::weapon_element`].
+    /// target's resistance to its element (the plain Attack carries it), and an action carrying it
+    /// auto-hits for a party attacker whose weapon has the needle bit — before the dazzle's die of
+    /// eight (`RollAccuracy`, `ov_000::02156648`). See [`Fighter::weapon_element`] and
+    /// [`Fighter::poison_needle`].
     pub weapon_element: bool,
     /// `+0x10` bit 16: a party member with a certain trait throws a die of four in the accuracy
     /// roll (the plain Attack carries it). See [`Fighter::accuracy_die_trait`].

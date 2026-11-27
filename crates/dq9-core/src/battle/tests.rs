@@ -769,6 +769,66 @@ fn a_dazzled_striker_throws_the_die_of_eight_and_misses_under_five() {
 }
 
 #[test]
+fn the_poison_needle_auto_hits_after_the_die_of_one_hundred_before_the_die_of_eight() {
+    let mut action = flat(5);
+    action.spoilt = true;
+    action.weapon_element = true;
+    let mut needle = party();
+    needle.dazzled = true;
+    needle.poison_needle = true;
+    // The same dazzled attacker without the needle, and the needle's bearer on an action without
+    // `+0x10` bit 18: both keep the die of eight.
+    let mut bare = party();
+    bare.dazzled = true;
+    let mut unflagged = action.clone();
+    unflagged.weapon_element = false;
+    let (mut misses_bare, mut misses_unflagged) = (0, 0);
+    for seed in 0..64u64 {
+        let hit =
+            resolve_action(&mut Random::new(seed), &needle, &action, &[monster()], 0).unwrap();
+        assert!(
+            hit.targets[0].landed,
+            "seed {seed}: the needle auto-hits through the dazzle"
+        );
+        assert_eq!(hit.targets[0].amount, 1, "seed {seed}: the needle's 1.0");
+        // The die at `[battle + 0x8e6e]`, the critical, the die of 100, the range's own and its
+        // spread: five draws, no die of eight.
+        assert_eq!(hit.draws, 5, "seed {seed}");
+        let mut by_hand = Random::new(seed);
+        by_hand.next_max(100);
+        by_hand.next_max(10_000);
+        by_hand.next_max(100);
+        by_hand.next_float_between(5.0, 5.0);
+        by_hand.next_float_between(0.0, 0.0);
+        assert_eq!(
+            hit.generator_state,
+            by_hand.state(),
+            "seed {seed}: the die of 100 is still drawn"
+        );
+
+        let shrugged =
+            resolve_action(&mut Random::new(seed), &bare, &action, &[monster()], 0).unwrap();
+        let no_bit =
+            resolve_action(&mut Random::new(seed), &needle, &unflagged, &[monster()], 0).unwrap();
+        assert_eq!(
+            shrugged.targets[0].landed, no_bit.targets[0].landed,
+            "seed {seed}: the gate needs both flags"
+        );
+        // The die of eight is drawn either way; the amount only after landing.
+        let spoiled = if shrugged.targets[0].landed { 6 } else { 4 };
+        assert_eq!(shrugged.draws, spoiled, "seed {seed}: the die of eight");
+        assert_eq!(no_bit.draws, spoiled, "seed {seed}: the die of eight");
+        misses_bare += i32::from(!shrugged.targets[0].landed);
+        misses_unflagged += i32::from(!no_bit.targets[0].landed);
+    }
+    assert!(
+        (16..=48).contains(&misses_bare),
+        "five faces of eight miss: {misses_bare} of 64"
+    );
+    assert_eq!(misses_bare, misses_unflagged);
+}
+
+#[test]
 fn a_scaling_accuracy_is_the_chance_times_the_resistance() {
     let mut action = flat(5);
     action.scales_accuracy = true;
