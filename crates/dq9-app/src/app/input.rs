@@ -154,6 +154,11 @@ impl App {
             return false; // key repeat
         }
         self.log_key(code, true);
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.title.is_some() {
+            // The title takes every key: it steps nothing else.
+            return self.title_key(code);
+        }
         if self.combat.fight.is_some() {
             // The fight reads the pad itself; the conversation's presses must not pile up.
             match code {
@@ -286,6 +291,15 @@ impl App {
             return;
         }
         let screens = screens::screens(self.options.layout, window.0, window.1);
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.title.is_some() {
+            // The title maps the pointer to the 256×192 screen it draws on; a tap on a row
+            // chooses it.
+            if let Some(at) = screens.field_pointer(self.presentation.screens, false, point) {
+                self.title_tap(at);
+            }
+            return;
+        }
         // A battle keeps the port's assignment, which is the original's for a battle
         // (`re/bottom-screen.md` § 3): the tap would reach the same rectangle either way.
         let mode = if self.encounter.battle.is_some() {

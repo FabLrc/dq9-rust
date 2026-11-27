@@ -330,9 +330,10 @@ session"). The port decisions, documented rather than silent:
   no container, so the entry says why (a port line, not a ROM one) and writes nothing. The write
   updates `Save::current_slot` (the first valid normal slot), which is slot 0 for every ordinary
   container: the original writes slot 0 unconditionally.
-- **the ending**: 110 is shown, then the session ends (`App::end_session`: the window's loop
-  leaves). The original stays on 110; this build has no console to switch off and no title
-  screen of its own, so the adventure stops there.
+- **the ending**: 110 is shown, then the interactive app shows the title screen
+  (`App::end_session`: the original stays on 110 and is switched off; the port cannot power off
+  and returns to `ov_004`'s slot check, as the next switch-on does). A headless run only sets
+  `session_over` and keeps its steps; the church's own tests and the pilots are unchanged.
 - **not modelled**: the confession trigger 0xC (no consumer of it is known: **[unknown]**), the
   60-frame hold before the write (the write is synchronous and 100 stays up until a key), the
   link-session variants (1018/1017), and the jingle 60 — no facility code path plays jingles
@@ -618,7 +619,9 @@ runs its own state 3 with the file's lines 1010 to 1090 (`re/facility.md`, § "T
 above): "Yes" writes the live state into the save's current normal slot, sealed and mirrored,
 to `--save-out` or the `--save` container itself; "No" records nothing. Without `--save` there
 is no container, so the window says why and nothing is written. 110, the original's last line,
-ends the session (this build has no console to switch off and no title screen of its own).
+returns the interactive app to the title screen (`App::end_session`); a headless run only sets
+`session_over` and keeps its steps. The title's rows are in
+[`app/title.md`](../app/title.md).
 
 **Benediction's unequipping** — `Church_CureFlow` = `func_ov003_0215a740` (overlay 3), state 5,
 read on the ROM. After `func_02048418(member, 4)` clears the cursed bit it walks the eleven

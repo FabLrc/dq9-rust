@@ -23,8 +23,9 @@ log and suspend your game for the moment?"): "Yes" writes the suspend slot throu
 `App::quick_save` into `--suspend-out`, or into the `--save` container itself when that option
 is absent, then shows 4702; "No" returns to the list. Without `--save` the entry says it has no
 file and writes nothing. The original shows 4701 while the slot is written and returns to the
-title screen after 4702; the port logs 4701 and keeps the field, having no title screen
-([`re/save.md`](../re/save.md), § "The suspend slot").
+title screen after 4702; the port logs 4701, and once 4702 is dismissed the interactive app
+shows the title (a headless run keeps the field menu), the way `ov_002::02169efc` returns
+([`app/title.md`](title.md); [`re/save.md`](../re/save.md), § "The suspend slot").
 
 The rules live in `dq9_core::facility` and `dq9_core::party`;
 `crates/dq9-app/src/app/services.rs` adds the ROM tables, the cursors and the transfer into
@@ -46,8 +47,9 @@ the member, Divination is free and returns to its row, and Confession runs the c
 live state is written into the save's current normal slot (sealed, mirrored, through a temporary
 file and a rename — `--save-out` when it is given, else the `--save` container itself), then 1011
 and 1013; "Yes, continue" farewells with 1090 and returns to the field, while the rest (1015, which
-opens on No) ends with 1014 and 110 and **ends the session** (`App::end_session`: the window
-closes — the original's 110 is its last line, with no title screen of its own). Without `--save`
+opens on No) ends with 1014 and 110 and **returns the interactive app to the title screen**
+(`App::end_session`: the original stays on 110, the port shows the title; a headless run only
+sets `session_over`). Without `--save`
 there is no container: the entry says so in its own words and nothing is written. The lines, their
 initial rows and their order are in [`re/facility.md`](../re/facility.md), § "The Confession".
 

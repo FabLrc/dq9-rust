@@ -274,6 +274,12 @@ impl App {
         if !self.session_renders() {
             return;
         }
+        // The title draws its own frame: no scene, no renderer.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.title.is_some() {
+            self.draw_title();
+            return;
+        }
         if self.battle().is_some() {
             let camera = self.draw_battle();
             self.present_frame(&camera, false, false);
@@ -337,6 +343,58 @@ impl App {
         let camera = self.view.camera;
         let swapped = self.events.screen_swapped();
         self.present_frame(&camera, swapped, true);
+    }
+
+    /// Presents one frame of the title: the placeholder panel fills the window and the port's
+    /// rows are drawn on the screen the field would use. No scene or renderer is involved, so
+    /// the app can boot without a map (`docs/app/title.md`).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn draw_title(&mut self) {
+        // The quads borrow the message window's font and atlas, and `self`: take them before
+        // the GPU fields are borrowed mutably.
+        let quads = self
+            .talk
+            .with_ui(|atlas, font| self.title_quads(atlas, font));
+        let Some(gpu) = &mut self.gpu else {
+            return;
+        };
+        let frame = match gpu.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(f)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                gpu.surface.configure(&gpu.device, &gpu.config);
+                return;
+            }
+            _ => return,
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let (w, h) = (gpu.config.width, gpu.config.height);
+        let field =
+            screens::screens(self.options.layout, w, h).field_for(self.presentation.screens, false);
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("title"),
+            });
+        let panel = self
+            .presentation
+            .panel
+            .get_or_insert_with(|| Panel::new(&gpu.device, gpu.config.format));
+        panel.draw(&mut encoder, &view, Viewport::full(w.max(1), h.max(1)));
+        if let Some(quads) = quads {
+            self.talk.draw_screens(
+                &gpu.device,
+                &gpu.queue,
+                gpu.config.format,
+                &mut encoder,
+                &view,
+                &[(field, quads)],
+            );
+        }
+        gpu.queue.submit([encoder.finish()]);
+        gpu.queue.present(frame);
     }
 
     /// Presents one frame of the active scene: the 3D screen, the panel that fills the freed

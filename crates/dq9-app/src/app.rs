@@ -79,6 +79,8 @@ mod recording;
 mod roaming;
 mod script;
 pub(crate) mod services;
+#[cfg(not(target_arch = "wasm32"))]
+mod title;
 mod window;
 
 #[cfg(all(test, windows))]
@@ -143,8 +145,20 @@ pub struct App {
     #[cfg(not(target_arch = "wasm32"))]
     suspend_out: Option<std::path::PathBuf>,
     /// The church's Confession ended the adventure (110 is the original's last line, state 9
-    /// staying on it): the window's loop leaves, since this build has no title screen.
+    /// staying on it). A headless run keeps the flag; the window's loop would leave, so the
+    /// interactive app shows the title instead (`App::end_session`).
     session_over: bool,
+    /// Whether the window (not a headless driver) started this app: with no start-forcing
+    /// option it boots on the title screen, and the church's 110 and a Quick Save return to
+    /// it. The Web page keeps its own paths.
+    #[cfg(not(target_arch = "wasm32"))]
+    interactive: bool,
+    /// See [`title::Title`].
+    #[cfg(not(target_arch = "wasm32"))]
+    title: Option<title::Title>,
+    /// A Quick Save's 4702 notice returns to the title once it closes (`App::after_service`).
+    #[cfg(not(target_arch = "wasm32"))]
+    title_pending: bool,
     /// The field menu and the facility screens (`app/services.rs`).
     services: Services,
     /// The current map's treasure containers (`app/services/containers.rs`).
@@ -233,6 +247,8 @@ impl App {
         options: Options,
         rom: Option<Vec<u8>>,
     ) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        let interactive = proxy.is_some();
         let state = field::initial_state(&options.story);
         let mut audio = Audio::new(options.mute);
         if options.record_sound {
@@ -267,6 +283,12 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             suspend_out: None,
             session_over: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            interactive,
+            #[cfg(not(target_arch = "wasm32"))]
+            title: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            title_pending: false,
             services: Services::default(),
             containers: Containers::default(),
             events: EventPlayer::new(),
@@ -310,6 +332,12 @@ impl App {
         self.doors.doors_opened.clear();
         self.doors.door_angles.clear();
         self.roaming.reset_rom();
+        // A Quick Save's return to the title does not survive the session it belonged to.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.title = None;
+            self.title_pending = false;
+        }
     }
 
     fn set_rom(&mut self, rom: Vec<u8>) {
@@ -325,6 +353,21 @@ impl App {
         self.item_table = item_table(&rom);
         self.talk.set_rom(&rom);
         self.rom = Some(rom);
+        // An interactive start with no start-forcing option boots on the title screen
+        // (`docs/app/title.md`); every CLI driver, the Web page and the forcing options
+        // (--new-game, --save, --map, --event, --battle) keep the field path below.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.shows_title() {
+            self.show_title();
+            return;
+        }
+        self.begin_from_options();
+    }
+
+    /// The start the options name: a battle preview, a new game, else the map or the save
+    /// (`load::start`). What `set_rom` resumes once the title is away, and what the title's
+    /// rows call.
+    fn begin_from_options(&mut self) {
         self.state = field::initial_state(&self.options.story);
         self.state.compendium = self.item_table.clone();
         if let Some(request) = self.options.battle.clone() {
@@ -346,6 +389,12 @@ impl App {
                 return;
             }
         };
+        self.begin(start);
+    }
+
+    /// Loads the field from a [`load::Start`]: the save's trigger state, party, look, day and
+    /// map (or the default hero on an explicit map).
+    fn begin(&mut self, start: load::Start) {
         self.talk.set_identity(start.identity);
         self.state = load::trigger_state(
             start.state.as_ref(),
@@ -393,6 +442,20 @@ impl App {
         if self.session_running() {
             self.session_frame();
             return;
+        }
+        // The title waits for a row: no field step runs meanwhile. `--record` and a record
+        // replay install their recorder right after the app is built and keep today's field
+        // start, so the title gives way before the first step.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.title.is_some() {
+            if self.recording.recorder.is_some() || self.recording.replay.is_some() {
+                self.title = None;
+                self.begin_from_options();
+            } else {
+                self.last = Instant::now();
+                self.accumulator = 0.0;
+                return;
+            }
         }
         let now = Instant::now();
         // Clamp long pauses (window dragged, tab hidden) instead of catching up.

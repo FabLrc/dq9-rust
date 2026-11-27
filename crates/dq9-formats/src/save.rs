@@ -398,10 +398,8 @@ impl Save {
     /// argument (its second argument is 0 in every caller and unused in the body), which picks
     /// slot 1 (header `0x8010`, blocks `0x8084`) or slot 0 (`0x84`). Its callers are the title
     /// screen's Continue (`ov_004::0216d504`: intermission 0) and its quick-save entry
-    /// (`ov_004::0216e490`: intermission 1). The port has no title menu and folds the two
-    /// entries into one start-up, so the Continue slot wins and the suspend save is the
-    /// fallback; the title screen itself ranks a present suspend save first
-    /// (`docs/re/save.md`, § "The suspend slot").
+    /// (`ov_004::0216e490`: intermission 1). This is the boot `--save` order (the normal log
+    /// first); the title's own Continue row takes [`Save::title_slot`] instead.
     ///
     /// Note that slot 1 is `Valid` on a cartridge that has only seen normal saves: it holds the
     /// mirror copy of slot 0, an adventure log, and [`Save::current_slot`] may take it when
@@ -414,6 +412,35 @@ impl Save {
                 })
             })
         })
+    }
+
+    /// The slot the title screen's Continue row resumes (`ov_004::0216dad0`): the suspend save
+    /// ([`SUSPEND_SLOT`]) when its header says [`SlotStatus::Intermission`] and its three
+    /// checksums hold, otherwise slot 0 when its header says [`SlotStatus::Valid`] and its
+    /// checksums hold, otherwise `None` (no resumable log).
+    ///
+    /// `ov_004::0216dad0` calls `Save_SlotStatus` on both slots and builds an entry code from
+    /// it: **4** (intermission) on slot 1 first — entry code 0, the quick-save entry, which
+    /// also records whether slot 0 is empty (`*puVar1 = 1` when slot 0 is status 3) —, then
+    /// 1 (unreadable) → 6, 2 on slot 1 → 7, 2 on slot 0 → 4, 0 (valid) on slot 0 → 1
+    /// (Continue, the adventure log it reads for the display), 3 (empty) → 2 (new game). A
+    /// present suspend save therefore ranks **above** a normal one here, while
+    /// [`Save::resume_slot`] keeps the boot order. Which function consumes the entry code and
+    /// builds the title menu is not in the decompilation corpus: **[unknown]** (`docs/re/title.md`).
+    ///
+    /// Unlike the title's header check, the port only ranks a slot it can load: all three
+    /// checksums must hold, as `Save_LoadSlot` (`0x020aaf94`) tests them.
+    pub fn title_slot(&self) -> Option<usize> {
+        let resumable = |index: usize, wanted: SlotStatus| {
+            self.slot(index)
+                .is_some_and(|slot| slot.status() == wanted && slot.checksums_valid())
+        };
+        if resumable(SUSPEND_SLOT, SlotStatus::Intermission) {
+            return Some(SUSPEND_SLOT);
+        }
+        // The entry code only names slot 0's valid status (0 → 1, Continue): slot 1's mirror
+        // copy of a normal save is not a title entry of its own.
+        resumable(0, SlotStatus::Valid).then_some(0)
     }
 
     /// Rewrite the mirror copy of slot 0, as `Save_WriteStep` (`0x020aad2c`) state 2 does for
@@ -1548,6 +1575,56 @@ mod tests {
         // rejects it.
         save.slot_mut(SUSPEND_SLOT).unwrap().set_day_timer(1.0);
         assert_eq!(save.resume_slot(), None);
+    }
+
+    /// The title screen's own ranking (`ov_004::0216dad0`): a present suspend save above a
+    /// normal log, the normal log when there is no suspend save, nothing when both are empty.
+    /// Slot 1's mirror copy of a normal save is not a title entry (only slot 0's valid status
+    /// gives Continue), and a slot that cannot load (a stale checksum) is not ranked.
+    #[test]
+    fn the_title_ranks_the_suspend_save_above_the_normal_log() {
+        let mut save = Save::parse(&blank()).unwrap();
+        assert_eq!(save.title_slot(), Some(0), "the normal log alone");
+
+        {
+            let mut slot = save.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_intermission(true);
+            slot.set_exists(true);
+            slot.seal();
+        }
+        assert_eq!(
+            save.title_slot(),
+            Some(SUSPEND_SLOT),
+            "a present quick save outranks the normal log"
+        );
+        assert_eq!(save.resume_slot(), Some(0), "the boot order is unchanged");
+
+        // Both empty: no Continue row.
+        {
+            let mut slot = save.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_exists(false);
+            slot.seal();
+        }
+        {
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.set_exists(false);
+            slot.seal();
+        }
+        assert_eq!(save.title_slot(), None);
+
+        // A stale suspend checksum is not ranked either: `Save_LoadSlot` would reject it.
+        let mut save = Save::parse(&blank()).unwrap();
+        save.slot_mut(SUSPEND_SLOT).unwrap().set_intermission(true);
+        save.slot_mut(SUSPEND_SLOT).unwrap().set_exists(true);
+        save.slot_mut(SUSPEND_SLOT).unwrap().seal();
+        save.slot_mut(SUSPEND_SLOT).unwrap().set_day_timer(1.0);
+        assert_eq!(save.title_slot(), Some(0), "the normal log still ranks");
+        {
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.set_exists(false);
+            slot.seal();
+        }
+        assert_eq!(save.title_slot(), None);
     }
 
     /// The deletion of the quick save log (`Save_WriteHeaderA`, `0x020aba6c`): header A is

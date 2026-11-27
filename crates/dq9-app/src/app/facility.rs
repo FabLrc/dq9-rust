@@ -242,6 +242,12 @@ impl App {
                     state.party.gold,
                 ));
                 self.services.quick_save_done();
+                // The interactive app returns to the title once 4702 is dismissed
+                // (`after_service`); a headless run keeps the menu.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.title_pending = self.interactive;
+                }
             }
             Err(e) => {
                 status(&format!("quick save: not written: {e:#}"));
@@ -270,11 +276,19 @@ impl App {
 
     /// Ends the session: the original's 110 ("Bless you, my child. Please turn the power OFF.")
     /// is its last line — state 9 shows it and stays there, its words telling the player to
-    /// switch the console off. This build has no title screen, so the window's loop leaves
-    /// (headless runs keep their steps, and no pilot reaches a confession).
+    /// switch the console off. The DS returns to its title screen when the console is switched
+    /// on again; the interactive port shows the title at once, at `ov_004`'s own slot check
+    /// (`docs/app/title.md`). A headless run only records the flag.
     pub(super) fn end_session(&mut self) {
         self.session_over = true;
         status("session over: the Confession said its last line (110)");
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.interactive {
+            // The original stays on 110; the port cannot power off and shows the title,
+            // which is what the next switch-on does.
+            self.show_title();
+            status("the title screen is back, as after switching the console off");
+        }
     }
 
     pub(super) fn service_side(&mut self, right: bool) {
@@ -295,6 +309,15 @@ impl App {
     pub(super) fn after_service(&mut self, effect: services::Effect) {
         if self.services.take_end_session() {
             self.end_session();
+        }
+        // The Quick Save's 4702 closes back to the title, as `ov_002::02169efc` returns the
+        // player there. Headless runs keep their steps.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.title_pending && !self.services.is_open() {
+            self.title_pending = false;
+            self.show_title();
+            status("quick save: 4702 dismissed, the title screen is back");
+            return;
         }
         if !self.services.is_open() {
             self.talk.finish_service();
