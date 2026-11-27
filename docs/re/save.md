@@ -316,10 +316,12 @@ The reader is `Save::resume_slot` (`dq9-formats`): the normal log ([`Save::curre
 when the container has one, else the slot whose header says intermission with its three
 checksums (slot 1 in a save the game wrote); `GameState::from_save` builds the state from that
 slot, so a suspend save gives its warp map, its `Warp` pose ([`Placement::At`]), story, party,
-gold and clock. The port has no title menu and folds the two entries into one start-up, so it
-takes the Continue slot **first** where the title screen ranks the quick save first — a
-normal+suspend container resumes the older normal log. `--save` is the cartridge, so a resume
-from an intermission slot deletes that log in the file (`SlotMut::clear_header` + `seal`,
+gold and clock. Two readers exist: **`Save::title_slot`** is the title screen's ranking (a present
+quick save above the normal log, `ov_004::0216dad0`), used when the player chooses Continue
+(`app/title.rs`); **`Save::resume_slot`** is the start-up used by `--save` and the headless paths,
+which takes the normal log first — so a normal+suspend container started with `--save` resumes the
+older normal log, while Continue on the title resumes the quick save. `--save` is the cartridge,
+so a resume from an intermission slot deletes that log in the file (`SlotMut::clear_header` + `seal`,
 temporary file and rename, `native::main`'s `consume_suspend_log`), but only once
 `GameState::from_save` has read the slot, as the original writes the header after
 `Save_LoadSlot` unpacked it; the Web page keeps its uploaded bytes, having no file. A recorded
@@ -327,9 +329,9 @@ run (`--play-record`) does not delete it: it checks the container's hash before 
 
 Not modelled: the `Suspend` block's payload (the port keeps the input slot 1's bytes, which
 on a mirrored cartridge are a normal save's list — the original's is the field's own state),
-the `Warp` block's extra fields `+0x10..+0x1b` (they keep the input's bytes), the jingle and
-the fade, and the return to a title screen, which this build does not have: after 4702 the
-field goes on. **DS acceptance of the suspend slot is not attempted**: the written slot 1 has
+the `Warp` block's extra fields `+0x10..+0x1b` (they keep the input's bytes) and the jingle and
+the fade; 4702 returns to the title screen (`app/title.rs`), as the original's entry does.
+**DS acceptance of the suspend slot is not attempted**: the written slot 1 has
 the right header, checksums, state and `Warp` block (`build/evidence/v3-suspend-save/reload.txt`,
 its `Suspend` block kept from the input), but whether the cartridge's title screen offers the
 quick save and resumes at that position is **[hypothesis]** — melonDS was not driven through

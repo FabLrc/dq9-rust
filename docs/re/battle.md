@@ -285,8 +285,11 @@ decompilation and its disassembly (evidence `build/evidence/v4-metal-rules/accur
    `+0x00` word of the worn weapon — the record `func_ov017_021b3780` copies to the character's
    `+0x2F4` (`docs/re/item.md`, "The weapon words") — and adds `1.0` to a metal body's damage on
    a party blow carrying `+0x10` bit 18: with the coin it is 1 or 2. Seven of the table's 1,423
-   records carry the bit: ids 20021–20023, 20119 and 20517–20519, all weapons, all element 8
-   (`build/evidence/v4-metal-equipment/item-flags.txt`, `6f15e467da33`). The other
+   records carry the bit: ids 20021–20023, 20119 and 20517–20519, all weapons, all element 8 —
+   **metal slime sword, liquid metal sword, metal king sword, attribeaute, metal slime spear,
+   liquid metal spear, metal king spear** (`v4-item-names`, from the tables' names block,
+   `build/evidence/v4-item-names/names-check.txt`, `190849f11f35`; the flags from
+   `build/evidence/v4-metal-equipment/item-flags.txt`, `6f15e467da33`). The other
    accessors of the same record read bits 5 to 7; their meaning is not established here.
 6. **The poison needle**: `func_020851d8` tests **bit 10** of the same copied record (19057 is
    the one record of 1,423 that carries it, and it also holds bits 5 and 24; the accessor of bit
