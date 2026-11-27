@@ -48,17 +48,19 @@ Enrage itself is read but not modelled, and no chapter-2 fight carries a trigger
 
 One action, of a party member or a monster, on any number of targets: the plain Attack, the
 damage and healing spells of chapter 2 (kind 1 and kind 2), the attack level of Oomph and Blunt
-(kind 3), the stat changes of Buff and Accelerate (kinds 4 and 5), Dazzle (kind 19), Weird Dance's MP damage (kind 57), a call for
-backup (kind 12), a kind-0 action and the monsters' Flee `0xE1`. The accuracy roll models an
+(kind 3), the stat changes of Buff and Accelerate (kinds 4 and 5), the tension rise (kind 15),
+Dazzle (kind 19), Weird Dance's MP damage (kind 57), a call for backup (kind 12), a kind-0 action
+and the monsters' Flee `0xE1`. The accuracy roll models an
 action whose accuracy stands at 100 and a monster's scaling accuracy with the dazzle die of
 eight, the guard level and the dazzle flag, and the twelve several-target records lose damage by
 the target's rank (below, "The several-target falloff"). Everything else is **refused before any
 draw** with `Unsupported`: damage handlers 1..66, riders, a party member's scaling accuracy,
 a tension level above 4, a guard level above 3, a trait `0x11d` critical, an elemental weapon, a
-weapon that strikes several, the accuracy die of four, and the actions the code
+weapon that strikes several, the accuracy die of four, a reach the model does not establish
+(8, which Egg On 168 and 330 carry), and the actions the code
 singles out by number (`0x1B`, `0x48`, `0x70`, `0xAF`, `0x79`, `0x395`, `0x1FF`, `0x200`, `0x20B`,
-`0x20C`). Tension itself is modelled (below, "Tension") — its multiplier, its flat bonus, the
-maximum's half and the spend — but no modelled action raises it: Psyche Up's kind 15 is refused.
+`0x20C`). Tension is modelled (below, "Tension") — its multiplier, its flat bonus, the
+maximum's half, the rise (kind 15) and the spend.
 A metal body is not refused any more: its rules are below, and the four actions they
 single out (`0x40`, `0x7E`, `0x82`, `0x205`) are now refused by the handler or the rider they
 carry. The chapter 2 actions and handlers are below.
@@ -367,7 +369,71 @@ statuses exists (no sleep, paralysis, confusion, poison or lost-turn state, and 
 chapter 2 sets one), so there is nothing for the immunity to refuse. The facts are recorded
 here for the batch that adds them; `Unsupported::Tension` now refuses only a level above 4.
 
-Tests (`battle/tests.rs`): `tension_multiplies_the_damage_and_adds_a_flat_bonus_by_side` (each
+**The rise (batch `v4-psyche-up`).** The kind-15 handler is `ov_024::021dc93c`, the fifteenth
+entry of the kind table whose base pointer is the word at `0x021ec3c0` (entry 15 = the handler,
+read on the EU overlay: `build/evidence/v4-psyche-up/kind-table.txt`). `ResolveAction` calls it
+once per target, after the accuracy roll and the amount, with the **landed** flag (the handler's
+`param_7`, tested at `0x021dc990`); it reads the **target's** `[status + 0x24]` and writes it
+back through `func_02088220` (EU `0x02088230`) or `func_02088150` (EU `0x02088160`).
+
+- **The amount is the action's `+0x30` short** (`ldrsh r7, [r7, #0x30]`, `0x021dc9f4` and
+  `0x021dcc7c`): a count of levels to **add** on four of the six records, the level to **reach**
+  on the two the handler singles out by number (`0x021dc99c`–`0x021dc9b0`: `number + 0xfeaf`
+  under 2, i.e. 0x151 and 0x152). The six EU records
+  (`build/evidence/v4-psyche-up/kind15-records.txt`, parsed with
+  `cargo dq9re gp2 data/prm/actdt_b.gp2`):
+
+  | action | name | `+0x30` | reach | MP | opening | rule |
+  |---|---|---|---|---|---|---|
+  | 161 | Psyche Up | 1 | 1 (the actor) | 0 | 0x30 | adds one level |
+  | 168 | Egg On | 1 | 8 (not established) | 0 | 0x6B | adds one level; still refused by its reach |
+  | 330 | — | 2 | 8 | 0 | 0x6B | adds two; still refused by its reach |
+  | 337 | — | 3 | 1 | 0 | 0x30 | **sets** the level to 3 |
+  | 338 | — | 4 | 1 | 0 | 0x30 | **sets** the level to 4 (the maximum) |
+  | 567 | — | 1 | 3 (everyone) | 0 | 0x19B | adds one to each target |
+
+- **The cap is 4.** The adding loop is bounded by `4 − level` (`0x021dcc84`–`0x021dcc90`: it
+  computes `level + step`, and when that passes 4 subtracts the overflow from the step), and the
+  absolute branch holds its short under 4.
+- **The gate: a die of two on the step to the maximum, and nothing before it.** Each added level
+  goes through `func_02088208` (EU `0x02088218`, called at `0x021dcca0`): it sets `0x800000`
+  and tail-calls `0x0208768c`, which adds one to `[status + 0x24]`; from level 3 only, it first
+  draws `NextRandomMax(2)` and refuses unless the draw is 0 (`0x020876a4`–`0x020876d0`), so the
+  step to 4 succeeds on a half. Reaching 4 sets `0x1000000` through `func_02088150` (EU
+  `0x02088160`, `0x021dcba4`), gated by `func_0208810c` (`0x0208811c`); the added branch is
+  entered only when `func_020881c4` (`0x020881d4`) allows it, and the absolute branch tests
+  `func_0208810c`/`func_020881c4` too (`0x021dc9c4`, `0x021dc9e4`, `0x021dcc6c`). Those gates
+  test status bits the port does not carry (bit 0, `0x10`, `0x80000`, bit 3), so only the die
+  and the cap are modelled (**[unknown]** what they would change on a chapter-2 state). From 4
+  the routine returns −1 with no draw.
+- **No MP**: all six records have `+0x08` low byte 0.
+- **The messages** (`+0x20`/`+0x24` staging, not modelled): the opening lines of the table
+  above, one line per level reached — `0x31`–`0x33` in the absolute branch
+  (`0x021dcaa4`–`0x021dcac0`) and `0x34` for the maximum (`0x021dcbb0`), the level itself in
+  the adding branch (`func_ov024_021e8c48` at `0x021dccc0`) — and the records' failure line
+  `0x1F` (`+0x24` bits 10–19 and 20–29).
+- **The outcome**: a kind-15 action changes no HP and no MP (the amount `CalculateFinalDamage`
+  computes is ignored), and carries no `+0x10` bit 13, so it neither uses nor spends tension.
+
+The port reports the rise per target (`ActionOutcome::tension_rises`, `None` for another kind
+or a miss) and `Battle::resolve` writes it to `Status::tension_level`; the next action carrying
+`+0x10` bit 13 multiplies by it and clears it. The handler's messages, its status bits and the
+`func_0208810c` gate are not modelled; Egg On 168 and 330 keep their reach-8 refusal.
+
+Tests (`battle/tests.rs`): `a_kind_fifteen_action_raises_the_level_by_its_step` (0→1, 1→2,
+2→3, +2), `the_tension_rise_caps_at_four_and_only_the_step_to_it_draws` (0–2 add no draw; at 3
+the die of two is read from the same pass and decides 4 or 3; 4 stays),
+`the_two_absolute_kind_fifteen_actions_set_the_level` (0x151/0x152, including above and at the
+target level, no draw),
+`a_missed_kind_fifteen_action_raises_nothing`,
+`a_rejected_kind_fifteen_action_raises_nothing` (MP 255, no target),
+`the_risen_level_is_used_and_spent_by_the_next_blow`, and
+`a_battle_raises_then_spends_the_hero_s_tension` (the whole round, then the spend). On the ROM,
+`the_six_kind_fifteen_records_carry_the_rise_and_its_step` pins the six numbers and the `+0x30`
+of the four records the model resolves (161, 337, 338, 567; 168 and 330 are pinned as their
+reach-8 refusals), and that the oracle's records (1, 2, 12, 16, 18, 30) are none kind 15.
+
+Tests (`battle/tests.rs`, `v4-tension`): `tension_multiplies_the_damage_and_adds_a_flat_bonus_by_side` (each
 level by side, level 0 unchanged, no extra draw),
 `the_tension_is_spent_by_the_action_that_uses_it` (a hit, a miss, the second action at 0),
 `a_metal_body_takes_the_multiplier_twice_and_no_flat_bonus`,
@@ -376,10 +442,12 @@ level by side, level 0 unchanged, no extra draw),
 `a_battle_spends_the_hero_s_tension_once` (the whole round's status, twice).
 
 **The chapter 2 route cannot move.** No chapter 2 way is kind 15 (the rise), which
-`chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve` now asserts, so no route battle
+`chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve` asserts, so no route battle
 ever holds a level: every tension multiply is `×1.0`, every flat bonus `0` and every spend a
 clear of 0. The plain Attack does carry `+0x10` bit 13 (asserted on the ROM), so the gate and
-the spend path run on the route — with nothing to multiply. Parity stays 2/2.
+the spend path run on the route — with nothing to multiply. The 306 oracle vectors replay
+actions 1, 2, 12, 16, 18 and 30, none of them kind 15 (pinned on the ROM), and the rise branch
+is the only code path the batch adds, so the vectors cannot move. Parity stays 2/2.
 
 ### The weapon's killer bonus (`ov_024::021e6a90`, `0x021e7200`–`0x021e7494`)
 
@@ -1270,8 +1338,8 @@ most eight, so a ninth is unmodelled.
   unread), `func_ov000_0215b5a0`'s hit rise, the tail of `ResolveAction`
   (`0x021ed48c`–`0x021ed564`: the tension spend is modelled, its drawing neighbours are not).
   `ActionOutcome::generator_state` is exact up to the
-  wake roll of the last target, not beyond; the oracle's `special charge` and `rage` draws are the
-  oracle's modelling of those and are not compared.
+  wake roll and the kind-15 rise's draws of the final target, not beyond; the oracle's
+  `special charge` and `rage` draws are the oracle's modelling of those and are not compared.
 - **[hypothesis]** the group spells' per-target draws (die, accuracy, amount per target, one
   critical for the action): from the wiki's reading and unit tests; BattleEmulator is one-on-one
   and cannot check it.
@@ -1346,5 +1414,6 @@ riders, no damage handler).
 
 The battle's flow (`setup`, `round`, `ai`, `end`) marks nothing either: `ProcessCombatTurn`,
 the way rules, the targeting handlers, `TryPartyFlee` and the victory routine are translated for a
-battle with the chapter 2 statuses and tension (which no modelled action raises), no co-op
-action and no grotto, so none is fully reimplemented.
+battle with the chapter 2 statuses and tension (whose rise is the kind-15 handler, `0x021dc93c`,
+modelled for the level and the die but not for its messages), no co-op action and no grotto, so
+none is fully reimplemented.

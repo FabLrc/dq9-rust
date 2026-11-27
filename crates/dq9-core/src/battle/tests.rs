@@ -1583,3 +1583,297 @@ fn a_battle_spends_the_hero_s_tension_once() {
     let plain_second = hero_amount(&mut control);
     assert_eq!(second, plain_second);
 }
+
+/// Psyche Up's shape: kind 15, reaching the actor, `+0x30` as the rise. The amount is the
+/// record's no-range blow, which the handler ignores (`ov_024::021dc93c`).
+fn psyche(step: i16) -> Action {
+    let mut a = Action::new(161, 15, Amount::Blow { multiplier: 1.0 });
+    a.reach = Reach::Actor;
+    a.stat_step = step;
+    a
+}
+
+/// A landed kind-15 action raises the target's level through its `+0x30` (`ov_024::021dc93c`,
+/// the handler's `iVar5 = *(short *)(action + 0x30)` loop), changes no HP and no MP, and spends
+/// no tension of its own (the record carries no `+0x10` bit 13).
+#[test]
+fn a_kind_fifteen_action_raises_the_level_by_its_step() {
+    for (before, after) in [(0u8, 1u8), (1, 2), (2, 3)] {
+        let mut target = monster();
+        target.tension_level = before;
+        let outcome = resolve_action(
+            &mut Random::new(9),
+            &party(),
+            &psyche(1),
+            &[target.clone()],
+            0,
+        )
+        .unwrap();
+        assert_eq!(outcome.tension_rises, [Some(after)], "level {before}");
+        assert_eq!(outcome.targets[0].hp_after, target.hp, "no damage");
+        assert_eq!(outcome.targets[0].mp_damage, 0, "no MP taken");
+        assert!(!outcome.tension_spent, "kind 15 carries no spend bit");
+    }
+    let mut target = monster();
+    target.tension_level = 0;
+    let two = resolve_action(&mut Random::new(9), &party(), &psyche(2), &[target], 0).unwrap();
+    assert_eq!(two.tension_rises, [Some(2)], "330's +2 adds two levels");
+}
+
+/// The cap: the port holds 0 to 4 (`[status + 0x24]`). A rise at 4 stays, and the step **to** 4
+/// draws a die of two (`0x020876a4`–`0x020876d0`, its `NextRandomMax(2)` at `0x020876c4`), only a
+/// 0 rising; below 3 the rise draws nothing, so its draw count is the one the action would take
+/// without a rise.
+#[test]
+fn the_tension_rise_caps_at_four_and_only_the_step_to_it_draws() {
+    let base = {
+        // The same action with a zero rise: the count of the action's own draws.
+        let mut target = monster();
+        target.tension_level = 3;
+        resolve_action(&mut Random::new(11), &party(), &psyche(0), &[target], 0)
+            .unwrap()
+            .draws
+    };
+    for level in 0..3u8 {
+        let mut target = monster();
+        target.tension_level = level;
+        let outcome =
+            resolve_action(&mut Random::new(11), &party(), &psyche(1), &[target], 0).unwrap();
+        assert_eq!(outcome.draws, base, "0 to 3 weakens nothing but the level");
+    }
+    // The die is the next draw of the pass: read it from the same action without a rise, then
+    // assert which way it sent each seed — a 0 rises, anything else stays at 3.
+    let mut counted = [0usize; 2];
+    for seed in 0..64u64 {
+        let mut target = monster();
+        target.tension_level = 3;
+        let control = resolve_action(
+            &mut Random::new(seed),
+            &party(),
+            &psyche(0),
+            &[target.clone()],
+            0,
+        )
+        .unwrap();
+        let die = Random::new(control.generator_state).next_max(2);
+        let outcome =
+            resolve_action(&mut Random::new(seed), &party(), &psyche(1), &[target], 0).unwrap();
+        assert_eq!(
+            outcome.draws,
+            control.draws + 1,
+            "the die of two is the next draw"
+        );
+        let expected = if die == 0 { 4 } else { 3 };
+        assert_eq!(
+            outcome.tension_rises[0],
+            Some(expected),
+            "seed {seed}, die {die}"
+        );
+        counted[usize::from(die != 0)] += 1;
+    }
+    assert_eq!(counted.iter().sum::<usize>(), 64);
+    assert!(counted[0] > 0 && counted[1] > 0, "{counted:?}");
+
+    // At 4 nothing moves, and a second kind-15 after the cap stays at the maximum.
+    let mut full = monster();
+    full.tension_level = 4;
+    let held = resolve_action(&mut Random::new(5), &party(), &psyche(1), &[full], 0).unwrap();
+    assert_eq!(held.tension_rises, [Some(4)]);
+    assert_eq!(held.draws, base, "no die from the maximum");
+}
+
+/// 0x151 and 0x152 set the level their `+0x30` names instead of adding it (`0x021dcec8`,
+/// `0x021dcecc`): 3 and 4 on the EU records, above the current level only, with no draw.
+#[test]
+fn the_two_absolute_kind_fifteen_actions_set_the_level() {
+    let mut to_three = psyche(3);
+    to_three.number = 0x151;
+    let mut to_four = psyche(4);
+    to_four.number = 0x152;
+    for (action, before, after) in [
+        (&to_three, 0u8, 3u8),
+        (&to_three, 2, 3),
+        (&to_three, 3, 3),
+        (&to_three, 4, 4),
+        (&to_four, 0, 4),
+        (&to_four, 3, 4),
+        (&to_four, 4, 4),
+    ] {
+        let mut target = monster();
+        target.tension_level = before;
+        let outcome = resolve_action(&mut Random::new(3), &party(), action, &[target], 0).unwrap();
+        assert_eq!(
+            outcome.tension_rises,
+            [Some(after)],
+            "{} from {before}",
+            action.number
+        );
+    }
+    // The absolute branch draws nothing: the same action whose short cannot move spends the
+    // same draws as a zero rise.
+    for action in [&to_three, &to_four] {
+        let mut target = monster();
+        target.tension_level = 1;
+        let risen = resolve_action(
+            &mut Random::new(3),
+            &party(),
+            action,
+            std::slice::from_ref(&target),
+            0,
+        )
+        .unwrap();
+        let control =
+            resolve_action(&mut Random::new(3), &party(), &psyche(0), &[target], 0).unwrap();
+        assert_eq!(
+            risen.draws, control.draws,
+            "no draw from the absolute branch"
+        );
+    }
+    assert!(to_three.tension_is_absolute() && to_four.tension_is_absolute());
+    assert!(!psyche(1).tension_is_absolute());
+}
+
+/// The handler runs on a landing: a missed kind-15 action raises nothing. The rise is the last
+/// draw this resolver models, so the die of two is only taken when the action landed.
+#[test]
+fn a_missed_kind_fifteen_action_raises_nothing() {
+    let mut action = psyche(1);
+    action.works_on_metal = false;
+    let mut metal = monster();
+    metal.metal_body = true;
+    metal.tension_level = 0;
+    let outcome = resolve_action(&mut Random::new(2), &party(), &action, &[metal], 0).unwrap();
+    assert!(!outcome.targets[0].landed);
+    assert_eq!(outcome.tension_rises, [None]);
+    assert_eq!(
+        outcome.draws, 2,
+        "the kept die and the critical roll; the metal miss costs no accuracy die"
+    );
+}
+
+/// A refused action never reaches the handler: nothing is drawn and no level moves. MP 255 (all
+/// the caster has) and an empty target list are the resolver's own refusals.
+#[test]
+fn a_rejected_kind_fifteen_action_raises_nothing() {
+    let mut costly = psyche(1);
+    costly.mp_cost = 255;
+    let mut rng = Random::new(1);
+    let before = rng.state();
+    assert_eq!(
+        resolve_action(&mut rng, &party(), &costly, &[monster()], 0),
+        Err(Unsupported::MpCost(255))
+    );
+    assert_eq!(rng.state(), before, "nothing drawn");
+    assert_eq!(
+        resolve_action(&mut rng, &party(), &psyche(1), &[], 0),
+        Err(Unsupported::NoTargets)
+    );
+    assert_eq!(rng.state(), before);
+}
+
+/// The risen level is the one the next tensioned action multiplies by and spends: level 1 gives
+/// party ×1.5 plus the flat bonus, and the outcome marks the spend (`0x021e6b9c`, `0x021ed48c`).
+#[test]
+fn the_risen_level_is_used_and_spent_by_the_next_blow() {
+    let target = monster();
+    let rise = resolve_action(
+        &mut Random::new(4),
+        &party(),
+        &psyche(1),
+        std::slice::from_ref(&target),
+        0,
+    )
+    .unwrap();
+    let level = rise.tension_rises[0].expect("a landed rise");
+    assert_eq!(level, 1);
+
+    let mut actor = party();
+    actor.tension_level = level;
+    actor.level = 25;
+    let blow = resolve_action(
+        &mut Random::new(7),
+        &actor,
+        &tensioned_action(100),
+        std::slice::from_ref(&target),
+        0,
+    )
+    .unwrap();
+    assert_eq!(
+        blow.targets[0].amount,
+        (100.0f32 * 1.5 + flat_bonus(1)) as i32
+    );
+    assert!(blow.tension_spent);
+
+    // Spent: the same actor at 0 deals the plain amount.
+    actor.tension_level = 0;
+    let plain = resolve_action(
+        &mut Random::new(7),
+        &actor,
+        &tensioned_action(100),
+        std::slice::from_ref(&target),
+        0,
+    )
+    .unwrap();
+    assert_eq!(plain.targets[0].amount, 100);
+    assert!(!plain.tension_spent);
+}
+
+/// A battle with one hero (level 25) and one monster, the hero able to use Psyche Up's rise.
+fn psyche_battle(seed: u64) -> Battle {
+    let mut f = Fighter::new(Side::Party);
+    f.hp = 1000;
+    f.max_hp = 1000;
+    f.mp = 10;
+    f.attack = 100;
+    f.defence = 0;
+    f.agility = 10;
+    f.evasion_rate = 2.0;
+    f.level = 25;
+    let mut skills = BTreeMap::new();
+    skills.insert(1, Skill::from_action(tensioned_action(100)));
+    skills.insert(161, Skill::from_action(psyche(1)));
+    let setup = BattleSetup {
+        monsters: vec![attack_buff_monster()],
+        skills,
+        set_battle: false,
+    };
+    Battle::new(setup, vec![PartyMember::new(f)], Surprise::None, seed).unwrap()
+}
+
+/// The whole battle path: a round's kind-15 action writes `Status::tension_level` (the kernel's
+/// `[status + 0x24]`), the next round's blow multiplies by it and clears it — the same spend the
+/// `v4-tension` batch pinned for a hand-set level (`0x021ed48c`).
+#[test]
+fn a_battle_raises_then_spends_the_hero_s_tension() {
+    let mut battle = psyche_battle(0x2468);
+    let rise = Command::Act {
+        skill: Skill::from_action(psyche(1)),
+        target: Target::Party(0),
+    };
+    battle
+        .round(std::slice::from_ref(&rise), &mut Random::new(3))
+        .unwrap();
+    assert_eq!(
+        battle.status(Who::Party(0)).tension_level,
+        1,
+        "a landed Psyche Up raises by its +1"
+    );
+
+    let blow = Command::Act {
+        skill: Skill::from_action(tensioned_action(100)),
+        target: Target::Monster(0),
+    };
+    let report = battle.round(&[blow], &mut Random::new(7)).unwrap();
+    let amount = report
+        .events
+        .iter()
+        .find_map(|e| match e {
+            Event::Acted { who, outcomes, .. } if *who == Who::Party(0) => {
+                Some(outcomes[0].1.amount)
+            }
+            _ => None,
+        })
+        .expect("the hero acted");
+    assert_eq!(amount, (100.0f32 * 1.5 + flat_bonus(1)) as i32);
+    assert_eq!(battle.status(Who::Party(0)).tension_level, 0);
+}

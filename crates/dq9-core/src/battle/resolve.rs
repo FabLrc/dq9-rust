@@ -12,16 +12,17 @@
 //!    the amount (`GetAttackBaseDamage`; even for a blow already dodged or blocked), the
 //!    several-target falloff of the rank (no draw), the final damage
 //!    (`CalculateFinalDamage`, `ov_024::021e6a90`: a critical's draw, a coin) and, for a
-//!    blow that deals damage and carries the wake bit, the wake roll.
+//!    blow that deals damage and carries the wake bit, the wake roll; then the kind-15 handler
+//!    (`ov_024::021dc93c`) if the action is one, whose step to the maximum draws a die of two.
 //!
 //! What follows a blow in the game and is **not** modelled: a monster's provocation draws
-//! (`func_ov024_021eb08c`), the rider, the counters and everything after the wake roll
-//! (`docs/re/battle.md`, "Open points"). The generator state returned by [`resolve_action`] is
-//! therefore exact up to the wake roll of the last target, not beyond.
+//! (`func_ov024_021eb08c`), the rider, the counters and everything after the wake roll and the
+//! kind-15 rise (`docs/re/battle.md`, "Open points"). The generator state returned by
+//! [`resolve_action`] is therefore exact up to those last draws of the final target, not beyond.
 //!
 //! Not listed as ported: `ResolveAction` and `CalculateFinalDamage` are translated for the plain
-//! Attack and the damage and healing spells only, with no status. The two tension helpers they
-//! call are, though.
+//! Attack, the damage and healing spells and the non-damage kinds only, with no status. The two
+//! tension helpers they call are, though.
 //!
 //! port: 0x02074774, 0x02074748
 
@@ -100,6 +101,11 @@ pub struct ActionOutcome {
     /// actor that fell (`ResolveAction`'s tail, `0x021ed48c`–`0x021ed564`, `func_020881ac` and
     /// `func_02088234`). The caller does the clearing: the kernel reads its fighters.
     pub tension_spent: bool,
+    /// One entry per target, in the order given: the tension level it holds after a **landed**
+    /// kind-15 action (`ov_024::021dc93c`), capped at 4 and gated by a die of two on the step to
+    /// the maximum (`0x0208768c`); `None` for every other kind and for a miss, which raises
+    /// nothing. The caller writes it to its status: the kernel reads its fighters.
+    pub tension_rises: Vec<Option<u8>>,
     /// Draws taken from the generator by this call.
     pub draws: u32,
     /// The generator's state after, for chaining the next action.
@@ -228,6 +234,47 @@ fn tension_multiplier(side: Side, level: u8) -> f32 {
 /// `[status + 0x24]` byte. Skipped against a metal body (`0x021e6cf8`).
 fn tension_flat_bonus(level: i32, tension: u8) -> f32 {
     (1.0f32 + (level / 10) as f32) * f32::from(tension)
+}
+
+/// The maximum tension level (`[status + 0x24]` holds 0 to 4; `func_02088208`, `0x0208768c`,
+/// returns −1 from 4 on).
+const TENSION_MAX: u8 = 4;
+
+/// One level up, `func_02088208` (EU `0x02088218`): `[status + 0x14] |= 0x800000` then
+/// `0x0208768c`, which refuses from the maximum, and from 3 draws `NextRandomMax(2)` and refuses
+/// unless it is 0; otherwise it adds one to `[status + 0x24]` and, on reaching 4, sets the
+/// maximum's bit through `func_02088150` (`0x02088160`). Returns the level after (unchanged when
+/// refused). The step to 4 is gated by `func_0208810c` (EU `0x0208811c`) on status bits the port
+/// does not carry (bit 0, `0x10`, `0x80000`, bit 3), so only the die and the cap are modelled.
+fn raise_one_level(rng: &mut Counted<'_>, level: u8) -> u8 {
+    if level >= TENSION_MAX {
+        return level;
+    }
+    // The step to the maximum (`0x020876a4`–`0x020876d0`): a die of two, and only a 0 rises.
+    if level == TENSION_MAX - 1 && rng.next_max(2) >= 1 {
+        return level;
+    }
+    level + 1
+}
+
+/// `ov_024::021dc93c` (kind 15), the rise: 0x151 and 0x152 set the level its `+0x30` short names
+/// (capped at 4) when that is above the current one, without a draw; every other kind-15 action
+/// adds `+0x30` levels, one `raise_one_level` at a time, bounded by `4 − level` (the handler
+/// subtracts the overflow: `0x021dcc84`–`0x021dcc90`). A refused step still spends its loop turn.
+fn raise_tension(rng: &mut Counted<'_>, action: &Action, level: u8) -> u8 {
+    if action.tension_is_absolute() {
+        let wanted = action.stat_step.clamp(0, i16::from(TENSION_MAX)) as u8;
+        return level.max(wanted);
+    }
+    let mut level = level;
+    let steps = action
+        .stat_step
+        .max(0)
+        .min(i16::from(TENSION_MAX - level.min(TENSION_MAX)));
+    for _ in 0..steps {
+        level = raise_one_level(rng, level);
+    }
+    level
 }
 
 /// `CalculateFinalDamage` (`ov_024::021e6a90`) for the steps modelled, in the game's order:
@@ -406,6 +453,7 @@ pub(crate) fn resolve_action_with_attack(
         .critical_is_shared()
         .then(|| roll_critical(&mut rng, actor, action));
     let mut outcomes = Vec::with_capacity(targets.len());
+    let mut tension_rises = Vec::with_capacity(targets.len());
     for (rank, target) in targets.iter().enumerate() {
         // The die kept at `[battle + 0x8e6e]`; only a status not modelled reads it.
         rng.next_max(100);
@@ -455,6 +503,12 @@ pub(crate) fn resolve_action_with_attack(
                 rng.next_max(100);
             }
         }
+        // The kind-15 handler (`ov_024::021dc93c`) runs once per target, after the amount: a
+        // landed action raises the target's level, a miss raises nothing. It is the last draw
+        // this resolver models (the die of two on the step to 4).
+        let tension_after = (action.kind == 15 && landed)
+            .then(|| raise_tension(&mut rng, action, target.tension_level));
+        tension_rises.push(tension_after);
         let fell = landed && action.number == 0xE1;
         let (hp_after, mp_damage) = match action.kind {
             1 => ((target.hp - amount).max(0), 0),
@@ -470,7 +524,7 @@ pub(crate) fn resolve_action_with_attack(
             // Weird Dance (`func_ov024_021e0bf4`): the amount is taken from MP, held under what
             // the target has.
             57 => (target.hp, amount.max(0).min(target.mp.max(0))),
-            // Kinds 0, 3, 4, 5, 12 and 19 change no HP or MP here.
+            // Kinds 0, 3, 4, 5, 12, 15 and 19 change no HP or MP here (kind 15's rise is above).
             _ => (target.hp, 0),
         };
         outcomes.push(TargetOutcome {
@@ -489,6 +543,7 @@ pub(crate) fn resolve_action_with_attack(
         targets: outcomes,
         mp_spent: i32::from(action.mp_cost),
         tension_spent,
+        tension_rises,
         draws: rng.draws,
         generator_state: rng.rng.state(),
     })

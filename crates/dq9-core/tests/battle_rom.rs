@@ -897,6 +897,85 @@ fn the_tension_table_is_the_roms() {
     assert_eq!(monster, [1.0, 1.3, 2.0, 3.0, 4.5]);
 }
 
+/// The six kind-15 records of the EU action tables and the rise their `+0x30` carries
+/// (`ov_024::021dc93c`: Psyche Up 161, Egg On 168, 330, 337, 338 and 567; `docs/re/battle.md`,
+/// "Tension"). The two actions the handler singles out by number (`0x021dcec8`, 0x151 and
+/// 0x152) name the level to reach (3 and 4); the other four add their short, 1 or 2. All six
+/// cost no MP. The records the 306 oracle vectors replay (the plain Attack, Crack, Crackle,
+/// Woosh, Heal) are not among them, so the rise's new branch cannot move a vector.
+#[test]
+fn the_six_kind_fifteen_records_carry_the_rise_and_its_step() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let mut rises: Vec<(u16, u8)> = (0..0x600u16)
+        .filter_map(|number| tables.actions.skill(number))
+        .filter(|skill| skill.kind == 15)
+        .map(|skill| (skill.number, skill.reach))
+        .collect();
+    rises.sort_unstable();
+    // Six records carry kind 15 (the parsed table also gives their `+0x30`: 1 on 161, 168 and
+    // 567, 2 on 330, 3 on 337, 4 on 338 — `build/evidence/v4-psyche-up/kind15-records.txt`).
+    assert_eq!(
+        rises,
+        [(161, 1), (168, 8), (330, 8), (337, 1), (338, 1), (567, 3)]
+    );
+    // The kind is modelled now: the four records whose reach is a battle reach (1 the actor, 3
+    // everyone) resolve, and their `+0x30` is the rise. Egg On 168 and 330 still stop at their
+    // reach 8, which the model does not establish.
+    for (number, step) in [(161u16, 1i16), (337, 3), (338, 4), (567, 1)] {
+        let action = tables
+            .actions
+            .skill(number)
+            .unwrap()
+            .action
+            .unwrap_or_else(|error| panic!("action {number}: {error:?}"));
+        assert_eq!(action.kind, 15, "action {number}");
+        assert_eq!(action.stat_step, step, "action {number}'s +0x30");
+        assert_eq!(action.mp_cost, 0, "action {number} costs no MP");
+    }
+    for number in [168u16, 330] {
+        assert_eq!(
+            tables.actions.skill(number).unwrap().action,
+            Err(Unsupported::Reach(8)),
+            "action {number} is refused by its reach, not its kind"
+        );
+    }
+    let absolute: Vec<u16> = [161u16, 337, 338, 567]
+        .into_iter()
+        .filter(|&number| {
+            tables
+                .actions
+                .skill(number)
+                .unwrap()
+                .action
+                .unwrap()
+                .tension_is_absolute()
+        })
+        .collect();
+    assert_eq!(absolute, [0x151, 0x152]);
+
+    // A landed Psyche Up on the hero raises the level and changes no HP or MP.
+    let action = tables.actions.skill(161).unwrap().action.unwrap();
+    let mut hero = Fighter::new(Side::Party);
+    hero.hp = 100;
+    hero.max_hp = 100;
+    hero.attack = 100;
+    hero.defence = 50;
+    let mut risen = hero.clone();
+    risen.tension_level = 2;
+    let outcome = resolve_action(&mut Random::new(3), &hero, &action, &[risen.clone()], 0).unwrap();
+    assert_eq!(outcome.tension_rises, [Some(3)]);
+    assert_eq!(outcome.targets[0].hp_after, risen.hp);
+    assert_eq!(outcome.targets[0].mp_damage, 0);
+
+    for number in [1u16, 2, 12, 16, 18, 30] {
+        let action = tables.actions.skill(number).unwrap().action.unwrap();
+        assert_ne!(action.kind, 15, "oracle action {number}");
+    }
+}
+
 /// The scope of the grudge rule and of enrage, counted on the ROM's 438 records: `+0x10` bit 26
 /// (the grudge memory, `func_ov000_02154f30`) and the two trigger pairs of `+0x24`
 /// (`func_ov024_021eb08c`: kind bits 0–6 with chance 7–13, kind 14–20 with chance 21–27).

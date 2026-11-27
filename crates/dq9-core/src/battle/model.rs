@@ -335,6 +335,9 @@ pub struct Action {
     /// `0x020e88d0` in EU).
     pub halved_by_defending: bool,
     /// `+0x30`: the levels the action moves a stat by, held to two either way (kinds 3, 4 and 5).
+    /// On a kind-15 action it is the tension rise: the number of levels **added** (1 on Psyche Up
+    /// 161, Egg On 168 and 567; 2 on 330), except on the two [`TENSION_ABSOLUTE_ACTIONS`], whose
+    /// short is the level to **reach** (3 and 4). `docs/re/battle.md`, "Tension".
     pub stat_step: i16,
     /// `+0x10` bit 17: strikes several, weakening as it goes. The action's targets are
     /// multiplied by the rank table `0x020e88e0` in the order of the resolution
@@ -417,6 +420,13 @@ impl Action {
     pub fn critical_uses_attack_power(&self) -> bool {
         matches!(self.number, 1 | 0xDB | 0x1F9)
     }
+
+    /// Whether this kind-15 action **sets** the tension level to its `+0x30` short instead of
+    /// adding it: 0x151 and 0x152 (`ov_024::021dc93c`, `0x021dcec8`). Only the kind-15 handler
+    /// reads it.
+    pub fn tension_is_absolute(&self) -> bool {
+        TENSION_ABSOLUTE_ACTIONS.contains(&self.number)
+    }
 }
 
 /// What the resolver refuses to answer: part of the game's behaviour that is not modelled (or
@@ -427,7 +437,8 @@ pub enum Unsupported {
     NoTargets,
     /// An action the code singles out by number and whose special rules are not modelled.
     ActionNumber(u16),
-    /// A kind other than 1 (damage) and 2 (heal).
+    /// A kind other than the ones the resolver models (see `MODELLED_KINDS`; 15 is the tension
+    /// rise).
     Kind(u8),
     /// A reach that is not 1 to 5.
     Reach(u8),
@@ -524,9 +535,15 @@ const SPECIAL_ACTIONS: [u16; 10] = [
     0x1B, 0x48, 0x70, 0xAF, 0x79, 0x395, 0x1FF, 0x200, 0x20B, 0x20C,
 ];
 
+/// The actions whose kind 15 sets the tension level outright rather than adding to it: 0x151 and
+/// 0x152 (`ov_024::021dc93c`, `0x021dcec8`/`0x021dcecc`). Their `+0x30` short is the level to
+/// reach (3 and 4 on the EU records), not a count of levels to add.
+pub const TENSION_ABSOLUTE_ACTIONS: [u16; 2] = [0x151, 0x152];
+
 /// The kinds the resolver and the battle apply: 0 nothing (and the monsters' flight), 1 damage,
-/// 2 heal, 3 attack level, 4 defence, 5 agility, 12 a call for backup, 19 dazzle, 57 damage to MP.
-const MODELLED_KINDS: [u8; 9] = [0, 1, 2, 3, 4, 5, 12, 19, 57];
+/// 2 heal, 3 attack level, 4 defence, 5 agility, 12 a call for backup, 15 the tension rise,
+/// 19 dazzle, 57 damage to MP.
+const MODELLED_KINDS: [u8; 10] = [0, 1, 2, 3, 4, 5, 12, 15, 19, 57];
 
 /// Checks everything the resolver cannot answer, before any draw.
 pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result<(), Unsupported> {

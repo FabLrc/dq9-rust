@@ -25,8 +25,8 @@
 //! where it is made and in `docs/re/battle.md`.
 //!
 //! Nothing here is marked as ported: `ProcessCombatTurn` is translated for a battle with the
-//! chapter 2 statuses and tension (which no modelled action raises: Psyche Up's kind 15 is
-//! refused), no guard command beyond the stance, no co-op action and no grotto.
+//! chapter 2 statuses and tension (whose rise is Psyche Up's kind 15, applied by the kernel),
+//! no guard command beyond the stance, no co-op action and no grotto.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -272,8 +272,9 @@ pub struct Status {
     /// Tension level 0 to 4 (`+0x24`; 4 is the maximum the game shows as 100 and marks with the
     /// `0x1000000` status bit, 1 to 3 with `0x800000`). The resolver multiplies the damage by
     /// it, adds its flat bonus and halves a kind-1 blow on a target at 4
-    /// ([`super::model::Fighter::tension_level`]); an action carrying `+0x10` bit 13 clears it,
-    /// whatever it came to (`0x021ed48c`).
+    /// ([`super::model::Fighter::tension_level`]); a kind-15 action raises it through
+    /// `ov_024::021dc93c` (a die of two on the step to 4), and an action carrying `+0x10` bit 13
+    /// clears it, whatever it came to (`0x021ed48c`).
     pub tension_level: u8,
 }
 
@@ -1042,7 +1043,7 @@ impl Battle {
             self.status_mut(who).tension_level = 0;
         }
         let mut outcomes = Vec::new();
-        for (&victim, o) in targets.iter().zip(&outcome.targets) {
+        for (index, (&victim, o)) in targets.iter().zip(&outcome.targets).enumerate() {
             let before = self.fighter(victim).hp;
             if o.fled {
                 self.fighter_mut(victim).hp = 0;
@@ -1054,6 +1055,12 @@ impl Battle {
                 if o.mp_damage > 0 {
                     let mp = &mut self.fighter_mut(victim).mp;
                     *mp = (*mp - o.mp_damage).max(0);
+                }
+                // The kind-15 rise (`ov_024::021dc93c`): a landed Psyche Up (or the other
+                // kind-15 records) writes the level its handler read from the target's
+                // `[status + 0x24]`; the next action that uses tension spends it below.
+                if let Some(Some(level)) = outcome.tension_rises.get(index) {
+                    self.status_mut(victim).tension_level = *level;
                 }
                 self.apply_kind(
                     victim,
