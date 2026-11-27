@@ -24,8 +24,9 @@
 //! exactly as it was before the round, generator included. What is a **[hypothesis]** is marked
 //! where it is made and in `docs/re/battle.md`.
 //!
-//! Nothing here is marked as ported: `ProcessCombatTurn` is translated for a battle with no
-//! status, no tension, no guard, no co-op action and no grotto.
+//! Nothing here is marked as ported: `ProcessCombatTurn` is translated for a battle with the
+//! chapter 2 statuses and tension (which no modelled action raises: Psyche Up's kind 15 is
+//! refused), no guard command beyond the stance, no co-op action and no grotto.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -268,6 +269,12 @@ pub struct Status {
     pub dazzle_second: u8,
     /// Guard level 0 to 3 (`+0x21`): 1 while defending, cleared at the round's end.
     pub guard: u8,
+    /// Tension level 0 to 4 (`+0x24`; 4 is the maximum the game shows as 100 and marks with the
+    /// `0x1000000` status bit, 1 to 3 with `0x800000`). The resolver multiplies the damage by
+    /// it, adds its flat bonus and halves a kind-1 blow on a target at 4
+    /// ([`super::model::Fighter::tension_level`]); an action carrying `+0x10` bit 13 clears it,
+    /// whatever it came to (`0x021ed48c`).
+    pub tension_level: u8,
 }
 
 impl Status {
@@ -527,6 +534,7 @@ impl Battle {
         let status = self.status(who);
         fighter.guard_level = status.guard;
         fighter.dazzled = status.dazzle_count > 0;
+        fighter.tension_level = status.tension_level;
         if status.defence_level != 0 {
             fighter.defence =
                 super::damage::round_up(fighter.defence as f32 * status.defence_multiplier());
@@ -1026,6 +1034,13 @@ impl Battle {
             combo,
             amount_attack,
         )?;
+        // The tension spend (`ResolveAction`'s tail, `0x021ed48c`–`0x021ed564`): once the
+        // action's targets are done, an action carrying `+0x10` bit 13 clears the actor's level
+        // and both status bits — `func_020881ac` and `func_02088234` — whatever it came to, even
+        // for an actor that fell. The port keeps the level alone, so it goes to 0.
+        if outcome.tension_spent {
+            self.status_mut(who).tension_level = 0;
+        }
         let mut outcomes = Vec::new();
         for (&victim, o) in targets.iter().zip(&outcome.targets) {
             let before = self.fighter(victim).hp;

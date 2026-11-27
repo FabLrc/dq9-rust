@@ -819,6 +819,12 @@ fn chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve() {
             skill.kind, 3,
             "action {action} of {who:?} is kind 3 (the attack buff)"
         );
+        // Nor is any kind 15 (Psyche Up, Egg On, 330, 567, 337, 338): no chapter 2 action
+        // raises tension, so the route's tension level stays 0 wherever it is read.
+        assert_ne!(
+            skill.kind, 15,
+            "action {action} of {who:?} is kind 15 (a tension rise)"
+        );
     }
 
     // Every way of the chapter 2 list is resolved by the kernel and its handler is modelled.
@@ -866,6 +872,29 @@ fn the_attack_buff_records_carry_the_sign_and_the_blow_its_bit() {
         action.attack_buff_applies,
         "the plain Attack reads the buffed attack"
     );
+    assert!(
+        action.tension_applies,
+        "the plain Attack carries +0x10 bit 13 (tension works on it and is spent by it)"
+    );
+}
+
+/// The tension table on the European ARM9: `0x020e8908` (the USA one is `0x020e88f8`, ten bytes
+/// lower with the shift), five levels per side, the party's then the monster's. `func_02074738`
+/// (`0x02074748`) indexes it `level × 8 + side × 4`; a level past four falls back to 1.0.
+#[test]
+fn the_tension_table_is_the_roms() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let arm9 = rom.arm9().unwrap();
+    let at = (0x020e_8908u32 - arm9.load_addr) as usize;
+    let word = |i: usize| {
+        let bytes = &arm9.data[at + i * 4..at + i * 4 + 4];
+        f32::from_bits(u32::from_le_bytes(bytes.try_into().unwrap()))
+    };
+    let party = [word(0), word(2), word(4), word(6), word(8)];
+    let monster = [word(1), word(3), word(5), word(7), word(9)];
+    assert_eq!(party, [1.0, 1.5, 2.5, 4.0, 6.0]);
+    assert_eq!(monster, [1.0, 1.3, 2.0, 3.0, 4.5]);
 }
 
 /// The scope of the grudge rule and of enrage, counted on the ROM's 438 records: `+0x10` bit 26

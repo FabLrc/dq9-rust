@@ -107,8 +107,21 @@ pub struct Fighter {
     /// Dazzled: status `+0x14` bit 6 (`func_02088854`). A dazzled striker throws a die of eight
     /// on an action carrying `+0x10` bit 3 and misses on 0 to 4 (`func_ov000_02156648`).
     pub dazzled: bool,
-    /// Tension level, 0 to 4 (`[status + 0x24]`): refused above 0 ([`Unsupported::Tension`]).
+    /// Tension level, 0 to 4 (`[status + 0x24]`, `docs/re/battle.md`, "Tension"): 1 to 3 carry
+    /// the status word's `0x800000` (`func_02088220`), 4 is the maximum and carries `0x1000000`
+    /// (`func_02088150`). The level multiplies the damage and adds a flat bonus at the head of
+    /// `CalculateFinalDamage` (`ov_024::021e6a90`, `0x021e6b9c`–`0x021e6d18`) for an action
+    /// carrying `+0x10` bit 13 ([`Action::tension_applies`]), and a target at 4 has a landed
+    /// kind-1 amount halved (`0x021e7a58`). A level above 4 is not one the code holds
+    /// ([`Unsupported::Tension`]).
     pub tension_level: u8,
+    /// The dealer's level, read by the tension flat bonus
+    /// ([`CalculateTensionBonus`](super::resolve)): a party member's in their current vocation
+    /// (the table at `+0x16c` indexed by `+0x950`, `0x021e6d0c`) or a monster's (`mon_data`
+    /// `+0x0A` bits 0–6 through `func_ov000_02159dbc`). `Character::fighter` does not fill it
+    /// yet, so a party fighter built there keeps 0 and its flat bonus is the level alone
+    /// (**[unknown]**, below, "Tension"); a monster's is the name record's level.
+    pub level: i32,
     /// The element of the weapon a party member wields (0: none; looked up from the weapon's
     /// kind by `CalculateFinalDamage`, `ov_024::021e6a90`). An elemental weapon (1 to 7) on an
     /// action with [`Action::weapon_element`] multiplies the damage again, which is not modelled
@@ -168,6 +181,7 @@ impl Fighter {
             guard_level: 0,
             dazzled: false,
             tension_level: 0,
+            level: 0,
             weapon_element: 0,
             accuracy_die_trait: false,
             weapon_strikes_several: false,
@@ -285,6 +299,12 @@ pub struct Action {
     pub blockable: bool,
     /// `+0x10` bit 11 (`0x800`): a blow that lands and deals damage draws the wake roll after it.
     pub wakes_target: bool,
+    /// `+0x10` bit 13 (`0x2000`): tension works on this action and is spent by it
+    /// (`CalculateFinalDamage`'s head, `0x021e6b9c`; the spend, `0x021ed48c`). 223 of the 681
+    /// EU records carry it — the plain Attack, the attack spells, the weapon skills, six heals —
+    /// not Defend, Psyche Up nor the herbs. A blow the original redirected (`[ctx + 0x76]`) is
+    /// skipped there; this port never redirects one.
+    pub tension_applies: bool,
     /// `+0x14` bits 21–27: the critical chance's multiplier in hundredths (100 on the plain
     /// Attack, 50 on the spells, 0 on items).
     pub critical_percent: u8,
@@ -364,6 +384,7 @@ impl Action {
             dodgeable: false,
             blockable: false,
             wakes_target: false,
+            tension_applies: false,
             critical_percent: 0,
             shared_critical_bits: 0,
             max_damage: 0,
@@ -426,7 +447,7 @@ pub enum Unsupported {
     MpCost(u8),
     /// A critical trait whose condition is not established.
     CriticalTrait,
-    /// A fighter with tension.
+    /// A tension level above 4, which the code does not hold (0 to 4 at `[status + 0x24]`).
     Tension,
     /// A fighter with a guard level.
     Guard,
@@ -473,7 +494,7 @@ impl fmt::Display for Unsupported {
             }
             Self::MpCost(c) => write!(f, "an MP cost of {c} is not modelled"),
             Self::CriticalTrait => write!(f, "trait 0x11d's critical rate is not established"),
-            Self::Tension => write!(f, "tension is not modelled"),
+            Self::Tension => write!(f, "a tension level above 4 is not modelled"),
             Self::Guard => write!(f, "a guard level above 3 is not modelled"),
             Self::Range => write!(f, "inconsistent amount range"),
             Self::AiMode(m) => write!(f, "AI mode {m} is not modelled"),
@@ -551,7 +572,7 @@ pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result
         return Err(Unsupported::CriticalTrait);
     }
     for fighter in std::iter::once(actor).chain(targets) {
-        if fighter.tension_level > 0 {
+        if fighter.tension_level > 4 {
             return Err(Unsupported::Tension);
         }
         if fighter.guard_level > 3 {

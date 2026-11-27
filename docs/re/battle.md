@@ -54,10 +54,12 @@ action whose accuracy stands at 100 and a monster's scaling accuracy with the da
 eight, the guard level and the dazzle flag, and the twelve several-target records lose damage by
 the target's rank (below, "The several-target falloff"). Everything else is **refused before any
 draw** with `Unsupported`: damage handlers 1..66, riders, a party member's scaling accuracy,
-tension, a guard level above 3, a trait `0x11d` critical, an elemental weapon, a weapon that
-strikes several, the accuracy die of four, and the actions the code
+a tension level above 4, a guard level above 3, a trait `0x11d` critical, an elemental weapon, a
+weapon that strikes several, the accuracy die of four, and the actions the code
 singles out by number (`0x1B`, `0x48`, `0x70`, `0xAF`, `0x79`, `0x395`, `0x1FF`, `0x200`, `0x20B`,
-`0x20C`). A metal body is not refused any more: its rules are below, and the four actions they
+`0x20C`). Tension itself is modelled (below, "Tension") — its multiplier, its flat bonus, the
+maximum's half and the spend — but no modelled action raises it: Psyche Up's kind 15 is refused.
+A metal body is not refused any more: its rules are below, and the four actions they
 single out (`0x40`, `0x7E`, `0x82`, `0x205`) are now refused by the handler or the rider they
 carry. The chapter 2 actions and handlers are below.
 
@@ -238,14 +240,17 @@ pilot fights with one hero, so no action has a second target. Parity stays 2/2
 
 Order read in `build/evidence/j4-battle-kernel/ghidra-final-damage.txt` and re-read on the EU
 decompilation for this batch (`build/evidence/v4-metal-rules/final-damage.c`): tension multiply
-at the head (not modelled) → critical → `× GetResistance(element)` (`_fmul`, line 182, float) →
+and flat bonus at the head (below, "Tension") → critical → `× GetResistance(element)` (`_fmul`,
+line 182, float) →
 **the weapon's killer bonus by the target's family** (party attacker, `+0x10` bit 18; the twelve
 `_fmul` at lines 300–365, below) → block and dodge zero it → the poison needle's `1.0` →
 **the metal body's zeroing** → **coin**
 `NextRandomMax(2)` (line 529) when the damage is not above 0, the target was not blocked or
 dodged, the action is not `0x1B`/`0x48`/`0x70` and the target's resistances to the action's both
-elements are above 0 → **Metal Slash's `1 + random(2)`** → **the `+1` weapon** → guard (not
-modelled) → combo table (`0x021fe778`, `1.0 1.2 1.5 2.0`, counter held to 3, line 574–587) →
+elements are above 0 → **Metal Slash's `1 + random(2)`** → **the `+1` weapon** → **tension again
+on a metal body** (`0x021e79d0`) → **a target at the maximum's half** (`0x021e7a58`) → guard
+(modelled as the guard level, above) → combo table (`0x021fe778`, `1.0 1.2 1.5 2.0`, counter
+held to 3, line 574–587) →
 `_ffix` **once** (line 594) → cap `+0x1C` bits 0–13 (0 = none).
 
 - **Critical**: the greatest of `1.2 × damage` and `CalculateCriticalDamage` (`func_02074838`, EU
@@ -277,6 +282,104 @@ modelled) → combo table (`0x021fe778`, `1.0 1.2 1.5 2.0`, counter held to 3, l
   (`smoke.log`, `2d4fc32e2122`). It was removed after the run; this is not a continuous
   chapter-route or interactive UI claim. No new function is marked ported: the handler's
   other state/message work is still partial.
+
+### Tension (batch `v4-tension`)
+
+The encyclopedia's B12 and B13, read on the EU decompilation (`build/evidence/v4-tension/`
+`tension-decomp.c` `895602431d1b`, `final-damage-head.c` `3e62ab90fae9`,
+`final-damage-metal-and-half.c` `15faee24a591`, `tension-spend.c` `edff6b8a16db`,
+`status-immunity-gates.c` `8f68e645b8a0`) and on the ARM9 (`tension-table.txt`
+`8c03003aca64`).
+
+**The levels.** `[status + 0x24]` holds a level 0 to 4 — not a number 0 to 100: levels 1–3 set
+the status word's `0x800000` (`func_02088220`), level 4 sets `0x1000000` (`func_02088150`, the
+"maximum" the game shows as 100). `ResetBattleStatus` (`0x020891cc`) zeroes it. The port keeps
+the level alone (`Fighter::tension_level`, `Status::tension_level`) and treats 4 as the maximum.
+
+**The table.** `func_02074738` (`0x02074748`) reads `float[level × 2 + side]` at `0x020e8908`
+(the USA table is `0x020e88f8`), side 0 the party and 1 the monsters; a level past four returns
+`1.0` (`_fls`'s carry test). Read on the ROM (five levels each, `the_tension_table_is_the_roms`):
+
+| level | party | monster |
+|---|---|---|
+| 0 | 1.0 | 1.0 |
+| 1 | 1.5 | 1.3 |
+| 2 | 2.5 | 2.0 |
+| 3 | 4.0 | 3.0 |
+| 4 | 6.0 | 4.5 |
+
+**What it does to damage.** At the head of `CalculateFinalDamage`
+(`0x021e6b9c`–`0x021e6d18`), in single precision, when the action carries `+0x10` bit 13 and the
+dealer holds tension (`func_ov024_021da998`, `0x800000`):
+
+```
+d1 = d0 × m[level][dealer is a monster]              ; func_02074738
+d2 = d1 + (1 + (float)(dealerLevel / 10)) × level    ; CalculateTensionBonus, 0x02074774
+```
+
+- **The flat bonus is the dealer's level's**, not the target's: a whole-number division, so
+  dealer levels 10 to 19 all give 2. A party member's level is the table at `+0x16c` indexed by
+  the live vocation (`0x021e6d0c`); a monster's is `mon_data` `+0x0A` bits 0–6 through
+  `func_ov000_02159dbc`. The port reads `Fighter::level`, filled from the name record by
+  `BattleSetup` for a monster; **`Character::fighter` does not fill it yet**, so a party fighter
+  the app builds carries 0 and its flat bonus is the level alone (**[unknown]**, a `party.rs`
+  hook that is outside this batch).
+- **Against a metal body the flat bonus is skipped** (`0x021e6cf8`), and after the metal body's
+  1-or-2 the multiplier is applied a **second** time, without the bonus (`0x021e79d0`). A
+  **critical** blow that works on metal has the head's multiply **undone** first (`0x021e6d1c`,
+  the critical flag at `[ctx + 0xc]` bit 7), so it takes one multiplier, not two.
+- **Only the critical's `1.2 ×` carries tension**: the plain Attack's floor (its attack power ×
+  `between(0.95, 1.05)`) and the other actions' `damage × between(1.5, 2.0)` read the amount as
+  it came, before the head (`pre_tension` in `final_amount`).
+- **A target at the maximum takes half** a landed kind-1 amount (`0x021e7a58`,
+  `func_ov024_021dd260` on the target), after the metal steps and before the combo.
+- **The gate**: `+0x10` bit 13 on the action and `[ctx + 0x76]` clear — a blow the original
+  redirected (a bounce, a counter) does not use its dealer's tension. This port never redirects
+  one, so it models the bit alone (`Action::tension_applies`, from the record's `+0x10` bit 13).
+
+**The spend.** Once, after the action's targets (`ResolveAction`'s tail,
+`0x021ed48c`–`0x021ed564`): for an action that carries the bit, **whatever it came to** — a hit,
+a miss (`0x021ec868`), a dodge, a block, 0 damage — the dealer's level and both bits are cleared
+(`func_020881ac`, `func_02088234`), even for one that fell. Not by Defend, Psyche Up, the herbs
+or the items (their records lack the bit). A blow the original redirected (a bounce) still marks
+the spend in `CalculateFinalDamage`'s bounce arm before `0x021e6b9c`, before it skips the damage;
+this port has no bounce. There is **no decay with the rounds**. The port reports the decision as
+`ActionOutcome::tension_spent` and `Battle::resolve` clears `Status::tension_level`;
+`resolve_action` itself reads its fighter and leaves the clearing to its caller.
+
+**B13 — the immunity at the maximum.** The maximum is **not** a plain stat: five statuses test
+the `0x1000000` flag in their "may take it" predicate and refuse a fighter at the maximum. All
+five are facts of the EU ARM9, each read in its setter's gate:
+
+| status | setter (bit) | gate |
+|---|---|---|
+| poison (`+0x14` bit 1) | `func_02088560` | `func_02088540` |
+| sleep (`+0x14` bit 4) | `func_02088338` | `func_0208830c` |
+| confusion (`+0x14` bit 5) | `func_020883cc` | `func_020883ac` |
+| paralysis (`+0x14` bit 3) | `func_0208826c` | `func_0208824c` |
+| a lost turn (`+0x14` bit 19, `0x80000`) | `func_02088474` | `func_02088418` |
+
+The lost turn is the one exception pair: `func_02088418` still lets it land from actions
+**`0x1FC`** and **`0x20F`** (`iRam02088480` = 527 = `0x20F`) — the "two abilities" of the
+encyclopedia, the coups of `Ability-Handlers.md` § "The lost turn". **The port cannot carry
+B13**: its `Status` holds the chapter 2 levels, dazzle and the guard, and none of the five
+statuses exists (no sleep, paralysis, confusion, poison or lost-turn state, and no action of
+chapter 2 sets one), so there is nothing for the immunity to refuse. The facts are recorded
+here for the batch that adds them; `Unsupported::Tension` now refuses only a level above 4.
+
+Tests (`battle/tests.rs`): `tension_multiplies_the_damage_and_adds_a_flat_bonus_by_side` (each
+level by side, level 0 unchanged, no extra draw),
+`the_tension_is_spent_by_the_action_that_uses_it` (a hit, a miss, the second action at 0),
+`a_metal_body_takes_the_multiplier_twice_and_no_flat_bonus`,
+`a_critical_metal_blow_undoes_the_head_multiply`,
+`a_target_at_the_maximum_takes_half_a_kind_one_amount`, and
+`a_battle_spends_the_hero_s_tension_once` (the whole round's status, twice).
+
+**The chapter 2 route cannot move.** No chapter 2 way is kind 15 (the rise), which
+`chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve` now asserts, so no route battle
+ever holds a level: every tension multiply is `×1.0`, every flat bonus `0` and every spend a
+clear of 0. The plain Attack does carry `+0x10` bit 13 (asserted on the ROM), so the gate and
+the spend path run on the route — with nothing to multiply. Parity stays 2/2.
 
 ### The weapon's killer bonus (`ov_024::021e6a90`, `0x021e7200`–`0x021e7494`)
 
@@ -1165,7 +1268,8 @@ most eight, so a ninth is unmodelled.
   (`func_ov024_021eb08c`: `NextRandomMax(100)` per opposing combatant when the action's `+0x1C`
   bits 19–31 is 5 or `0xc`, or its `+0x0A` bit 0 is set — the kinds our actions carry there are
   unread), `func_ov000_0215b5a0`'s hit rise, the tail of `ResolveAction`
-  (`0x021ed48c`–`0x021ed564` tension spend). `ActionOutcome::generator_state` is exact up to the
+  (`0x021ed48c`–`0x021ed564`: the tension spend is modelled, its drawing neighbours are not).
+  `ActionOutcome::generator_state` is exact up to the
   wake roll of the last target, not beyond; the oracle's `special charge` and `rage` draws are the
   oracle's modelling of those and are not compared.
 - **[hypothesis]** the group spells' per-target draws (die, accuracy, amount per target, one
@@ -1235,11 +1339,12 @@ uses. `ov_024::021e7bc0 GetAttackBaseDamage` and the `NextRandom*`/`CalculateCri
 
 Fully translated and cited: `NextRandom`, `NextRandomMax`, `NextRandomFloat01`,
 `NextRandomFloatBetween` (`battle/random.rs`), `RoundUp`, `CalculatePhysicalDamage`,
-`CalculateCritRate` (`battle/damage.rs`). Not marked: `ResolveAction`, `CalculateFinalDamage`,
-`GetAttackBaseDamage`, `InitMonsterBattleStatus` and the rolls (still partial: no tension, no
+`CalculateCritRate` (`battle/damage.rs`), `GetTensionMultiplier` and `CalculateTensionBonus`
+(`battle/resolve.rs`, the tension helpers). Not marked: `ResolveAction`, `CalculateFinalDamage`,
+`GetAttackBaseDamage`, `InitMonsterBattleStatus` and the rolls (still partial: no
 riders, no damage handler).
 
 The battle's flow (`setup`, `round`, `ai`, `end`) marks nothing either: `ProcessCombatTurn`,
 the way rules, the targeting handlers, `TryPartyFlee` and the victory routine are translated for a
-battle without tension, co-op action or grotto, and with the chapter 2 statuses only, so none is
-fully reimplemented.
+battle with the chapter 2 statuses and tension (which no modelled action raises), no co-op
+action and no grotto, so none is fully reimplemented.

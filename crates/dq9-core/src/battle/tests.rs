@@ -779,8 +779,9 @@ fn unsupported_rules_are_refused_before_any_draw() {
         refuse(&claws, &blow(), &monster()),
         Unsupported::MultiHitWeapon
     );
+    // A level the code does not hold is refused; 1 to 4 are modelled (the tests below).
     let mut tense = party();
-    tense.tension_level = 2;
+    tense.tension_level = 5;
     assert_eq!(refuse(&tense, &blow(), &monster()), Unsupported::Tension);
     let mut guarding = monster();
     guarding.guard_level = 4;
@@ -1346,4 +1347,239 @@ fn the_plain_attack_takes_its_falloff_from_the_weapon() {
         amounts(&party(), &variant, &[monster(), monster()]),
         [100, 80]
     );
+}
+
+/// A kind-1 action whose base amount is exactly `amount` and that tension works on: the range
+/// record's least and most are equal and the spread is 0, so the base is `amount` with no
+/// randomness, and the element is 0, i.e. resistance 1.0.
+fn tensioned_action(amount: u16) -> Action {
+    let mut a = flat(amount);
+    a.number = 0x300;
+    a.tension_applies = true;
+    a
+}
+
+/// The dealer's flat bonus, `CalculateTensionBonus` (`0x02074774`): `(1 + level / 10) × level`,
+/// the division a whole number's. A dealer of level 25 gives `3 × level`.
+fn flat_bonus(tension: u8) -> f32 {
+    3.0 * f32::from(tension)
+}
+
+/// Tension multiplies the damage and adds a flat bonus by dealer kind (`0x020e8908`): party
+/// `1.0 1.5 2.5 4.0 6.0`, monster `1.0 1.3 2.0 3.0 4.5`, the level 0 vector unchanged and no
+/// extra draw.
+#[test]
+fn tension_multiplies_the_damage_and_adds_a_flat_bonus_by_side() {
+    let action = tensioned_action(100);
+    let party_mults = [1.0f32, 1.5, 2.5, 4.0, 6.0];
+    let monster_mults = [1.0f32, 1.3, 2.0, 3.0, 4.5];
+    let plain = resolve_action(&mut Random::new(3), &party(), &action, &[monster()], 0).unwrap();
+    assert_eq!(plain.targets[0].amount, 100);
+    assert!(!plain.tension_spent, "level 0 spends nothing");
+
+    for (level, mult) in party_mults.iter().enumerate().skip(1) {
+        let mut actor = party();
+        actor.tension_level = level as u8;
+        actor.level = 25;
+        let outcome =
+            resolve_action(&mut Random::new(3), &actor, &action, &[monster()], 0).unwrap();
+        let expected = (100.0f32 * mult + flat_bonus(level as u8)) as i32;
+        assert_eq!(outcome.targets[0].amount, expected, "party level {level}");
+        assert_eq!(outcome.draws, plain.draws, "tension adds no draw");
+        assert!(outcome.tension_spent);
+    }
+    for (level, mult) in monster_mults.iter().enumerate().skip(1) {
+        let mut actor = monster();
+        actor.attack = 100;
+        actor.tension_level = level as u8;
+        actor.level = 25;
+        let outcome = resolve_action(&mut Random::new(3), &actor, &action, &[party()], 0).unwrap();
+        let expected = (100.0f32 * mult + flat_bonus(level as u8)) as i32;
+        assert_eq!(outcome.targets[0].amount, expected, "monster level {level}");
+    }
+}
+
+/// The spend: an action carrying `+0x10` bit 13 reports it, whatever its outcome, and once the
+/// caller has cleared the level the next action is not multiplied (`0x021ed48c`). A hit, a miss
+/// and a dodge all spend it.
+#[test]
+fn the_tension_is_spent_by_the_action_that_uses_it() {
+    let action = tensioned_action(100);
+    let mut actor = party();
+    actor.tension_level = 2;
+    actor.level = 25;
+    let first = resolve_action(&mut Random::new(5), &actor, &action, &[monster()], 0).unwrap();
+    assert!(first.tension_spent);
+    assert_eq!(first.targets[0].amount, 256);
+    // The caller clears the level; the second action is the plain one.
+    actor.tension_level = 0;
+    let second = resolve_action(&mut Random::new(5), &actor, &action, &[monster()], 0).unwrap();
+    assert!(!second.tension_spent);
+    assert_eq!(second.targets[0].amount, 100);
+
+    // A miss still spends it (`0x021ec868`): the accuracy die of 8 under the spoilt roll.
+    let mut spoilt = tensioned_action(100);
+    spoilt.spoilt = true;
+    let mut dazzled = party();
+    dazzled.tension_level = 1;
+    dazzled.dazzled = true;
+    dazzled.level = 25;
+    let mut spent_on_miss = false;
+    for seed in 0..64 {
+        let outcome =
+            resolve_action(&mut Random::new(seed), &dazzled, &spoilt, &[monster()], 0).unwrap();
+        assert!(outcome.tension_spent);
+        if !outcome.targets[0].landed {
+            spent_on_miss = true;
+        }
+    }
+    assert!(spent_on_miss, "some seed misses and still spends");
+}
+
+/// A metal body takes the multiplier a second time after its 1-or-2 and no flat bonus
+/// (`0x021e79d0`): the 0-or-1 coin is multiplied again, so a level 4 party blow deals 0 or 6.
+#[test]
+fn a_metal_body_takes_the_multiplier_twice_and_no_flat_bonus() {
+    let mut metal = monster();
+    metal.metal_body = true;
+    let mut action = tensioned_action(100);
+    action.works_on_metal = true;
+    action.aims_at_opponents = true;
+    let plain = resolve_action(&mut Random::new(11), &party(), &action, &[metal.clone()], 0)
+        .unwrap()
+        .targets[0]
+        .amount;
+    assert!((0..=1).contains(&plain), "the coin: {plain}");
+    let mut actor = party();
+    actor.tension_level = 4;
+    actor.level = 25;
+    let tense = resolve_action(&mut Random::new(11), &actor, &action, &[metal], 0)
+        .unwrap()
+        .targets[0]
+        .amount;
+    assert_eq!(tense, plain * 6);
+}
+
+/// A **critical** blow that works on a metal body has the head's tension undone
+/// (`0x021e6d1c`) and then the metal arm's single multiply (`0x021e79d0`): one multiplier, not
+/// two — `m ×` the untensioned amount, not `m²`.
+#[test]
+fn a_critical_metal_blow_undoes_the_head_multiply() {
+    let mut metal = monster();
+    metal.metal_body = true;
+    let mut action = tensioned_action(100);
+    action.works_on_metal = true;
+    action.aims_at_opponents = true;
+    action.always_critical = true;
+    let plain = resolve_action(&mut Random::new(13), &party(), &action, &[metal.clone()], 0)
+        .unwrap()
+        .targets[0]
+        .amount;
+    let mut actor = party();
+    actor.tension_level = 4;
+    actor.level = 25;
+    let tense = resolve_action(&mut Random::new(13), &actor, &action, &[metal], 0)
+        .unwrap()
+        .targets[0]
+        .amount;
+    // The critical's own draw multiplies the untensioned 100 by 1.5 to 2; the metal arm then
+    // multiplies once by 6. Without the undo the head's 6 would square to 36.
+    assert!(
+        (plain * 6).abs_diff(tense) <= 6,
+        "one multiplier: plain {plain}, tensed {tense}"
+    );
+}
+
+/// A target at the maximum (level 4) has a landed kind-1 amount halved (`0x021e7a58`), and a
+/// heal (kind 2) is not.
+#[test]
+fn a_target_at_the_maximum_takes_half_a_kind_one_amount() {
+    let mut full = monster();
+    full.tension_level = 4;
+    let plain = resolve_action(
+        &mut Random::new(3),
+        &party(),
+        &tensioned_action(101),
+        &[monster()],
+        0,
+    )
+    .unwrap()
+    .targets[0]
+        .amount;
+    let halved = resolve_action(
+        &mut Random::new(3),
+        &party(),
+        &tensioned_action(101),
+        &[full.clone()],
+        0,
+    )
+    .unwrap()
+    .targets[0]
+        .amount;
+    assert_eq!(plain, 101);
+    assert_eq!(halved, 50);
+
+    let mut heal = tensioned_action(101);
+    heal.kind = 2;
+    let held = resolve_action(&mut Random::new(3), &party(), &heal, &[full], 0)
+        .unwrap()
+        .targets[0]
+        .amount;
+    assert_eq!(held, 101);
+}
+
+/// A battle with one hero and one monster, the hero's action a tensioned kind-1 amount of 100.
+fn tension_battle(seed: u64) -> Battle {
+    let mut f = Fighter::new(Side::Party);
+    f.hp = 1000;
+    f.max_hp = 1000;
+    f.mp = 10;
+    f.attack = 100;
+    f.defence = 0;
+    f.agility = 10;
+    f.evasion_rate = 2.0;
+    f.level = 25;
+    let mut skills = BTreeMap::new();
+    skills.insert(1, Skill::from_action(tensioned_action(100)));
+    let setup = BattleSetup {
+        monsters: vec![attack_buff_monster()],
+        skills,
+        set_battle: false,
+    };
+    Battle::new(setup, vec![PartyMember::new(f)], Surprise::None, seed).unwrap()
+}
+
+/// The hero's amount in one round of `battle`.
+fn hero_amount(battle: &mut Battle) -> i32 {
+    let command = Command::Act {
+        skill: Skill::from_action(tensioned_action(100)),
+        target: Target::Monster(0),
+    };
+    let report = battle.round(&[command], &mut Random::new(7)).unwrap();
+    report
+        .events
+        .iter()
+        .find_map(|e| match e {
+            Event::Acted { who, outcomes, .. } if *who == Who::Party(0) => {
+                Some(outcomes[0].1.amount)
+            }
+            _ => None,
+        })
+        .expect("the hero acted")
+}
+
+/// The whole battle's spend: a tensioned status multiplies the round's blow, the status goes to
+/// 0 whatever happened, and the second round's amount is the untensioned one (`0x021ed48c`).
+#[test]
+fn a_battle_spends_the_hero_s_tension_once() {
+    let mut tense = tension_battle(0x1234);
+    let mut control = tension_battle(0x1234);
+    tense.party_status[0].tension_level = 2;
+    let first = hero_amount(&mut tense);
+    let plain_first = hero_amount(&mut control);
+    assert_eq!(first, (plain_first as f32 * 2.5 + 6.0) as i32);
+    assert_eq!(tense.status(Who::Party(0)).tension_level, 0);
+    let second = hero_amount(&mut tense);
+    let plain_second = hero_amount(&mut control);
+    assert_eq!(second, plain_second);
 }

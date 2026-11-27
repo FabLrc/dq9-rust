@@ -19,16 +19,16 @@ the game grabs the keyboard automatically. ROM and save files stay local: nothin
 The demo is public, experimental and needs a recent browser with WebGPU or WebGL 2.
 
 <!-- coverage:start -->
-[![Ported](https://img.shields.io/badge/ported-2.3%25%20of%20functions-orange)](docs/roadmap.md)
+[![Ported](https://img.shields.io/badge/ported-2.4%25%20of%20functions-orange)](docs/roadmap.md)
 
-**Progress: 2.3%** of game functions ported (288 / 12,056), 2.9% of the code (75 KB / 2,505 KB).
+**Progress: 2.4%** of game functions ported (290 / 12,056), 2.9% of the code (75 KB / 2,505 KB).
 Computed by `cargo dq9re coverage` from the `port:` markers in the code (definition in `docs/roadmap.md`).
 
 <details><summary>Per-module detail</summary>
 
 | Module | Functions ported | Code ported |
 |---|---:|---:|
-| ARM9 | 256 / 5,464 (4.6%) | 65 KB / 826 KB (7.8%) |
+| ARM9 | 258 / 5,464 (4.7%) | 65 KB / 826 KB (7.8%) |
 | ITCM | 0 / 34 (0.0%) | 0 KB / 6 KB (0.0%) |
 | ov_000 | 1 / 826 (0.1%) | 1 KB / 190 KB (0.1%) |
 | ov_001 | 1 / 515 (0.1%) | 1 KB / 70 KB (0.0%) |

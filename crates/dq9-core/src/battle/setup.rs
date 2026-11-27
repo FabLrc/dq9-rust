@@ -190,6 +190,7 @@ fn skill(r: &ActionRecord<'_>, ranges: &Ranges) -> Skill {
         a.dodgeable = r.dodgeable;
         a.blockable = r.blockable;
         a.wakes_target = r.wakes;
+        a.tension_applies = r.tension;
         a.critical_percent = r.critical_multiplier;
         a.shared_critical_bits = hit_code;
         a.max_damage = r.max_amount;
@@ -341,10 +342,14 @@ impl BattleSetup {
                 .monsters
                 .find(number)
                 .ok_or(SetupError::UnknownMonster(number))?;
-            let metal = tables.names.find(number).is_some_and(|n| n.metal);
+            let name = tables.names.find(number);
+            let metal = name.is_some_and(|n| n.metal);
             // `func_ov000_02156068(battle, target, n, 0)` reads the family at bits 7–10 of the
             // same `mon_data` word (0 for an empty record: no family answers).
-            let family = tables.names.find(number).map_or(0, |n| n.family);
+            let family = name.map_or(0, |n| n.family);
+            // Its level is the same word's bits 0–6 (`func_ov000_02159dbc`): the dealer's level
+            // of the tension flat bonus.
+            let level = name.map_or(0, |n| i32::from(n.level));
             // Action 2, the fall-back every way rule ends on, is always needed.
             for &way in record.ways.iter().chain(&[2]) {
                 if let Entry::Vacant(slot) = skills.entry(way) {
@@ -361,7 +366,7 @@ impl BattleSetup {
                     Some(world) => init_monster_hp(world, record.hp, false),
                     None => i32::from(record.hp),
                 };
-                monsters.push(monster(record, group, metal, family, hp)?);
+                monsters.push(monster(record, group, metal, family, level, hp)?);
             }
         }
         Ok(Self {
@@ -378,6 +383,7 @@ fn monster(
     group: usize,
     metal: bool,
     family: u8,
+    level: i32,
     hp: i32,
 ) -> Result<Monster, SetupError> {
     let rate = |grade: u8| grade_rate(grade).ok_or(SetupError::Grade(record.number, grade));
@@ -393,6 +399,7 @@ fn monster(
     fighter.resistances = record.resistances;
     fighter.metal_body = metal;
     fighter.family = family;
+    fighter.level = level;
     let word = record.word_10;
     Ok(Monster {
         number: record.number,

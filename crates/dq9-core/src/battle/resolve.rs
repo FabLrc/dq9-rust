@@ -20,7 +20,10 @@
 //! therefore exact up to the wake roll of the last target, not beyond.
 //!
 //! Not listed as ported: `ResolveAction` and `CalculateFinalDamage` are translated for the plain
-//! Attack and the damage and healing spells only, with no status.
+//! Attack and the damage and healing spells only, with no status. The two tension helpers they
+//! call are, though.
+//!
+//! port: 0x02074774, 0x02074748
 
 use super::damage::{base_amount, critical_rate, critical_threshold};
 use super::model::{Action, Fighter, Side, Unsupported, validate};
@@ -36,6 +39,12 @@ const METAL_ZEROING_EXEMPT: [u16; 2] = [0x205, 0x82];
 
 /// The multipliers of the combo table (`0x021fe778`), indexed by the counter held to 3.
 const COMBO_TABLE: [f32; 4] = [1.0, 1.2, 1.5, 2.0];
+
+/// The tension multipliers by level and dealer kind, read on the EU ARM9 at `0x020e8908`
+/// (`GetTensionMultiplier`, `0x02074748`; the USA table is `0x020e88f8`): party
+/// `1.0 1.5 2.5 4.0 6.0`, monster `1.0 1.3 2.0 3.0 4.5`. `func_02074738` returns 1.0 for an
+/// index past the four levels (`_fls`'s carry test).
+const TENSION_MULTIPLIERS: [[f32; 5]; 2] = [[1.0, 1.5, 2.5, 4.0, 6.0], [1.0, 1.3, 2.0, 3.0, 4.5]];
 
 /// The multipliers of the guard level (`0x020e88c0` in USA, `0x020e88d0` in EU; read from the EU
 /// ARM9): the party's Defend sets 1, the round's end clears it. Applied to an action carrying
@@ -85,6 +94,12 @@ pub struct ActionOutcome {
     pub targets: Vec<TargetOutcome>,
     /// MP the action costs its actor.
     pub mp_spent: i32,
+    /// Whether the action spends the actor's tension: it carries `+0x10` bit 13 and the actor
+    /// held a level. The original clears the level and both status bits once, after the action's
+    /// targets, whatever it came to — a hit, a miss, a dodge, a block, 0 damage, even for an
+    /// actor that fell (`ResolveAction`'s tail, `0x021ed48c`–`0x021ed564`, `func_020881ac` and
+    /// `func_02088234`). The caller does the clearing: the kernel reads its fighters.
+    pub tension_spent: bool,
     /// Draws taken from the generator by this call.
     pub draws: u32,
     /// The generator's state after, for chaining the next action.
@@ -198,10 +213,27 @@ fn roll_accuracy(
     die < accuracy
 }
 
+/// `func_02074738` (`0x02074748`, the table `0x020e8908`): the tension multiplier of `level`
+/// for `side`, 1.0 past the four levels (`_fls`'s carry test).
+fn tension_multiplier(side: Side, level: u8) -> f32 {
+    let arm = if side == Side::Monster { 1 } else { 0 };
+    TENSION_MULTIPLIERS[arm]
+        .get(usize::from(level))
+        .copied()
+        .unwrap_or(1.0)
+}
+
+/// `CalculateTensionBonus` (`0x02074774`): `(1 + level / 10) * tension`, the division a **whole
+/// number's** — dealer levels 10 to 19 all give 2. The level is the dealer's, the tension its
+/// `[status + 0x24]` byte. Skipped against a metal body (`0x021e6cf8`).
+fn tension_flat_bonus(level: i32, tension: u8) -> f32 {
+    (1.0f32 + (level / 10) as f32) * f32::from(tension)
+}
+
 /// `CalculateFinalDamage` (`ov_024::021e6a90`) for the steps modelled, in the game's order:
-/// critical, resistance, the weapon's family bonus, block / dodge zero, the poison needle, the
-/// metal body's zeroing, the coin, Metal Slash's `1 + random(2)`, the `+1` weapon, the combo,
-/// truncation, the cap.
+/// tension, critical, resistance, the weapon's family bonus, block / dodge zero, the poison
+/// needle, the metal body's zeroing, the coin, Metal Slash's `1 + random(2)`, the `+1` weapon,
+/// tension again on a metal body, the maximum's half, the combo, truncation, the cap.
 fn final_amount(
     rng: &mut Counted<'_>,
     strike: &Strike<'_>,
@@ -217,15 +249,34 @@ fn final_amount(
         combo_count,
     } = *strike;
     let mut damage = base as f32;
+    // The head of `CalculateFinalDamage` (`0x021e6b9c`–`0x021e6d18`): the action carries
+    // `+0x10` bit 13 and the dealer holds tension, so the amount is multiplied by the level's
+    // table entry and a flat bonus is added — the bonus skipped against a metal body
+    // (`0x021e6cf8`). `pre_tension` keeps the amount as it came for the critical's floor.
+    let pre_tension = damage;
+    let tensioned = action.tension_applies && actor.tension_level > 0;
+    if tensioned {
+        damage *= tension_multiplier(actor.side, actor.tension_level);
+        if !target.metal_body {
+            damage += tension_flat_bonus(actor.level, actor.tension_level);
+        }
+    }
+    // A critical blow that works on a metal body has the head's tension **undone** before the
+    // critical and the metal arm's own multiply (`0x021e6d1c`): it takes the multiplier once,
+    // not twice. `bVar20` there is the critical flag.
+    if critical && target.metal_body && action.works_on_metal {
+        damage = pre_tension;
+    }
     if critical {
         // The greatest of 1.2 × damage and the critical's own damage; for the plain Attack the
         // damage as it came is a floor too.
         let boosted = 1.2f32 * damage;
         if action.critical_uses_attack_power() {
             let power = actor.attack as f32 * rng.float_between(0.95, 1.05);
-            damage = boosted.max(power).max(damage);
+            damage = boosted.max(power).max(pre_tension);
         } else {
-            let doubled = damage * rng.float_between(1.5, 2.0);
+            // Only the 1.2× carries tension: the drawn factor multiplies the amount as it came.
+            let doubled = pre_tension * rng.float_between(1.5, 2.0);
             damage = boosted.max(doubled);
         }
     }
@@ -284,6 +335,16 @@ fn final_amount(
     {
         damage += 1.0;
     }
+    // A metal body takes the multiplier a **second** time after its 1-or-2, with no flat bonus
+    // (`0x021e79d0`, inside the metal-body arm of `CalculateFinalDamage`).
+    if target.metal_body && tensioned {
+        damage *= tension_multiplier(actor.side, actor.tension_level);
+    }
+    // A target at the maximum (level 4, status bit `0x1000000`) has a landed kind-1 amount
+    // halved (`0x021e7a58`, `func_ov024_021dd260` on the target), before the combo.
+    if target.tension_level == 4 && action.kind == 1 {
+        damage *= 0.5;
+    }
     if action.chains_combo && damage >= 1.0 {
         damage *= COMBO_TABLE[usize::from(combo_count.min(3))];
     }
@@ -329,6 +390,9 @@ pub(crate) fn resolve_action_with_attack(
     amount_attack: Option<i32>,
 ) -> Result<ActionOutcome, Unsupported> {
     validate(actor, action, targets)?;
+    // The spend is decided before any draw: the action carries `+0x10` bit 13 and the actor
+    // holds a level. It happens whatever the action comes to (`0x021ed48c`).
+    let tension_spent = action.tension_applies && actor.tension_level > 0;
     // One copy per action, never per target; the plain path shares the actor itself.
     let amount_actor = amount_attack
         .filter(|&attack| attack != actor.attack)
@@ -424,6 +488,7 @@ pub(crate) fn resolve_action_with_attack(
     Ok(ActionOutcome {
         targets: outcomes,
         mp_spent: i32::from(action.mp_cost),
+        tension_spent,
         draws: rng.draws,
         generator_state: rng.rng.state(),
     })
