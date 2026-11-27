@@ -336,6 +336,31 @@ Character creation is real (no fabricated save): defaults are accepted, the name
 character typed on the touch keyboard, then "Begin your adventure"; battle 26 is played (A)
 and won normally. States are stable story points, not exact frames.
 
+`-SaveFilePath <file>` copies an existing container to `dq9.sav` before boot (the cartridge the
+console starts with), and leaves what the game wrote back in `build/melonds-oracle/dq9.sav`.
+`tap`'s Y is added to the touch screen's top row (`$touch` = client height − 192), so a point
+on the bottom screen is 0..191; the title's START button is at `tap:127:160`.
+
+A drive through the title's **quick save** entry (the suspend slot, [`save.md`](save.md)
+§ "The suspend slot"), verified on melonDS 1.1 with the port's written container:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/melonds-play.ps1 `
+  -SaveFilePath build/evidence/v3-suspend-ds/suspend-demo.sav -Actions `
+  "waitstart,tap:127:160,wait:6,shot:title-message,key:a,wait:3,shot:title-menu,key:a,wait:2,shot:backup,autosave:12:1:fs,shot:field"
+```
+
+`waitstart` waits for the orange START button, `tap:127:160` presses it, `key:a` answers the
+menu row, `autosave` writes state 1 every second from there. On a container with a suspend slot
+the title shows the log's message before the menu ("Quick save log found…"), the menu holds one
+row, "Load quick save data.", with "Cancel", and "Creating backup." follows; the field comes up
+at the written `Warp`. A suspend-only container (slot 0 `Empty`) takes the same path with no
+slot-0 log involved. The states give the map, the pose and the words at `GameState+0x5cb0`
+(`dq9re state`, `--peek 020f9088:10`); `--save` compares RAM with the container's **current**
+slot (slot 0 here), so the gold reading slot 1's value is the tell that the quick save was the
+source. Evidence: `build/evidence/v3-suspend-ds/` (README, `resume-compare.txt`, the `.ml1`
+states, the PNGs of each step, the containers written back).
+
 ### melonDS DS core harness (libretro)
 
 Standalone melonDS requires a focusable window and its GDB stub disconnects; the official

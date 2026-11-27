@@ -33,11 +33,15 @@
 # build/melonds-oracle (ignored by git): melonDS.exe, `portable`, a hard link to the ROM and
 # dq9.sav. melonDS 1.1 maps no DS key by default: melonDS.toml is written with the mappings
 # this script posts (arrows, A = X, B = Z, Start = Return).
+# -SaveFilePath copies an existing .sav to dq9.sav before boot (the cartridge the console
+# starts with); a container written by a previous run of the script is left in place after it
+# exits, so the caller copies it out to see what the game wrote back.
 param(
     [string] $Rom = $env:DQ9_ROM,
     [string] $Actions = '',
     [string] $Work = '',
     [string] $MelonDS = '',
+    [string] $SaveFilePath = '',
     [switch] $Fresh,
     [switch] $Keep,
     [string] $LoadState = ''
@@ -85,6 +89,7 @@ HK_FrameStep = 70
 '@ | Set-Content (Join-Path $Work 'melonDS.toml') -Encoding ascii
 }
 if ($Fresh) { Remove-Item (Join-Path $Work 'dq9.sav') -ErrorAction SilentlyContinue }
+if ($SaveFilePath) { Copy-Item (Resolve-Path $SaveFilePath).Path (Join-Path $Work 'dq9.sav') -Force }
 if ($LoadState) { Copy-Item (Resolve-Path $LoadState).Path (Join-Path $Work 'dq9.ml1') -Force }
 
 Add-Type -ReferencedAssemblies System.Drawing @'

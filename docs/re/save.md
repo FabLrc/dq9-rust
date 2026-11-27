@@ -248,8 +248,10 @@ it only records whether slot 0 is empty (`*puVar1 = 1` when slot 0 is status 3) 
 (unreadable) → 6, 2 on slot 1 → 7, 2 on slot 0 → 4, 0 (valid) on slot 0 → 1 (Continue, the
 adventure log it reads for the display), 3 (empty) → 2 (new game). A present suspend save
 therefore ranks **above** a normal one in this check; the function that consumes the code and
-builds the menu is not in the decompilation corpus, so what the menu does with both flags is
-**[unknown]**.
+builds the menu is not in the decompilation corpus (**[unknown]**), but melonDS shows what the
+menu does with both flags: on a container holding a valid slot 0 *and* a suspend slot 1 it
+offers the quick save alone — one row "Load quick save data." and "Cancel", no Continue row
+(`build/evidence/v3-suspend-ds/title-menu.png`; § "The suspend slot").
 
 Erasing is the other half: a new game writes an empty header A into **both** slots and clears
 their header C (`func_020abb74`).
@@ -298,8 +300,10 @@ record (§ "Position on resume") — the live position of the resumed quick save
 over. **[limit]** the `Suspend` block: the original serializes a normal save's short list
 there, the port keeps the bytes of the image (slot 1's suspend payload for a fresh slot 0);
 its reader in the port does not read that block, but the DS `Save_UnpackSuspend` would.
-[hypothesis] the DS accepts that slot 0 — header, three checksums and modelled blocks match
-what the original writes, melonDS was not driven for this batch.
+**[hypothesis]** — a separate, still-open case — the DS also accepts that seeded slot 0
+(a normal log written from a suspend-only container): header, three checksums and modelled
+blocks match what the original writes, but that container was not driven; the suspend slot
+itself is proven, § "The suspend slot".
 
 **In the port.** `dq9_core::state::GameState::write_suspend(&mut SlotMut, HeroPose)` is the
 writer: the modelled state at the offsets `write_into` uses (`Main`'s own map word included),
@@ -331,14 +335,58 @@ Not modelled: the `Suspend` block's payload (the port keeps the input slot 1's b
 on a mirrored cartridge are a normal save's list — the original's is the field's own state),
 the `Warp` block's extra fields `+0x10..+0x1b` (they keep the input's bytes) and the jingle and
 the fade; 4702 returns to the title screen (`app/title.rs`), as the original's entry does.
-**DS acceptance of the suspend slot is not attempted**: the written slot 1 has
-the right header, checksums, state and `Warp` block (`build/evidence/v3-suspend-save/reload.txt`,
-its `Suspend` block kept from the input), but whether the cartridge's title screen offers the
-quick save and resumes at that position is **[hypothesis]** — melonDS was not driven through
-its title menu for this batch. The port's own start-up is checked instead: a suspend-only
+
+**DS acceptance: proven.** With the written container as `dq9.sav` (melonDS 1.1, hands driven
+by `scripts/melonds-play.ps1 -SaveFilePath`, § "Driving melonDS" of
+[`melonds-state.md`](melonds-state.md)), the title screen announces the log — "Quick save log
+found. Your adventure will begin from the quick save location." — and its menu offers the row
+"Load quick save data." (38) with "Cancel" and the message "When you restart your adventure, the
+quick save log will be deleted."; answering it shows "Creating backup. Do not turn the power
+OFF or remove the DS Game Card." and the field comes up on `C01M09` (map 109). The facts read
+in the state:
+
+| | written `Warp` (slot 1) | first field frame | the port's resume |
+|---|---|---|---|
+| map | 109 | 109 (area 198) | 109 `C01M09` |
+| position | 9000, 500, −5000 fx32 = 2.197265625, 0.1220703125, −1.220703125 | 2.197265625, **0.09912109375**, −1.220703125 | 2.197, 0.099, −1.221 |
+| angle | 10752 = 2.625 rad | 2.625 | 2.625 |
+| gold | 38761 | 38761 | 38761 |
+
+The placement state (map still 0) has the exact written y; from the first frame with the map
+loaded the hero is on the ground (406 fx32, the same snap the port computes), and no key was
+posted between the two states. `GameState+0x5cb0` holds the Progress block's words [19,3,1] at
+the placement frame, and every copy of the load's blocks is identical except the gold, which is
+slot 1's (it differs from slot 0's 38754 by one byte) — the load took slot 1, not the slot-0 log
+the title read at boot. `dq9re state`'s "scenario" line is not that read: it comes from the
+**event block** (`g_QuestManager`), whose track record is 19.2.1 in both slots of this container
+(the suspend batch changed only the words at `slot+11572`), so it cannot tell the two slots
+apart; the port's own checkpoint prints the same 19.2.1 for the same reason. The four members
+have slot 1's level, HP, MP and experience (91/78/81/81, 481/327/544/668, 552/165/94/94,
+4557182/2948711/3495617/3485197); the maxima are recomputed by the game. A **suspend-only**
+container (slot 0 `Empty`) resumes the same way, with no slot-0 log involved, and its words stay
+[19,3,1]. Evidence: `build/evidence/v3-suspend-ds/` (`pre-map-placement.ml1`,
+`first-field-frame.ml1`, `suspend-only-field.ml1`, `resume-compare.txt`, the PNGs).
+
+**What the cartridge keeps after the resume.** On the suspend-only container `Save_WriteHeaderA`
+leaves slot 1 `Empty` with its blocks intact (CRC B `670cc2cc` unchanged); on a container that
+also holds an adventure log the whole slot 1 is instead overwritten by a **normal save**: 21
+bytes change, the slot becomes the slot-0 image byte for byte (slot 0 untouched), i.e.
+`Save_WriteStep`'s mirror step (state 2, `0x020aad2c`), and the `GameState` story words are
+refreshed from that log (19.2.1 here, the gold left at the quick save's 38761). Cause:
+**[hypothesis]** the load writes a normal save of the slot-0 log the title read at boot — the
+only reading that explains slot 1 holding slot 0's image and the words coming from that log
+while the gold and pose stay the quick save's; the caller that shows "Creating backup." is not
+in the corpus. Booting to the title and closing without choosing the row writes nothing
+(`control-title.sav`, byte-identical to the input). `build/evidence/v3-suspend-ds/`,
+`after-suspend-only.sav` `e21ad588…`, `after-normal-suspend.sav` `cf0f43b4…`.
+
+The port's start-up was checked before this drive and agrees on the state: a suspend-only
 container resumes at the written pose with slot 1's gold and story, a normal+suspend container
 at the normal slot's map start with slot 0's gold, and the resumed log is deleted
-(`build/evidence/v3-suspend-resume/`).
+(`build/evidence/v3-suspend-resume/`). Its file side differs only in the deletion: the port
+clears slot 1's header (`SlotMut::clear_header`) and never writes the backup, so where the DS
+ends with slot 1 as the log's mirror, the port's container keeps slot 1's blocks with an empty
+header.
 
 ## Clock and time of day
 
@@ -714,7 +762,9 @@ Evidence: `build/evidence/v3-suspend-saveout/`.
 and levels, play time, "Stornway") and continues into Stornway's church with that party on the
 map (`build/evidence/v3-save-bind/melonds-title.png`, `melonds-continue.png`): the header, the
 three checksums and the blocks are accepted by the game's own loader. It does not prove the
-meaning of every written field, nor a mutation made in game and saved from the DS menu.
+meaning of every written field, nor a mutation made in game and saved from the DS menu. The
+**suspend** container is accepted the same way, through the title's own quick-save entry
+(§ "The suspend slot", `build/evidence/v3-suspend-ds/`).
 
 ## Unknown
 

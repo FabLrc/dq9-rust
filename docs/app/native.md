@@ -78,8 +78,15 @@ at the position and heading the Quick Save wrote, with that slot's story, party,
 clock; no data is sent over the network. A run that resumes the suspend slot **deletes that
 log** in the file, as the original's title screen does when it loads a quick save
 (`Save_WriteHeaderA`, `re/save.md` § "The suspend slot"; temporary file and rename, and a
-`resume: deleted the quick save log` line on stderr). A recorded run (`--play-record`) leaves
-`it, since it checks the container's hash before replaying. With a normal slot the hero starts
+`resume: deleted the quick save log` line on stderr). That is verified against the console: on
+melonDS the DS's title offers "Load quick save data." for the written container and the field
+resumes at the written warp (map, x, z and angle exact, y snapped to the ground), with slot 1's
+gold, party and story words (`re/save.md`, § "The suspend slot"; evidence
+`build/evidence/v3-suspend-ds/`). One file difference there: loading a quick save from a
+cartridge that also holds an adventure log makes the DS write that log as a normal save
+("Creating backup."), which mirrors onto slot 1 — the port only clears slot 1's header and
+keeps its blocks. A recorded run (`--play-record`) leaves it, since it checks the container's
+hash before replaying. With a normal slot the hero starts
 at the position and heading the game gives after "Continue" (the map's start point, `re/save.md`
 § "Position on resume"), placed on the ground; the `--screenshot` output prints this pose
 (`hero: …`) and centers the camera on it.
