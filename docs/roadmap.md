@@ -500,7 +500,7 @@ seed, same inputs); flags identical to melonDS wherever an original reference ex
 Out of scope, kept for v0.3: title screen, character creation (the default hero stays),
 saving and loading.
 
-## J5 — Progressing: **v0.3**
+## J5 — **v0.3** met (November 27, 2026)
 
 - Title screen, character creation, loading/saving in DS format (J0); church Confession.
   **Saving**: the format's writer edits every field the reader exposes (`dq9re save --set/--out`,
@@ -513,9 +513,11 @@ saving and loading.
   field menu's Quick Save write the normal and suspend slots (`v3-suspend-save`, `v3-suspend-resume`,
   `v3-suspend-saveout`), the title screen ranks and resumes them like `ov_004::0216dad0`
   (`v3-title-screen`), and character creation asks the name and sex and writes them with the hero's
-  look (`v3-character-creation`, `v3-save-appearance`). Remaining for the milestone: the DS
-  acceptance of a written **suspend** slot ([hypothesis]; the normal slot loaded in melonDS) and
-  the creation's face/hair pages (only the sex defaults are modelled).
+  look (`v3-character-creation`, `v3-save-appearance`, `v3-character-appearance`). **The milestone's
+  criteria are met**: the DS loaded a normal save and accepted and resumed a written **suspend**
+  slot at its exact warp (`v3-suspend-ds`), the title ranks and resumes like `ov_004::0216dad0`,
+  and the port reads the DS's own files. The J5 backlog below (menus, facilities, party beyond
+  chapter 2) continues; it is not a v0.3 criterion.
 - Menus beyond what chapter 2 needs: tactics, skills (overlays 2, 4, 5, 11, 13).
 - Facilities beyond Angel Falls: bank, other shops (overlay 3; wiki Inns-and-Churches,
   Items `shopdata1.bin`).
