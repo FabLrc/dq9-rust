@@ -1564,3 +1564,129 @@ fn the_flow_resolves_a_weakening_group_action_on_three_monsters() {
     assert!((75..=84).contains(&amounts[1]), "{amounts:?}");
     assert!((56..=63).contains(&amounts[2]), "{amounts:?}");
 }
+
+/// The EU weapons whose `itembtlprm` `+0x00` bits 0–1 name a reach: `func_ov000_021540fc`
+/// (`0x021540fc`) turns a reach-5 party Attack into bit 0 → a group (4), bit 1 → everyone (3),
+/// neither → one target (2), and `ResolveAction`'s several-target gate accepts the same two bits
+/// (`0x021ec6b0`–`0x021ec6c8`). The table holds **42**: the 18 whips 20300–20317 (bit 0), the
+/// four Gringham whips 20318–20321 and the 20 boomerangs 20700–20719 (bit 1). The pilot's copper
+/// sword 20004 carries neither, so the chapter-2 route's Attack stays on one target.
+#[test]
+fn the_several_target_weapons_set_the_reach_from_the_rom() {
+    use dq9_core::battle::model::WeaponReach;
+
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let params = BattleParams::parse(rom.file_by_path("data/prm/itembtlprm.nat").unwrap()).unwrap();
+    let ids = |reach: u8| -> Vec<i16> {
+        params
+            .items
+            .iter()
+            .filter(|p| p.weapon_reach() == reach)
+            .map(|p| p.id)
+            .collect()
+    };
+    assert_eq!(
+        ids(4),
+        (20300..=20317).collect::<Vec<i16>>(),
+        "the group whips"
+    );
+    assert_eq!(
+        ids(3),
+        (20318..=20321).chain(20700..=20719).collect::<Vec<i16>>(),
+        "the Gringham whips and the boomerangs"
+    );
+    assert_eq!(
+        ids(2).len(),
+        1423 - 42,
+        "every other record names one target"
+    );
+
+    let weapons = member(&rom, "data/prm/itemdt_w.gp2", "itemdt_w_en.nat");
+    let items = ItemStats::from_members(&[&weapons]).unwrap();
+    let fighter = |weapon: u16| {
+        let mut character = Character::hero();
+        character.equipment.weapon = Some(weapon);
+        character.fighter(&items, &params)
+    };
+    assert_eq!(
+        fighter(20004).weapon_reach,
+        WeaponReach::One,
+        "the copper sword"
+    );
+    assert_eq!(
+        fighter(20300).weapon_reach,
+        WeaponReach::Group,
+        "the leather whip"
+    );
+    assert_eq!(
+        fighter(20318).weapon_reach,
+        WeaponReach::All,
+        "the Gringham whip"
+    );
+    assert_eq!(
+        fighter(20700).weapon_reach,
+        WeaponReach::All,
+        "the boomerang"
+    );
+    // An empty weapon slot keeps one target (`func_ov017_021b3780`'s zeroed record).
+    let mut bare = Character::hero();
+    bare.equipment.weapon = None;
+    assert_eq!(bare.fighter(&items, &params).weapon_reach, WeaponReach::One);
+}
+
+/// A party plain Attack (record 1, `+0x10` bit 17) on three monsters: with a group whip every
+/// target's base is truncated by the rank table (1.0, 0.8, 0.6) — the bands are the base's
+/// 186..=213 around a 400 attack, scaled — while a sword's Attack keeps all three at full.
+#[test]
+fn a_whip_weakens_across_a_group_and_a_sword_does_not() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let params = BattleParams::parse(rom.file_by_path("data/prm/itembtlprm.nat").unwrap()).unwrap();
+    let weapons = member(&rom, "data/prm/itemdt_w.gp2", "itemdt_w_en.nat");
+    let items = ItemStats::from_members(&[&weapons]).unwrap();
+    let attack = tables.actions.skill(1).unwrap().action.unwrap();
+    assert!(
+        attack.multi_target_falloff,
+        "the plain Attack carries +0x10 bit 17"
+    );
+    let actor = |weapon: u16| {
+        let mut character = Character::hero();
+        character.equipment.weapon = Some(weapon);
+        let mut fighter = character.fighter(&items, &params);
+        // A clean base: 400 attack, no buff, no element, no family row for the bare target.
+        fighter.attack = 400;
+        fighter.deftness = 0;
+        fighter
+    };
+    let mut target = Fighter::new(Side::Monster);
+    target.hp = 1000;
+    target.max_hp = 1000;
+    let three = |weapon: u16| {
+        resolve_action(
+            &mut Random::new(5),
+            &actor(weapon),
+            &attack,
+            &[target.clone(), target.clone(), target.clone()],
+            0,
+        )
+        .unwrap()
+        .targets
+        .iter()
+        .map(|t| t.amount)
+        .collect::<Vec<i32>>()
+    };
+
+    let whip = three(20300);
+    assert_eq!(whip.len(), 3);
+    assert!((186..=213).contains(&whip[0]), "{whip:?}");
+    assert!((148..=170).contains(&whip[1]), "{whip:?}");
+    assert!((111..=127).contains(&whip[2]), "{whip:?}");
+
+    let sword = three(20004);
+    for amount in &sword {
+        assert!((186..=213).contains(amount), "{sword:?}");
+    }
+}

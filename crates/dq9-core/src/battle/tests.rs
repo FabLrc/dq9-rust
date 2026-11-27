@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::damage::{calculate_crit_rate, calculate_physical_damage, critical_threshold};
+use super::model::WeaponReach;
 use super::resolve::resolve_action_with_attack;
 use super::*;
 
@@ -773,12 +774,6 @@ fn unsupported_rules_are_refused_before_any_draw() {
         refuse(&trained, &die, &monster()),
         Unsupported::AccuracyTrait
     );
-    let mut claws = party();
-    claws.weapon_strikes_several = true;
-    assert_eq!(
-        refuse(&claws, &blow(), &monster()),
-        Unsupported::MultiHitWeapon
-    );
     // A level the code does not hold is refused; 1 to 4 are modelled (the tests below).
     let mut tense = party();
     tense.tension_level = 5;
@@ -1323,15 +1318,26 @@ fn the_plain_attack_takes_its_falloff_from_the_weapon() {
         [100, 100]
     );
 
-    // The Attack that is not number 1 (2) reaches the gate; with the group weapon bit it weakens
-    // (a weapon with bit 1 set keeps the factor too, which the kernel does not model).
+    // Record 2 reaches the gate too, and both weapon reaches arm it: bit 0 (a group) and bit 1
+    // (everyone) are the same two bits the target list reads.
     let mut weapon_attack = weakening(100);
     weapon_attack.number = 2;
     let mut armed = party();
-    armed.weapon_strikes_several = true;
+    armed.weapon_reach = WeaponReach::Group;
     assert_eq!(
         amounts(&armed, &weapon_attack, &[monster(), monster()]),
         [100, 80]
+    );
+    let mut everywhere = party();
+    everywhere.weapon_reach = WeaponReach::All;
+    assert_eq!(
+        amounts(&everywhere, &weapon_attack, &[monster(), monster()]),
+        [100, 80]
+    );
+    // …and on the plain Attack itself (1), which the party path resolves.
+    assert_eq!(
+        amounts(&armed, &party_attack, &[monster(), monster(), monster()]),
+        [100, 80, 60]
     );
 
     let mut monster_actor = Fighter::new(Side::Monster);
@@ -1347,6 +1353,140 @@ fn the_plain_attack_takes_its_falloff_from_the_weapon() {
         amounts(&party(), &variant, &[monster(), monster()]),
         [100, 80]
     );
+}
+
+/// The flow's target list takes a reach-5 party Attack's reach from the worn weapon
+/// (`func_ov000_021540fc`, `0x021541a0`–`0x021541cc`): with a group weapon the chosen monster
+/// widens to its group of three and the rank factor truncates the 100 base to 100, 80 and 60;
+/// with no group weapon the same command reaches the chosen monster alone.
+#[test]
+fn a_group_weapon_widens_the_party_attacks_target_list() {
+    let battle = |reach: WeaponReach| {
+        let mut f = Fighter::new(Side::Party);
+        f.hp = 1000;
+        f.max_hp = 1000;
+        f.attack = 100;
+        f.agility = 10;
+        f.evasion_rate = 2.0;
+        f.weapon_reach = reach;
+        let mut attack = weakening(100);
+        attack.number = 1;
+        attack.reach = Reach::Attack;
+        let mut skills = BTreeMap::new();
+        skills.insert(1u16, Skill::from_action(attack));
+        let mut monster = attack_buff_monster();
+        monster.ways = [1; 6];
+        monster.ai_mode = 0;
+        let setup = BattleSetup {
+            monsters: vec![monster.clone(), monster.clone(), monster],
+            skills,
+            set_battle: false,
+        };
+        Battle::new(setup, vec![PartyMember::new(f)], Surprise::None, 0x2000).unwrap()
+    };
+    let amounts = |reach: WeaponReach| {
+        let mut world = Random::new(4);
+        let mut b = battle(reach);
+        let command = Command::Act {
+            skill: Skill::from_action({
+                let mut attack = weakening(100);
+                attack.number = 1;
+                attack.reach = Reach::Attack;
+                attack
+            }),
+            target: Target::Monster(0),
+        };
+        let report = b.round(&[command], &mut world).unwrap();
+        report
+            .events
+            .iter()
+            .find_map(|event| match event {
+                Event::Acted {
+                    who: Who::Party(0),
+                    outcomes,
+                    ..
+                } => Some(outcomes.iter().map(|(_, o)| o.amount).collect::<Vec<_>>()),
+                _ => None,
+            })
+            .expect("the hero's Attack resolves in the first round")
+    };
+    assert_eq!(amounts(WeaponReach::Group), [100, 80, 60]);
+    assert_eq!(amounts(WeaponReach::All), [100, 80, 60]);
+    assert_eq!(amounts(WeaponReach::One), [100]);
+}
+
+/// The party's list stops at eight (`func_ov000_021540fc` passes `8` to
+/// `func_ov000_0215eb1c`): a boomerang's Attack on ten standing monsters reaches the first eight.
+#[test]
+fn the_party_target_list_holds_at_most_eight() {
+    let mut attack = weakening(100);
+    attack.number = 1;
+    attack.reach = Reach::Attack;
+    let battle = |reach: WeaponReach| {
+        let mut f = Fighter::new(Side::Party);
+        f.hp = 1000;
+        f.max_hp = 1000;
+        f.attack = 100;
+        f.agility = 10;
+        f.weapon_reach = reach;
+        let mut skills = BTreeMap::new();
+        skills.insert(1u16, Skill::from_action(attack.clone()));
+        let mut monster = attack_buff_monster();
+        monster.ways = [1; 6];
+        monster.ai_mode = 0;
+        let setup = BattleSetup {
+            monsters: (0..10).map(|_| monster.clone()).collect(),
+            skills,
+            set_battle: false,
+        };
+        Battle::new(setup, vec![PartyMember::new(f)], Surprise::None, 0x2000).unwrap()
+    };
+    let mut world = Random::new(4);
+    let mut b = battle(WeaponReach::All);
+    let command = Command::Act {
+        skill: Skill::from_action(attack),
+        target: Target::Monster(0),
+    };
+    let report = b.round(&[command], &mut world).unwrap();
+    let count = report
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::Acted {
+                who: Who::Party(0),
+                outcomes,
+                ..
+            } => Some(outcomes.len()),
+            _ => None,
+        })
+        .expect("the hero's Attack resolves in the first round");
+    assert_eq!(count, 8);
+}
+
+/// A several-target weapon moves the plain Attack's critical to the damage arm
+/// (`CalculateFinalDamage`, `0x021e6dfc`–`0x021e6e28`): with the record's bits 0–1 clear the
+/// critical is the attack power × `between(0.95, 1.05)` (floored by 1.2 × the damage), with
+/// either bit set it is the damage as it came × `between(1.5, 2.0)` and the floor is 0.
+#[test]
+fn a_group_weapon_gives_the_plain_attacks_critical_the_damage_multiplier() {
+    let mut attack = flat(100);
+    attack.number = 1;
+    attack.element = 8;
+    attack.always_critical = true;
+    let amount = |reach: WeaponReach| {
+        let mut actor = party();
+        actor.weapon_reach = reach;
+        resolve_action(&mut Random::new(3), &actor, &attack, &[monster()], 0)
+            .unwrap()
+            .targets[0]
+            .amount
+    };
+    // The attack arm: 100 × 0.95..1.05 is at most 105, so 1.2 × 100 = 120 wins.
+    assert_eq!(amount(WeaponReach::One), 120);
+    for reach in [WeaponReach::Group, WeaponReach::All] {
+        let damage = amount(reach);
+        assert!((150..=200).contains(&damage), "{reach:?}: {damage}");
+    }
 }
 
 /// A kind-1 action whose base amount is exactly `amount` and that tension works on: the range

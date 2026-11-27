@@ -27,7 +27,7 @@
 //! port: 0x02074774, 0x02074748
 
 use super::damage::{base_amount, critical_rate, critical_threshold};
-use super::model::{Action, Fighter, Side, Unsupported, validate};
+use super::model::{Action, Fighter, Side, Unsupported, WeaponReach, validate};
 use super::random::{FloatDraw, Random};
 
 /// Metal Slash `0x40` and Metalicker `0x7E`: `1 + random(2)` against a metal body when the blow
@@ -170,14 +170,14 @@ fn falloff_factor(rank: usize) -> f32 {
 /// (`0x021ec644`–`0x021ec730`): always for an action carrying `+0x10` bit 17, except the two plain
 /// Attack records (1 and 2), whose factor only a party member's weapon arms — the weapon record's
 /// `+0x00`, the factor kept when bit 1 is set and otherwise only when bit 0 is set, and never for
-/// a monster. The same block multiplies action `0x79` by a further 0.8, which this resolver never
-/// reaches (it refuses `0x79`).
+/// a monster. Those two bits are the weapon's reach ([`WeaponReach`]). The same block multiplies
+/// action `0x79` by a further 0.8, which this resolver never reaches (it refuses `0x79`).
 fn falloff_applies(actor: &Fighter, action: &Action) -> bool {
     if !action.multi_target_falloff {
         return false;
     }
     if matches!(action.number, 1 | 2) {
-        return actor.side == Side::Party && actor.weapon_strikes_several;
+        return actor.side == Side::Party && actor.weapon_reach != WeaponReach::One;
     }
     true
 }
@@ -315,10 +315,11 @@ fn final_amount(
         damage = pre_tension;
     }
     if critical {
-        // The greatest of 1.2 × damage and the critical's own damage; for the plain Attack the
-        // damage as it came is a floor too.
+        // The greatest of 1.2 × damage and the critical's own damage; on the attack-power arm
+        // (the plain Attack with a single-target weapon) the damage as it came is a floor too,
+        // and a group or everyone weapon moves those three numbers to the damage arm.
         let boosted = 1.2f32 * damage;
-        if action.critical_uses_attack_power() {
+        if action.critical_uses_attack_power(actor) {
             let power = actor.attack as f32 * rng.float_between(0.95, 1.05);
             damage = boosted.max(power).max(pre_tension);
         } else {

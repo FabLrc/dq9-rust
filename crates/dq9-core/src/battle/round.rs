@@ -33,7 +33,7 @@ use std::error::Error;
 use std::fmt;
 
 use super::end::{BattleResult, Kind};
-use super::model::{Fighter, Side, Unsupported};
+use super::model::{Fighter, Side, Unsupported, WeaponReach};
 use super::random::Random;
 use super::resolve::{TargetOutcome, resolve_action_with_attack};
 use super::setup::{BattleSetup, MAX_GROUPS, Monster, SetupError, Skill};
@@ -394,6 +394,11 @@ const NO_FLIGHT_SPECIES: std::ops::RangeInclusive<u16> = 38..=40;
 /// What the world's generator is held under by the surprise-round roll of a monster after the
 /// first (`NextRandomMax(100) < 67`).
 const SURPRISE_ROLL: i32 = 0x42;
+
+/// The most targets a party command's list holds: `func_ov000_021540fc` passes `8` to both
+/// builders (`func_ov000_02153e78` and `func_ov000_0215eb1c`, `0x0215eb1c`'s `if (iVar8 ==
+/// param_3) return iVar8;`), the size of the eight-`u16` list it fills.
+const TARGET_LIST_MAX: usize = 8;
 
 impl Battle {
     /// A battle of `setup` against `party` (one to four members), the battle's generator seeded
@@ -905,7 +910,9 @@ impl Battle {
     /// A party command's targets at the moment it resolves (`func_ov000_021540fc`): by the
     /// action's side and reach, one chosen target (re-chosen when it has fallen: another group if
     /// its group is empty, then a member of the group), a group, everyone, or the actor; then the
-    /// draws of [`Battle::hit_draws`].
+    /// draws of [`Battle::hit_draws`]. A reach-5 action (`Reach::Attack`, the plain Attack) takes
+    /// the worn weapon's reach instead (`0x021541a0`–`0x021541cc`): one target with no group
+    /// weapon, the chosen monster's group with bit 0, every monster with bit 1.
     fn party_targets(
         &mut self,
         who: Who,
@@ -916,10 +923,12 @@ impl Battle {
             unreachable!()
         };
         let fighter = &self.party[actor].fighter;
-        if skill.reach == 5 && fighter.weapon_strikes_several {
-            return Err(Unsupported::MultiHitWeapon.into());
-        }
-        let targets: Vec<Who> = match (skill.aims, skill.reach) {
+        let reach = match (skill.reach, fighter.weapon_reach) {
+            (5, WeaponReach::All) => 3,
+            (5, WeaponReach::Group) => 4,
+            _ => skill.reach,
+        };
+        let targets: Vec<Who> = match (skill.aims, reach) {
             (_, 1) => vec![who],
             (1, 2 | 5) => {
                 let Target::Monster(chosen) = target else {
@@ -935,12 +944,14 @@ impl Battle {
                 self.monsters_standing()
                     .into_iter()
                     .filter(|&j| self.monsters[j].group == group)
+                    .take(TARGET_LIST_MAX)
                     .map(Who::Monster)
                     .collect()
             }
             (1, 3) => self
                 .monsters_standing()
                 .into_iter()
+                .take(TARGET_LIST_MAX)
                 .map(Who::Monster)
                 .collect(),
             (2, 2 | 7 | 8) => {

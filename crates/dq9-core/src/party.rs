@@ -36,7 +36,7 @@ use dq9_formats::save::{
     Block, Character as SaveCharacter, EquipSlot, NAME_LEN, NO_ITEM, Slot, VOCATION_COUNT,
 };
 
-use crate::battle::model::{Fighter, Side};
+use crate::battle::model::{Fighter, Side, WeaponReach};
 use crate::collision::CollisionWorld;
 use crate::fx::Fx3;
 use crate::movement::Hero;
@@ -520,6 +520,14 @@ impl Character {
                     // (`+0x2AC`, the item record slot 8's id).
                     fighter.metal_bonus = (param.flags >> 4) & 1 != 0;
                     fighter.poison_needle = (param.flags >> 10) & 1 != 0;
+                    // The same record's bits 0–1 are the weapon's reach, which a plain Attack
+                    // takes (`func_ov000_021540fc`): bit 0 a group, bit 1 everyone, neither one
+                    // target (`docs/re/item.md`, "The weapon words").
+                    fighter.weapon_reach = match param.weapon_reach() {
+                        3 => WeaponReach::All,
+                        4 => WeaponReach::Group,
+                        _ => WeaponReach::One,
+                    };
                     // The twelve killer-bonus fields of the same copied record
                     // (`CalculateFinalDamage`'s `func_02085968` … `func_02085888`, tenths with
                     // 10 none). Only the weapon's record is read, and an empty slot keeps the
@@ -545,12 +553,10 @@ impl Character {
         };
         fighter.crit_accessory_bonus = critical as f32 / 10.0;
         // The book's critical bonus comes from skill panels, not from the equipment records
-        // read here; the trait fields (0x11d, the accuracy die, a multi-strike weapon) are
-        // not established.
+        // read here; the trait fields (0x11d, the accuracy die) are not established.
         fighter.crit_book_bonus = 0.0;
         fighter.crit_trait_11d = false;
         fighter.accuracy_die_trait = false;
-        fighter.weapon_strikes_several = false;
         fighter
     }
 

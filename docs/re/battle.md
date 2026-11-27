@@ -53,10 +53,12 @@ Dazzle (kind 19), Weird Dance's MP damage (kind 57), a call for backup (kind 12)
 and the monsters' Flee `0xE1`. The accuracy roll models an
 action whose accuracy stands at 100 and a monster's scaling accuracy with the dazzle die of
 eight, the guard level and the dazzle flag, and the twelve several-target records lose damage by
-the target's rank (below, "The several-target falloff"). Everything else is **refused before any
-draw** with `Unsupported`: damage handlers 1..66, riders, a party member's scaling accuracy,
-a tension level above 4, a guard level above 3, a trait `0x11d` critical, an elemental weapon, a
-weapon that strikes several, the accuracy die of four, a reach the model does not establish
+the target's rank (below, "The several-target falloff"); a plain Attack's reach and that falloff
+come from the worn weapon's `itembtlprm` `+0x00` bits 0–1 (`docs/re/item.md`, "The weapon's
+reach"), both in the command's target list and in the kernel. Everything else is **refused
+before any draw** with `Unsupported`: damage handlers 1..66, riders, a party member's scaling
+accuracy, a tension level above 4, a guard level above 3, a trait `0x11d` critical, an
+elemental weapon, the accuracy die of four, a reach the model does not establish
 (8, which Egg On 168 and 330 carry), and the actions the code
 singles out by number (`0x1B`, `0x48`, `0x70`, `0xAF`, `0x79`, `0x395`, `0x1FF`, `0x200`, `0x20B`,
 `0x20C`). Tension is modelled (below, "Tension") — its multiplier, its flat bonus, the
@@ -189,12 +191,20 @@ by the target's **rank**: `×1, ×0.8, ×0.6, ×0.4, ×0.2`.
   attacker **index** `0 <= local_206 <= 3`, and a monster gets `false` (`0x021ec6d0`). The worn
   weapon's `itembtlprm` `+0x00` (the record `func_ov017_021b3780` copies to the character's
   `+0x2F4`, the first slot being the weapon) keeps the factor on when **bit 1** is set, and
-  otherwise keeps it only when **bit 0** is set (`0x021ec6b0`–`0x021ec6c8`, i.e. bit 0 | bit 1;
-  the same two bits map to the weapon's reach 4 and 3 at `ov_024.c` 26333–26345). Those are the
-  bits `Fighter::weapon_strikes_several` stands for, which `validate` already refuses on action 1
-  (`Unsupported::MultiHitWeapon`) — but `party.rs` does not read them yet (it leaves the field
-  false), so a party Attack that resolves never weakens today. Actions **223 and 224** are not in
-  the gate's `1 | 2` test and always fall off.
+  otherwise keeps it only when **bit 0** is set (`0x021ec6b0`–`0x021ec6c8`, i.e. bit 0 | bit 1).
+  Those two bits are the weapon's **reach** (`docs/re/item.md`, "The weapon's reach"; batch
+  `v4-party-weapon-strikes`): bit 0 a group, bit 1 everyone, neither one target. `Character::fighter`
+  maps them onto `Fighter::weapon_reach` from the equipped weapon alone, and `falloff_applies`
+  reads `weapon_reach != WeaponReach::One` for records 1 and 2, so a whip's Attack weakens
+  across its group, a boomerang's across everyone, and the copper sword's does not. Actions
+  **223 and 224** are not in the gate's `1 | 2` test and always fall off.
+- **The target list** (`func_ov000_021540fc`, `0x021540fc`; `func_ov000_02171ffc`,
+  `0x02171ffc`). The same two bits turn the reach-5 attack into 4 or 3 there: the chosen
+  monster's group, or every monster, is exactly what `Battle::party_targets` builds (with neither
+  bit the command keeps its one chosen target), and the list stops at **eight**
+  (`func_ov000_0215eb1c`, `0x0215eb1c`: `if (iVar8 == param_3) return iVar8;` with `param_3 = 8`).
+  The effect builder `func_ov024_021fb490` reads them too (its second application site, below),
+  and so does `CalculateFinalDamage`'s critical switch (`0x021e6dfc`–`0x021e6e28`, above).
 - **The application point.** It multiplies `local_284` — the base amount after
   `GetAttackBaseDamage` and the damage handler (`func_ov024_021da55c`) — **before**
   `CalculateFinalDamage`: `local_284 = _ffix(_fmul(_fflt(local_284), factor))`. So it precedes
@@ -223,19 +233,29 @@ Tests: `battle/tests.rs` `the_falloff_follows_the_target_lists_order` (guard lev
 that list order → 10, 80, 30), `two_and_three_targets_take_one_four_fifths_and_three_fifths`,
 `the_rank_holds_at_the_tables_fifth_entry` (seven targets → `100 80 60 40 20 20 20`),
 `the_rank_factor_truncates_the_base_before_the_final_damage`,
-`the_plain_attack_takes_its_falloff_from_the_weapon` (1 keeps 100/100, 2 with the weapon bit
-100/80, a monster's 1 keeps 100/100, 223 weakens), and the real-ROM test above, which resolves
+`the_plain_attack_takes_its_falloff_from_the_weapon` (1 keeps 100/100, 2 with a group weapon
+100/80 and with everyone 100/80, 1 with a group weapon 100/80/60, a monster's 1 keeps 100/100,
+223 weakens), `a_group_weapon_widens_the_party_attacks_target_list` (the flow: 100/80/60 through
+`Battle::round`, 100 with no group weapon), and the real-ROM tests above, which resolve
 Party Pooper (94) against three monsters: rank 0's amount equals the single-target amount of the
 same seed, the next two fall in the 148–170 and 111–127 bands around 0.8 and 0.6 of the
 186–213 base. `the_flow_resolves_a_weakening_group_action_on_three_monsters` runs the same record
 through `Battle::round` against a group of three slimes and reads the three amounts in 94–106,
-75–84 and 56–63 around a 100 base. Evidence: `build/evidence/v4-multitarget-falloff/`.
+75–84 and 56–63 around a 100 base. `the_several_target_weapons_set_the_reach_from_the_rom` and
+`a_whip_weakens_across_a_group_and_a_sword_does_not` pin the 42 weapon ids and resolve the
+table's own record 1 with a whip (186–213, 148–170, 111–127 around a 400 attack) and with the
+copper sword (three full amounts).
+`a_group_weapon_gives_the_plain_attacks_critical_the_damage_multiplier` reads the critical
+switch (120 with no reach, 150–200 with one) and `the_party_target_list_holds_at_most_eight`
+the list's cap. Evidence: `build/evidence/v4-multitarget-falloff/` and
+`build/evidence/v4-party-weapon-strikes/`.
 
 **The chapter-2 route cannot move.** Its ways are actions 1, 9, 41, 45, 59, 225, 236, 243, 323,
 344, 364, 366 and 546 (`chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve`,
 `chapter-two-coverage.log`); the only one of the twelve is 1, whose party use is disarmed by the
-hero's weapon (no `weapon_strikes_several`) and whose monster use is excluded outright — and the
-pilot fights with one hero, so no action has a second target. Parity stays 2/2
+hero's single-target weapon (no reach bit) and whose monster use is excluded outright — and the
+pilot fights with one hero, so no action has a second target. The hero's copper sword 20004
+carries neither reach bit, so even a second target would not weaken. Parity stays 2/2
 (`parity.log`).
 
 ### Final damage (`ov_024::021e6a90`), EU decompilation read
@@ -257,7 +277,12 @@ held to 3, line 574–587) →
 
 - **Critical**: the greatest of `1.2 × damage` and `CalculateCriticalDamage` (`func_02074838`, EU
   `0x02074848`); for action 1 (and `0xDB`, `0x1F9`) the latter is the attacker's attack power ×
-  `between(0.95, 1.05)`, else `damage × between(1.5, 2.0)`. One draw either way.
+  `between(0.95, 1.05)` **while the worn weapon names no reach**, and the damage as it came ×
+  `between(1.5, 2.0)` once the weapon record's `+0x00` bits 0–1 are set (`0x021e6dfc`–
+  `0x021e6e28`: the attack-power arm is the `if (iVar10 != 0)` block's default, and either bit
+  clears its mode byte and replaces its number with the incoming amount; the third floor,
+  `float(param_5)`, is cleared too). Every other action is `damage × between(1.5, 2.0)`. One
+  draw either way.
 - **A resistance stays a float.** A blow of 1 against a resistance of 50 is 0.5: no coin, `_ffix`
   gives 0 (unit test).
 - **Heal** (kind 2) goes through the same function: a critical heal multiplies by
@@ -331,8 +356,9 @@ d2 = d1 + (1 + (float)(dealerLevel / 10)) × level    ; CalculateTensionBonus, 0
   **critical** blow that works on metal has the head's multiply **undone** first (`0x021e6d1c`,
   the critical flag at `[ctx + 0xc]` bit 7), so it takes one multiplier, not two.
 - **Only the critical's `1.2 ×` carries tension**: the plain Attack's floor (its attack power ×
-  `between(0.95, 1.05)`) and the other actions' `damage × between(1.5, 2.0)` read the amount as
-  it came, before the head (`pre_tension` in `final_amount`).
+  `between(0.95, 1.05)`, or the amount as it came with a group/everyone weapon) and the other
+  actions' `damage × between(1.5, 2.0)` read the amount as it came, before the head
+  (`pre_tension` in `final_amount`).
 - **A target at the maximum takes half** a landed kind-1 amount (`0x021e7a58`,
   `func_ov024_021dd260` on the target), after the metal steps and before the combo.
 - **The gate**: `+0x10` bit 13 on the action and `[ctx + 0x76]` clear — a blow the original

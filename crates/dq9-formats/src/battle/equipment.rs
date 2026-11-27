@@ -23,8 +23,9 @@ const COUNT_MASK: u32 = 0x0000_0fff;
 pub struct BattleParam {
     /// `+0x28`: the item's id.
     pub id: i16,
-    /// `+0x00`: flags, tested a bit at a time by `func_020852a4` … `func_020855d0`; bit 16
-    /// is an experience bonus, bits 23–25 the weapon's element. The rest is not established.
+    /// `+0x00`: flags, tested a bit at a time by `func_020852a4` … `func_020855d0`; bits 0–1 are
+    /// the weapon's reach (see [`BattleParam::weapon_reach`]), bit 16 is an experience bonus,
+    /// bits 23–25 the weapon's element. The rest is not established.
     pub flags: u32,
     /// `+0x08` to `+0x10`: a weapon's killer bonus by monster family 1 to 12, in tenths,
     /// signed — 10 is none (`func_ov024_021fa7ec`).
@@ -42,6 +43,27 @@ impl BattleParam {
     pub fn weapon_element(&self) -> u8 {
         let element = (self.flags >> 23 & 7) as u8;
         if element == 0 { 8 } else { element }
+    }
+
+    /// The flags' bits 0–1: what a plain Attack (record 1) reaches with this weapon worn — 2 one
+    /// target (neither bit), 4 a group (bit 0) or 3 everyone (bit 1, which wins). The readers
+    /// agree: `func_ov000_021540fc` (`0x021540fc`, the command's target list, decomp lines
+    /// 616–630) and `func_ov000_02171ffc` (`0x02171ffc`, lines 23006–23024) rewrite a reach-5
+    /// action with it, `func_ov024_021fb490` (`0x021fb490`, lines 26333–26345) for the effect
+    /// records, `ResolveAction`'s several-target gate accepts the two bits
+    /// (`0x021ec6b0`–`0x021ec6c8`), and `CalculateFinalDamage` (`0x021e6dfc`–`0x021e6e28`)
+    /// switches a plain Attack's critical to the damage arm. On the EU table the 42 weapons that carry one of them are
+    /// the 18 whips 20300–20317 (bit 0), the four Gringham whips 20318–20321 and the 20
+    /// boomerangs 20700–20719 (bit 1); the copper sword 20004 carries neither
+    /// (`docs/re/item.md`, "The weapon words").
+    pub fn weapon_reach(&self) -> u8 {
+        if self.flags >> 1 & 1 != 0 {
+            3
+        } else if self.flags & 1 != 0 {
+            4
+        } else {
+            2
+        }
     }
 
     /// The flags' bit 16: an experience bonus.
@@ -157,6 +179,28 @@ mod tests {
         data.extend_from_slice(&[0; RECORD_SIZE]);
         let table = BattleParams::parse(&data).unwrap();
         assert_eq!(table.items[0].weapon_element(), 8);
+    }
+
+    /// The flags' bits 0–1 are the weapon's reach: bit 1 wins over bit 0 (everyone over a group),
+    /// bit 0 alone is a group, neither is one target.
+    #[test]
+    fn the_two_low_flags_are_the_weapons_reach() {
+        let with = |flags: u32| {
+            let mut r = [0u8; 44];
+            r[0..4].copy_from_slice(&flags.to_le_bytes());
+            r
+        };
+        let decode = |flags: u32| {
+            let mut data = 1u32.to_le_bytes().to_vec();
+            data.extend_from_slice(&with(flags));
+            BattleParams::parse(&data).unwrap().items[0].weapon_reach()
+        };
+        assert_eq!(decode(0), 2);
+        assert_eq!(decode(1), 4);
+        assert_eq!(decode(2), 3);
+        assert_eq!(decode(3), 3);
+        // The bits the neighbours read do not move it.
+        assert_eq!(decode(1 << 4 | 1 << 10 | 1 << 16 | 7 << 23), 2);
     }
 
     /// The head word's bits 12–31 are ignored: `func_0209a088` clears them with the `lsl`/`lsr`

@@ -21,6 +21,24 @@ pub enum Side {
     Monster,
 }
 
+/// What a party member's plain Attack (action 1) reaches with the worn weapon, from the
+/// `itembtlprm` record's `+0x00` bits 0–1 ([`BattleParam::weapon_reach`]). A reach-5 action
+/// (`Reach::Attack`) takes it in the command's target list (`func_ov000_021540fc`) and in the
+/// effect records (`func_ov024_021fb490`); it is also what arms the several-target falloff on
+/// actions 1 and 2 (`ResolveAction`, `0x021ec6b0`–`0x021ec6c8`). A monster never has one.
+///
+/// [`BattleParam::weapon_reach`]: dq9_formats::battle::equipment::BattleParam::weapon_reach
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WeaponReach {
+    /// 2: one target (the record's bits 0 and 1 clear, or no weapon).
+    #[default]
+    One,
+    /// 4: a group (bit 0): the whips 20300–20317.
+    Group,
+    /// 3: everyone (bit 1): the Gringham whips 20318–20321 and the boomerangs 20700–20719.
+    All,
+}
+
 /// Bytes of a fighter's resistance array (`ResetBattleStatus`, `0x020891cc`): 22, elements 1 to
 /// 21 being reachable (`GetResistance`, `ov_000::02156b38`).
 pub const ELEMENTS: usize = 22;
@@ -131,16 +149,17 @@ pub struct Fighter {
     /// roll, which is **[unknown]**): the resolver refuses an action that carries the bit
     /// ([`Unsupported::AccuracyTrait`]).
     pub accuracy_die_trait: bool,
-    /// A party member's weapon strikes more than one (two bits at `+0x2F4` of the worn
-    /// equipment, USA reading). The plain Attack then rolls its critical once for the whole
-    /// action and divides its rate by the hits: refused ([`Unsupported::MultiHitWeapon`]). It is
-    /// also what arms the several-target falloff on actions 1 and 2: `ResolveAction`
-    /// (`0x021ec644`–`0x021ec730`) reads the weapon record's `+0x00`, leaves the factor on when
-    /// bit 1 is set, and otherwise keeps it only when bit 0 is set; a monster never gets it.
-    /// These are the two bits whose reach mapping `ov_024.c` 26333–26345 reads (bit 1 → reach 3,
-    /// bit 0 → reach 4, neither → 2), i.e. bit 0 | bit 1. `party.rs` does not read them yet (it
-    /// leaves this false), so a party Attack that resolves never weakens today.
-    pub weapon_strikes_several: bool,
+    /// What the worn weapon makes a plain Attack reach: the `itembtlprm` record's `+0x00`
+    /// bits 0–1 (see [`WeaponReach`]). It arms the several-target falloff on actions 1 and 2 —
+    /// `ResolveAction` (`0x021ec644`–`0x021ec730`) reads the weapon record's `+0x00`, keeps the
+    /// factor on when bit 1 is set and otherwise only when bit 0 is set; a monster never gets it
+    /// — and it decides the target list a reach-5 party Attack gets
+    /// (`func_ov000_021540fc`): one target, the chosen monster's group, or every monster. It
+    /// also moves a plain Attack's critical to the damage arm
+    /// ([`Action::critical_uses_attack_power`]).
+    /// [`Character::fighter`](crate::party::Character::fighter) fills it from the equipped
+    /// weapon; an empty slot keeps [`WeaponReach::One`].
+    pub weapon_reach: WeaponReach,
     /// The worn weapon's "+1 against metal": `func_02085128` tests bit 4 of the `itembtlprm`
     /// record `func_ov017_021b3780` copies into the character object (its `+0x150` word, the
     /// records at `+0x2F4`; the weapon's is the first), and `CalculateFinalDamage` adds 1.0 to a
@@ -184,7 +203,7 @@ impl Fighter {
             level: 0,
             weapon_element: 0,
             accuracy_die_trait: false,
-            weapon_strikes_several: false,
+            weapon_reach: WeaponReach::One,
             metal_bonus: false,
             poison_needle: false,
         }
@@ -344,8 +363,8 @@ pub struct Action {
     /// (`ResolveAction`, `ov_024::021eb5d0` `0x021ec6ec`): 1.0, 0.8, 0.6, 0.4, 0.2, the index
     /// held to the table's fifth entry. The twelve records that carry it are actions 1, 2, 86,
     /// 87, 91, 94, 113, 121, 123, 126, 223 and 224 of the EU tables; on 1 and 2 the factor is
-    /// armed only through the attacker's weapon (see [`Fighter::weapon_strikes_several`]) and
-    /// never for a monster. `docs/re/battle.md`, "The several-target falloff".
+    /// armed only through the attacker's weapon (see [`Fighter::weapon_reach`]) and never for a
+    /// monster. `docs/re/battle.md`, "The several-target falloff".
     pub multi_target_falloff: bool,
     /// `+0x10` bit 9 (`0x200`): for a blow (no range record) `GetAttackBaseDamage` reads the
     /// **buffed** attack (`+0x8`, `UpdateCombatantAttack`) rather than the base word (`+0x134`
@@ -416,9 +435,13 @@ impl Action {
     }
 
     /// Whether a critical takes the attacker's attack power × `between(0.95, 1.05)` rather than
-    /// the damage × `between(1.5, 2.0)`: the plain Attack (1) and actions `0xDB`, `0x1F9`.
-    pub fn critical_uses_attack_power(&self) -> bool {
+    /// the damage × `between(1.5, 2.0)`: the plain Attack (1) and actions `0xDB`, `0x1F9` — and
+    /// only while the party member's worn weapon names no reach. `CalculateFinalDamage`
+    /// (`0x021e6dfc`–`0x021e6e28`) switches those three to the damage arm when `+0x2F4`'s bits
+    /// 0–1 are set, which is what [`Fighter::weapon_reach`] carries.
+    pub fn critical_uses_attack_power(&self, actor: &Fighter) -> bool {
         matches!(self.number, 1 | 0xDB | 0x1F9)
+            && !(actor.side == Side::Party && actor.weapon_reach != WeaponReach::One)
     }
 
     /// Whether this kind-15 action **sets** the tension level to its `+0x30` short instead of
@@ -452,8 +475,6 @@ pub enum Unsupported {
     WeaponElement,
     /// The trait behind the accuracy die of four.
     AccuracyTrait,
-    /// A party weapon that strikes more than one.
-    MultiHitWeapon,
     /// An MP cost of 255 or 128.
     MpCost(u8),
     /// A critical trait whose condition is not established.
@@ -500,9 +521,6 @@ impl fmt::Display for Unsupported {
             Self::AccuracyScaling => write!(f, "a scaling accuracy is not modelled"),
             Self::WeaponElement => write!(f, "a weapon's element is not modelled"),
             Self::AccuracyTrait => write!(f, "the accuracy die of four is not modelled"),
-            Self::MultiHitWeapon => {
-                write!(f, "a weapon that strikes more than one is not modelled")
-            }
             Self::MpCost(c) => write!(f, "an MP cost of {c} is not modelled"),
             Self::CriticalTrait => write!(f, "trait 0x11d's critical rate is not established"),
             Self::Tension => write!(f, "a tension level above 4 is not modelled"),
@@ -571,9 +589,6 @@ pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result
     }
     if action.trait_accuracy_die && actor.side == Side::Party && actor.accuracy_die_trait {
         return Err(Unsupported::AccuracyTrait);
-    }
-    if action.number == 1 && actor.side == Side::Party && actor.weapon_strikes_several {
-        return Err(Unsupported::MultiHitWeapon);
     }
     if matches!(action.mp_cost, 128 | 255) {
         return Err(Unsupported::MpCost(action.mp_cost));

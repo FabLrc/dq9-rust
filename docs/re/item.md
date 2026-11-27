@@ -189,12 +189,51 @@ Both accessors first require the weapon slot's id to be positive (`*(s16 *)(char
 < 1` returns false), which the copy of an empty slot — a zeroed record with `0xFFFF` at
 `+0x2A` — never satisfies; `func_ov017_021b3780` writes exactly that for a worn slot whose id is
 not positive. The seven bit-4 records are all weapons, all with element 8 (none); 20119 carries
-bits 4 to 7 and 19057 bits 5, 10 and 24 — the other bits' meanings are not established here. The
-counts are over the whole table (`build/evidence/v4-metal-equipment/item-flags.txt`,
-`6f15e467da33`), and
+bits 4 to 7 and 19057 bits 5, 10 and 24 — the meanings of the bits beyond 0, 1, 4 and 10 are not
+established here. The counts are over the whole table
+(`build/evidence/v4-metal-equipment/item-flags.txt`, `6f15e467da33`), and
 `crates/dq9-core/tests/battle_rom.rs::the_equipped_weapon_sets_the_metal_and_needle_flags` pins
 them: the party's adapter (`Character::fighter`) fills `Fighter::metal_bonus` and
 `Fighter::poison_needle` from the equipped weapon alone.
+
+### The weapon's reach (bits 0 and 1; batch `v4-party-weapon-strikes`)
+
+A plain Attack (action 1) is a **reach-5** record: "the attack's alone", resolved by the worn
+weapon. Three readers rewrite it from the record's `+0x00` bits 0–1 with the same rule — bit 1
+set → **3** (everyone), else bit 0 set → **4** (a group), else **2** (one target):
+
+- `func_ov000_021540fc` (`0x021540fc`), the command's target list, which then picks one monster
+  (reach 2), the chosen monster's group (4) or every monster (3) — the function
+  `crates/dq9-core/src/battle/round.rs::Battle::party_targets` mirrors;
+- `func_ov000_02171ffc` (`0x02171ffc`), the action's effective reach, which the command menu
+  (`func_ov000_02180ca8`) reads for its target cursor;
+- `func_ov024_021fb490` (`0x021fb490`), the effect/display records (below).
+
+A fourth reader, `CalculateFinalDamage` (`0x021e6dfc`–`0x021e6e28`), switches the plain
+Attack's critical from the attack power × `between(0.95, 1.05)` to the damage ×
+`between(1.5, 2.0)` when either bit is set (`docs/re/battle.md`, "Final damage").
+
+The three excerpts are in `build/evidence/v4-party-weapon-strikes/reach-readers.c`
+(`ab19b31ad955`).
+
+`ResolveAction`'s several-target gate reads the same two bits as "strikes several"
+(`0x021ec6b0`–`0x021ec6c8`; `docs/re/battle.md`, "The several-target falloff"), so a whip's
+Attack weakens across its group, a boomerang's across everyone, and a sword's does not.
+
+**42 records of the 1,423** carry one of the two bits, all weapons:
+
+| ids | items | bit | reach |
+|---:|---|---:|---:|
+| 20300–20317 | the 18 whips (leather whip … wizardly whip) | 0 | 4, a group |
+| 20318–20321 | the four Gringham whips (Gringham whip … the Über Gringham whip) | 1 | 3, everyone |
+| 20700–20719 | the 20 boomerangs (boomerang … galaxarang) | 1 | 3, everyone |
+
+The copper sword 20004 — the new game's weapon — carries neither, so the pilot's Attack reaches
+one target. `BattleParam::weapon_reach` returns the 2/3/4,
+`Character::fighter` maps it onto `Fighter::weapon_reach` from the equipped weapon alone, and
+`crates/dq9-core/tests/battle_rom.rs::the_several_target_weapons_set_the_reach_from_the_rom` pins
+the 42 ids and the four adapters (`build/evidence/v4-party-weapon-strikes/item-reach-flags.txt`,
+`b6b3d305c9d3`).
 
 The same copied record's `+0x08`–`+0x10` hold the twelve **killer bonuses by monster family**
 (signed six-bit tenths, 10 none). `CalculateFinalDamage` reads them for a party blow carrying
