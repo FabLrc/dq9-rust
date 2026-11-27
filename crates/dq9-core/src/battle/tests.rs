@@ -619,6 +619,81 @@ fn the_plus_one_weapon_makes_one_and_the_poison_needle_deals_exactly_one() {
     assert!((0..=1).contains(&outcome.targets[0].amount));
 }
 
+/// The weapon's killer bonus by the target's family (`CalculateFinalDamage`,
+/// `0x021e7200`–`0x021e7494`): a party blow carrying `+0x10` bit 18 multiplies by the worn
+/// weapon's row for the target's own family, in tenths over ten, in the game's single precision.
+#[test]
+fn the_weapon_family_bonus_multiplies_a_party_blow_by_its_tenths() {
+    let mut action = flat(10);
+    action.weapon_element = true;
+    let amount = |actor: &Fighter, target: &Fighter| {
+        let outcome = resolve_action(
+            &mut Random::new(1),
+            actor,
+            &action,
+            std::slice::from_ref(target),
+            0,
+        )
+        .unwrap();
+        (outcome.targets[0].amount, outcome.draws)
+    };
+    let mut actor = party();
+    let mut target = monster();
+    target.family = 2;
+    let baseline = amount(&actor, &target);
+    assert_eq!(baseline.0, 10, "ten tenths, no bonus");
+
+    actor.family_bonus[1] = 11;
+    let boosted = amount(&actor, &target);
+    assert_eq!(boosted.0, 11, "eleven tenths");
+    assert_eq!(boosted.1, baseline.1, "the bonus draws nothing");
+    actor.family_bonus[1] = 12;
+    assert_eq!(amount(&actor, &target).0, 12, "twelve tenths");
+    actor.family_bonus[1] = 13;
+    assert_eq!(amount(&actor, &target).0, 13, "thirteen tenths");
+    actor.family_bonus[1] = 1;
+    assert_eq!(amount(&actor, &target).0, 1, "one tenth: a tenth of ten");
+    // Only the target's own family is read: the other eleven rows are ten.
+    target.family = 7;
+    assert_eq!(amount(&actor, &target).0, 10);
+}
+
+/// The family multiplication's gate: a party attacker, `+0x10` bit 18, and a target that answers
+/// a family. A monster attacker never enters the branch and a party index never answers one.
+#[test]
+fn the_weapon_family_bonus_needs_the_party_the_bit_and_the_target_family() {
+    let mut action = flat(10);
+    action.weapon_element = true;
+    let mut actor = party();
+    actor.family_bonus[1] = 12;
+    let mut target = monster();
+    target.family = 2;
+    let amount = |actor: &Fighter, action: &Action, target: &Fighter| {
+        resolve_action(
+            &mut Random::new(1),
+            actor,
+            action,
+            std::slice::from_ref(target),
+            0,
+        )
+        .unwrap()
+        .targets[0]
+            .amount
+    };
+    assert_eq!(amount(&actor, &action, &target), 12);
+
+    // The action's `+0x10` bit 18 is the gate.
+    let mut without = action.clone();
+    without.weapon_element = false;
+    assert_eq!(amount(&actor, &without, &target), 10);
+    // A party target answers no family (`func_ov000_02156068` with a party index): 0, never a row.
+    assert_eq!(amount(&actor, &action, &party()), 10);
+    // A monster attacker never reaches the weapon record.
+    let mut beast = monster();
+    beast.family_bonus[1] = 12;
+    assert_eq!(amount(&beast, &action, &target), 10);
+}
+
 #[test]
 fn a_party_range_without_a_scaling_number_draws_twice() {
     // The medicinal herb: 35 to 35 then the spread's 5.

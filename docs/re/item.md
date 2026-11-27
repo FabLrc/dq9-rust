@@ -196,6 +196,14 @@ counts are over the whole table (`build/evidence/v4-metal-equipment/item-flags.t
 them: the party's adapter (`Character::fighter`) fills `Fighter::metal_bonus` and
 `Fighter::poison_needle` from the equipped weapon alone.
 
+The same copied record's `+0x08`–`+0x10` hold the twelve **killer bonuses by monster family**
+(signed six-bit tenths, 10 none). `CalculateFinalDamage` reads them for a party blow carrying
+`+0x10` bit 18 against the target's `mon_data` family 1 to 12, dividing by `10.0f`; the copper
+sword 20004 — the new game's weapon — is ten everywhere but **family 2, eleven**.
+`Character::fighter` copies the twelve onto `Fighter::family_bonus`
+(`docs/re/battle.md`, "The weapon's killer bonus"; `docs/re/battle-data.md`,
+`build/evidence/v4-family-bonus/item-rows.txt`).
+
 ## "Item obtained" flag
 
 `func_0207cc18` (`0x0207cc28`, called by `Items_Give`, bag additions and

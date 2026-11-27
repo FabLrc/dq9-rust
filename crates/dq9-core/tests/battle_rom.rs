@@ -728,6 +728,31 @@ fn chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve() {
         );
     }
 
+    // Nor can the weapon's killer bonus move one: the new game hands the hero the copper sword
+    // 20004 and no companion joins on the route, and that weapon's only row that is not ten is
+    // the eleventh tenth against family 2 — a family no monster of this set answers (the
+    // Hexagoon, set battle 2, is family 1, whose row is ten).
+    let params = BattleParams::parse(rom.file_by_path("data/prm/itembtlprm.nat").unwrap()).unwrap();
+    let copper = params
+        .find(dq9_core::state::NEW_GAME_WEAPON as i16)
+        .unwrap();
+    assert_eq!(
+        copper.family_bonus,
+        [10, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+    );
+    for (&number, places) in &monsters {
+        let setup = BattleSetup::set_battle(&tables, &[(number, 1)]).unwrap();
+        let family = setup.monsters[0].fighter.family;
+        let row = match family {
+            1..=12 => copper.family_bonus[usize::from(family) - 1],
+            _ => 10,
+        };
+        assert_eq!(
+            row, 10,
+            "monster {number} (family {family}, {places:?}) would take the copper sword's bonus"
+        );
+    }
+
     let hero = hero();
     let mut by_action: BTreeMap<u16, (Skill, BTreeSet<u16>, BTreeSet<String>)> = BTreeMap::new();
     for (&number, places) in &monsters {
@@ -1088,6 +1113,132 @@ fn the_equipped_weapon_sets_the_metal_and_needle_flags() {
     assert!(!outcome.targets[0].dodged, "the needle is not dodged");
     assert!(!outcome.targets[0].blocked, "the needle is not blocked");
     assert_eq!(outcome.targets[0].amount, 1);
+}
+
+/// The weapon's killer bonus on the ROM's own rows: `itembtlprm` `+0x08`–`+0x10` (twelve signed
+/// six-bit tenths, 10 none) against the target's family (`mon_data` `+0x0A` bits 7–10). The
+/// copper sword — the pilot's only weapon — is ten everywhere but **eleven against family 2**; a
+/// metal slime spear's first row is eleven and multiplies a blow on a family-1 monster by 1.1;
+/// and a party target answers no family at all (`func_ov000_02156068` with a party index).
+#[test]
+fn the_weapon_family_bonus_reads_the_rom_rows_and_the_monster_family() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let params = BattleParams::parse(rom.file_by_path("data/prm/itembtlprm.nat").unwrap()).unwrap();
+
+    let copper = params.find(20004).expect("the copper sword");
+    assert_eq!(
+        copper.family_bonus,
+        [10, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10],
+        "the new game's weapon: eleven tenths against family 2 alone"
+    );
+    let spear = params.find(20517).expect("the metal slime spear");
+    assert_eq!(spear.family_bonus[0], 11, "+0x0C bits 6-11, family 1");
+    assert_eq!(spear.family_bonus[1..], [10; 11]);
+
+    // The adapter: the row comes from the equipped weapon alone, and a member answers no family.
+    let weapons = member(&rom, "data/prm/itemdt_w.gp2", "itemdt_w_en.nat");
+    let items = ItemStats::from_members(&[&weapons]).unwrap();
+    let fighter = |weapon: u16| {
+        let mut character = Character::hero();
+        character.equipment.weapon = Some(weapon);
+        character.fighter(&items, &params)
+    };
+    let armed = fighter(20517);
+    assert_eq!(armed.family_bonus[0], 11);
+    assert_eq!(armed.family, 0, "a party member answers no family");
+    assert_eq!(
+        fighter(20004).family_bonus,
+        [10, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+    );
+
+    // A real monster of family 1, built by the setup.
+    let family_one = tables
+        .names
+        .monsters
+        .iter()
+        .find(|n| n.family == 1 && !n.metal && tables.monsters.find(n.number).is_some())
+        .expect("a family-1 monster in the battle data");
+    let target = BattleSetup::set_battle(&tables, &[(family_one.number, 1)])
+        .expect("a set battle of one")
+        .monsters[0]
+        .fighter
+        .clone();
+    assert_eq!(
+        target.family, 1,
+        "mon_data +0x0A bits 7-10 through the setup"
+    );
+
+    let attack = tables.actions.skill(1).unwrap().action.unwrap();
+    assert!(
+        attack.weapon_element,
+        "the plain Attack carries +0x10 bit 18"
+    );
+    let mut unscaled = armed.clone();
+    unscaled.family_bonus = [10; 12];
+    let mut differed = false;
+    for seed in 0..64u64 {
+        let boosted = resolve_action(
+            &mut Random::new(seed),
+            &armed,
+            &attack,
+            std::slice::from_ref(&target),
+            0,
+        )
+        .unwrap()
+        .targets[0]
+            .clone();
+        let plain = resolve_action(
+            &mut Random::new(seed),
+            &unscaled,
+            &attack,
+            std::slice::from_ref(&target),
+            0,
+        )
+        .unwrap()
+        .targets[0]
+            .clone();
+        // A critical's own damage is already truncated before the bonus, and a blow that deals
+        // nothing takes the coin: those seeds do not pin the ratio.
+        if plain.critical || plain.amount == 0 {
+            continue;
+        }
+        assert_eq!(
+            boosted.amount,
+            (plain.amount as f32 * 1.1) as i32,
+            "seed {seed}: eleven tenths of {}",
+            plain.amount
+        );
+        differed |= boosted.amount != plain.amount;
+    }
+    assert!(differed, "the eleven-tenths row changed a blow");
+
+    // A party target answers no family: the same blow, unchanged.
+    let member = Fighter::new(Side::Party);
+    let boosted = resolve_action(
+        &mut Random::new(1),
+        &armed,
+        &attack,
+        std::slice::from_ref(&member),
+        0,
+    )
+    .unwrap()
+    .targets[0]
+        .amount;
+    let plain = resolve_action(
+        &mut Random::new(1),
+        &unscaled,
+        &attack,
+        std::slice::from_ref(&member),
+        0,
+    )
+    .unwrap()
+    .targets[0]
+        .amount;
+    assert_eq!(boosted, plain);
+    assert_eq!(member.family, 0);
 }
 
 /// The needle's accuracy auto-hit (`RollAccuracy`, `ov_000::02156648`, `0x02156814`–`0x02156830`):

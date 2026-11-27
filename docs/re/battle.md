@@ -27,10 +27,11 @@ in the cited function (`external-resources.md`).
 Audited 2026-11-17 in [`encyclopedia-audit.md`](encyclopedia-audit.md), function by function. The
 verdicts that touch this note: the multiplication order **agrees** except the cap's place in the
 page's list — `ov_024::021e6a90` truncates once and clamps `+0x1C` bits 0–13 last, as this note
-already read. The coup-de-grâce thresholds, the enrage triggers (`ov_024::021eb08c`), the
-companion tactics and the family bonus are **not implemented** (refused or absent), so nothing
-diverges silently; the metal rules **agree** and are modelled (`v4-metal-rules`, below, "The metal
-body"). The rules the audit found **differing** are now modelled: the two buff wear-off
+already read. The coup-de-grâce thresholds, the enrage triggers (`ov_024::021eb08c`) and the
+companion tactics are **not implemented** (refused or absent), so nothing diverges silently; the
+metal rules **agree** and are modelled (`v4-metal-rules`, below, "The metal body"), and so does
+the family bonus, modelled by `v4-family-bonus` (below, "The weapon's killer bonus"). The rules
+the audit found **differing** are now modelled: the two buff wear-off
 chance arrays — `ov_000::0215858c` reads one for dazzle (`0x02158d6c`) and one for defence and
 agility (`0x02158d68`, four bytes earlier), indexed by the decremented count (`j4-audit-fixes`,
 `ed0974b`; below, "Statuses' run-down") — and the grudge weights (`j4-grudge-enrage`, `4e0a0ed`;
@@ -148,7 +149,9 @@ party member's come from equipment, and a monster's from its record grade (`0, 2
 Order read in `build/evidence/j4-battle-kernel/ghidra-final-damage.txt` and re-read on the EU
 decompilation for this batch (`build/evidence/v4-metal-rules/final-damage.c`): tension multiply
 at the head (not modelled) → critical → `× GetResistance(element)` (`_fmul`, line 182, float) →
-block and dodge zero it → the poison needle's `1.0` → **the metal body's zeroing** → **coin**
+**the weapon's killer bonus by the target's family** (party attacker, `+0x10` bit 18; the twelve
+`_fmul` at lines 300–365, below) → block and dodge zero it → the poison needle's `1.0` →
+**the metal body's zeroing** → **coin**
 `NextRandomMax(2)` (line 529) when the damage is not above 0, the target was not blocked or
 dodged, the action is not `0x1B`/`0x48`/`0x70` and the target's resistances to the action's both
 elements are above 0 → **Metal Slash's `1 + random(2)`** → **the `+1` weapon** → guard (not
@@ -184,6 +187,65 @@ modelled) → combo table (`0x021fe778`, `1.0 1.2 1.5 2.0`, counter held to 3, l
   (`smoke.log`, `2d4fc32e2122`). It was removed after the run; this is not a continuous
   chapter-route or interactive UI claim. No new function is marked ported: the handler's
   other state/message work is still partial.
+
+### The weapon's killer bonus (`ov_024::021e6a90`, `0x021e7200`–`0x021e7494`)
+
+`CalculateFinalDamage` multiplies a blow by the worn weapon's killer bonus for the **target's
+monster family** (`docs/re/battle-data.md`, `mon_data` `+0x0A` bits 7–10). Read on the EU
+decompilation (`build/evidence/v4-family-bonus/final-damage-family.txt`; decompilation lines
+300–365 of `v4-metal-rules/final-damage.c`) and on the accessors' own code and literal pools
+(`accessors.txt`):
+
+1. **The gate.** `0 <= attacker < 4 && func_0200ff1c(gs, attacker) != 0 &&
+   (action + 0x10 & 0x40000) != 0` — a **party** attacker and an action carrying `+0x10` bit 18
+   (`Action::weapon_element`; the plain Attack carries it). A monster attacker never enters the
+   branch.
+2. **The twelve queries.** For `n = 1` to `12`: `func_02156068(battle, target, n, 0) != 0`
+   (the target's record bits 7–10 equal `n`) → `damage = _fmul(damage, accessor(character))`.
+   The accessors `func_02085968` … `func_02085888` read a **signed six-bit** field of the
+   weapon's copied `itembtlprm` record (`char + 0x2F4`, its `+0x08`/`+0x0C`/`+0x10` — the twelve
+   fields `docs/re/battle-data.md` names), convert it with `_fflt`, then `_fdiv` by the literal
+   `0x41200000` (**10.0f**) at each accessor's pool in `arm9.bin`. The multiplier is therefore
+   `tenths / 10.0` in single precision, and 10 is none.
+3. **One multiply in practice.** The family field holds one value: bits 7–10 answer one `n`, or
+   none — 0, 13, 14 and 15 answer no query at all (31 of the 438 name records hold 0, 111 hold
+   13). Every step is `f32`; the single `_ffix` (line 594) truncates once, at the end, so a blow
+   of 10 against eleven tenths deals 11.
+4. **A party target cannot be boosted**: `func_02156068` answers 0 for a party index, so the loop
+   body never runs. `Fighter::family` is 0 on a party fighter.
+5. **The empty weapon slot** (`char + 0x2AC < 1`): all twelve accessors answer
+   `movle r0, #0x3f800000` — **1.0f** — before reading their field (`0x02085984`–`0x0208598C`;
+   the decompiled bodies render it as a bare `return`, `accessors.txt`). An unarmed party blow is
+   therefore multiplied by exactly 1.0, which the port's default ten reproduces bit for bit
+   (`Fighter::family_bonus = [10; 12]`).
+
+Where the step sits: after the resistance multiplication, **before** the target's status
+multipliers (`0x021e7494`), the needle and the metal zeroing. The port applies it at the same
+place (`resolve::final_amount`), and it draws nothing, so no vector or route changes from its
+call count.
+
+**The pilot's route is unaffected, but not for the reason first assumed.** The new game's copper
+sword 20004 is **not** all ten: its family-2 row is eleven (`item-rows.txt`). What keeps the
+route's checkpoints in place is that no monster of the chapter-2 set answers family 2: the set
+(F01 map 20001 and the Hexagon floors 7102–7104 through `encfld`/`encbtl`, plus set battles 2 and
+26) answers families 0, 1, 3, 4, 5, 6, 7, 8, 9, 10 and 11, and the Hexagoon (set battle 2) is
+family 1, whose row is ten. The hero is the only party member on the route. Both facts are pinned
+by `tests/battle_rom.rs::chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve`.
+
+Tests: `battle/tests.rs` — `the_weapon_family_bonus_multiplies_a_party_blow_by_its_tenths`
+(ten/eleven/twelve/thirteen tenths and one tenth on a flat 10, the bonus drawing nothing) and
+`the_weapon_family_bonus_needs_the_party_the_bit_and_the_target_family` (the bit-18 gate, a party
+target, a monster attacker); `tests/battle_rom.rs::the_weapon_family_bonus_reads_the_rom_rows_and_the_monster_family`
+(the copper sword's rows, the metal slime spear's eleven tenths against a family-1 monster of the
+battle data — `boosted == (plain × 1.1) truncated` on every seed that is not a critical — and a
+party target left alone). The 306 oracle vectors replay unchanged (no fighter there sets a family
+or a weapon row; the default ten is an exact `× 1.0`).
+
+Evidence (`build/evidence/v4-family-bonus/`): `final-damage-family.txt` (`6a4154f63ae5`),
+`accessors.txt` (`558086c0be9a`), `item-rows.txt` (`d53a2aee9d3a`), `families.txt`
+(`1edd40de85c9`), `challenger.md` (`7ef09a895177`), `verify-full.log` (`8e0b1cdef429`),
+`route-long.log` (`8569516d0380`), `parity.log` (`b0ff7fac51e4`), `notes.md`
+(`1d5f470d9904`).
 
 ### The metal body (`ov_000::02156648`, `ov_024::021e6a90`)
 

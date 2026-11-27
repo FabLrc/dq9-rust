@@ -507,6 +507,11 @@ impl Character {
                     // (`+0x2AC`, the item record slot 8's id).
                     fighter.metal_bonus = (param.flags >> 4) & 1 != 0;
                     fighter.poison_needle = (param.flags >> 10) & 1 != 0;
+                    // The twelve killer-bonus fields of the same copied record
+                    // (`CalculateFinalDamage`'s `func_02085968` … `func_02085888`, tenths with
+                    // 10 none). Only the weapon's record is read, and an empty slot keeps the
+                    // kernel's "no bonus" ten.
+                    fighter.family_bonus = param.family_bonus;
                 }
             }
         }

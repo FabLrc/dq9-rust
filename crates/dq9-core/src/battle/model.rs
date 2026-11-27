@@ -84,6 +84,19 @@ pub struct Fighter {
     /// party member). An action that does not work on one misses it, and the actions that do deal
     /// 0 or 1 (`docs/re/battle.md`, "The metal body").
     pub metal_body: bool,
+    /// The monster family the killer bonus is keyed by: the name record's `+0x0A` bits 7–10
+    /// (`mon_data_<lang>.nat`, `func_ov000_02156068` with 1 to 12; 0 = none, and a party index
+    /// never answers). Read only against a party blow carrying [`Action::weapon_element`]
+    /// (`CalculateFinalDamage`, `ov_024::021e6a90`); a party fighter keeps 0.
+    pub family: u8,
+    /// The worn weapon's killer bonus by family 1 to 12, in tenths — the `itembtlprm` record's
+    /// twelve signed six-bit fields (`+0x08` to `+0x10`, `docs/re/battle-data.md`). 10 is none;
+    /// the multiplication is by `tenths / 10.0` in the game's single precision, and only for the
+    /// target's own family. Filled from the equipped weapon by
+    /// [`Character::fighter`](crate::party::Character::fighter); an empty weapon keeps ten
+    /// everywhere, because every accessor returns `movle r0, #0x3f800000` (1.0) when the slot's
+    /// id is not positive (`0x02085984`–`0x0208598C`), which ten tenths reproduce bit for bit.
+    pub family_bonus: [i8; 12],
     /// Guard level, 0 to 3 (`[status + 0x138] + 0x21`): the party's Defend command sets 1
     /// (`func_ov024_021e57c0`), the round's end clears it (`func_ov000_0215e6e8`). An action
     /// carrying `+0x10` bit 4 is multiplied by `[1.0, 0.5, 0.1, 0.0][level]` in the final damage
@@ -142,6 +155,8 @@ impl Fighter {
             crit_trait_11d: false,
             resistances: [100; ELEMENTS],
             metal_body: false,
+            family: 0,
+            family_bonus: [10; 12],
             guard_level: 0,
             dazzled: false,
             tension_level: 0,

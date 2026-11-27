@@ -90,7 +90,9 @@ in the same order; every monster list number has a battle record and agrees on i
 
 438 records carry 312 distinct codes: a code names the story's versions of one monster.
 Elements of the numbers' block (`+0x0A`) measured: levels 0 to 99, 11 metal monsters, 115
-refusing a fall, 14 family values (0 to 13).
+refusing a fall, 14 family values (0 to 13). Only 1 to 12 answer a weapon's killer bonus
+(`func_ov000_02156068` with 1 to 12, `docs/re/battle.md`); 0 and 13 answer none, and 31 records
+hold 0 and 111 hold 13.
 
 **[unknown]**: the list's `+0x0E` and `+0x10`–`+0x1F`; battle data `+0x14`, `+0x2A`–`+0x5B`,
 `+0x66`–`+0x67`, `+0x82`; the name record's `+0x18`; bit 15 of the battle data's number.
@@ -254,7 +256,10 @@ at `+0x28`, strictly ascending from 994 to 22,290; `+0x2A` is 0.
 - `+0x00`: flags. Bit 16 an experience bonus; bits 23–25 the weapon's element (1–7 stand for
   themselves, 0 for 8, the plain Attack's); the rest not established.
 - `+0x08`–`+0x10`: twelve 6-bit signed fields, a weapon's killer bonus by monster family 1 to
-  12, in tenths (10 none), through the accessors of the wiki's table.
+  12, in tenths (10 none), through the accessors of the wiki's table. The consumer is
+  `CalculateFinalDamage` (`ov_024::021e6a90`, `0x021e7200`–`0x021e7494`), not only the AI's
+  forecast: a party blow carrying `+0x10` bit 18 multiplies by `tenths / 10.0f`
+  (`docs/re/battle.md`, "The weapon's killer bonus").
 - `+0x14`: twenty `i8` resistance additions, one an element, in the order
   `1 2 3 4 5 6 7 9 10 11 12 13 14 15 16 17 18 19 20 21` (8 and 22 absent).
 

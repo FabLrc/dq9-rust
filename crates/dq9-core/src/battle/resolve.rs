@@ -166,8 +166,9 @@ fn roll_accuracy(
 }
 
 /// `CalculateFinalDamage` (`ov_024::021e6a90`) for the steps modelled, in the game's order:
-/// critical, resistance, block / dodge zero, the poison needle, the metal body's zeroing, the
-/// coin, Metal Slash's `1 + random(2)`, the `+1` weapon, the combo, truncation, the cap.
+/// critical, resistance, the weapon's family bonus, block / dodge zero, the poison needle, the
+/// metal body's zeroing, the coin, Metal Slash's `1 + random(2)`, the `+1` weapon, the combo,
+/// truncation, the cap.
 fn final_amount(
     rng: &mut Counted<'_>,
     strike: &Strike<'_>,
@@ -198,6 +199,15 @@ fn final_amount(
     // The resistance stays a float: a blow of 1 against a half is 0.5, which is not "nothing"
     // for the coin but truncates to 0.
     damage *= target.resistance(action.element);
+    // The weapon's killer bonus by the target's family (`0x021e7200`–`0x021e7494` of
+    // `final-damage.c`): for a **party** attacker on an action carrying `+0x10` bit 18, each of
+    // the twelve families the target answers (`func_0x02156068(battle, target, n, 0)`) multiplies
+    // the damage by the worn weapon's signed six-bit field over `10.0f`
+    // (`func_02085968` … `func_02085888`, all dividing by the same `0x41200000`). A monster
+    // attacker never enters the branch, and a party index never answers a family.
+    if actor.side == Side::Party && action.weapon_element && (1..=12).contains(&target.family) {
+        damage *= f32::from(actor.family_bonus[usize::from(target.family) - 1]) / 10.0;
+    }
     if nullified {
         damage = 0.0;
     }

@@ -341,6 +341,9 @@ impl BattleSetup {
                 .find(number)
                 .ok_or(SetupError::UnknownMonster(number))?;
             let metal = tables.names.find(number).is_some_and(|n| n.metal);
+            // `func_ov000_02156068(battle, target, n, 0)` reads the family at bits 7–10 of the
+            // same `mon_data` word (0 for an empty record: no family answers).
+            let family = tables.names.find(number).map_or(0, |n| n.family);
             // Action 2, the fall-back every way rule ends on, is always needed.
             for &way in record.ways.iter().chain(&[2]) {
                 if let Entry::Vacant(slot) = skills.entry(way) {
@@ -357,7 +360,7 @@ impl BattleSetup {
                     Some(world) => init_monster_hp(world, record.hp, false),
                     None => i32::from(record.hp),
                 };
-                monsters.push(monster(record, group, metal, hp)?);
+                monsters.push(monster(record, group, metal, family, hp)?);
             }
         }
         Ok(Self {
@@ -373,6 +376,7 @@ fn monster(
     record: &BattleMonster<'_>,
     group: usize,
     metal: bool,
+    family: u8,
     hp: i32,
 ) -> Result<Monster, SetupError> {
     let rate = |grade: u8| grade_rate(grade).ok_or(SetupError::Grade(record.number, grade));
@@ -387,6 +391,7 @@ fn monster(
     fighter.block_rate = rate(record.block_grade())?;
     fighter.resistances = record.resistances;
     fighter.metal_body = metal;
+    fighter.family = family;
     let word = record.word_10;
     Ok(Monster {
         number: record.number,
