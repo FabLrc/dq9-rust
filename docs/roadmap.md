@@ -506,8 +506,10 @@ saving and loading.
   **Saving**: the format's writer edits every field the reader exposes (`dq9re save --set/--out`,
   `v3-save-writer`), the game state binds to a normal slot and `--save-out` writes it from any run
   (`v3-save-bind`), and melonDS loaded the written container and continued into Stornway — the DS
-  acceptance is proven once, not per field. Not written: the record's base attributes and current
-  HP/MP (derived at load). **Done in the saving/title stretch**: the in-game Confession and the
+  acceptance is proven once, not per field. **Record semantics settled** (`v3-base-attributes`): fields 7/8
+  hold the current HP/MP and 9/10 the maxima, so a wounded party round-trips (`Save_LoadRecord`
+  reads 7/8 back); fields 0–6 are the original's write-only attribute cache, recomputed at load
+  from the level row and seeds — the port keeps them byte for byte. **Done in the saving/title stretch**: the in-game Confession and the
   field menu's Quick Save write the normal and suspend slots (`v3-suspend-save`, `v3-suspend-resume`,
   `v3-suspend-saveout`), the title screen ranks and resumes them like `ov_004::0216dad0`
   (`v3-title-screen`), and character creation asks the name and sex and writes them with the hero's
