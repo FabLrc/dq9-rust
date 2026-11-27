@@ -647,10 +647,10 @@ mod tests {
         app.party.bag.add(123);
         app.party.members[0].max_hp += 7;
         app.party.members[0].max_mp += 3;
-        // The format restores a member at full HP and MP (`from_record`: `hp = max_hp`), so a
-        // state that expects to reload equal must hold full values.
-        app.party.members[0].hp = app.party.members[0].max_hp;
-        app.party.members[0].mp = app.party.members[0].max_mp;
+        // The format stores the current HP/MP (fields 7/8) and the maxima (9/10), so the wounded
+        // member this raises the maxima of must reload wounded, not at full — and the equality
+        // below is what proves the current values round-trip.
+
         app.state.flags.insert(11);
         app.state.tracks[0].chapter = 3;
         app.state.tracks[0].step = 2;
@@ -1068,8 +1068,8 @@ mod tests {
         // A played session mutates the party: gold, the bag and a member's stored maximum.
         app.party.bag.add(123);
         app.party.members[0].max_hp += 5;
-        // A normal save restores a member at full HP: the current value is not stored.
-        app.party.members[0].hp = app.party.members[0].max_hp;
+        // The member's current HP is stored (fields 7/8): the raised maximum leaves it wounded,
+        // and the reload must keep it so.
         let (map, _, _, _) = app.walk_pose().expect("the save's map is loaded");
         // The run holds live field companions (`PartyField`, their positions and trails); the
         // format has no block for them, so this is the part of the run the reload must drop —
