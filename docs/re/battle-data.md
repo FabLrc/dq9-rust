@@ -253,8 +253,11 @@ Only the equipment path uses that accessor pair: `calls.txt` lists one caller fo
 stride is fixed at `0x2C` = 44 there. Records are sorted by the `s16` item id
 at `+0x28`, strictly ascending from 994 to 22,290; `+0x2A` is 0.
 
-- `+0x00`: flags. Bit 16 an experience bonus; bits 23–25 the weapon's element (1–7 stand for
-  themselves, 0 for 8, the plain Attack's); the rest not established.
+- `+0x00`: flags. Bits 0–1 the weapon's reach (bit 1 everyone, bit 0 a group, neither one target;
+  42 weapons carry them — whips 20300–20317 and 20318–20321, boomerangs 20700–20719,
+  `v4-party-weapon-strikes`); bit 4 the “+1 against metal” weapon; bit 10 the poison needle; bit 16
+  an experience bonus; bits 23–25 the weapon's element (1–7 stand for themselves, 0 for 8, the
+  plain Attack's); the rest not established.
 - `+0x08`–`+0x10`: twelve 6-bit signed fields, a weapon's killer bonus by monster family 1 to
   12, in tenths (10 none), through the accessors of the wiki's table. The consumer is
   `CalculateFinalDamage` (`ov_024::021e6a90`, `0x021e7200`–`0x021e7494`), not only the AI's
