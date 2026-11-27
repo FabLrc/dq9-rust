@@ -86,7 +86,7 @@ field task's indirect calls and were not resolved.
 | Party strips | one name strip per party slot | the 64×64 panel of `obj_mm.pac` (cell 2 of `obj_minimap.NCER`, name strip = rows 0..15 only) | 4 × **64×16** at **y = 176**, x = **0, 64, 128, 192**; only as many as the party holds | party order `GameState+0x397c`, count `+0x3980`; per-member colour | capture + decomp; colour source **[unknown]**; the port uses the file's palette slots 0–3 (blue, green, pink, orange) **[hypothesis]** |
 | Party dots | one coloured dot per member on the map | `obj_minimap.NCER` cells 3..7 / the dots of `obj_mm.pac` | on the party's position, projected by the `.bmmp` scale/corner | hero and members' x/z | wiki + capture; colour choice **[unknown]**; the port draws cells 3..7 at the leader's position then each companion's own (`Party::field::positions`, `characters.md` § "The party's other members on the field") |
 | Floor badge | a small box with the floor (`1` in the Observatory capture) | `tmap_field_obj.NCER`/`.NCGR`/`.NCLR` **or** the same cells as the tab **[hypothesis]** | x≈0..24, y≈3..19 (Observatory capture) | map id | capture only |
-| Map markers | doors, houses, marks | `.bmmp` marks (`0x6c`), `obj_mappoint.pac` | from the map position × scale − corner × 8 | `.bmmp` | wiki; which `marker0`–`4` a mark takes **[unknown]** |
+| Map markers | **none drawn**: `.bmmp` marks are metadata (party objects, ship/harbour, containers) | `.bmmp` (`0x6c` → `+0x754`), `shipMPos.bin`, `0x02026bec`/`0x020236ec`/`0x02026790`; `marker0`–`4` are never loaded | — | map id, flag `0x2b` | code (`re/minimap.md` § 3.1); `marker0`–`4`'s role **[unknown]** |
 | Clock / time of day | **nothing** is drawn in the field HUD; the day clock only drives lighting, rosters and encounters | — | — | `GameState` clock | capture |
 
 The party strips measured in `field-church.png`: row 176 is the black border, rows 177-190
@@ -102,12 +102,13 @@ name strips cut from cell 2 of `obj_minimap.NCER` (rows 0..15) with palette slot
 member's name from the record's glyph indices in the message font, centred in the slot; one
 dot per member (cells 3..7, palette slot 4) at the projected position of the leader and then of
 each companion on the field (`Party::field::positions`); and the `maplist9` label in the tab,
-right aligned. Not drawn, because the data
-does not establish them: the scrolling of a picture larger than 256×192, the `.bmmp` marks
-(`0x6c`; decoded and projected, but no record says which of the five `marker0`–`4` dots —
-blue, green, pink, yellow, red — an ordinary door or house mark takes, and
-`obj_mappoint.pac`'s role is **[unknown]**), the original's palette source for the strips and
-dots, and the floor badge. A map without a `.bmmp` layout (592 of the map list's 1,010
+right aligned. Not drawn, and the marks are **not** an omission: the original draws no marker glyph. A
+`.bmmp` mark (`0x6c`) is map metadata — it attaches the party's objects to doors (the dot is
+then drawn at the mark's x/z), positions the ship/harbour icon from `shipMPos.bin` and the
+room's containers — and no layout's picture or backdrop names one of `marker0`–`4`
+(`re/minimap.md` § 3.1). Also not drawn, because the data does not
+establish them: the scrolling of a picture larger than 256×192, the original's palette source
+for the strips and dots, and the floor badge. A map without a `.bmmp` layout (592 of the map list's 1,010
 records, mostly dungeons) leaves the placeholder and the status line says so. Captures:
 `build/evidence/v3-map-screen-draw/` and, with the backdrop, `build/evidence/v3-map-screen-details/`.
 
@@ -224,6 +225,12 @@ members; the tab measured on `field-church.png` at x 200..253, y 0..15 (dark `97
 `211,146,48`, white name); the port's `--screens port` reference is byte-identical to the
 parent commit (`3475c61`).
 
+The mark rule was settled in `build/evidence/v3-map-marks/`: `decomp.txt` (`3a534d4281d7`),
+the `.bmmp` consumer and the map-screen draws; `handlers.txt` (`a2061f0fbf86`), the tag 0x6c
+handler and the `marker`/`obj_mappoint` scan of the ARM9 and its 35 overlays (0 hits); `M01.txt`
+(`2f1196bc44b5`), the nine marks as room/field ids; `tests.txt` (`c72570504c5e`).
+`re/minimap.md` § 3.1 has the addresses.
+
 Touch UI implemented (`v3-touch-ui`, `build/evidence/v3-touch-ui/`):
 `menu-affordance-measured.png` (`b21563f6ebbc`, the measured label box in green, the note's
 earlier box in red over the stylus hand), `tap-trace.txt` (`d16a4a0b6814`, the `X01M07`
@@ -240,12 +247,16 @@ Ghidra queries (cache under `build/ghidra-cache/`): `decomp ov_017::021b1564`,
 - The field's map-screen mode (0 assumed) and which element draws the area tab, the floor
   badge and the "X Menu" text/hand (asset and function).
 - How the `.obg` picture scrolls (the port crops a larger one at its top-left) and the
-  colours of the party's dots; their placement is the projection of § 2.1, of the
-  companions' own field positions (`Party::field::positions`).
+  colours of the party's dots: the original picks the dot's 5th argument from the party slot
+  (`0x02039884` + `0x58`) and its palette from `object+4 + 4` (`0x020236ec`, § 3.1 of
+  `re/minimap.md`); which cell of `obj_mm.pac` that names is not decoded, and the placement
+  here is the projection of § 2.1 of the companions' own field positions
+  (`Party::field::positions`).
 - How the DS lays out the backdrop (`0x6a`): the port tiles it over the picture's own
   rectangle (`re/minimap.md` § 4.1, § 6).
-- Which of `marker0`–`4` an ordinary door or house mark takes, and what `obj_mappoint.pac`
-  holds (`re/minimap.md` § 4.1).
+- What loads `marker0`–`4` and `obj_mappoint.pac` (neither string occurs in the ARM9 or its 35
+  overlays, so neither is this screen's art) and what `obj_mappoint.pac` holds
+  (`re/minimap.md` § 3.1, § 4.1).
 - Whether the Menu affordance is a touch target (it is drawn like one) or only an X hint: the
   port hit-tests the label's measured box (a decision, **[hypothesis]**), not the game's own
   rectangle (`TestHoldInRectangle` `0x02012744` was not resolved for it).

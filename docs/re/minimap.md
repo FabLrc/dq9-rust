@@ -86,7 +86,8 @@ Eight-byte head, sixteen BGR555 colours, `tile count` tiles of 32 bytes, then a 
 Besides the maps, the archive holds the screen's other `.obg` pieces: `minimapbg` and
 `minimapbg2`–`4` (8×8 cells of paper, `minimapbg4` one cell) and `marker0`–`4` (one 8×8 tile
 each, the five coloured dots), plus the `name*` members — the wiki's list, all present on our
-ROM (`cargo dq9re -- gp2 data/pack_lv5/minimap.gp2`).
+ROM (`cargo dq9re -- gp2 data/pack_lv5/minimap.gp2`). Only the backdrops are ever loaded:
+`marker0`–`4` are named by no layout and by no string of the ARM9 or its overlays (§ 3.1).
 
 The decode (`Picture::image`) gives RGBA8 rows, transparent for index 0; `dq9re minimap M01
 --out …` writes it as a PNG (`M01M0001.png`, 280×152, 36,593 bytes: Stornway's plan with the
@@ -114,9 +115,12 @@ the 283 layouts (files / records):
   the scales seen are 3.2 (village), 1 (field), 2 (the pass), 4, 8, 2.67, 0.67.
 - **244 of the 268 pictures are named by a layout**, 283 of 283 layouts name a picture that
   exists in the archive. Names are the base name plus `.obg` (`0x66` stores the base name).
-- **A mark record holds no marker index**: its two floats are the position, its integers the
-  map ids it stands for (`S01M01`'s two marks: 20001 and 20002). The 273 records over 91
-  layouts therefore say where a mark is, not which of the five markers draws it.
+- **A mark record holds no marker index.** Its two floats are the position and **every integer
+  is a map id**: the 273 records over 91 layouts carry 889 ids, and all 889 resolve in
+  `data/map/maplist9.bin` (`a_mark_names_maps_and_no_layout_names_a_marker` in
+  `minimap_rom.rs`). `M01`'s nine records name the ten rooms 1101–1110, two of them a house and
+  the floor above it, and the field's 20001 (`F01`) — never the layout's own id 1100, and no
+  value names one of the five `marker0`–`marker4` tiles (§ 3.1).
 - `0x66` also carries the picture's short name inside `M01M0001_MG`-style members in
   `D01M01`'s extra `0x6e` record; not reused.
 
@@ -125,6 +129,57 @@ like an empty LZ77 stream and as "not empty". It is their **record count**: each
 16 records, with 5 strings (`F07`, `H07`) or 9 (`M05`, `M12`), and the table reader reads them
 like the other 279. The wiki's alternative ("the table header's own size") is falsified: the
 stream ends at the declared string table and the count of records is 16.
+
+### 3.1 What the game does with a mark — no marker glyph
+
+The `.bmmp` reader's consumer is `0x02020c28` (`func_02020c18`): it runs the file through the
+generic table reader with the handler table at `0x020ef510` — 12 `(tag, function)` pairs:
+`0x64`→`0x0201f4dc`, `0x65`→`0x0201f510`, `0x66`→`0x0201f538`, `0x67`→`0x0201f590`,
+`0x68`→`0x0201f5b8`, `0x69`→`0x0201f610`, `0x6a`→`0x0201f644`, `0x6b`→`0x0201f670`,
+`0x6c`→`0x0201f738`, `0x6d`→`0x0201f854`, `0x6e`→`0x0201f874`, `0x6f`→`0x0201f8a4`,
+`0x70`→`0x0201f8e0`. These are EU addresses (the corpus's headers); its `func_*` names use the
+USA ones, `0x10` lower (`AGENTS.md`).
+Tag `0x6c` is `0x0201f738` (`func_0201f728`): it appends a 20-byte record to the map-screen
+object's list at `+0x754` — kind 1, a rank byte (1, then the previous record's rank + 1), the
+`u16` map ids, the two positions converted to fx32 (×4096 by `uRam0201f850`), and a next
+pointer. Nothing in the record can name a tile. Tag `0x6b` feeds the same list with kind 0
+(the maps the picture is drawn for, no position), so the readers below see both kinds; only a
+kind-1 record carries a position.
+
+Four functions read that list, and none of them draws a marker tile:
+
+| function (EU) | use of the mark list |
+|---|---|
+| `0x020211c0` (`func_020211b0`) | keeps the `shipMPos.bin` entries whose id is in the list, as `(id, byte, x, y)` at `+0xaa2`; `0x020213a4` (`func_02021394`) looks one up by `(id, map id & 0xff)` |
+| `0x02026bec` (`func_02026bdc`) | for each of the four party objects, matches its map position id (`GetField06`) against the list; a hit sets the object's on-map bit 8, and a **kind-1** record also sets bit `0x10` and copies the mark's position (`0x02053f4c`) and rank (`0x02053f6c`) |
+| `0x020236ec` (`func_020236dc`) | after the four party entries, if the **current room's id** is in the list and flag `0x2b` is set, appends one icon positioned from `0x020213a4` (a `shipMPos.bin` entry looked up by the room id and the map id's low byte), 5th argument `0x74`, palette 7 |
+| `0x02026790` (`func_02026780`) | places the room's lootable containers at a kind-1 mark of that room id, offset by the mark's position (`/4096`) |
+
+So the marks are **map metadata**: they attach the party's dots to doors, put the ship/harbour
+icon and the containers on the picture, and never stand for a tile. Two readers do place a
+sprite at a **kind-1 mark's own x/z**: `0x02026bec` copies that position onto the party object
+(bits `0x10`), which `0x020236dc` passes to the dot drawn by `0x02024528`; `0x02026790` adds
+each container's local offset to it. A mark is therefore drawn *through* those sprites — the
+party's dot on a door, the room's container — never as its own glyph. Its rank byte orders the
+entries and indexes a pixel-offset table in the draw (`iRam02024d50`/`iRam02024d54`), not a
+tile; nothing writes a BG tilemap from a mark. The field screen names only
+two `.obg` members: the picture (`0x66` → `0x02027804`, `func_020277f4`) and the backdrop (`0x6a` stores
+the name at `+0x548`; `0x02021588`, `func_02021578`, formats `%s.obg`). **0 of 283 layouts name a `marker` picture**
+(`a_mark_names_maps_and_no_layout_names_a_marker`), and neither the ARM9 nor any of its 35
+overlays holds the string `marker`, so `marker0`–`marker4` are never loaded by this screen (or
+any module's string path). Their role (another screen, or dead art) stays **[unknown]**.
+
+What the mode-0 per-frame draw `0x020235d8` (`func_020235c8`) does draw over the picture, in
+order: `0x02024010` (`func_02024000`, the leader's two 8×8 marks, arguments `0x40`/`0x41`),
+`0x0202428c` (`func_0202427c`, the area tab, `0x40`/`0x41`/`0x53`), `0x02026ecc`
+(`func_02026ebc`, OBJ mode flags), `0x02024528` (`func_02024518`: the party dots and the ring,
+then `0x02023b6c`/`0x02023d94` for the containers and rings), and `0x02027110`
+(`func_02027100`, the four name strips). The party dot's fifth argument to `0x0202757c`
+(`func_0202756c`, the one `DrawMetatile` call) is `0x02039884`'s (`func_02039874`) result
+`+ 0x58`; that function is the character byte `+0x1c9`, which `ov_017::02190884` sets to the
+**party slot** through `0x0203987c` (`func_0203986c`). Its palette is
+`object+4 + 4`, overridden to slot/palette 6 when `(*object+0x130 & 1)`. The dot therefore
+follows the party order, not a place on the map, and not a `.bmmp` mark.
 
 ## 4. Where a point falls on the picture
 
@@ -165,10 +220,12 @@ formula; that the engine uses this exact expression is [hypothesis].
   top-left. **How the DS lays the backdrop out is [unknown]** (§ 6): that rectangle and
   top-left are a stated choice, not the engine's rule.
 - **Marks**: the 91 layouts' 273 records are decoded and projected with the formula above,
-  but not drawn. `marker0` to `4`, one 8×8 tile each, are blue, green, pink, yellow and red
-  in that order (§ 1); a `0x6c` record carries only its position and the map ids it stands
-  for, **so which marker an ordinary door or house mark takes is [unknown]**, as is what
-  `obj_mappoint.pac` holds. No colour is invented.
+  but not drawn — **because the original draws no marker glyph**: a mark is map metadata (a position for
+  the party's map objects, the ship/harbour icon and the room's containers), not a tile, and
+  no layout names one of the archive's `marker0`–`marker4` pictures (§ 3.1). Drawing them would
+  invent a glyph the engine does not have. `marker0` to `4`, one 8×8 tile each, are blue,
+  green, pink, yellow and red in that order (§ 1); their role, and `obj_mappoint.pac`'s, stay
+  **[unknown]** — no module names either string.
 - **Scrolling**: a picture wider or taller than 256×192 is cropped at its top-left, as
   before (§ 6).
 
@@ -200,7 +257,9 @@ panel's attribute is 23.
 
 ## 6. INFERRED, confirmed, and open
 
-- **Confirmed on our ROM** (previously measured on the wiki's copy): file framing and block
+- **Confirmed on our ROM** (previously measured on the wiki's copy): **every one of the
+  889 mark ids is a `maplist9.bin` record** (273 marks over 91 layouts) and no layout names a
+  `marker` picture (§ 3.1); file framing and block
   extents of 501 Nitro 2D files; palette depth 3, `0xBEEF`, colours filling the `PCMP` count
   (139 files; 120 with a `PCMP`, 19 without); NCGR depth 3, no width/height, characters at
   `0x18`; NCER cells at `0x18`, no boxes, `CEBK+0x0c..0x14` zero; tile numbers at
@@ -211,8 +270,11 @@ panel's attribute is 23.
   positive case justifies it, an independent proof is missing; colour 0 is clear (the count is
   established, the engine's treatment is the DS rule); scale in pixels per unit and corner in
   tiles.
-- **Corrected here**: the pass's mark at (14.33, −50.19) lands on row 4 only if the pixel row
-  is rounded (§ 4's table had the two pass rows swapped);
+- **Corrected here**: **a `.bmmp` mark names maps and is not drawn** — no record carries a
+  marker index (889 ids, every one a map-list record) and no layout names a `marker` picture,
+  so the five marker tiles are not this screen's art (§ 3.1, § 4.1); the pass's mark at
+  (14.33, −50.19) lands on row 4 only if the pixel row is rounded (§ 4's table had the two
+  pass rows swapped);
   the `.pac` end marker of the effect packs carries `0xFFFFFFFF` in the data-size and step
   words (head size stays `0x50`); `.pac` names can be Shift-JIS; 33 `.pac` files are NARCs, so
   the wiki's 468 is 501 not 468; the "16" first word of four `.bmmp` files is their record
@@ -243,7 +305,22 @@ panel's attribute is 23.
 - `tests.txt` (`f59158135276`): the four test runs (nitro2d, nitro2d_rom, minimap, minimap_rom).
 - `verify.log` (`5aa906f145b8`): `verify.ps1 -RequireRom`, all five steps ok.
 
-`build/evidence/v3-map-screen-details/` (this batch, manifest `manifest.json`):
+`build/evidence/v3-map-marks/` (the mark rule, manifest `manifest.json`):
+
+- `decomp.txt` (`3a534d4281d7`): `scripts/decomp-find.ps1` on the 14 functions of § 3.1 — the
+  `.bmmp` consumer, the four mark-list readers, the mode-0 loader and the map-screen draws.
+- `handlers.txt` (`a2061f0fbf86`): the handler table at `0x020ef510` (tag → EU address), the
+  loader's strings, and the scan of `arm9.bin` and all 35 overlays for `marker` and
+  `obj_mappoint` (0 hits).
+- `M01.txt` (`2f1196bc44b5`): `dq9re minimap M01`, the nine marks and their room/field ids.
+- `archive-members.txt` (`12a0ecae17cd`): `dq9re gp2 data/pack_lv5/minimap.gp2`; the five
+  `marker0`–`4.obg` members are there, named by no layout.
+- `tests.txt` (`c72570504c5e`): `minimap_rom` (7), `map_screen_rom` (2) and `shaders` (3).
+- `verify.log` (`89f80b808d43`): `verify.ps1 -RequireRom`, all five steps ok.
+- `parity.log` (`7dee80cdb3c3`): `parity.ps1`, 2 references, 2 ok — the batch changes no game
+  state (docs, a doc comment and a test), so no checkpoint can move.
+
+`build/evidence/v3-map-screen-details/` (previous batch, manifest `manifest.json`):
 
 - `backdrops.txt` (`db3f23c110a2`): `dq9re minimap` of `M01`, `S01M01` and `F01` — the
   backdrop names and the mark records.

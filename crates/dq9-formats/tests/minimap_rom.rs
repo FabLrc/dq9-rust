@@ -160,7 +160,8 @@ fn the_position_formula_lands_where_the_wiki_says() {
         .into_iter()
         .find(|m| m.maps.contains(&20001))
         .unwrap();
-    let (_, row) = village.pixel(road.x, road.z).unwrap();
+    let (column, row) = village.pixel(road.x, road.z).unwrap();
+    assert!((column - 121.088).abs() < 0.01, "column {column}");
     assert_eq!(row.round() as i32, 148);
     let picture = {
         let data = archive
@@ -175,13 +176,16 @@ fn the_position_formula_lands_where_the_wiki_says() {
         .unwrap();
     let pass = Layout::parse(&data).unwrap();
     assert_eq!(pass.scale(), Some(2.0));
-    let mut rows: Vec<i32> = pass
+    // File order: the mark at the pass's far end (row 187), then its first (row 4).
+    let pixels: Vec<(f32, f32)> = pass
         .marks()
         .into_iter()
-        .map(|m| pass.pixel(m.x, m.z).unwrap().1.round() as i32)
+        .map(|m| pass.pixel(m.x, m.z).unwrap())
         .collect();
-    rows.sort_unstable();
-    assert_eq!(rows, [4, 187]);
+    assert_eq!(pixels.len(), 2);
+    for ((x, z), (ex, ez)) in pixels.iter().zip([(42.96, 187.38), (108.66, 3.62)]) {
+        assert!((x - ex).abs() < 0.01 && (z - ez).abs() < 0.01, "({x}, {z})");
+    }
 
     let data = archive.member(archive.find("F01.bmmp").unwrap()).unwrap();
     let field = Layout::parse(&data).unwrap();
@@ -305,4 +309,83 @@ fn every_pac_parses_except_the_tdata_files() {
     for name in &rejected {
         assert!(name.starts_with("tdata_"), "{name} should have parsed");
     }
+}
+
+/// A `.bmmp` mark names maps, never a marker: its integers are all map-list ids
+/// (`data/map/maplist9.bin`), and no layout's picture (`0x66`) or backdrop (`0x6a`) names one
+/// of the archive's `marker0`-`marker4` tiles. 273 records over 91 layouts, 889 ids.
+#[test]
+fn a_mark_names_maps_and_no_layout_names_a_marker() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let archive = Gpc2::parse(rom.file_by_path(ARCHIVE).unwrap()).unwrap();
+    for index in 0..5 {
+        assert!(
+            archive.find(&format!("marker{index}.obg")).is_some(),
+            "marker{index} in {ARCHIVE}"
+        );
+    }
+    let table =
+        dq9_formats::Table::parse(rom.file_by_path(dq9_formats::maplist::PATH).unwrap()).unwrap();
+    let maps = dq9_formats::maplist::MapList::parse(&table).unwrap();
+    assert_eq!(maps.records.len(), 1010);
+
+    let mut layouts = Vec::new();
+    for entry in &archive.entries {
+        if entry.name.ends_with(".bmmp") {
+            layouts.push(entry.name.clone());
+        }
+    }
+    let (mut with_marks, mut marks, mut ids) = (0, 0, 0);
+    for name in &layouts {
+        let data = archive.member(archive.find(name).unwrap()).unwrap();
+        let layout = Layout::parse(&data).unwrap();
+        // Every string of the picture (0x66, a list) and backdrop (0x6a) tags: the only
+        // `.obg` names the field screen loads.
+        for record in layout.records(0x66).chain(layout.records(0x6a)) {
+            for value in &record.values {
+                if let dq9_formats::Value::Str(Some(bytes)) = value {
+                    let field = String::from_utf8_lossy(bytes);
+                    assert!(
+                        !field.to_ascii_lowercase().starts_with("marker"),
+                        "{name}: a marker picture {field}"
+                    );
+                }
+            }
+        }
+        let found = layout.marks();
+        with_marks += usize::from(!found.is_empty());
+        marks += found.len();
+        for mark in &found {
+            assert!(!mark.maps.is_empty(), "{name}: a mark without a map");
+            for &id in &mark.maps {
+                ids += 1;
+                assert!(
+                    maps.find(id as u16).is_some(),
+                    "{name}: mark {id} is no map"
+                );
+            }
+        }
+    }
+    assert_eq!((with_marks, marks, ids), (91, 273, 889));
+
+    // The village's nine marks: a house per room, one house standing for two floors, and the
+    // field's mark on the road out of town.
+    let data = archive.member(archive.find("M01.bmmp").unwrap()).unwrap();
+    let village = Layout::parse(&data).unwrap();
+    let found: Vec<Vec<u32>> = village.marks().into_iter().map(|m| m.maps).collect();
+    assert_eq!(
+        found,
+        [
+            vec![1101],
+            vec![1102],
+            vec![1103],
+            vec![1104],
+            vec![1105, 1109],
+            vec![1106],
+            vec![1107, 1110],
+            vec![1108],
+            vec![20001],
+        ]
+    );
 }

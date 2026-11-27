@@ -25,6 +25,12 @@ pub const TAG_MARK: u16 = 0x6c;
 pub const TAG_CODES: u16 = 0x70;
 
 /// A mark on the picture: a position in map units, and the maps it stands for.
+///
+/// The record holds no marker index: every integer is a map id (`data/map/maplist9.bin`), and
+/// the field's map screen draws no mark — it uses the list to attach the party's objects, the
+/// `shipMPos.bin` ship/harbour entry and the room's containers to the picture
+/// (`docs/re/minimap.md` § 3.1). The archive's `marker0`–`marker4` pictures are named by no
+/// layout.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mark {
     /// Across.
