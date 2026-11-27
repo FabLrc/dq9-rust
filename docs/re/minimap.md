@@ -12,10 +12,13 @@ per section. Every count on this page was then measured again on our ROM, by the
 `crates/dq9-formats/tests/minimap_rom.rs` and `crates/nds-rom/tests/nitro2d_rom.rs`; where a
 measurement disagrees with the wiki it is said so.
 
-No game function is reimplemented here (data readers only), so no `port:` marker: the code
-addresses cited are the ones `docs/re/bottom-screen.md` already established — `0x02020b98`
+The data readers are `dq9_formats::minimap`; the drawing in `dq9_render::map_screen` models
+only the mode-0 window, the backdrop and the dots' placement, not the whole draw, so it carries
+no `port:` marker (`AGENTS.md`: no marker for a function that is only partially modelled). The
+code addresses cited are the ones `docs/re/bottom-screen.md` already established — `0x02020b98`
 opens the archive, `0x02021578` is the mode-0 loader (`minimap.gp2` + `obj_mm.pac`),
-`0x02020aa0` maps the VRAM banks to the sub engine.
+`0x02020aa0` maps the VRAM banks to the sub engine; the scroll is `0x02024518`/`0x02027438`
+and the mode choice `0x020dc214` (§ 4.2).
 
 ## 1. What the cartridge holds
 
@@ -201,13 +204,18 @@ why the note's pairing survived; `Layout::pixel` and `marks` were right.
 
 **The row is rounded, not truncated**: 3.62 must land on 4, which truncation would put on 3.
 The wiki's own table (rows 4 and 187) therefore selects rounding; the other two examples do
-not distinguish the two. The scale being pixels per unit and the corner tiles is still read
-from these fits, not from code — the game-side computation was not located.
+not distinguish the two. The scale and corner read from these fits are confirmed by the code:
+the `0x69` handler (`0x0201f610`) stores the scale as fx32 and the `0x64` handler
+(`0x0201f4dc`) the corner in tiles, and the mode-0 draw projects the leader with
+`position × scale` and the corner is blitted as `corner × 8` (§ 4.2).
 
 Marks are in the map's own units, the units of a doorway (`docs/re/map-archive.md`): the
 village's nine marks stand within four units of their doorways, eight of nine within three
-(wiki's measurement, plausible against the numbers above). The party's position uses the same
-formula; that the engine uses this exact expression is [hypothesis].
+(wiki's measurement, plausible against the numbers above). The party's field positions are in
+the same units (a mark's position is copied onto a party object at a door, § 3.1); the draw
+composes them differently — the scroll is `position × scale` *without* the corner, and the
+picture's tilemap blit adds `corner × 8` (§ 4.2) — so the net screen mapping is the same
+`pixel = position × scale − corner × 8` as a mark's, minus the scroll.
 
 ### 4.1 What the port draws (batch `v3-map-screen-details`)
 
@@ -215,10 +223,16 @@ formula; that the engine uses this exact expression is [hypothesis].
 
 - **Backdrop**: `0x6a`'s name resolved as a member of `minimap.gp2` (the base name, or the
   name plus `.obg`). The three patterns are 8×8 cells of paper — 64×64 pixels, except
-  `minimapbg4`, one cell (8×8) — and 221 of the 283 layouts name one. The port repeats the
-  pattern at one texel per pixel over **the picture's own rectangle**, starting at its
-  top-left. **How the DS lays the backdrop out is [unknown]** (§ 6): that rectangle and
-  top-left are a stated choice, not the engine's rule.
+  `minimapbg4`, one cell (8×8) — and 221 of the 283 layouts name one. **The original stages it
+  on the sub engine's BG1 and fills the 32×24-tile (256×192) screen with it from (0, 0),
+  fixed**: `0x02020fc4` (`func_02020fc4`, the load step after the layout's `0x6a` file) loads
+  the `.obg` through a `BGLayer` set to engine 1, **BG1** (`func_0203bb3c(..., 1, 1)`) and
+  blits its cells in a 32/width × 32/height loop (`func_0203bcb8`, `func_0203b8bc`:
+  `func_0203b97c(..., 0x20, 0x18, ...)` for BG1). The pictures go to BG0
+  (`func_0203bb3c(..., 1, 0)`) above it. The port repeats the pattern at one texel per pixel
+  over the whole screen, from (0, 0). The patterns carry **no colour 0** (minimapbg2: 4,096
+  pixels over indices 11–14; minimapbg3 5 indices; minimapbg4 one index), so the whole screen
+  is paper wherever no picture cell covers it.
 - **Marks**: the 91 layouts' 273 records are decoded and projected with the formula above,
   but not drawn — **because the original draws no marker glyph**: a mark is map metadata (a position for
   the party's map objects, the ship/harbour icon and the room's containers), not a tile, and
@@ -226,8 +240,66 @@ formula; that the engine uses this exact expression is [hypothesis].
   invent a glyph the engine does not have. `marker0` to `4`, one 8×8 tile each, are blue,
   green, pink, yellow and red in that order (§ 1); their role, and `obj_mappoint.pac`'s, stay
   **[unknown]** — no module names either string.
-- **Scrolling**: a picture wider or taller than 256×192 is cropped at its top-left, as
-  before (§ 6).
+- **Scrolling**: the picture is panned so the leader's picture pixel sits on the screen's
+  (128, 96), with the original's dead zone — § 4.2.
+
+### 4.2 The scroll and its window (`v3-map-scroll`)
+
+Two different fields pick the screen's behaviour, and the note keeps them apart:
+
+- **The loader mode** (`+0x9c1`, which of the five loaders runs) is chosen by `0x020dc214`
+  (`func_020dc214`) from its caller's request (1 → loader 1, 2 → loader 4) and, for the field's
+  own request 0, from `func_0201b588(map id)` (nonzero → loader 3) and the world-map ids
+  (`uRam020dc2c8`, `+100` → loader 4; otherwise loader 0). The field's area plans taking
+  loader 0 remains the **[hypothesis]** it was (`re/bottom-screen.md` § 2.1).
+- **The draw mode** (`+0x14`) is set inside each loader; the mode-0 loader (`0x02021578`)
+  derives it from the map record's kind (`+0xc` bits 0–3, `docs/re/maplist.md`): kind 0 → 3,
+  kind 7 → 1, every other kind → 0. `M01`, `C01M09` (town kind 2) and `S01M01` (story location
+  kind 2) are therefore **draw mode 0** when the mode-0 loader runs, which is what the port
+  models. Maps that would take another loader (world map, grotto) are not modelled: the port
+  applies the kind mapping to every map.
+
+Read from the mode-0 draw `0x02024518` (`func_02024518`) and the sub-BG0 offset writer
+`0x02027438` (`func_02027438`):
+
+- **The scroll is the leader's position × the layout's scale, in pixels.** `func_02024518`
+  reads `GameState`'s leader object (`GetUnknownGameObject`, `GameState+0x397c`,
+  `docs/re/map-archive.md` § doors) — `+0x44` x, `+0x4c` z — multiplies each by the `0x69`
+  scale (`+0x38`) in fx32 with the `+0x800` rounding, and stores the result at `+0x44`/`+0x48`
+  (pixels). `func_0202445c` seeds `+0x5ac`/`+0x5b0` from the same object at load.
+- **The window is centred on it.** The picture's cell `c` is blitted at sub-BG0 tile
+  `corner + c − floor(scroll / 8) + (32, 16)` (`func_0203bcb8`), and `func_02027438` writes
+  `BG0HOFS = scroll mod 8 + 128` and `BG0VOFS = scroll mod 8 + 32` to `0x04001010` (a 32-bit
+  half-word pair). The 8-pixel steps of the tilemap plus the 0–7 remainder give
+  **`screen = picture pixel − scroll + (128, 96)`**: with `scroll` equal to the leader's own
+  picture pixel, the leader is on the screen's (128, 96). The party dots are drawn at
+  `projected pixel − scroll + (124, 92)`, i.e. an 8×8 dot centred on that point.
+- **Dead zone.** `func_02024518` moves the stored scroll only when the leader has left a box:
+  `|leader − scroll| > 30` pixels horizontally, `leader − scroll > 10` below the anchor or
+  `< −20` above it; the scroll then jumps to the edge of the box. At load the scroll equals the
+  leader, so the dot starts on the anchor and wanders up to 30 px horizontally (10 below, 20
+  above) before the picture follows. There is **no clamp to the picture's edges**: near a map
+  border the picture's torn edge moves on screen and the fixed BG1 backdrop fills the rest.
+- **Modes 1 and 3** (kinds 7 and 0) do not scroll this way. Mode 1 blits the pictures at their
+  `0x68` offsets once (`func_02024e78`) and keeps the dots on their picture pixels. Mode 3
+  (`func_0202555c`) pans vertically by its own `+0x48` (the dot's y is `projected − +0x48 +
+  0x5c`) and `func_0202445c` clamps its camera z to `0 .. 30 / scale` world units (30 pixels)
+  with different thresholds; it is **not modelled**. The port keeps both pictures at their
+  top-left with their dots on their picture pixels — the earlier behaviour, now limited to
+  those kinds.
+
+The port's `map_screen::follow` / `picture_offset` / `Frame::new(…, Some(scroll))`
+(`crates/dq9-render/src/map_screen.rs`) implement the rule; `MapScreenData` (`app/draw.rs`)
+keeps the scroll across frames and picks it only for kinds other than 0 and 7. Tests:
+`the_scroll_holds_inside_the_dead_zone`, `a_scroll_puts_the_leader_on_the_anchor` and, on the
+ROM, `the_scroll_anchors_the_leader_on_two_layouts` (M01 at its road mark → picture top-left
+(7, −52); S01M01 at its first mark → (85, −91); a 20-pixel move holds the picture, a 40-pixel
+move carries it by 10).
+
+Captures (window, `--layout stacked --screens original`) in `build/evidence/v3-map-scroll/`:
+`M01-road.png` (the village plan panned, the fixed paper filling the rest of the screen) and
+`S01M01-mark.png` (the pass plan shifted right, paper on its left). The exact top-lefts are
+the ROM test's, at the layouts' own marks: (7, −52) and (85, −91).
 
 Captures of the three states are in `build/evidence/v3-map-screen-details/`
 (`original-M01.png`, `b319a0f1adbd`: the village, its backdrop outside the torn paper;
@@ -265,7 +337,9 @@ panel's attribute is 23.
   `0x18`; NCER cells at `0x18`, no boxes, `CEBK+0x0c..0x14` zero; tile numbers at
   `32 << mapping` bytes (the panel at tile 8 with 64 tiles, the dots at `0x48`); `.obg` size
   formula on 268; no cell past the count, no bit above 9; nibble order; the three formula
-  examples; the strip and the dots.
+  examples; the strip and the dots; **the mode-0 scroll** (leader × scale, rounded; the
+  picture at `pixel − scroll + (128, 96)`, dots at `pixel − scroll + (124, 92)`; the 30/10/20
+  dead zone, § 4.2) and **the backdrop's fixed BG1 fill** of the screen (§ 4.1).
 - **INFERRED, unchanged**: a part's position is signed (nine bits of x, eight of y) — our
   positive case justifies it, an independent proof is missing; colour 0 is clear (the count is
   established, the engine's treatment is the DS rule); scale in pixels per unit and corner in
@@ -281,8 +355,8 @@ panel's attribute is 23.
   count.
 - **[unknown]**: `0x65`/`0x67`/`0x68`/`0x6d`, `0x6e`/`0x6f` on `D01M01`, `0x66`'s first
   value, `unknown_03` of `.obg`, `CEBK`'s `unknown_0x10` and a cell's attribute, the `z` sets
-  and `pd_ab_*`, how the DS scrolls a picture larger than 256×192, how it lays out the
-  backdrop (the port repeats it over the picture's rectangle, § 4.1), which of the five
+  and `pd_ab_*`, **mode 3's draw** (`func_0202555c`, the terrain regions' kind 0) and mode 1's
+  (`func_02024e78`, kind 7), which the port keeps fixed, which of the five
   markers a `.bmmp` mark takes (§ 3, § 4.1), `obj_mappoint.pac`'s role, how a character's dot
   colour is chosen (the wiki could not tie it to these palettes), and the tab at the picture's
   top right.
@@ -334,3 +408,22 @@ panel's attribute is 23.
 - `sweep.txt` (`b25081e83a2a`): `map_screen_rom` — 283 layouts resolve, 221 with a backdrop,
   418 of the map list's 1,010 maps draw, 592 named fallbacks.
 - `verify.log` (`79d28a45393c`): `verify.ps1 -RequireRom`, all five steps ok.
+
+`build/evidence/v3-map-scroll/` (the scroll and the backdrop, manifest `manifest.json`):
+
+- `decomp.txt` (`829bf4117d09`): the corpus's `func_02027438` (the BG0HOFS/VOFS writer),
+  `func_02024518` (the mode-0 draw and its dead zone), `func_0202445c` (the load seed and the
+  mode-3 clamp), `func_02020fc4` (the backdrop fill) and `func_020dc214` (the mode choice).
+- `bg0-offset.txt` (`841311f0d2cc`): the ARM disassembly at `0x02027448` (the `scroll mod 8`
+  math and the `str` to `0x04001010`, constants `0x80`/`0x20`), `0x0203bb4c` (the `BGLayer`
+  engine/index pair) and `0x0203bcc8` (the tilemap blit).
+- `layouts.txt` (`530d2a99416e`): `dq9re minimap M01` and `S01M01` (scale, corner, backdrop,
+  picture size), the two layouts the rule is tested on.
+- `M01-road.png` (`614246f5be32`), `S01M01-mark.png` (`eb3b61ad5ee5`): window captures,
+  `--layout stacked --screens original`; the village plan panned with the fixed paper filling
+  the rest of the screen, the pass plan shifted right with paper on its left.
+- `tests.txt` (`7c33ca9f3da5`): the 13 `dq9-render` unit tests, the 3 `map_screen_rom` tests
+  (`the_scroll_anchors_the_leader_on_two_layouts`) and the kind → draw-mode test.
+- `verify.log` (`468f9f13411b`): `verify.ps1 -RequireRom`, all five steps ok.
+- `parity.log` (`33a188b62cf4`): `parity.ps1`, 2 references, 2 ok — the top screen is not game
+  state, so no checkpoint can move.

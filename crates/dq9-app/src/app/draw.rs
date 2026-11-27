@@ -69,11 +69,20 @@ impl Presentation {
     }
 }
 
+/// Whether the mode-0 loader's draw mode scrolls the picture for a map kind (`0x02021578`):
+/// kinds 0 and 7 take the fixed modes 3 and 1, every other kind mode 0.
+fn scrolls(kind: u8) -> bool {
+    !matches!(kind, 0 | 7)
+}
+
 /// The map screen's data for one map, decoded once per map load (`dq9_render::map_screen`).
 pub(super) struct MapScreenData {
     /// `MapEntry::id` of the map the data was decoded for.
     id: u16,
     content: Content,
+    /// Whether the map screen follows the leader (the mode-0 loader's draw mode, `0x02021578`:
+    /// every map kind but 0 and 7) and its scroll in picture pixels (`map_screen::follow`).
+    scroll: Option<(f32, f32)>,
 }
 
 impl App {
@@ -116,7 +125,20 @@ impl App {
                     .get_or_insert_with(|| MapScreen::new(&gpu.device, gpu.config.format));
                 self.presentation.map_layers =
                     Some(screen.layers(&gpu.device, &gpu.queue, &content));
-                self.presentation.map_data = Some(MapScreenData { id, content });
+                // The mode-0 loader's draw mode comes from the map kind (`0x02021578`): kind 0
+                // is mode 3 and kind 7 mode 1, whose picture does not scroll; every other kind
+                // is mode 0 and starts with the leader on the anchor (`0x0202445c`,
+                // `map_screen::follow`).
+                let leader = self.hero.as_ref().map_or((0.0, 0.0), |hero| {
+                    let position = hero.position();
+                    map_screen::project((position.x, position.z), content.scale, content.corner)
+                });
+                let scroll = scrolls(entry.byte_c & 0xf).then_some(leader);
+                self.presentation.map_data = Some(MapScreenData {
+                    id,
+                    content,
+                    scroll,
+                });
                 self.presentation.map_error = None;
             }
             Err(e) => {
@@ -461,7 +483,9 @@ impl App {
             let mut drawn = false;
             if mode == ScreenMode::Original && self.encounter.battle.is_none() {
                 drawn = draw_map_screen(
-                    &self.presentation,
+                    self.presentation.map_screen.as_ref(),
+                    self.presentation.map_layers.as_ref(),
+                    self.presentation.map_data.as_mut(),
                     &self.party,
                     self.hero.as_ref(),
                     self.current.as_ref().map(|(_, label)| label.as_str()),
@@ -717,6 +741,16 @@ mod tests {
     use super::*;
     use crate::app::Options;
 
+    #[test]
+    fn the_map_kind_picks_the_scrolling_draw_mode() {
+        // The village (M01), the church (C01M09) and the pass (S01M01) are kind 2: mode 0
+        // scrolls. F01 is kind 0 (mode 3) and O00 kind 7 (mode 1): fixed.
+        assert!(scrolls(2));
+        assert!(scrolls(1));
+        assert!(!scrolls(0));
+        assert!(!scrolls(7));
+    }
+
     fn app_at(map: &str, story: (u8, u8, u8)) -> Option<App> {
         let rom = testrom::load()?;
         let options = Options {
@@ -885,7 +919,9 @@ fn load_map_screen(rom: &[u8], code: &str) -> Result<Content, String> {
 /// whether anything was drawn; `false` leaves the placeholder (`prepare_map_screen` said why).
 #[allow(clippy::too_many_arguments)]
 fn draw_map_screen(
-    presentation: &Presentation,
+    screen: Option<&MapScreen>,
+    layers: Option<&Layers>,
+    data: Option<&mut MapScreenData>,
     party: &Party,
     hero: Option<&Hero>,
     label: Option<&str>,
@@ -895,11 +931,7 @@ fn draw_map_screen(
     target: &wgpu::TextureView,
     region: Viewport,
 ) -> bool {
-    let (Some(screen), Some(layers), Some(data)) = (
-        &presentation.map_screen,
-        &presentation.map_layers,
-        &presentation.map_data,
-    ) else {
+    let (Some(screen), Some(layers), Some(data)) = (screen, layers, data) else {
         return false;
     };
     // The leader's dot is the hero's, then each companion's own field position
@@ -912,7 +944,16 @@ fn draw_map_screen(
     let mut positions = vec![at];
     positions.extend(party.field.positions());
     positions.truncate(members);
-    let frame = map_screen::Frame::new(&data.content, &positions, (0.0, 0.0));
+    // The original's window follows the leader's own picture pixel (`0x02024518`): it starts
+    // there and moves only past the dead zone (`map_screen::follow`). Map kinds 0 and 7 keep
+    // the fixed picture of their own mode.
+    let scroll = data.scroll.map(|previous| {
+        let leader = map_screen::project(at, data.content.scale, data.content.corner);
+        let scroll = map_screen::follow(previous, leader);
+        data.scroll = Some(scroll);
+        scroll
+    });
+    let frame = map_screen::Frame::new(&data.content, &positions, scroll);
     screen.draw(&gpu.device, encoder, target, region, layers, &frame);
     let names: Vec<&[u8]> = party
         .members

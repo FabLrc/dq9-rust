@@ -111,6 +111,59 @@ fn every_map_resolves_or_names_why() {
     assert!(drawn > 400, "only {drawn} maps resolve");
 }
 
+/// The original's mode-0 window on the doc's two layouts (`docs/re/minimap.md` § 4.2): the
+/// leader's picture pixel starts on the screen's (128, 96) and the picture only follows past the
+/// dead zone, so the dot moves alone by up to 30 pixels horizontally.
+#[test]
+fn the_scroll_anchors_the_leader_on_two_layouts() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let archive = read(&rom, map_screen::ARCHIVE);
+    let (ncer, ncgr, nclr) = (
+        read(&rom, map_screen::SPRITE_CELLS),
+        read(&rom, map_screen::SPRITE_CHARS),
+        read(&rom, map_screen::SPRITE_PALETTE),
+    );
+    for (code, leader, pixel) in [
+        ("M01", (-7.16, 16.31), (121.0, 148.0)),
+        ("S01M01", (-18.52, 41.69), (43.0, 187.0)),
+    ] {
+        let content = map_screen::content(archive, ncer, ncgr, nclr, code)
+            .unwrap_or_else(|e| panic!("{code}: {e}"));
+        let at = map_screen::project(leader, content.scale, content.corner);
+        assert_eq!(at, pixel, "{code}");
+        // At map load the scroll is the leader's own pixel: the picture's top-left is the
+        // anchor minus it and the leader's dot is on the anchor.
+        let scroll = at;
+        let world = |pixel: (f32, f32)| {
+            (
+                (pixel.0 + content.corner.0 * 8.0) / content.scale,
+                (pixel.1 + content.corner.1 * 8.0) / content.scale,
+            )
+        };
+        let frame = map_screen::Frame::new(&content, &[leader], Some(scroll));
+        assert_eq!(frame.picture_offset, map_screen::picture_offset(at));
+        assert_eq!(frame.sprites[1].dst, [124.0, 92.0, 8.0, 8.0], "{code}");
+        // A 20-pixel move is inside the 30-pixel dead zone: the picture holds, the dot moves.
+        let moved = (at.0 + 20.0, at.1);
+        assert_eq!(map_screen::follow(scroll, moved), scroll, "{code}");
+        let frame = map_screen::Frame::new(&content, &[world(moved)], Some(scroll));
+        assert_eq!(frame.sprites[1].dst, [144.0, 92.0, 8.0, 8.0], "{code}");
+        // A 40-pixel move carries the picture by the 10 pixels past the dead zone.
+        let moved = (at.0 + 40.0, at.1);
+        assert_eq!(
+            map_screen::follow(scroll, moved),
+            (at.0 + 10.0, at.1),
+            "{code}"
+        );
+        // The layout's backdrop tiles the 256×192 screen: 64×64 cells, four columns, three rows.
+        let backdrop = content.backdrop.as_ref().expect(code);
+        assert_eq!(backdrop.size(), (64, 64), "{code}");
+        let tiles = map_screen::backdrop_tiles(backdrop.size(), [0.0, 0.0, 256.0, 192.0]);
+        assert_eq!(tiles.len(), 12, "{code}");
+    }
+}
+
 /// Whether a sheet rectangle holds a pixel with alpha.
 fn has_pixels(sheet: &map_screen::Image, [x, y, w, h]: [u32; 4]) -> bool {
     (y..y + h).any(|py| {

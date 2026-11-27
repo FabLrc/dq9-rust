@@ -6,12 +6,14 @@
 //! What is drawn, and what establishes it:
 //!
 //! - the backdrop: the `minimapbg2`-`4` `.obg` (8×8-cell paper) the layout's tag `0x6a` names
-//!   (`docs/re/minimap.md` § 1, § 3), tiled at one texel per pixel under the picture's own
-//!   rectangle — how the DS lays it out is [unknown], so the picture's rectangle and top-left
-//!   stand ([`backdrop_tiles`]);
+//!   (`docs/re/minimap.md` § 1, § 3), tiled at one texel per pixel over the whole 256×192
+//!   screen from its top-left and fixed: the original stages it on sub BG1 and fills the
+//!   32×24-tile screen with it (`0x02020fc4`, `docs/re/minimap.md` § 4.2, [`backdrop_tiles`]);
 //! - the picture: the `.obg` the map's `.bmmp` names (`docs/re/minimap.md` § 2), at one pixel
-//!   per texel with its top-left at the screen's top-left — the original scroll of a picture
-//!   larger than 256×192 is not established ([`picture_dst`]);
+//!   per texel, scrolled so the leader's picture pixel sits at the screen's (128, 96)
+//!   (`0x02027438`, `0x02024518`, § 4.2): [`follow`] reproduces the original's 30-pixel
+//!   horizontal and 10/20-pixel vertical dead zone; maps whose map kind is 0 or 7 do not use
+//!   this mode and keep their picture at its top-left ([`picture_dst`], [unknown]);
 //! - the party strips: cell 2 of `obj_minimap.NCER`, rows 0..15, 64×16 at y 176, one per member
 //!   in party order, palette slot 0..3 (blue, green, pink, orange in the file);
 //! - the party dots: cells 3..7 (8×8, palette slot 4) at the member's projected position
@@ -50,6 +52,18 @@ pub const STRIP_PITCH: u32 = 64;
 pub const STRIP_Y: u32 = 176;
 /// The dots' size: one 8×8 part each.
 pub const DOT_SIZE: u32 = 8;
+/// The screen point the original's scrolling window puts the leader at: sub BG0 is scrolled
+/// to `(scroll mod 8) + (128, 32)` and its tilemap is blitted at
+/// `corner + entry - scroll / 8 + (32, 16)`, so a picture pixel lands at
+/// `pixel - scroll + (128, 96)` (`0x02027438`, `0x02024518`).
+pub const ANCHOR: (f32, f32) = (128.0, 96.0);
+/// The scroll follows the leader only past this horizontal dead zone, in pixels
+/// (`0x02024518`: the difference is clamped to 30 either way).
+pub const DEAD_ZONE_X: f32 = 30.0;
+/// The vertical dead zone: the leader may fall 10 pixels below the anchor or 20 above it
+/// before the picture follows (`0x02024518`).
+pub const DEAD_ZONE_BELOW: f32 = 10.0;
+pub const DEAD_ZONE_ABOVE: f32 = 20.0;
 /// Member slots a party can fill (`dq9_core::party::PARTY_MAX`).
 pub const MEMBERS: usize = 4;
 /// The area tab's rectangle and colours, measured on the original's capture (a dark tab with a
@@ -346,25 +360,53 @@ pub fn project(position: (f32, f32), scale: f32, corner: (f32, f32)) -> (f32, f3
 }
 
 /// The picture's rectangle in screen pixels: its top-left at `offset`, one pixel per texel.
-/// The original's scroll of a picture larger than the screen is [unknown]
-/// (`docs/re/minimap.md` § 6): the caller passes (0, 0), the picture's top-left.
+/// With `None` as the frame's scroll (a map kind that does not use the original's mode 0) the
+/// caller passes (0, 0), the picture's top-left.
 pub fn picture_dst(size: (u32, u32), offset: (f32, f32)) -> [f32; 4] {
     [offset.0, offset.1, size.0 as f32, size.1 as f32]
 }
 
-/// The backdrop's quads under the picture: the 8×8-cell paper pattern ([`Content::backdrop`],
-/// 64×64 pixels) repeated at one texel per pixel over `picture`'s rectangle, top-left first.
-/// The DS's own layout of the backdrop is [unknown] (`docs/re/minimap.md` § 6): the picture's
-/// rectangle and top-left are the rule, the last column and row are cut to fit.
+/// The scroll after moving the leader to `leader` (both in picture pixels): the original holds
+/// the picture while the leader stays within 30 pixels horizontally, 10 below the anchor and
+/// 20 above it, then jumps the difference past that
+/// (`0x02024518`; `docs/re/minimap.md` § 4.2). The first frame's scroll is the leader's own
+/// pixel, which puts its dot on [`ANCHOR`].
+pub fn follow(previous: (f32, f32), leader: (f32, f32)) -> (f32, f32) {
+    fn axis(previous: f32, leader: f32, below: f32, above: f32) -> f32 {
+        let difference = leader - previous;
+        if difference > below {
+            leader - below
+        } else if difference < -above {
+            leader + above
+        } else {
+            previous
+        }
+    }
+    (
+        axis(previous.0, leader.0, DEAD_ZONE_X, DEAD_ZONE_X),
+        axis(previous.1, leader.1, DEAD_ZONE_BELOW, DEAD_ZONE_ABOVE),
+    )
+}
+
+/// The picture's top-left for a scroll: the leader's picture pixel sits on the screen's
+/// [`ANCHOR`], so the top-left is `ANCHOR - scroll` (the sub BG0 viewport of `0x02027438`).
+pub fn picture_offset(scroll: (f32, f32)) -> (f32, f32) {
+    (ANCHOR.0 - scroll.0, ANCHOR.1 - scroll.1)
+}
+
+/// The backdrop's quads: the 8×8-cell paper pattern ([`Content::backdrop`], 64×64 pixels)
+/// repeated at one texel per pixel over `screen`, top-left first, fixed. The original stages
+/// the pattern on sub BG1 and fills the 32×24-tile screen with it from (0, 0)
+/// (`0x02020fc4`); the last column and row are cut to fit.
 ///
 /// Each entry is `(destination, texture coordinate)` in the screen's pixels and the backdrop's
 /// texels.
-pub fn backdrop_tiles(pattern: (u32, u32), picture: [f32; 4]) -> Vec<([f32; 4], [f32; 4])> {
+pub fn backdrop_tiles(pattern: (u32, u32), screen: [f32; 4]) -> Vec<([f32; 4], [f32; 4])> {
     let (mut quads, pw, ph) = (Vec::new(), pattern.0 as f32, pattern.1 as f32);
-    if pw <= 0.0 || ph <= 0.0 || picture[2] <= 0.0 || picture[3] <= 0.0 {
+    if pw <= 0.0 || ph <= 0.0 || screen[2] <= 0.0 || screen[3] <= 0.0 {
         return quads;
     }
-    let [x, y, w, h] = picture;
+    let [x, y, w, h] = screen;
     let mut top = 0.0;
     while top < h {
         let tile_h = (h - top).min(ph);
@@ -430,7 +472,8 @@ pub struct Sprite {
 /// What the top screen shows this frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Frame {
-    /// The picture's top-left on the screen: (0, 0), its own top-left.
+    /// The picture's top-left on the screen: `ANCHOR - scroll` for a scrolling map, its own
+    /// top-left (0, 0) for a fixed one.
     pub picture_offset: (f32, f32),
     /// The picture's size in texels.
     pub picture: (u32, u32),
@@ -446,7 +489,11 @@ impl Frame {
     /// The frame of `content` for the party at `party` (map positions `x, z`), hero first: one
     /// strip and one dot per member, up to [`MEMBERS`]. The dots sit at each member's own field
     /// position (`v3-party-companions`; the app passes the followers' places).
-    pub fn new(content: &Content, party: &[(f32, f32)], picture_offset: (f32, f32)) -> Self {
+    ///
+    /// `scroll` is the original's scrolling window in picture pixels ([`follow`]); `None` keeps
+    /// the picture at its top-left and the dots on their picture pixels (the draw modes 1 and 3
+    /// the mode-0 loader picks for map kinds 7 and 0, `0x02021578`, [unknown]).
+    pub fn new(content: &Content, party: &[(f32, f32)], scroll: Option<(f32, f32)>) -> Self {
         let mut sprites = Vec::with_capacity(party.len().min(MEMBERS) * 2);
         for (slot, &position) in party.iter().take(MEMBERS).enumerate() {
             sprites.push(Sprite {
@@ -454,13 +501,18 @@ impl Frame {
                 dst: strip_dst(content, slot),
             });
             let pixel = project(position, content.scale, content.corner);
+            // The dot's 8×8 sprite is centred on the party's picture pixel once it is on screen.
+            let on_screen = match scroll {
+                Some(scroll) => (pixel.0 - scroll.0 + ANCHOR.0, pixel.1 - scroll.1 + ANCHOR.1),
+                None => pixel,
+            };
             sprites.push(Sprite {
                 src: dot_src(content, slot),
-                dst: dot_dst(pixel),
+                dst: dot_dst(on_screen),
             });
         }
         Self {
-            picture_offset,
+            picture_offset: scroll.map_or((0.0, 0.0), picture_offset),
             picture: content.picture.size(),
             backdrop: content.backdrop.as_ref().map(Image::size),
             sheet: content.sprites.size(),
@@ -499,7 +551,8 @@ fn vertices(frame: &Frame) -> Vec<[f32; VERTEX_FLOATS]> {
     if w > 0.0 && h > 0.0 {
         let picture = picture_dst(frame.picture, frame.picture_offset);
         if let Some(pattern) = frame.backdrop {
-            for (dst, uv) in backdrop_tiles(pattern, picture) {
+            let screen = [0.0, 0.0, SCREEN.0 as f32, SCREEN.1 as f32];
+            for (dst, uv) in backdrop_tiles(pattern, screen) {
                 quad(dst, uv, 0.0, &mut out);
             }
         }
@@ -786,7 +839,7 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_larger_than_the_screen_keeps_its_top_left() {
+    fn a_fixed_picture_keeps_its_top_left() {
         // The village's picture is 280×152 on a 256×192 screen: 24 pixels fall off the right.
         assert_eq!(
             picture_dst((280, 152), (0.0, 0.0)),
@@ -799,9 +852,32 @@ mod tests {
     }
 
     #[test]
+    fn the_scroll_holds_inside_the_dead_zone() {
+        // 30 pixels horizontally, 10 below the anchor and 20 above it (`0x02024518`).
+        assert_eq!(follow((100.0, 100.0), (129.0, 109.0)), (100.0, 100.0));
+        assert_eq!(follow((100.0, 100.0), (71.0, 81.0)), (100.0, 100.0));
+        assert_eq!(follow((100.0, 100.0), (140.0, 100.0)), (110.0, 100.0));
+        assert_eq!(follow((100.0, 100.0), (60.0, 100.0)), (90.0, 100.0));
+        assert_eq!(follow((100.0, 100.0), (100.0, 115.0)), (100.0, 105.0));
+        assert_eq!(follow((100.0, 100.0), (100.0, 75.0)), (100.0, 95.0));
+    }
+
+    #[test]
+    fn a_scroll_puts_the_leader_on_the_anchor() {
+        assert_eq!(ANCHOR, (128.0, 96.0));
+        assert_eq!(picture_offset((121.0, 148.0)), (7.0, -52.0));
+        // A dot whose party pixel equals the scroll lands on the anchor, top-left 4 up and left.
+        assert_eq!(dot_dst(ANCHOR), [124.0, 92.0, 8.0, 8.0]);
+        let c = sample(1.0, (0.0, 0.0));
+        let frame = Frame::new(&c, &[(121.0, 148.0)], Some((121.0, 148.0)));
+        assert_eq!(frame.picture_offset, (7.0, -52.0));
+        assert_eq!(frame.sprites[1].dst, [124.0, 92.0, 8.0, 8.0]);
+    }
+
+    #[test]
     fn the_frame_has_a_strip_and_a_dot_per_member() {
         let c = sample(2.0, (-10.0, -13.0));
-        let frame = Frame::new(&c, &[(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)], (0.0, 0.0));
+        let frame = Frame::new(&c, &[(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)], None);
         assert_eq!(frame.sprites.len(), 6);
         assert_eq!(frame.sheet, (256, 32));
         for slot in 0..3 {
@@ -814,14 +890,14 @@ mod tests {
             assert_eq!(dot.dst, [76.0, 100.0, 8.0, 8.0]);
         }
         // More than four members would leave the sheet: only four strips and dots exist.
-        let frame = Frame::new(&c, &[(0.0, 0.0); 6], (0.0, 0.0));
+        let frame = Frame::new(&c, &[(0.0, 0.0); 6], None);
         assert_eq!(frame.sprites.len(), 8);
     }
 
     #[test]
     fn vertices_cover_the_picture_then_the_sprites() {
         let c = sample(1.0, (0.0, 0.0));
-        let frame = Frame::new(&c, &[(0.0, 0.0)], (0.0, 0.0));
+        let frame = Frame::new(&c, &[(0.0, 0.0)], None);
         let data = vertices(&frame);
         // One picture, one strip and one dot: three quads.
         assert_eq!(data.len(), 18);
@@ -830,23 +906,18 @@ mod tests {
     }
 
     #[test]
-    fn a_backdrop_is_tiled_under_the_picture() {
-        // The village's 280×152 picture over a 64×64 paper pattern: 5 columns, 3 rows, the
-        // last column and row cut to the picture's rectangle.
-        let picture = picture_dst((280, 152), (0.0, 0.0));
-        let tiles = backdrop_tiles((64, 64), picture);
-        assert_eq!(tiles.len(), 15);
+    fn a_backdrop_fills_the_whole_screen() {
+        // The paper pattern is fixed on sub BG1: 64×64 over 256×192 is 4 columns and 3 rows,
+        // and the one-cell pattern (8×8) tiles the 32×24-tile screen.
+        let screen = [0.0, 0.0, SCREEN.0 as f32, SCREEN.1 as f32];
+        let tiles = backdrop_tiles((64, 64), screen);
+        assert_eq!(tiles.len(), 12);
         assert_eq!(tiles[0], ([0.0, 0.0, 64.0, 64.0], [0.0, 0.0, 1.0, 1.0]));
-        assert_eq!(
-            tiles[4],
-            ([256.0, 0.0, 24.0, 64.0], [0.0, 0.0, 24.0 / 64.0, 1.0])
-        );
-        let last = tiles[14];
-        assert_eq!(last.0, [256.0, 128.0, 24.0, 24.0]);
-        assert_eq!(last.1, [0.0, 0.0, 24.0 / 64.0, 24.0 / 64.0]);
-        // An exact multiple has no cut tile, and no backdrop has no quads.
-        assert_eq!(backdrop_tiles((64, 64), [0.0, 0.0, 128.0, 64.0]).len(), 2);
-        assert!(backdrop_tiles((0, 0), picture).is_empty());
+        assert_eq!(tiles[11].0, [192.0, 128.0, 64.0, 64.0]);
+        assert_eq!(backdrop_tiles((8, 8), [0.0, 0.0, 128.0, 64.0]).len(), 128);
+        assert_eq!(backdrop_tiles((8, 8), screen).len(), 32 * 24);
+        // No backdrop or no screen has no quads.
+        assert!(backdrop_tiles((0, 0), screen).is_empty());
         assert!(backdrop_tiles((64, 64), [0.0, 0.0, 0.0, 0.0]).is_empty());
     }
 
@@ -858,16 +929,16 @@ mod tests {
             height: 64,
             rgba: vec![0; 64 * 64 * 4],
         });
-        let frame = Frame::new(&c, &[(0.0, 0.0)], (0.0, 0.0));
+        let frame = Frame::new(&c, &[(0.0, 0.0)], None);
         assert_eq!(frame.backdrop, Some((64, 64)));
         let data = vertices(&frame);
-        // 15 backdrop quads, then the picture, the strip and the dot.
-        assert_eq!(data.len(), (15 + 3) * 6);
-        for vertex in &data[..15 * 6] {
+        // 12 backdrop quads, then the picture, the strip and the dot.
+        assert_eq!(data.len(), (12 + 3) * 6);
+        for vertex in &data[..12 * 6] {
             assert_eq!(vertex[4], 0.0);
         }
-        assert_eq!(data[15 * 6][4], 1.0);
-        assert_eq!(data[16 * 6][4], 2.0);
+        assert_eq!(data[12 * 6][4], 1.0);
+        assert_eq!(data[13 * 6][4], 2.0);
     }
 
     #[test]
@@ -884,7 +955,7 @@ mod tests {
         assert_eq!(mark.maps, [20001]);
         let mut c = sample(2.0, (-10.0, -13.0));
         c.marks = layout.marks();
-        let frame = Frame::new(&c, &[(0.0, 0.0)], (0.0, 0.0));
+        let frame = Frame::new(&c, &[(0.0, 0.0)], None);
         assert_eq!(vertices(&frame).len(), 18);
     }
 

@@ -80,8 +80,8 @@ field task's indirect calls and were not resolved.
 
 | Element | Purpose | Draw / data | Layout (screen pixels) | State read | Confidence |
 |---|---|---|---|---|---|
-| Map picture | area plan, `.obg` of `minimap.gp2` drawn as a BG tilemap (`z01`-`z05` palettes) | mode-0 loader above; `.bncg`/`.bncl`/`.bnsc` staging `0x02020e58` | full 256×192, scrolled; `.obg` scale and corner come from the map's `.bmmp` (`0x69`, `0x64`) | map id → `.bmmp` picture | code + capture; scrolling **[unknown]**; port draws the picture at its own top-left (a larger one is cropped) |
-| Backdrop | paper pattern under the map picture | the layout's `.bmmp` `0x6a` name → `minimapbg2`–`4` `.obg` of `minimap.gp2` (8×8 cells) | the port repeats it at one texel per pixel over the picture's own rectangle, from its top-left (stated choice, DS layout **[unknown]**) | `.bmmp` `0x6a` | data + code; `221 of 283` layouts name one (`re/minimap.md` § 4.1) |
+| Map picture | area plan, `.obg` of `minimap.gp2` drawn as a BG tilemap (`z01`-`z05` palettes) | mode-0 loader above; sub BG0: cells at `corner + c − floor(scroll/8) + (32, 16)`, `BG0HOFS` = `scroll mod 8 + 128`, `BG0VOFS` = `scroll mod 8 + 32` (`0x02024518`, `0x02027438`) | the leader's picture pixel on the screen's (128, 96); the scroll follows past a 30-px horizontal / 10-below / 20-above dead zone; no edge clamp | map id → `.bmmp` picture; the mode-0 loader's draw mode from the kind (`0x02021578`); loader mode `0x020dc214` | code (`re/minimap.md` § 4.2) + port captures |
+| Backdrop | paper pattern under the map picture | the layout's `.bmmp` `0x6a` name → `minimapbg2`–`4` `.obg` of `minimap.gp2` (8×8 cells) | sub BG1, fixed: the pattern tiled at one texel per pixel over the whole 32×24-tile (256×192) screen from (0, 0) (`0x02020fc4`) | `.bmmp` `0x6a` | code + data; `221 of 283` layouts name one (`re/minimap.md` § 4.1) |
 | Area tab | the map section's name ("Stornway", "Western Stornway", "Observatory - L1") | text; `TMAP_SEC` is the same name inside dialogue (`MsgSubst_TMAP_SEC`, `0x020691d0`) | x 200..253, y 0..15 on `field-church.png` (dark tab, light edge); the port keeps the right edge and grows the tab left when the name is wider | map id → map list name (`maplist9` label, the port's `loaded.label`) | capture; drawing function and palette source **[unknown]** |
 | Party strips | one name strip per party slot | the 64×64 panel of `obj_mm.pac` (cell 2 of `obj_minimap.NCER`, name strip = rows 0..15 only) | 4 × **64×16** at **y = 176**, x = **0, 64, 128, 192**; only as many as the party holds | party order `GameState+0x397c`, count `+0x3980`; per-member colour | capture + decomp; colour source **[unknown]**; the port uses the file's palette slots 0–3 (blue, green, pink, orange) **[hypothesis]** |
 | Party dots | one coloured dot per member on the map | `obj_minimap.NCER` cells 3..7 / the dots of `obj_mm.pac` | on the party's position, projected by the `.bmmp` scale/corner | hero and members' x/z | wiki + capture; colour choice **[unknown]**; the port draws cells 3..7 at the leader's position then each companion's own (`Party::field::positions`, `characters.md` § "The party's other members on the field") |
@@ -94,23 +94,27 @@ the dark strip with the white name and the two coloured ends, row 191 white. The
 are 64 px wide each, in party order, irrespective of colour.
 
 **What the port draws** (`dq9_render::map_screen`, wired in `app/draw.rs` for `--screens
-original`): the `.obg` picture the map's `.bmmp` names, one pixel per texel with its top-left
-at the screen's top-left; under it, the backdrop the layout's `0x6a` names (`minimapbg2`–`4`,
-8×8 cells of paper) repeated at one texel per pixel over the picture's own rectangle, from its
-top-left — how the DS lays it out is **[unknown]**, so the rectangle is a stated choice; the
+original`): the `.obg` picture the map's `.bmmp` names, one pixel per texel, panned so the
+leader's picture pixel sits on the screen's (128, 96) and following it only past the original's
+30-px horizontal / 10-below / 20-above dead zone (`0x02027438`, `0x02024518`;
+`re/minimap.md` § 4.2) — for map kinds other than 0 and 7, whose modes 1 and 3 are not
+modelled and keep the picture at its top-left; under it, the backdrop the layout's `0x6a`
+names (`minimapbg2`–`4`, 8×8 cells of paper) tiled at one texel per pixel over the whole
+256×192 screen from its top-left, fixed (sub BG1, `0x02020fc4`); the
 name strips cut from cell 2 of `obj_minimap.NCER` (rows 0..15) with palette slots 0..3 and each
 member's name from the record's glyph indices in the message font, centred in the slot; one
 dot per member (cells 3..7, palette slot 4) at the projected position of the leader and then of
-each companion on the field (`Party::field::positions`); and the `maplist9` label in the tab,
-right aligned. Not drawn, and the marks are **not** an omission: the original draws no marker glyph. A
-`.bmmp` mark (`0x6c`) is map metadata — it attaches the party's objects to doors (the dot is
-then drawn at the mark's x/z), positions the ship/harbour icon from `shipMPos.bin` and the
-room's containers — and no layout's picture or backdrop names one of `marker0`–`4`
-(`re/minimap.md` § 3.1). Also not drawn, because the data does not
-establish them: the scrolling of a picture larger than 256×192, the original's palette source
-for the strips and dots, and the floor badge. A map without a `.bmmp` layout (592 of the map list's 1,010
+each companion on the field (`Party::field::positions`), four pixels up and left of the
+projected pixel; and the `maplist9` label in the tab, right aligned. Not drawn, and the marks
+are **not** an omission: the original draws no marker glyph. A `.bmmp` mark (`0x6c`) is map
+metadata — it attaches the party's objects to doors (the dot is then drawn at the mark's x/z),
+positions the ship/harbour icon from `shipMPos.bin` and the room's containers — and no
+layout's picture or backdrop names one of `marker0`–`4` (`re/minimap.md` § 3.1). Also not
+drawn, because the data does not establish them: the original's palette source for the strips
+and dots, and the floor badge. A map without a `.bmmp` layout (592 of the map list's 1,010
 records, mostly dungeons) leaves the placeholder and the status line says so. Captures:
-`build/evidence/v3-map-screen-draw/` and, with the backdrop, `build/evidence/v3-map-screen-details/`.
+`build/evidence/v3-map-screen-draw/`, `build/evidence/v3-map-screen-details/` and, with the
+scroll, `build/evidence/v3-map-scroll/` (`M01-road.png`, `S01M01-mark.png`).
 
 ### 2.2 Bottom LCD (engine A): the 3D view and the touch UI
 
@@ -244,16 +248,15 @@ Ghidra queries (cache under `build/ghidra-cache/`): `decomp ov_017::021b1564`,
 
 ## Not established
 
-- The field's map-screen mode (0 assumed) and which element draws the area tab, the floor
-  badge and the "X Menu" text/hand (asset and function).
-- How the `.obg` picture scrolls (the port crops a larger one at its top-left) and the
-  colours of the party's dots: the original picks the dot's 5th argument from the party slot
+- Which element draws the area tab, the floor badge and the "X Menu" text/hand (asset and
+  function). The draw mode is read (`0x02021578`: kind 0 → mode 3, kind 7 → mode 1, otherwise
+  mode 0; `re/minimap.md` § 4.2); whether the field's areas always take the mode-0 loader stays
+  the previous **[hypothesis]**, and draw modes 1 and 3 are not modelled.
+- The colours of the party's dots: the original picks the dot's 5th argument from the party slot
   (`0x02039884` + `0x58`) and its palette from `object+4 + 4` (`0x020236ec`, § 3.1 of
   `re/minimap.md`); which cell of `obj_mm.pac` that names is not decoded, and the placement
   here is the projection of § 2.1 of the companions' own field positions
   (`Party::field::positions`).
-- How the DS lays out the backdrop (`0x6a`): the port tiles it over the picture's own
-  rectangle (`re/minimap.md` § 4.1, § 6).
 - What loads `marker0`–`4` and `obj_mappoint.pac` (neither string occurs in the ARM9 or its 35
   overlays, so neither is this screen's art) and what `obj_mappoint.pac` holds
   (`re/minimap.md` § 3.1, § 4.1).
