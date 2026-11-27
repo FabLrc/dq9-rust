@@ -481,12 +481,26 @@ impl Battle {
         self.rng.state()
     }
 
-    /// Whether `who` is standing: HP above 0 and not gone.
-    pub fn alive(&self, who: Who) -> bool {
+    /// Whether `who` is out of the fight: the original's two filter bits, `func_02010088`
+    /// (the live record's `+0x14` bit 0) and `func_ov000_02153c0c` (`+0x18` bit 0x2000,
+    /// `ov_000.c:285`). Both are written by the game's end-of-fight paths: `func_02088f68`
+    /// sets `+0x14 = 0` and `+0x18 = 0x2000` for a death or a flight (`ov_024.c:1738`, `5587`,
+    /// `5887`), `func_02088e80` sets `+0x14 = 1` and clears `+0x18` when a fallen monster is
+    /// removed and paid for (`ov_000.c:4930`, `func_ov000_02155184` next). The port keeps one
+    /// state per case — HP 0 for both end-of-fight paths, and [`Battle::has_fled`] for the
+    /// flight one — so a fled monster is gone even where a caller restored its HP.
+    pub fn gone(&self, who: Who) -> bool {
         match who {
-            Who::Party(i) => self.party[i].fighter.hp > 0,
-            Who::Monster(i) => self.monsters[i].fighter.hp > 0,
+            Who::Party(i) => self.party[i].fighter.hp <= 0,
+            Who::Monster(i) => self.monsters[i].fighter.hp <= 0 || self.fled[i],
         }
+    }
+
+    /// Whether `who` is standing: not [`Battle::gone`]. A target list, a re-pick and the round's
+    /// actor test all read this (`func_ov000_0215e9fc`/`0215eb1c` with `param_4` bit 0,
+    /// `func_ov000_02153aa4`, `func_ov024_021eb5d0`'s loop head).
+    pub fn alive(&self, who: Who) -> bool {
+        !self.gone(who)
     }
 
     pub(super) fn party_standing(&self) -> Vec<usize> {
@@ -1037,12 +1051,16 @@ impl Battle {
             )
         });
         let victims: Vec<Fighter> = targets.iter().map(|&w| self.fighter_snapshot(w)).collect();
+        // `func_ov024_021eb5d0`'s per-target guard (`0x021ebf28`–`0x021ec018`): the die of 100,
+        // then the target re-check; a gone one jumps to the loop's increment (`0x021ed0f8`).
+        let gone: Vec<bool> = targets.iter().map(|&w| self.gone(w)).collect();
         let combo = self.step_combo(who, &action, &targets, turn)?;
         let outcome = resolve_action_with_attack(
             &mut self.rng,
             &actor,
             &action,
             &victims,
+            Some(&gone),
             combo,
             amount_attack,
         )?;
@@ -1055,6 +1073,15 @@ impl Battle {
         }
         let mut outcomes = Vec::new();
         for (index, (&victim, o)) in targets.iter().zip(&outcome.targets).enumerate() {
+            // `func_ov024_021eb5d0`'s guard skipped this target's pass whole: no HP, MP, status,
+            // kind, kill, `func_0208978c` memory (`0x021ed0d4`) nor combo reset
+            // (`func_ov000_0215cd80`). Reachable only when a list still holds a target that
+            // went down since its settlement — the multi-blow hit codes, which the port
+            // refuses — so a modelled action never takes this arm.
+            if self.gone(victim) {
+                outcomes.push((victim, o.clone()));
+                continue;
+            }
             let before = self.fighter(victim).hp;
             if o.fled {
                 self.fighter_mut(victim).hp = 0;

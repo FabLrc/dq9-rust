@@ -795,6 +795,141 @@ nested calls: the direct calls were searched and none draws; `func_ov000_0215704
 "charmed by its target" roll, status byte `+0x53`) draws only when that byte is not 0, assumed 0;
 `func_ov000_0215fc60` (a battle kind, `[battle + 0x81fe]` = 800 or 801) is assumed 0.
 
+### The gone target (`func_02010088`, `func_ov000_02153c0c`)
+
+**The two bits.** A combatant is *gone* when either of
+
+- `func_02010088` (ARM9 `0x02010088`, EU = USA, `arm9.c:10888`): `(record + 0x14 & 1) != 0`;
+- `func_ov000_02153c0c` (EU/entry `ov_000::02153c0c`, `ov_000.c:285`): `(record + 0x18 & 0x2000) != 0`
+
+holds, where `record` is the combatant's live battle record (`combatant + 0x138`). The writers
+say which case each is: `func_02088f68` (`arm9.c:112633`) writes `+0x14 = 0` and `+0x18 = 0x2000`
+for a **death** (HP set to 0 just before it: `ov_024.c:1738`, `5595`, `5887`) and for **flight**
+(action `0xE1`, the kind-0 handler `ov_024::021da670`, `ov_024.c:1738`; "Flee `0xE1`" below);
+`func_02088e80` (`arm9.c:112597`) writes `+0x14 = 1` and clears `+0x18` when a fallen monster is
+**removed and paid for** (`ov_000.c:4930`, `func_ov000_02155184` next). No other writer sets either
+bit and nothing clears them. So both mean "not in the fight any more" for the target lists of the
+actions modelled here; the revival-like kinds `0x12` (18) and `0x21` (33) deliberately reach the
+removed dead (below), which is why no filter here is universal. Other readers agree: the revive
+list at `ov_024.c:15651` takes the `+0x18`-clear first and then, under a budget, the `+0x14`-set
+dead; the party counter `func_02053dd0` (`arm9.c:68116`) stops counting a member whose bit is set;
+the spawn routine at `ov_000.c:10130` distinguishes the two.
+
+**Where the construction tests them.** `func_ov000_0215e9fc` (party side, by the presence table
+`[battle + 0x8e18]`), `func_ov000_0215eb1c` (monster side, group by group) and
+`func_ov000_02153e78` (a group of the opposite side, `param_4` the group's `+0x17c`) all append a
+candidate only when `!gone`: the `+0x18` bit (0x2000) is tested on every candidate, and the
+`+0x14` bit only when the caller asks for it (`param_4 & 1`), while `param_4 & 0x10` turns the
+`+0x18` test off. `func_ov000_021540fc` (a party action's targets) passes **1** to the
+opponent builders and to an own-side group/everyone, except on action kind `0x21` (33), where the
+own-side list passes 0 (the dead included, for the revive-like kinds); a single chosen target is
+re-drawn instead: `func_ov000_02153aa4` (a monster: only when the chosen target's own group has
+none standing does `NextRandomMax` pick a group that has one, then `NextRandomMax` picks a
+standing member), `func_ov000_02153c24` (the group alone), `func_ov000_02153cc0` (own side: a
+gone target becomes the actor, no draw). Ids above `0xc0` name monsters, below 4 the party.
+`func_ov000_0215440c` (a monster action's targets) does the opposite: the builders fill its local
+list with `param_4 = 0` (dead included), then the copy loops keep only the candidates that are not
+gone (`ov_000.c:883`–`899`; the `0x21` block's own at `848`–`880`) — action kinds `0x12` (18) and
+`0x21` (33) excepted, which keep every listed target on purpose. Either way the list a modelled
+action resolves holds standing targets only.
+
+**The resolution re-check** (`func_ov024_021eb5d0`, `ResolveAction`; EU = USA). Its loop, per
+settled target, in this order:
+
+1. `NextRandomMax(100)`, stored at `[battle + 0x8e6e]` (`0x021ebf28`–`0x021ebf38`) — drawn for
+   **every** target, gone or not;
+2. `func_ov000_02154c68` (`0x021ebf4c`; EU `ov_000::02154c68`, `ov_000.c:1047`): a target that is
+   gone is **replaced** for an action whose `+0x1C` bits 14–18 (the hit code) is one of 3, 4, 5,
+   7, 8 or `0xb` — a fresh list is built with the action's aims/reach and `NextRandomMax` picks
+   one; for every other hit code the id comes back unchanged (this is the several-blow family
+   the port refuses, `Unsupported::HitCode`);
+3. the guard at `0x021ebfec`–`0x021ec018` (`if (target != 0 && !func_02010088(target))`, plus the
+   action numbers `0x12`/`0x21` that bypass it and resolve anyway): when the target is gone, the
+   pass is skipped (`b 0x021ed0f8`, the loop's only increment) — no critical, evasion, block,
+   accuracy, amount, damage, wake, kind or `func_0208978c` write, and no combo reset. This guard
+   reads `+0x14` only; the `+0x18` bit is the construction's and the loop head's. The loop's
+   head (`0x021ebe88`–`0x021ebea4`) also stops when the **actor** is gone (`func_02010088` and
+   `func_ov024_021e6798`, the same `+0x18` bit).
+
+**The port.** [`Battle::gone`] is the union of the two states the model can hold: HP 0 (the death
+and removal paths both land there) and [`Battle::has_fled`]. [`Battle::alive`] is its negation, so
+a fled monster is out of every list even if a caller restored its HP. Every construction site
+(`party_standing`, `monsters_standing`, the re-picks) already reads it; the two kinds that keep
+the dead on purpose (18 and 33) are not modelled. The resolver now mirrors
+the per-target order: `resolve_action_with_attack` takes a `gone` mask, draws the die of 100
+first and then skips the pass, so rank in the falloff and the generator stay the original's
+(`a_gone_target_costs_its_die_of_one_hundred_and_nothing_else`). The mask is the construction's
+union (`+0x14` or `+0x18`), a superset of the resolution guard's `+0x14` test; neither can be set
+on a listed target of a modelled action. The skip is unreachable from
+[`Battle::round`] for a modelled action: every list is re-settled from the standing at the moment
+it resolves and no modelled hit code strikes more than once, which
+`no_chapter_two_action_reaches_a_gone_target` asserts over the Hexagoon, the chapter 2 groups and
+eight ways' monsters × 20 seeds (every outcome has `hp_before > 0`). The public
+[`resolve_action`] keeps `None`, the all-standing contract the 306 oracle vectors enter through
+(`a_standing_target_list_ignores_the_gone_mask`). Tests:
+`a_monster_killed_earlier_in_the_round_is_not_struck_again`,
+`a_monster_that_left_the_battle_is_never_targeted_again`.
+
+### The acting-unit redirect (`ov_024::021e9f68`)
+
+`func_ov024_021e9f68` (entry `0x021e9f68`, `0x568` bytes, `ov_024.c:12094`) runs per target in
+that loop, after `func_ov024_021e9b74`, on a target that is not gone. Its head requires a live
+resolution context (`[ctx + 0xc] != 0`), the target combatant to exist, not be gone
+(`func_02010088` 0) and not be stopped (`func_ov024_021e6798` 0, the `+0x18` bit 0x2000), and
+`func_ov024_021e7ba8(target) == 0` (the target's `+0x18` bit 0x800 clear). It takes the resolution
+context, `*param_2` (the actor's id), `*param_3` (the target's id), the action record
+(`param_4`) and a one-byte out flag (`param_5`), and **swaps the acting and target ids** when one
+of five gates fires, so the caller resolves the action from the other unit:
+
+- **Bounce.** Action `+0x10` bit 10 (0x400 — the spell flag; 69 records on the EU action table)
+  **and** `+0x08` bits 8–9 at **1** (the action aims at the opponents — `Skill::aims`, not its
+  reach), the actor and target differ, and the target's `+0x14` bit 9 (0x200). That bit is
+  *Bounce* — `func_020888f4` sets it with a count of 5 (`arm9.c:112000`) and its expiry line is
+  `actmsg` 451, "The shining wall of light in front of … disappears". The spell is reflected:
+  `*param_2 = *param_3`, `*param_3` = the old actor, `[ctx + 0x76] = 0`, `*param_5 = 1`,
+  return 0 — the same action resolves from the bounced unit, and the tension gate
+  (`[ctx + 0x76]`) is cleared.
+- **A party member's reflect trait.** The same gate, target a party slot 0–3, whose live record
+  passes `func_02085474` (`arm9.c:108798`: a learned-skill/equipment bit 18 of the entry at
+  `live + 0x2f4 + id × 0x2c`), and `NextRandomMax(4) == 0` — a 1-in-4 reflect, same swap and
+  flag. **One draw** on the quarter, and only for a target that passes the trait test.
+- **Counter Wait / Back Atcha / action 329.** Action `+0x10` bit 7 (0x80 — the physical blow
+  family: 78 records, the plain Attack among them), **not** an action-1 blow whose acting party
+  member's weapon reaches a group or everyone (`func_ov024_021ea500(action, *param_2) == 0`: the
+  action's number 1 and the *actor's* `live + 0x2f4` bits 0–1), and
+  `func_ov000_02155f9c(battle, target) == 0` (the target is present, not gone, and not in the
+  two statuses that predicate reads: `func_020882f8`, `func_ov000_02156038`/`02156050`), and the
+  target's record `+0x21` — the category of the action it
+  queued this round (`func_ov000_021537b8` sets it from the table at `0x02182e24`: 11 triples
+  `(action, category)`, e.g. 3 Defend → 1, 96 Counter Wait → 4, 138 Back Atcha → 5, 146
+  Whipping Boy → 6, 185 Selflessness → 7, 182 Forbearance → 8, 329 → 9) — is **4**, **5** or
+  **9**:
+  - 4 (Counter Wait): the first time, `func_0x02156558` decides (0: state byte 2, no swap;
+    otherwise swap) and the per-target state byte at `ctx + 0x38/0x3c` records it; state 1 swaps
+    without a test. Return **1**, and the caller replaces the action with **action 1** (the plain
+    Attack): the counter-attacker strikes back.
+  - 5 (Back Atcha): a fresh target is built for the target's side
+    (`func_0x0215e9fc`/`0215eb1c`, drawn with `NextRandomMax` unless the target's own record at
+    `ctx + 0x20/0x28` already holds one), then the swap; `[ctx + 0x77] = 1`; return 0 (the same
+    action, redirected).
+  - 9 (action 329, name empty in `actname`): `NextRandomMax(5)` and the eight-entry table at
+    `0x021ea4cc`, a fresh target, `*param_2 = *param_3` when it differs, `[ctx + 0x77] = 1`,
+    return 0.
+- **Reverse Cycle.** Action `+0x10` bit 2 (0x4), `+0x08` bits 8–9 at 1 (aimed at the opponents),
+  the target's `+0x14` bit 26 (0x4000000). That bit is *Reverse Cycle* (`func_02088944`,
+  `arm9.c:112033`; expiry line `actmsg` 452): the ids swap and `[ctx + 0x76] = 0`, return 0.
+
+Return 1 tells the caller to use action 1 for the redirected actor; return 0 keeps the action
+record. The caller then re-checks the (possibly redirected) target at `ov_024.c:13663` — action
+kinds `0x12`/`0x21`, or a target that exists and is not gone — and only then resolves the pass
+and writes the `func_0208978c` memory. The port does **not** model this, and cannot: it has no
+Bounce/Reverse Cycle status (its
+`Status` carries the buffs, dazzle, guard and tension only), no queued-action category (Defend is
+the stance, category 1, outside {4, 5, 9}), no reflect trait and no counter way among the
+chapter-2 records the kernel resolves. So no port path reaches a swap, and no vector or route
+battle can move. **[unknown]**: action 329's name (the `actname` string is empty) and what
+`func_0x02156558` reads; the category table covers 11 actions only.
+
 ### Monster AI (`ai.rs`)
 
 - **Way rule** by `+0x10` bits 5–7 (`func_0208a91c`, table at `0x020f10b0`): 0, 1, 2, 4 the weight tables

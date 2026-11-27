@@ -1196,6 +1196,7 @@ fn the_attack_level_does_not_feed_the_criticals_own_attack_term() {
             &actor,
             action,
             std::slice::from_ref(&target),
+            None,
             0,
             Some(attack),
         )
@@ -2042,4 +2043,254 @@ fn a_battle_raises_then_spends_the_hero_s_tension() {
         .expect("the hero acted");
     assert_eq!(amount, (100.0f32 * 1.5 + flat_bonus(1)) as i32);
     assert_eq!(battle.status(Who::Party(0)).tension_level, 0);
+}
+
+// --- The gone target (`func_02010088`, `func_ov000_02153c0c`) -----------------------------
+
+/// `func_ov000_02153c0c` (`ov_000.c:285`): `(record + 0x18 & 0x2000) != 0`. `func_02010088`
+/// (`arm9.c:10891`) reads `+0x14` bit 0. The port's [`Battle::gone`] is the union, written by
+/// `func_02088f68` (death or flight: `+0x14 = 0`, `+0x18 = 0x2000`) and `func_02088e80` (a
+/// fallen monster removed: `+0x14 = 1`, `+0x18 = 0`).
+#[test]
+fn a_standing_target_list_ignores_the_gone_mask() {
+    let actor = party();
+    let action = flat(100);
+    let targets = [monster(), monster()];
+    let unmasked = resolve_action(&mut Random::new(5), &actor, &action, &targets, 0).unwrap();
+    let masked = resolve_action_with_attack(
+        &mut Random::new(5),
+        &actor,
+        &action,
+        &targets,
+        Some(&[false, false]),
+        0,
+        None,
+    )
+    .unwrap();
+    assert_eq!(masked, unmasked, "the oracle's entry point cannot move");
+}
+
+/// `func_ov024_021eb5d0` draws the per-target `NextRandomMax(100)` at `0x021ebf28` **before**
+/// `func_ov000_02154c68` and the loop's guard, then skips a gone target whole: no critical,
+/// evasion, block, accuracy, amount, damage, wake or kind draw. The following target's pass is
+/// exactly the one it would take after that single die.
+#[test]
+fn a_gone_target_costs_its_die_of_one_hundred_and_nothing_else() {
+    let actor = party();
+    let action = flat(100);
+    let live = monster();
+    let mut dead = monster();
+    dead.hp = 0;
+    dead.tension_level = 0;
+
+    let masked = resolve_action_with_attack(
+        &mut Random::new(11),
+        &actor,
+        &action,
+        &[dead.clone(), live.clone()],
+        Some(&[true, false]),
+        0,
+        None,
+    )
+    .unwrap();
+    let mut rng = Random::new(11);
+    rng.next_max(100);
+    let expected = resolve_action_with_attack(
+        &mut rng,
+        &actor,
+        &action,
+        std::slice::from_ref(&live),
+        None,
+        0,
+        None,
+    )
+    .unwrap();
+
+    let gone = &masked.targets[0];
+    assert!(!gone.landed && gone.amount == 0 && !gone.fled);
+    assert_eq!(gone.hp_before, 0);
+    assert_eq!(gone.hp_after, 0, "nothing is applied to a gone target");
+    assert_eq!(masked.targets.len(), 2);
+    assert_eq!(masked.targets[1], expected.targets[0]);
+    assert_eq!(masked.draws, expected.draws + 1, "the die, and only it");
+
+    // Without the mask the same dead target still costs its whole pass: the skip is the rule's.
+    let unmasked = resolve_action_with_attack(
+        &mut Random::new(11),
+        &actor,
+        &action,
+        &[dead, live],
+        None,
+        0,
+        None,
+    )
+    .unwrap();
+    assert!(
+        unmasked.draws > masked.draws,
+        "a gone target resolved anyway would draw more"
+    );
+}
+
+fn gone_action(number: u16) -> Action {
+    let mut a = Action::new(number, 1, Amount::Blow { multiplier: 1.0 });
+    a.reach = Reach::Attack;
+    a.element = 8;
+    a.landing_element = 8;
+    a.dodgeable = true;
+    a.blockable = true;
+    a.critical_percent = 100;
+    a
+}
+
+fn gone_hero(agility: i32) -> PartyMember {
+    let mut f = Fighter::new(Side::Party);
+    f.hp = 1000;
+    f.max_hp = 1000;
+    f.mp = 10;
+    f.attack = 100;
+    f.defence = 0;
+    f.agility = agility;
+    f.evasion_rate = 2.0;
+    PartyMember::new(f)
+}
+
+fn gone_slime(hp: i32, agility: i32, ways: [u16; 6]) -> Monster {
+    let mut f = Fighter::new(Side::Monster);
+    f.hp = hp;
+    f.max_hp = hp;
+    f.attack = 10;
+    f.defence = 0;
+    f.agility = agility;
+    Monster {
+        number: 1,
+        table_hp: hp as u16,
+        group: 0,
+        fighter: f,
+        ways,
+        selector: 0,
+        ai_mode: 1,
+        extra_class: 0,
+        once_mask: 0,
+        remembers: false,
+        experience: 2,
+        gold: 4,
+        drops: [0, 0],
+        drop_steps: [0, 0],
+    }
+}
+
+fn gone_battle(monsters: Vec<Monster>, party: Vec<PartyMember>) -> Battle {
+    let mut skills = BTreeMap::new();
+    skills.insert(1, Skill::from_action(gone_action(1)));
+    Battle::new(
+        BattleSetup {
+            monsters,
+            skills,
+            set_battle: false,
+        },
+        party,
+        Surprise::None,
+        0x1234_5678_9abc_def0,
+    )
+    .unwrap()
+}
+
+/// The targets a hero actually struck, from the round's report.
+fn struck(report: &RoundReport, who: Who) -> Vec<Who> {
+    report
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::Acted {
+                who: actor,
+                outcomes,
+                ..
+            } if *actor == who => Some(outcomes.iter().map(|&(victim, _)| victim).collect()),
+            _ => None,
+        })
+        .expect("the actor acted")
+}
+
+/// A monster the first hero killed is out of the second hero's list at its own settlement
+/// (`func_ov000_021540fc` → `func_ov000_02153aa4`): the second blow is re-drawn onto a standing
+/// monster of the group, never onto the corpse.
+#[test]
+fn a_monster_killed_earlier_in_the_round_is_not_struck_again() {
+    let monsters = vec![
+        gone_slime(5, 1, [1; 6]),
+        gone_slime(50, 1, [1; 6]),
+        gone_slime(50, 1, [1; 6]),
+    ];
+    let party = vec![gone_hero(100), gone_hero(1)];
+    let mut battle = gone_battle(monsters, party);
+    let hero = Skill::from_action(gone_action(1));
+    let command = Command::Act {
+        skill: hero,
+        target: Target::Monster(0),
+    };
+    let report = battle
+        .round(&[command.clone(), command], &mut Random::new(7))
+        .unwrap();
+
+    assert_eq!(struck(&report, Who::Party(0)), [Who::Monster(0)]);
+    assert_eq!(
+        struck(&report, Who::Party(1)),
+        [Who::Monster(1)],
+        "the chosen target is gone; the group's standing member is drawn"
+    );
+    assert!(!battle.alive(Who::Monster(0)));
+}
+
+/// A monster that took the Flee way `0xE1` in the previous round is gone for the party's list as
+/// well (`func_ov000_02153c0c` holds the `+0x18` bit; `Battle::has_fled`). The port keeps HP 0
+/// as well, and a caller that restored the HP cannot bring it back into the list.
+#[test]
+fn a_monster_that_left_the_battle_is_never_targeted_again() {
+    let mut flee = Action::new(0xE1, 0, Amount::Blow { multiplier: 1.0 });
+    flee.reach = Reach::Actor;
+    let mut flee_skill = Skill::from_action(flee);
+    flee_skill.aims = 2;
+    flee_skill.reach = 1;
+    flee_skill.handlers = [112, 112];
+
+    let mut skills = BTreeMap::new();
+    skills.insert(1, Skill::from_action(gone_action(1)));
+    skills.insert(0xE1, flee_skill);
+    let mut monsters = vec![gone_slime(50, 1, [0xE1; 6]), gone_slime(50, 1, [1; 6])];
+    // Rule 3 (`func_0208a52c`): in turn, so the first way — the Flee — is taken.
+    monsters[0].selector = 3;
+    let mut battle = Battle::new(
+        BattleSetup {
+            monsters,
+            skills,
+            set_battle: false,
+        },
+        vec![gone_hero(100)],
+        Surprise::None,
+        0x1234_5678_9abc_def0,
+    )
+    .unwrap();
+
+    battle
+        .round(&[Command::Defend], &mut Random::new(3))
+        .unwrap();
+    assert!(battle.has_fled(Who::Monster(0)), "the slime took its flee");
+    assert!(!battle.alive(Who::Monster(0)));
+    let hp = battle.monsters[0].fighter.hp;
+    battle.monsters[0].fighter.hp = 50;
+    assert!(
+        !battle.alive(Who::Monster(0)),
+        "the flight flag alone keeps it out ({hp} HP was the death path's)"
+    );
+
+    let command = Command::Act {
+        skill: Skill::from_action(gone_action(1)),
+        target: Target::Monster(0),
+    };
+    let report = battle.round(&[command], &mut Random::new(7)).unwrap();
+    assert_eq!(
+        struck(&report, Who::Party(0)),
+        [Who::Monster(1)],
+        "the fled monster is not drawn again"
+    );
 }

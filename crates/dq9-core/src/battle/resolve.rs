@@ -421,7 +421,7 @@ pub fn resolve_action(
     targets: &[Fighter],
     combo_count: u8,
 ) -> Result<ActionOutcome, Unsupported> {
-    resolve_action_with_attack(rng, actor, action, targets, combo_count, None)
+    resolve_action_with_attack(rng, actor, action, targets, None, combo_count, None)
 }
 
 /// [`resolve_action`] with the attack `GetAttackBaseDamage` (`ov_024::021e7bc0`) reads for the
@@ -429,11 +429,23 @@ pub fn resolve_action(
 /// `None` reads the actor's own word (the base attack). The critical's own term keeps
 /// `actor.attack`: the original reads the base word `+0x134` `+0x34` there whatever the buff
 /// (`0x021e6e2c`'s `sVar2 = *(short *)(… + 0x134) + 0x34`).
+///
+/// `gone` is aligned with `targets` and marks the ones the original had already given up on
+/// when its loop reached them: `func_02010088` (the live record's `+0x14` bit 0) or
+/// `func_ov000_02153c0c` (`+0x18` bit 0x2000, `ov_000.c:285`). `None` leaves every target
+/// standing, the contract of the public [`resolve_action`]. The per-target `NextRandomMax(100)`
+/// is drawn either way — `0x021ebf28` (stored at `[battle + 0x8e6e]`) before the
+/// `func_ov000_02154c68` call at `0x021ebf4c` and the guard at `0x021ebfec` — and then a gone
+/// target's pass is skipped: no critical, evasion, block, accuracy, amount, damage, wake or kind
+/// draw. Its rank in the falloff is its index in the loop, the skip included
+/// (`docs/re/battle.md`, "The gone target").
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_action_with_attack(
     rng: &mut Random,
     actor: &Fighter,
     action: &Action,
     targets: &[Fighter],
+    gone: Option<&[bool]>,
     combo_count: u8,
     amount_attack: Option<i32>,
 ) -> Result<ActionOutcome, Unsupported> {
@@ -456,8 +468,24 @@ pub(crate) fn resolve_action_with_attack(
     let mut outcomes = Vec::with_capacity(targets.len());
     let mut tension_rises = Vec::with_capacity(targets.len());
     for (rank, target) in targets.iter().enumerate() {
-        // The die kept at `[battle + 0x8e6e]`; only a status not modelled reads it.
+        // The die kept at `[battle + 0x8e6e]`; only a status not modelled reads it. It comes
+        // before `func_ov000_02154c68` and the loop's guard, so a gone target costs it.
         rng.next_max(100);
+        if gone.is_some_and(|gone| gone.get(rank).copied().unwrap_or(false)) {
+            outcomes.push(TargetOutcome {
+                landed: false,
+                dodged: false,
+                blocked: false,
+                critical: false,
+                amount: 0,
+                mp_damage: 0,
+                fled: false,
+                hp_before: target.hp,
+                hp_after: target.hp,
+            });
+            tension_rises.push(None);
+            continue;
+        }
         let critical = match shared {
             Some(critical) => critical,
             None => roll_critical(&mut rng, actor, action),

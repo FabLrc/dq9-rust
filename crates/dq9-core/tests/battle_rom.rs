@@ -1729,3 +1729,65 @@ fn a_whip_weakens_across_a_group_and_a_sword_does_not() {
         assert!((186..=213).contains(amount), "{sword:?}");
     }
 }
+
+/// Every target `ResolveAction` is handed in a chapter 2 fight is standing: the original's
+/// per-target guard (`func_ov024_021eb5d0`, the die at `0x021ebf28` and `func_ov000_02154c68` at
+/// `0x021ebf4c`, the `if` at `0x021ebfec`) never skips a pass there, so the gone rule
+/// of batch `v4-gone-targets` cannot move a route battle nor the 306 oracle vectors (which enter
+/// through the public `resolve_action`, whose mask is `None` — `a_standing_target_list_ignores_
+/// the_gone_mask`). A gone target would show `hp_before == 0` in its outcome.
+#[test]
+fn no_chapter_two_action_reaches_a_gone_target() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+
+    let scenario_groups: Vec<(u16, u8)> = scenario::battle(&rom, 2)
+        .unwrap()
+        .monsters
+        .iter()
+        .map(|&(m, n)| (m as u16, n as u8))
+        .collect();
+    let mut setups = vec![BattleSetup::set_battle(&tables, &scenario_groups).unwrap()];
+    for number in [1u16, 4, 20, 23, 32, 43, 56, 63] {
+        setups.push(BattleSetup::set_battle(&tables, &[(number, 1)]).unwrap());
+    }
+
+    let mut passes = 0usize;
+    for setup in setups {
+        for seed in 0..20u64 {
+            let mut world = Random::new(0x3000 + seed);
+            let mut battle =
+                Battle::new(setup.clone(), vec![enduring_hero()], Surprise::None, seed).unwrap();
+            for _ in 0..200 {
+                if battle.result().is_some() {
+                    break;
+                }
+                let Some(target) = battle.monsters().iter().position(|m| m.fighter.hp > 0) else {
+                    break;
+                };
+                let report = battle
+                    .round(&[attack_command(&tables, target)], &mut world)
+                    .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+                for event in &report.events {
+                    let Event::Acted { outcomes, .. } = event else {
+                        continue;
+                    };
+                    for (victim, outcome) in outcomes {
+                        assert!(
+                            outcome.hp_before > 0,
+                            "seed {seed}: {victim:?} was gone when its pass came"
+                        );
+                        passes += 1;
+                    }
+                }
+            }
+            assert!(
+                battle.result().is_some(),
+                "seed {seed}: the battle never ended"
+            );
+        }
+    }
+    assert!(passes > 0, "no action resolved");
+}
