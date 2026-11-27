@@ -507,8 +507,13 @@ saving and loading.
   `v3-save-writer`), the game state binds to a normal slot and `--save-out` writes it from any run
   (`v3-save-bind`), and melonDS loaded the written container and continued into Stornway — the DS
   acceptance is proven once, not per field. Not written: the record's base attributes and current
-  HP/MP (derived at load). Remaining for the milestone: the in-game save/quick-save menu, the title
-  screen, character creation and Confession.
+  HP/MP (derived at load). **Done in the saving/title stretch**: the in-game Confession and the
+  field menu's Quick Save write the normal and suspend slots (`v3-suspend-save`, `v3-suspend-resume`,
+  `v3-suspend-saveout`), the title screen ranks and resumes them like `ov_004::0216dad0`
+  (`v3-title-screen`), and character creation asks the name and sex and writes them with the hero's
+  look (`v3-character-creation`, `v3-save-appearance`). Remaining for the milestone: the DS
+  acceptance of a written **suspend** slot ([hypothesis]; the normal slot loaded in melonDS) and
+  the creation's face/hair pages (only the sex defaults are modelled).
 - Menus beyond what chapter 2 needs: tactics, skills (overlays 2, 4, 5, 11, 13).
 - Facilities beyond Angel Falls: bank, other shops (overlay 3; wiki Inns-and-Churches,
   Items `shopdata1.bin`).
