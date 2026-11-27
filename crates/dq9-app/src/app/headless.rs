@@ -685,6 +685,69 @@ mod tests {
         let _ = std::fs::remove_file(&out);
     }
 
+    /// `--save-out` writes the live party member's look into the record (`func_020830cc`'s
+    /// `+0x160` block), replacing the container's own bytes; the file reloads to that look
+    /// and a second write is the same image.
+    #[test]
+    fn a_session_writes_the_live_look() {
+        use dq9_formats::hero::{HeroLook, Sex};
+        let bytes = save_bytes();
+        let base = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let was = base.party.members[0].look.clone();
+        let mut app = App::new_headless(options(Some(bytes.clone())), None);
+        app.party = base.party.clone();
+        app.state = dq9_core::field::saved_state(&base);
+        app.current = Some((
+            MapEntry {
+                id: 109,
+                code: "C01M09".into(),
+                byte_c: 0,
+            },
+            "C01M09".into(),
+        ));
+        app.day = DayClock::new(300.0, true);
+        let mut look = HeroLook::for_sex(Sex::Woman);
+        // The fixture wears nothing but the weapon: the written record's equipment slots
+        // stay empty and read back as empty, so the whole look round-trips.
+        look.armour = None;
+        look.legwear = None;
+        look.footwear = None;
+        look.headgear = None;
+        look.hair_color = 7;
+        look.skin_tone = 6;
+        look.eye_color = 9;
+        look.build = (3_900, 4_300);
+        app.party.members[0].look = look.clone();
+        app.party.members[0].sex = Sex::Woman;
+        assert_ne!(look.face_item, was.face_item);
+        let out = temp_path("look");
+        let _ = std::fs::remove_file(&out);
+        app.write_save_out(&out).unwrap();
+        let file = std::fs::read(&out).unwrap();
+        let save = Save::parse(&file).unwrap();
+        let record = save.slot(0).unwrap().character(0).unwrap();
+        assert_eq!(record.gender(), 1, "+372 bit 0");
+        assert_eq!(record.face_item(), look.face_item, "+356");
+        assert_eq!(record.hair_item(), look.hair_item, "+358");
+        assert_eq!(record.skin_color(), look.skin_tone, "+372 bits 1-3");
+        assert_eq!(record.eye_color(), look.eye_color, "+372 bits 4-7");
+        assert_eq!(record.hair_color(), look.hair_color, "+373");
+        assert_eq!(record.body(), look.build, "+376/+378");
+        let reloaded = GameState::from_save(&save).unwrap();
+        assert_eq!(reloaded.party.members[0].look, look);
+        // A second write of the same session is the same image.
+        let again = temp_path("look-again");
+        let _ = std::fs::remove_file(&again);
+        app.write_save_out(&again).unwrap();
+        assert_eq!(
+            std::fs::read(&again).unwrap(),
+            file,
+            "a stable second write"
+        );
+        let _ = std::fs::remove_file(&out);
+        let _ = std::fs::remove_file(&again);
+    }
+
     /// Every byte the write changes lies in the checksummed slot block or a checksum word,
     /// and its mirror copy in slot 1: the opaque blocks elsewhere in the image do not move.
     #[test]

@@ -5,7 +5,7 @@
 use super::{App, NAME_MAX};
 use crate::app::Options;
 use dq9_core::state::GameState;
-use dq9_formats::hero::Sex;
+use dq9_formats::hero::{HeroLook, Sex};
 use dq9_formats::save::{NAME_LEN, Save};
 use winit::keyboard::KeyCode;
 
@@ -320,14 +320,17 @@ fn the_cli_new_game_keeps_the_default_hero() {
     );
 }
 
-/// The Confession's write carries the created name and sex: the demo container's "Adenine"
-/// is replaced by the typed glyphs and the `+0x174` bit 0 follows the choice.
+/// The Confession's write carries the created name, sex and look: the demo container's
+/// "Adenine" is replaced by the typed glyphs, the `+0x174` bit 0 follows the choice, and the
+/// appearance fields take the sex's creation defaults (`func_020830cc`'s `+0x160` block).
 #[test]
-fn a_written_save_carries_the_created_name_and_sex() {
+fn a_written_save_carries_the_created_name_sex_and_look() {
     let (Some(rom), Some(bytes)) = (testrom::load(), saved_container()) else {
         eprintln!("skipping: DQ9_ROM or DQ9_SAVE missing");
         return;
     };
+    let demo = Save::parse(&bytes).expect("the demo parses");
+    let adenines = demo.slot(0).unwrap().character(0).unwrap();
     let dir = std::env::temp_dir().join(format!("dq9-creation-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let out = dir.join("out.sav");
@@ -358,5 +361,53 @@ fn a_written_save_carries_the_created_name_and_sex() {
         reloaded.party.members.first().map(|h| h.name),
         Some(hero.name),
         "the state the write reported and the reload agree"
+    );
+
+    // The appearance, from the creation's default look: face, hair, skin, eyes, hair colour
+    // and body, replacing the demo's own Adenine values.
+    let look = HeroLook::for_sex(Sex::Woman);
+    assert_eq!(
+        (
+            hero.look.sex,
+            hero.look.face_item,
+            hero.look.hair_item,
+            hero.look.hair_color,
+            hero.look.skin_tone,
+            hero.look.eye_color,
+            hero.look.build
+        ),
+        (
+            look.sex,
+            look.face_item,
+            look.hair_item,
+            look.hair_color,
+            look.skin_tone,
+            look.eye_color,
+            look.build
+        ),
+        "every appearance field reads back as the live look"
+    );
+    let record = written.slot(0).unwrap().character(0).unwrap();
+    assert_eq!(
+        (record.face_item(), record.hair_item()),
+        (9_021, 9_006),
+        "+356/+358"
+    );
+    assert_eq!(
+        (record.skin_color(), record.eye_color()),
+        (3, 5),
+        "+372 bits"
+    );
+    assert_eq!(record.hair_color(), 3, "+373");
+    assert_eq!(record.body(), (0x1000, 0x1000), "+376/+378");
+    assert_ne!(
+        record.face_item(),
+        adenines.face_item(),
+        "the demo's face was replaced"
+    );
+    assert_ne!(
+        record.body(),
+        adenines.body(),
+        "the demo's body was replaced"
     );
 }

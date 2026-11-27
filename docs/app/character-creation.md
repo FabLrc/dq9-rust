@@ -58,10 +58,12 @@ truncate the name. The port also refuses to confirm a name whose first glyph is 
    skin tone 3 and the opening outfit for both sexes, face 9024 or 9021, hair 9000 or 9006, eye
    colour 0 or 5, hair colour 0 or 3 ([`re/characters.md`](../re/characters.md), the creation
    table);
-3. the party's hero record (`Character::name`, `Character::sex`), which `GameState::write_into`
-   serialises to `+0x140` glyphs and `+0x174` bit 0 — so a save the game writes (the church's
+3. the party's hero record (`Character::name`, `Character::sex`, `Character::look`), which
+   `GameState::write_into` serialises to `+0x140` glyphs, `+0x174` bit 0 and the appearance
+   block at `+0x160` (face `+356`, hair `+358`, the appearance byte `+372`, the hair colour
+   `+373` and the body words `+376`/`+378`) — so a save the game writes (the church's
    Confession through `--save`/`--save-out`, the port's `write_save_out`) carries the created
-   name and sex. The creation start itself has no cartridge open, so in the window the
+   name, sex and look. The creation start itself has no cartridge open, so in the window the
    Confession refuses ("no save file is open"); the write path is exercised by the test below
    with the demo container;
 4. the message identity (`Talk::set_identity`), which decodes the glyphs to text for `<HERO>`.
@@ -80,19 +82,18 @@ truncate the name. The port also refuses to confirm a name whose first glyph is 
 - an empty name does not confirm, a space is not a name character, and the 8-glyph limit
   holds;
 - `--new-game` keeps the default hero (no screen, male, empty name);
-- a written save carries the created name and sex, replacing the demo container's "Adenine"
-  (`build/evidence/v3-character-creation/`).
+- a written save carries the created name, sex and look, replacing the demo container's
+  "Adenine" and its face/body bytes (`build/evidence/v3-character-creation/`).
 
 ## Limits
 
 - Only the name and the sex are asked: the face, hair, skin and eye pages are **not** modelled;
-  their values are the sex's defaults from the creation table.
+  their values are the sex's defaults from the creation table. Those defaults are written to
+  the save like the live look of any member (`docs/re/save.md` § "Writing a session"), so a
+  created hero's log no longer keeps the container's face, hair, skin, eye and body bytes.
 - The sex-dependent defaults are established for the initial mode (`0xd95` = 0); the other mode
   changes both faces, the woman's hair and colours and what the pages offer, and **what chooses
   it** is `[unknown]`.
-- Only the name and the sex are serialised by `GameState::write_into`: a written save keeps the
-  container record's face, hair, skin, eye and hair-colour bytes; the creation's appearance
-  defaults drive the scene's look, not the saved record.
 - The original's keyboard layout, its markup keys (`<capslock>`, `<shift>`, `<back>`, the
   accented letters) and the name filter (`ov_009::02189a4c`'s word lists) are **not** modelled;
   accents can be typed only through the letters the port maps.

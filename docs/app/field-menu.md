@@ -44,8 +44,9 @@ clock (time, lighting and the trigger's `time_of_day` follow) and heals the livi
 church's Resurrection, Purification and Benediction charge the price the core computes and name
 the member, Divination is free and returns to its row, and Confession runs the church's own state 3
 (`ov_003::02159d0c`): the greeting 1010 asks to record the adventure log, "Yes" shows 100 while the
-live state is written into the save's current normal slot (sealed, mirrored, through a temporary
-file and a rename — `--save-out` when it is given, else the `--save` container itself), then 1011
+live state (the hero's look included, `+0x160`) is written into the save's current normal slot
+(sealed, mirrored, through a temporary file and a rename — `--save-out` when it is given, else the
+`--save` container itself), then 1011
 and 1013; "Yes, continue" farewells with 1090 and returns to the field, while the rest (1015, which
 opens on No) ends with 1014 and 110 and **returns the interactive app to the title screen**
 (`App::end_session`: the original stays on 110, the port shows the title; a headless run only

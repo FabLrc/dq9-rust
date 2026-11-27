@@ -553,7 +553,7 @@ save test runs when `DQ9_SAVE` names one).
 | quest nibbles (`set_quest`, 204) | event block `+0x2cc`, `0x66` | the event block's quest quartets |
 | current track (`set_current_track`) | event block `+0x332` | the event block's selector |
 | party count (`set_party_count`) | 7577 | `party.members.len()` (at most 4) |
-| members (`character_mut`): name glyphs, sex, vocation, 13 levels, 13 experiences, equipment, skill points, skill panel bytes, maximum HP and MP (`set_max_hp`/`set_max_mp`, 10-bit fields 7 and 8 of `+0x14c`) | records `136 + 572 n` | `party.members`, records `standby_count + i` |
+| members (`character_mut`): name glyphs, sex, face, hair, hair colour, skin tone, eye colour and body (`set_face_item`/`set_hair_item`/`set_hair_color`/`set_skin_color`/`set_eye_color`/`set_body`), vocation, 13 levels, 13 experiences, equipment, skill points, skill panel bytes, maximum HP and MP (`set_max_hp`/`set_max_mp`, 10-bit fields 7 and 8 of `+0x14c`) | records `136 + 572 n` | `party.members`, records `standby_count + i` |
 | held items (`set_held_items`) | `7578 + 18 i` | `member.held_items` |
 | bag (`set_bag`: capacity, ids, quantities) | `7652`, `0x1d4` bytes | `party.bag` |
 | gold (`set_gold_on_hand`) | 11448 | `party.gold` |
@@ -575,6 +575,25 @@ special guests, party tricks, unlocked vocations, the version string, and every 
 reader leaves opaque (`QuestLog`…`Suspend`, the 12 bytes at `+0x2c0` of the event block). An
 empty equipment, held-item or bag place keeps the empty word it already had (`0` or
 `0xffff`), so a write of unchanged state changes no byte.
+
+**The look.** The original writes the appearance from the live character on every save,
+normal and suspend: `Save_Serialize` first copies the standby records from the party array
+(`GameState_Party +0xf80`, `standby_count × 0x23c`), then calls `func_020830cc` for each
+active member, which copies the 0x1c bytes at the member object's `+0x488` onto the record's
+`+0x160` — torso, legs, face `+356`, hair `+358`, arms and feet, head, weapon, shield,
+accessory, the appearance byte `+372` (gender bit 0, skin bits 1–3, eyes bits 4–7), the hair
+colour `+373` and the body words `+376`/`+378`. `Save_UnpackMain` reads the same block back
+through `PartyMember_LoadRecord` (`0x02082d7c`, `+0x160` → `+0x488`), so a load restores the
+look the object had at the save. The port writes it from `Character::look`
+(`HeroLook::from_character`, the same reader) for every active member; a field the record
+already reads as is not written, which is what keeps a load→save byte-identical (the look's
+hair colour is clamped to 0..=9 on read). Only the six appearance fields are taken from the
+look: the record's worn-item words (`+352` torso, `+354` legs, `+360` arms, `+362` feet,
+`+364` head, `+366`…`+370`) come from `member.equipment`, the value the equip menu changes,
+and the look's copies of them are a rig-side view (`HeroLook::new_game`'s halo, for one, is
+not a record the port's new game writes — **[limit]**). The records of the characters in
+reserve are still the container's: the port does not model the party array they come
+from **[limit]**. Evidence: `build/evidence/v3-save-appearance/`.
 
 A normal save carries **no hero position** (§ "Position on resume"): `from_slot` gives
 `Placement::MapStart`, so the reload stands the party at the map's start record, as the

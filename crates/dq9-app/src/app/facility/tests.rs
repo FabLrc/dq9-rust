@@ -381,6 +381,76 @@ fn confessing_writes_the_adventure_log_and_reloads_the_state() {
     let _ = std::fs::remove_file(&input);
 }
 
+/// The Confession writes the live party's look, not the container's bytes: the church's
+/// normal save carries `func_020830cc`'s `+0x160` block (face, hair, appearance, hair colour
+/// and body) from the member's `HeroLook`.
+#[test]
+fn the_confession_writes_the_live_look() {
+    use dq9_formats::hero::{HeroLook, Sex};
+    let Some(rom) = testrom::load() else {
+        eprintln!("skipping: DQ9_ROM missing");
+        return;
+    };
+    let dir = temp_dir("look");
+    let input = dir.join("in.sav");
+    let out = dir.join("out.sav");
+    let bytes = container();
+    std::fs::write(&input, &bytes).unwrap();
+    let _ = std::fs::remove_file(&out);
+
+    let mut app = app_with_save(rom, Some(bytes.clone()));
+    app.set_save_files(Some(input.clone()), Some(out.clone()));
+    let mut party = dq9_core::party::Party::new_game();
+    let mut look = HeroLook::for_sex(Sex::Woman);
+    look.hair_color = 7;
+    look.skin_tone = 6;
+    look.eye_color = 9;
+    look.build = (3_900, 4_300);
+    party.members[0].sex = Sex::Woman;
+    party.members[0].look = look.clone();
+    app.party = party;
+    open_confession(&mut app);
+    app.service_button(Button::Confirm); // Yes: the write
+    assert_eq!(app.services.confession_line(), Some(100));
+
+    let written =
+        dq9_formats::save::Save::parse(&std::fs::read(&out).expect("the log was written")).unwrap();
+    let record = written.slot(0).unwrap().character(0).unwrap();
+    assert_eq!(record.gender(), 1, "+372 bit 0");
+    assert_eq!(record.face_item(), look.face_item, "+356");
+    assert_eq!(record.hair_item(), look.hair_item, "+358");
+    assert_eq!(record.skin_color(), look.skin_tone, "+372 bits 1-3");
+    assert_eq!(record.eye_color(), look.eye_color, "+372 bits 4-7");
+    assert_eq!(record.hair_color(), look.hair_color, "+373");
+    assert_eq!(record.body(), look.build, "+376/+378");
+    let reloaded = dq9_core::state::GameState::from_save(&written).expect("the log reloads");
+    let hero = &reloaded.party.members[0].look;
+    assert_eq!(
+        (
+            hero.sex,
+            hero.face_item,
+            hero.hair_item,
+            hero.hair_color,
+            hero.skin_tone,
+            hero.eye_color,
+            hero.build
+        ),
+        (
+            look.sex,
+            look.face_item,
+            look.hair_item,
+            look.hair_color,
+            look.skin_tone,
+            look.eye_color,
+            look.build
+        ),
+        "the church's write reloads to the live look"
+    );
+    assert_eq!(std::fs::read(&input).unwrap(), bytes, "--save untouched");
+    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_file(&input);
+}
+
 /// "No" records nothing and ends the adventure: the greeting's No shows 1012, the offer to
 /// continue's No shows 1015 (it opens on No), its Yes shows 1014 then 110, and the port ends
 /// the session.

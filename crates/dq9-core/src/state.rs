@@ -9,7 +9,7 @@
 use core::ops::Range;
 use std::collections::BTreeSet;
 
-use dq9_formats::hero::Sex;
+use dq9_formats::hero::{HeroLook, Sex};
 use dq9_formats::map::StartPoint;
 use dq9_formats::save::{
     EVENT_FLAGS_SIZE, EventFlags, EventFlagsMut, GLOBAL_FLAGS_SIZE, NO_ITEM, QUEST_COUNT, Save,
@@ -505,7 +505,11 @@ impl GameState {
             // An empty place keeps the word it already had when that word is empty too
             // (`0` and `NO_ITEM` both read as empty): a write of unchanged state must not
             // change the representation an input save used.
-            let (current_equipment, current_held): ([u16; 8], [u16; HELD_ITEMS]) = {
+            let (current_equipment, current_held, current_look): (
+                [u16; 8],
+                [u16; HELD_ITEMS],
+                Option<HeroLook>,
+            ) = {
                 let current = slot.as_slot();
                 let character = current.character(record);
                 (
@@ -513,12 +517,57 @@ impl GameState {
                         character.map_or(0, |c| c.equipment(dq9_formats::save::EquipSlot::ALL[i]))
                     }),
                     current.held_items(index).unwrap_or([0; HELD_ITEMS]),
+                    character.map(|c| HeroLook::from_character(&c)),
                 )
             };
             {
                 let mut saved = slot.character_mut(record).ok_or(StateError::BadParty)?;
                 ranges.push(saved.set_name_raw(&member.name));
                 ranges.push(saved.set_gender(u8::from(member.sex == Sex::Woman)));
+                // The look, from the live member: `func_020830cc` (the writer of
+                // `Save_Serialize`'s character records) copies the 28 bytes at the member
+                // object's `+0x488` onto the record's `+0x160` for every active member, and
+                // `PartyMember_LoadRecord` (`0x02082d7c`) reads them back on a load — face
+                // and hair item words, the skin/eye/gender byte, the hair colour and the body
+                // words. The gender bit above comes from the same character, so it is not
+                // repeated here. A field the record already reads as is left alone, so an
+                // unchanged save keeps its bytes (the look's hair colour is clamped to
+                // 0..=9 on read and rewriting it would normalise an out-of-band byte).
+                let look = &member.look;
+                let face = current_look
+                    .as_ref()
+                    .is_none_or(|c| c.face_item != look.face_item);
+                let hair = current_look
+                    .as_ref()
+                    .is_none_or(|c| c.hair_item != look.hair_item);
+                let hair_color = current_look
+                    .as_ref()
+                    .is_none_or(|c| c.hair_color != look.hair_color);
+                let skin = current_look
+                    .as_ref()
+                    .is_none_or(|c| c.skin_tone != look.skin_tone);
+                let eyes = current_look
+                    .as_ref()
+                    .is_none_or(|c| c.eye_color != look.eye_color);
+                let body = current_look.as_ref().is_none_or(|c| c.build != look.build);
+                if face {
+                    ranges.push(saved.set_face_item(look.face_item));
+                }
+                if hair {
+                    ranges.push(saved.set_hair_item(look.hair_item));
+                }
+                if hair_color {
+                    ranges.push(saved.set_hair_color(look.hair_color));
+                }
+                if skin {
+                    ranges.push(saved.set_skin_color(look.skin_tone));
+                }
+                if eyes {
+                    ranges.push(saved.set_eye_color(look.eye_color));
+                }
+                if body {
+                    ranges.push(saved.set_body(look.build.0, look.build.1));
+                }
                 ranges.push(saved.set_vocation(member.vocation));
                 for (vocation, &level) in member.levels.iter().enumerate() {
                     ranges.extend(saved.set_level(vocation, level));
@@ -814,6 +863,12 @@ mod tests {
             let mut hero = slot.character_mut(0).unwrap();
             hero.set_name_raw(&[18, 47, 48, 39]);
             hero.set_gender(1);
+            hero.set_face_item(9_023);
+            hero.set_hair_item(9_007);
+            hero.set_hair_color(4);
+            hero.set_skin_color(2);
+            hero.set_eye_color(5);
+            hero.set_body(3_600, 4_200);
             hero.set_vocation(6);
             hero.set_level(6, 42).unwrap();
             hero.set_experience(6, 1_234_567).unwrap();
@@ -855,6 +910,117 @@ mod tests {
         };
         assert!(!ranges.is_empty(), "the binding wrote nothing");
         assert_eq!(rewritten.as_bytes(), &bytes[..]);
+    }
+
+    /// The live member's look is what the record keeps: `func_020830cc` writes the 28 bytes
+    /// at the member object's `+0x488` (face `+356`, hair `+358`, appearance `+372`, hair
+    /// colour `+373`, body `+376`/`+378`), and a reload reads them back through
+    /// `PartyMember_LoadRecord`.
+    #[test]
+    fn a_live_look_is_written_into_the_record_and_reloads() {
+        let bytes = played_save();
+        let mut state = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let look = &mut state.party.members[0].look;
+        look.face_item = 9_021;
+        look.hair_item = 9_013;
+        look.hair_color = 7;
+        look.skin_tone = 6;
+        look.eye_color = 9;
+        look.build = (3_900, 4_300);
+        let mut written = Save::parse(&bytes).unwrap();
+        {
+            let mut slot = written.slot_mut(0).unwrap();
+            state.write_into(&mut slot).unwrap();
+            slot.seal();
+        }
+        // The record itself, not only the round trip.
+        let before = Save::parse(&bytes).unwrap();
+        let was = before.slot(0).unwrap().character(0).unwrap();
+        let record = written.slot(0).unwrap().character(0).unwrap();
+        assert_eq!(record.face_item(), 9_021, "+356");
+        assert_eq!(record.hair_item(), 9_013, "+358");
+        assert_eq!(record.hair_color(), 7, "+373");
+        assert_eq!(record.skin_color(), 6, "+372 bits 1-3");
+        assert_eq!(record.eye_color(), 9, "+372 bits 4-7");
+        assert_eq!(record.body(), (3_900, 4_300), "+376/+378");
+        assert_ne!(
+            record.face_item(),
+            was.face_item(),
+            "the input's face was replaced"
+        );
+        assert_ne!(record.body(), was.body(), "the input's body was replaced");
+        let reloaded = GameState::from_save(&written).unwrap();
+        assert_eq!(reloaded.party.members[0].look, state.party.members[0].look);
+
+        // A second write of the same session is the same image.
+        let mut again = Save::parse(written.as_bytes()).unwrap();
+        {
+            let mut slot = again.slot_mut(0).unwrap();
+            reloaded.write_into(&mut slot).unwrap();
+            slot.seal();
+        }
+        assert_eq!(again.as_bytes(), written.as_bytes());
+    }
+
+    /// The demo container (`DQ9_SAVE`): a created look replaces every appearance field of
+    /// its hero record, the other members' records keep their bytes, and the file reloads to
+    /// the live look.
+    #[test]
+    fn a_real_saves_hero_look_is_replaced_by_the_live_one() {
+        let Some(path) = std::env::var_os("DQ9_SAVE") else {
+            eprintln!("skipped: no DQ9_SAVE");
+            return;
+        };
+        let bytes = std::fs::read(path).unwrap();
+        let mut state = GameState::from_save(&Save::parse(&bytes).unwrap()).unwrap();
+        let was = state.party.members[0].look.clone();
+        let mut look = was.clone();
+        look.face_item = 9_021;
+        look.hair_item = 9_013;
+        look.hair_color = 7;
+        look.skin_tone = 6;
+        look.eye_color = 9;
+        look.build = (3_900, 4_300);
+        state.party.members[0].look = look.clone();
+        let mut written = Save::parse(&bytes).unwrap();
+        let index = written.current_slot().unwrap();
+        {
+            let mut slot = written.slot_mut(index).unwrap();
+            state.write_into(&mut slot).unwrap();
+            slot.seal();
+        }
+        if index == 0 {
+            written.mirror_normal_slot();
+        }
+        let reloaded = GameState::from_save(&written).unwrap();
+        assert_eq!(reloaded.party.members[0].look, look);
+        assert_ne!(
+            look.face_item, was.face_item,
+            "the fixture differs on the face"
+        );
+        let record = written.slot(index).unwrap().character(0).unwrap();
+        assert_eq!(
+            (
+                record.face_item(),
+                record.hair_item(),
+                record.skin_color(),
+                record.eye_color(),
+                record.hair_color(),
+                record.body()
+            ),
+            (9_021, 9_013, 6, 9, 7, (3_900, 4_300))
+        );
+        // The other members' looks were not touched: their records still read as before.
+        let after = Save::parse(&bytes).unwrap();
+        for i in 1..reloaded.party.members.len() {
+            let old = after.slot(index).unwrap().character(i).unwrap();
+            let new = written.slot(index).unwrap().character(i).unwrap();
+            assert_eq!(
+                HeroLook::from_character(&new),
+                HeroLook::from_character(&old),
+                "member {i}'s look"
+            );
+        }
     }
 
     #[test]
@@ -1075,6 +1241,12 @@ mod tests {
         hero.levels[1] = 12;
         hero.experience[1] = 9999;
         hero.equipment.set(EquipSlot::Weapon, Some(20_005));
+        hero.look.face_item = 9_021;
+        hero.look.hair_item = 9_013;
+        hero.look.hair_color = 8;
+        hero.look.skin_tone = 6;
+        hero.look.eye_color = 2;
+        hero.look.build = (3_900, 4_300);
         hero.max_hp = 111;
         hero.max_mp = 22;
         let mut save = Save::parse(&bytes).unwrap();
