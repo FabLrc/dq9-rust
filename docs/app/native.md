@@ -75,18 +75,19 @@ local `.sav` and resumes the slot a start-up takes (`Save::resume_slot`): the fi
 **normal** slot, else the save's **suspend** slot (the Quick Save's, slot 1) when its header
 says intermission and its checksums hold. A suspend resume starts on the `Warp` block's map,
 at the position and heading the Quick Save wrote, with that slot's story, party, gold and
-clock; no data is sent over the network. A run that resumes the suspend slot **deletes that
-log** in the file, as the original's title screen does when it loads a quick save
-(`Save_WriteHeaderA`, `re/save.md` § "The suspend slot"; temporary file and rename, and a
-`resume: deleted the quick save log` line on stderr). That is verified against the console: on
-melonDS the DS's title offers "Load quick save data." for the written container and the field
-resumes at the written warp (map, x, z and angle exact, y snapped to the ground), with slot 1's
-gold, party and story words (`re/save.md`, § "The suspend slot"; evidence
-`build/evidence/v3-suspend-ds/`). One file difference there: loading a quick save from a
-cartridge that also holds an adventure log makes the DS write that log as a normal save
-("Creating backup."), which mirrors onto slot 1 — the port only clears slot 1's header and
-keeps its blocks. A recorded run (`--play-record`) leaves it, since it checks the container's
-hash before replaying. With a normal slot the hero starts
+clock; no data is sent over the network. Resuming the suspend slot writes back what the DS
+leaves in it (`Save::finish_suspend_resume`, `re/save.md` § "The suspend slot"; temporary file
+and rename): with no valid normal log on slot 0 — the only kind `--save` resumes — the log is
+**deleted** (`Save_WriteHeaderA`; `resume: deleted the quick save log` on stderr), and with one
+the DS's "Creating backup." normal save of it mirrors slot 0 onto slot 1 instead (`resume:
+backed up slot 0 over the quick save log`); the title's Continue ranks the quick save above a
+normal log, so it is the path that meets that second kind. That is verified against the
+console: on melonDS the DS's title offers "Load quick save data." for the written container and
+the field resumes at the written warp (map, x, z and angle exact, y snapped to the ground), with
+slot 1's gold, party and story words (`re/save.md`, § "The suspend slot"; evidence
+`build/evidence/v3-suspend-ds/`), and the cartridge it leaves matches the port's write
+(`build/evidence/v3-suspend-backup/`). A recorded run (`--play-record`) leaves it, since it
+checks the container's hash before replaying. With a normal slot the hero starts
 at the position and heading the game gives after "Continue" (the map's start point, `re/save.md`
 § "Position on resume"), placed on the ground; the `--screenshot` output prints this pose
 (`hero: …`) and centers the camera on it.
@@ -99,8 +100,8 @@ resumed quick save, when no adventure log exists — slot 0 seeded with the susp
 log's blocks (quest log, monsters, grotto maps, zone) both survive. A normal save carries no
 pose, so that log resumes at the map's start point, as the original's does. The whole container
 goes through a temp file and a rename, and the option refuses to run without an input save or
-with an output naming the input. `--save` is only written by the game's own edits, the Quick
-Save and the deletion of a resumed log
+with an output naming the input. `--save` is only written by the game's own edits: the Quick
+Save, and the write after a resumed log
 (above). What the state does not model (the record's base attributes, the opaque blocks) stays
 byte for byte — the current HP and MP and their maxima **are** written (`+0x14c` fields 7 to
 10); the written container is one melonDS loads and continues from

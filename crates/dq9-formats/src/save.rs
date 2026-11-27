@@ -103,7 +103,8 @@ const HAIR_COLOR: usize = 373;
 const BODY: usize = 376;
 
 /// Bytes `Save_WriteStep` state 2 copies from slot 0 to slot 1 on a normal save (`0x6fe4`
-/// at `0x10` / `0x8010`), i.e. the slot minus its first 16 bytes.
+/// at `0x10` / `0x8010`): the used region after the first 16 bytes, up to `0x6ff4`. The
+/// `0x100c` bytes that follow it (`0x6ff4..0x8000`, erased `ff`) are never written.
 const MIRROR_LEN: usize = 0x6fe4;
 
 /// The bag inside the `Main` block: 12 header bytes (two runtime pointers, the capacity
@@ -459,6 +460,37 @@ impl Save {
         }
         self.data.copy_within(16..16 + MIRROR_LEN, SLOT_SIZE + 16);
         true
+    }
+
+    /// The write the game leaves in the suspend slot once its log has been read back, as the
+    /// title's quick-save entry (`ov_004::0216e490`) and the step after it do. Which one it is
+    /// depends on the container:
+    ///
+    /// - a **valid normal log on slot 0** ([`Save::current_slot`] = 0): the resume writes it as
+    ///   a normal save ("Creating backup."), whose mirror step (`Save_WriteStep` state 2,
+    ///   `0x020aad2c`) copies slot 0's image at slot 1's `0x10` — [`Save::mirror_normal_slot`],
+    ///   so slot 1's first 16 bytes stay and its checksums become slot 0's;
+    /// - **no** such log: `Save_WriteHeaderA` (`0x020aba6c`) empties slot 1's header A, and the
+    ///   blocks stay ([`SlotMut::clear_header`], sealed).
+    ///
+    /// DS evidence (`build/evidence/v3-suspend-ds/`, `resume-compare.txt`): the normal+suspend
+    /// cartridge ends with slot 1 byte-identical to slot 0's image from `0x10` on (21 bytes
+    /// changed), the suspend-only one with slot 1 `Empty` and CRC B `670cc2cc` unchanged.
+    /// `index` is the slot the caller resumed. Returns `true` for the backup write.
+    ///
+    /// Only a log whose three checksums hold counts ([`Save::current_slot`]): the backup was
+    /// observed on a container whose slot 0 was loadable, and what the DS does with a `Valid`
+    /// header whose block checksum is stale stays **unknown** — the port clears there.
+    pub fn finish_suspend_resume(&mut self, index: usize) -> bool {
+        if index == SUSPEND_SLOT && self.current_slot() == Some(0) && self.mirror_normal_slot() {
+            return true;
+        }
+        if let Some(mut slot) = self.slot_mut(index) {
+            slot.clear_header();
+            // A setter leaves the checksums stale: an image the game rejects is not a save.
+            slot.seal();
+        }
+        false
     }
 
     /// Prepares the image a **normal** save serializes into and returns the slot it writes,
@@ -1698,6 +1730,92 @@ mod tests {
         assert!(after.checksums_valid(), "the sealed header A recomputes");
         assert_eq!(after.gold_on_hand(), 77, "the blocks keep their bytes");
         assert_eq!(save.resume_slot(), None);
+    }
+
+    /// The DS's write after a resume (`Save::finish_suspend_resume`): with a valid normal log
+    /// on slot 0 the "Creating backup." step mirrors it onto the suspend slot
+    /// (`Save_WriteStep` state 2), slot 1's first 16 bytes untouched. The DS's own result is
+    /// `build/evidence/v3-suspend-ds/after-normal-suspend.sav`: slot 1 becomes slot 0's image
+    /// from `0x10` on, 21 bytes changed in all.
+    #[test]
+    fn a_resume_with_an_adventure_log_backs_it_up_into_the_suspend_slot() {
+        let mut save = Save::parse(&blank()).unwrap();
+        save.slot_mut(0).unwrap().set_gold_on_hand(38754);
+        save.slot_mut(0).unwrap().set_gold_in_bank(111);
+        save.slot_mut(0).unwrap().seal();
+        {
+            let mut slot = save.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_intermission(true);
+            slot.set_exists(true);
+            slot.set_gold_on_hand(38761);
+            slot.seal();
+        }
+        assert_eq!(save.resume_slot(), Some(0), "the normal log outranks it");
+        assert_eq!(
+            save.title_slot(),
+            Some(SUSPEND_SLOT),
+            "the quick save is ranked"
+        );
+        let log = save.slot(0).unwrap().bytes()[16..16 + MIRROR_LEN].to_vec();
+        let head = save.slot(SUSPEND_SLOT).unwrap().bytes()[..16].to_vec();
+        let tail = save.slot(SUSPEND_SLOT).unwrap().bytes()[16 + MIRROR_LEN..].to_vec();
+        assert!(save.finish_suspend_resume(SUSPEND_SLOT), "the backup write");
+        let resumed = save.slot(SUSPEND_SLOT).unwrap();
+        assert_eq!(resumed.status(), SlotStatus::Valid, "an adventure log now");
+        assert_eq!(
+            &resumed.bytes()[16..16 + MIRROR_LEN],
+            &log[..],
+            "slot 0's image from 0x10"
+        );
+        assert_eq!(&resumed.bytes()[..16], &head[..], "the first 16 bytes stay");
+        assert_eq!(
+            &resumed.bytes()[16 + MIRROR_LEN..],
+            &tail[..],
+            "and the tail"
+        );
+        assert!(resumed.checksums_valid(), "slot 0's checksums, which hold");
+        assert_eq!(
+            resumed.gold_on_hand(),
+            38754,
+            "slot 0's log, not the quick save's"
+        );
+        assert_eq!(
+            save.slot(0).unwrap().gold_on_hand(),
+            38754,
+            "slot 0 untouched"
+        );
+        assert_eq!(save.slot(0).unwrap().gold_in_bank(), 111);
+    }
+
+    /// The other half of the same write: a container with no normal log ends with the suspend
+    /// slot's header A emptied (`Save_WriteHeaderA`, `0x020aba6c`) while its blocks stay — the
+    /// DS's `after-suspend-only.sav` (CRC B unchanged).
+    #[test]
+    fn a_resume_without_an_adventure_log_clears_the_suspend_header() {
+        let mut save = Save::parse(&blank()).unwrap();
+        {
+            let mut slot = save.slot_mut(0).unwrap();
+            slot.set_exists(false);
+            slot.seal();
+        }
+        {
+            let mut slot = save.slot_mut(SUSPEND_SLOT).unwrap();
+            slot.set_intermission(true);
+            slot.set_exists(true);
+            slot.set_gold_on_hand(77);
+            slot.seal();
+        }
+        let crc_b = save.slot(SUSPEND_SLOT).unwrap().checksums()[1];
+        assert!(
+            !save.finish_suspend_resume(SUSPEND_SLOT),
+            "the header clear, not the backup"
+        );
+        let slot = save.slot(SUSPEND_SLOT).unwrap();
+        assert_eq!(slot.status(), SlotStatus::Empty);
+        assert_eq!(slot.checksums()[1], crc_b, "CRC B and the blocks stay");
+        assert_eq!(slot.gold_on_hand(), 77);
+        assert_eq!(save.resume_slot(), None);
+        assert_eq!(save.slot(0).unwrap().status(), SlotStatus::Empty);
     }
 
     /// A normal save into a container that has only a suspend save: `Save_WriteStep`

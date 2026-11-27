@@ -265,6 +265,10 @@ in the corpus; `ov_004::0216e490`, message 58 above), and a separate title step 
 unconditionally (`ov_004::0216e414`, message `0xd4` when the write fails). So the log is
 deleted **at the resume**, not by the next normal save (which does overwrite slot 1 as the
 mirror copy). `SlotMut::clear_header` is that write; `Slot::status` then answers `Empty`.
+That is what a suspend-only container shows (slot 1 `Empty`, its CRC B `670cc2cc` and blocks
+intact, `build/evidence/v3-suspend-ds/after-suspend-only.sav`); one that also holds a **valid
+normal log** ends differently, because the resume writes that log as a normal save first — see
+§ "What the cartridge keeps after the resume", and `Save::finish_suspend_resume` for the port.
 
 Careful with slot 1: on a cartridge that has only seen normal saves it holds the **mirror
 copy** of slot 0 (`Save_WriteStep` state 2), a `Valid` adventure log — `Save::current_slot`
@@ -324,12 +328,16 @@ gold and clock. Two readers exist: **`Save::title_slot`** is the title screen's 
 quick save above the normal log, `ov_004::0216dad0`), used when the player chooses Continue
 (`app/title.rs`); **`Save::resume_slot`** is the start-up used by `--save` and the headless paths,
 which takes the normal log first — so a normal+suspend container started with `--save` resumes the
-older normal log, while Continue on the title resumes the quick save. `--save` is the cartridge,
-so a resume from an intermission slot deletes that log in the file (`SlotMut::clear_header` + `seal`,
-temporary file and rename, `native::main`'s `consume_suspend_log`), but only once
-`GameState::from_save` has read the slot, as the original writes the header after
-`Save_LoadSlot` unpacked it; the Web page keeps its uploaded bytes, having no file. A recorded
-run (`--play-record`) does not delete it: it checks the container's hash before replaying.
+older normal log, while Continue on the title resumes the quick save. Both readers apply the
+write the DS leaves in the slot afterwards, through `Save::finish_suspend_resume`:
+`Save_WriteHeaderA`'s emptied header A (`SlotMut::clear_header` + `seal`) when slot 0 holds no
+valid normal log — the only kind `--save`'s `resume_slot` can reach — and the resume's
+"Creating backup." normal save of that log, i.e. slot 0's mirror image on slot 1, when it does
+(the title's Continue, which ranks the quick save first, meets both). Both go through a
+temporary file and a rename, and only once `GameState::from_save` has read the slot, as the
+original writes it after `Save_LoadSlot` unpacked the slot; the Web page keeps its uploaded
+bytes, having no file. A recorded run (`--play-record`) does not touch it: it checks the
+container's hash before replaying.
 
 Not modelled: the `Suspend` block's payload (the port keeps the input slot 1's bytes, which
 on a mirrored cartridge are a normal save's list — the original's is the field's own state),
@@ -372,7 +380,10 @@ leaves slot 1 `Empty` with its blocks intact (CRC B `670cc2cc` unchanged); on a 
 also holds an adventure log the whole slot 1 is instead overwritten by a **normal save**: 21
 bytes change, the slot becomes the slot-0 image byte for byte (slot 0 untouched), i.e.
 `Save_WriteStep`'s mirror step (state 2, `0x020aad2c`), and the `GameState` story words are
-refreshed from that log (19.2.1 here, the gold left at the quick save's 38761). Cause:
+refreshed from that log (19.2.1 here, the gold left at the quick save's 38761). The copy is
+raw, not a serialization of the resumed state: slot 1's `Warp` block (`0x69e0` of the slot,
+file `0xe9e0`) becomes slot 0's bytes there — the quick save's live pose (`6d00002a…`, map
+109, angle 10752) is overwritten by slot 0's `214ef757…`. Cause:
 **[hypothesis]** the load writes a normal save of the slot-0 log the title read at boot — the
 only reading that explains slot 1 holding slot 0's image and the words coming from that log
 while the gold and pose stay the quick save's; the caller that shows "Creating backup." is not
@@ -382,11 +393,18 @@ in the corpus. Booting to the title and closing without choosing the row writes 
 
 The port's start-up was checked before this drive and agrees on the state: a suspend-only
 container resumes at the written pose with slot 1's gold and story, a normal+suspend container
-at the normal slot's map start with slot 0's gold, and the resumed log is deleted
-(`build/evidence/v3-suspend-resume/`). Its file side differs only in the deletion: the port
-clears slot 1's header (`SlotMut::clear_header`) and never writes the backup, so where the DS
-ends with slot 1 as the log's mirror, the port's container keeps slot 1's blocks with an empty
-header.
+at the normal slot's map start with slot 0's gold (`build/evidence/v3-suspend-resume/`). Both
+readers now leave the file as the DS does, through `Save::finish_suspend_resume` (batch
+`v3-suspend-backup`, `build/evidence/v3-suspend-backup/`): on a container with a valid normal
+log, slot 1 ends as slot 0's mirror image (`Save_WriteStep` state 2 — `0x6fe4` bytes from `0x10`,
+slot 1's first 16 bytes and its `0x100c` erased tail untouched, the 21 bytes the DS changed);
+otherwise as `Save_WriteHeaderA` leaves it — header A emptied, blocks kept. A slot 0 whose
+header says `Valid` but whose block checksum is stale is **[unknown]** on the console (never
+driven): the port's `current_slot` requires the three checksums, so it takes the clear branch
+there. `--save`'s `resume_slot` takes the normal log first, so it only reaches the second kind;
+the title's Continue (`delete_suspend_log`) reaches both. Not modelled: the DS also refreshes
+`GameState`'s story words from the log it backs up (19.2.1 there) while the port's session
+keeps the quick save's (19.3.1) — a state difference, not a file one.
 
 ## Clock and time of day
 

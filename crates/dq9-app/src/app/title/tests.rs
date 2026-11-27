@@ -144,10 +144,12 @@ fn type_name(app: &mut App, text: &str) {
 }
 
 /// Title → Continue: the slot `Save::title_slot` ranks (the suspend save), the warp's map,
-/// party and look through the existing start, and the suspend log deleted from the container
-/// as the original's resume does.
+/// party and look through the existing start, and the write the original's resume leaves in
+/// slot 1 — the "Creating backup." mirror of the adventure log, since this container holds one
+/// (`build/evidence/v3-suspend-ds/after-normal-suspend.sav`: slot 1 becomes slot 0's image
+/// from `0x10` on, 21 bytes changed).
 #[test]
-fn continue_resumes_the_ranked_suspend_slot_and_deletes_its_log() {
+fn continue_resumes_the_ranked_suspend_slot_and_writes_the_backup() {
     let (Some(rom), Some(bytes)) = (testrom::load(), saved_container()) else {
         eprintln!("skipping: DQ9_ROM or DQ9_SAVE missing");
         return;
@@ -198,17 +200,88 @@ fn continue_resumes_the_ranked_suspend_slot_and_deletes_its_log() {
         "the party the slot holds"
     );
 
-    let written = Save::parse(&std::fs::read(&path).unwrap()).unwrap();
+    // `Save_WriteStep` state 2 copies slot 0's `0x10..0x6ff4` at slot 1's `0x10` (0x6fe4
+    // bytes); the 16 bytes before and the 0x100c erased bytes after keep the input's bytes.
+    let after = Save::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let log = save.slot(0).unwrap().bytes();
+    let resumed = after.slot(SUSPEND_SLOT).unwrap();
+    assert_eq!(resumed.status(), SlotStatus::Valid, "an adventure log now");
     assert_eq!(
-        written.slot(SUSPEND_SLOT).unwrap().status(),
-        SlotStatus::Empty,
-        "the resumed quick save log is deleted, as `Save_WriteHeaderA` does"
+        &resumed.bytes()[16..16 + 0x6fe4],
+        &log[16..16 + 0x6fe4],
+        "slot 1 is slot 0's image from 0x10 on"
     );
     assert_eq!(
-        written.slot(0).unwrap().status(),
-        SlotStatus::Valid,
+        &resumed.bytes()[..16],
+        &container[0x8000..0x8010],
+        "slot 1's first 16 bytes stay"
+    );
+    assert_eq!(
+        &resumed.bytes()[16 + 0x6fe4..],
+        &container[0x8000 + 16 + 0x6fe4..],
+        "and its tail"
+    );
+    assert!(resumed.checksums_valid(), "slot 0's checksums, which hold");
+    assert_eq!(
+        after.slot(0).unwrap().bytes(),
+        save.slot(0).unwrap().bytes(),
         "the normal log is untouched"
     );
+    // `DQ9_EVIDENCE_DIR` keeps the two cartridges for the batch's evidence: `build/evidence/
+    // v3-suspend-backup/<name>-normal-suspend-port.sav` (the same convention as the encounter
+    // captures).
+    if let Some(dir) = std::env::var_os("DQ9_EVIDENCE_DIR").map(std::path::PathBuf::from) {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("before-normal-suspend-port.sav"), &container).unwrap();
+        std::fs::write(dir.join("after-normal-suspend-port.sav"), after.as_bytes()).unwrap();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other container kind: slot 0 holds no adventure log, so the resume leaves
+/// `Save_WriteHeaderA`'s empty header A on slot 1 and keeps its blocks
+/// (`build/evidence/v3-suspend-ds/after-suspend-only.sav`).
+#[test]
+fn continue_with_no_adventure_log_clears_the_suspend_header() {
+    let (Some(rom), Some(bytes)) = (testrom::load(), saved_container()) else {
+        eprintln!("skipping: DQ9_ROM or DQ9_SAVE missing");
+        return;
+    };
+    let mut save = Save::parse(&with_a_suspend_save(&bytes)).unwrap();
+    {
+        let mut slot = save.slot_mut(0).unwrap();
+        slot.set_exists(false);
+        slot.seal();
+    }
+    let container = save.as_bytes().to_vec();
+    let save = Save::parse(&container).unwrap();
+    assert_eq!(save.title_slot(), Some(SUSPEND_SLOT));
+    assert_eq!(save.resume_slot(), Some(SUSPEND_SLOT), "no normal log");
+
+    let dir = std::env::temp_dir().join(format!("dq9-title-only-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("in.sav");
+    std::fs::write(&path, &container).unwrap();
+    let mut app = app(rom, Some(container.clone()));
+    app.interactive = true;
+    app.set_save_files(Some(path.clone()), None);
+    app.show_title();
+    assert!(!app.title_key(KeyCode::Enter), "Enter chooses Continue");
+
+    let after = Save::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let resumed = after.slot(SUSPEND_SLOT).unwrap();
+    assert_eq!(resumed.status(), SlotStatus::Empty);
+    assert_eq!(
+        &resumed.bytes()[36..],
+        &save.slot(SUSPEND_SLOT).unwrap().bytes()[36..],
+        "header A is emptied, the blocks keep their bytes"
+    );
+    assert_eq!(after.slot(0).unwrap().status(), SlotStatus::Empty);
+    if let Some(dir) = std::env::var_os("DQ9_EVIDENCE_DIR").map(std::path::PathBuf::from) {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("before-suspend-only-port.sav"), &container).unwrap();
+        std::fs::write(dir.join("after-suspend-only-port.sav"), after.as_bytes()).unwrap();
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

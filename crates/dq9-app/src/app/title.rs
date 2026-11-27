@@ -226,13 +226,21 @@ impl App {
                 }
             };
             match delete_suspend_log(path, &mut parsed) {
-                Ok(()) => {
+                Ok(backup) => {
                     image = parsed.as_bytes().to_vec();
                     self.options.save = Some(image);
-                    status(&format!(
-                        "title: the quick save log in {} was deleted, as the resume does",
-                        path.display()
-                    ));
+                    if backup {
+                        status(&format!(
+                            "title: the quick save log in {} was backed up (`Creating backup.`), \
+                             as the resume does",
+                            path.display()
+                        ));
+                    } else {
+                        status(&format!(
+                            "title: the quick save log in {} was deleted, as the resume does",
+                            path.display()
+                        ));
+                    }
                 }
                 Err(e) => status(&format!("title: the quick save log was not deleted: {e:#}")),
             }
@@ -371,24 +379,20 @@ fn start_from_container(bytes: &[u8]) -> Result<(usize, load::Start), String> {
     ))
 }
 
-/// The deletion after a resume (`Save_WriteHeaderA`, `0x020aba6c`): slot 1's header A is
-/// emptied, the slot sealed and the file replaced through a temporary and a rename. Only an
-/// intermission header is cleared (`Save_WriteStep` writes slot 0's mirror copy there
-/// otherwise, which is an adventure log).
-fn delete_suspend_log(path: &std::path::Path, image: &mut Save) -> anyhow::Result<()> {
+/// The write the game leaves after a resume. `Save_WriteHeaderA` (`0x020aba6c`) empties slot
+/// 1's header A; a container that also holds a **valid normal log** ends differently — the
+/// resume writes that log as a normal save ("Creating backup."), whose mirror step
+/// (`Save_WriteStep` state 2, `0x020aad2c`) leaves slot 1 as slot 0's image — so
+/// `Save::finish_suspend_resume` decides. Only an intermission header is touched, and the file
+/// is replaced through a temporary and a rename. Returns whether the backup was written.
+fn delete_suspend_log(path: &std::path::Path, image: &mut Save) -> anyhow::Result<bool> {
     let Some(slot) = image.slot(SUSPEND_SLOT) else {
-        return Ok(());
+        return Ok(false);
     };
     if slot.status() != SlotStatus::Intermission {
-        return Ok(());
+        return Ok(false);
     }
-    {
-        let mut slot = image
-            .slot_mut(SUSPEND_SLOT)
-            .ok_or_else(|| anyhow::anyhow!("slot {SUSPEND_SLOT} is out of range"))?;
-        slot.clear_header();
-        slot.seal();
-    }
+    let backup = image.finish_suspend_resume(SUSPEND_SLOT);
     let name = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("the path has no file name"))?;
@@ -396,7 +400,7 @@ fn delete_suspend_log(path: &std::path::Path, image: &mut Save) -> anyhow::Resul
     temp.set_file_name(format!("{}.tmp", name.to_string_lossy()));
     std::fs::write(&temp, image.as_bytes())?;
     std::fs::rename(&temp, path)?;
-    Ok(())
+    Ok(backup)
 }
 
 #[cfg(all(test, windows))]

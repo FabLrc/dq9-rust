@@ -37,7 +37,7 @@ struct Cli {
     /// Writes the session's state into the save's current normal slot and into this file
     /// (needs `--save`): the whole container, sealed and mirrored like the game's own normal
     /// save. What the state does not carry stays as it was; `--save` itself is only written
-    /// by the game's own edits (a quick save, the deletion of a resumed one).
+    /// by the game's own edits (a quick save, the write after a resumed one).
     #[arg(
         long,
         value_name = "FILE",
@@ -743,7 +743,7 @@ fn play_record(cli: &Cli, rom: Vec<u8>, save: Option<Vec<u8>>, path: &Path) -> R
 /// `--save-out`: the session's state into the file it names, at the end of any run that has
 /// an application to read it from (`--walk`, `--headless`, `--auto`, `--replay`,
 /// `--play-record`, the window). `--save` is only written by the game's own edits, the quick
-/// save and the deletion of a resumed one.
+/// save and the write after a resumed one.
 fn write_save_out(cli: &Cli, app: &App) -> Result<()> {
     match &cli.save_out {
         Some(out) => app.write_save_out(out).map(|_| ()),
@@ -811,16 +811,21 @@ fn resumes_save_state(cli: &Cli) -> bool {
         && cli.play_record.is_none()
 }
 
-/// The original deletes the quick save log when it resumes it: the title screen's quick-save
-/// entry calls `Save_WriteHeaderA` (`0x020aba6c`) on slot 1 once `Save_LoadSlot`
+/// The original writes the quick save's slot once it has resumed it: the title screen's
+/// quick-save entry calls `Save_WriteHeaderA` (`0x020aba6c`) on slot 1 after `Save_LoadSlot`
 /// (`0x020aaf94`) has read it and its header C has been written back (`ov_004::0216e490`),
 /// gated on the menu's confirmation byte (`*pcRam0216e5e0 == 1`, whose writer is not in the
-/// corpus); a step of its own clears the slot before the field starts
-/// (`ov_004::0216e414`); a new game clears both slots (`func_020abb74`). The menu's own
-/// message 58 says so ("When you restart your adventure, the quick save log will be deleted.").
+/// corpus); a step of its own clears the slot before the field starts (`ov_004::0216e414`); a
+/// new game clears both slots (`func_020abb74`). The menu's own message 58 says so ("When you
+/// restart your adventure, the quick save log will be deleted."). But a container that also
+/// holds a valid normal log ends differently: the resume writes that log as a normal save
+/// ("Creating backup."), whose mirror step (`Save_WriteStep` state 2, `0x020aad2c`) leaves
+/// slot 1 as slot 0's image (`docs/re/save.md` § "The suspend slot",
+/// `build/evidence/v3-suspend-ds/after-normal-suspend.sav`).
 ///
 /// The port has no title screen, so `--save` plays the cartridge: resuming an **intermission**
-/// slot clears that slot's header in the file, through a temporary file and a rename. The
+/// slot applies that write in the file (`Save::finish_suspend_resume`: the backup when slot 0
+/// holds a valid log, the header A clear otherwise), through a temporary file and a rename. The
 /// bytes the session was built from keep the log, as the game's `GameState` does. A slot the
 /// state cannot be built from keeps its log too: the original writes the header only after
 /// `Save_LoadSlot` has unpacked the slot.
@@ -841,19 +846,19 @@ fn consume_suspend_log(cli: &Cli, save: &[u8]) -> Result<()> {
     if !suspend || dq9_core::state::GameState::from_save(&image).is_err() {
         return Ok(());
     }
-    {
-        let mut slot = image
-            .slot_mut(resumed)
-            .context("the resumed slot is out of range")?;
-        slot.clear_header();
-        // A setter leaves the checksums stale: an image the game rejects is not a save.
-        slot.seal();
-    }
+    let backup = image.finish_suspend_resume(resumed);
     write_atomically(path, image.as_bytes())?;
-    eprintln!(
-        "resume: deleted the quick save log (slot {resumed} of {})",
-        path.display()
-    );
+    if backup {
+        eprintln!(
+            "resume: backed up slot 0 over the quick save log (slot {resumed} of {})",
+            path.display()
+        );
+    } else {
+        eprintln!(
+            "resume: deleted the quick save log (slot {resumed} of {})",
+            path.display()
+        );
+    }
     Ok(())
 }
 
