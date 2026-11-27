@@ -692,8 +692,9 @@ fn confessing_without_save_out_writes_the_container_itself() {
 }
 
 /// A save taken on the DS (`DQ9_SAVE`), confessed over in the application: the written file
-/// reloads to the state the run held, and only the updated slot's modelled ranges, its
-/// checksums and its mirror copy move.
+/// reloads to the state the run held — every field the format carries, the live field
+/// companions excepted — and only the updated slot's modelled ranges, its checksums and its
+/// mirror copy move.
 #[test]
 fn a_real_save_confessed_over_changes_only_the_slot_it_updates() {
     use dq9_formats::save::{Checksum, SLOT_SIZE};
@@ -710,6 +711,12 @@ fn a_real_save_confessed_over_changes_only_the_slot_it_updates() {
     let mut app = app_with_save(rom, Some(bytes.clone()));
     app.set_save_files(Some(input.clone()), Some(out.clone()));
     let (state, index) = app.save_state().expect("a state to write");
+    // The loaded party holds live companions on the field; no save carries them, so the
+    // reload equality below proves the rest of the state, not a field the format lacks.
+    assert!(
+        !app.party.field.is_empty(),
+        "the loaded party holds live companions"
+    );
     open_confession(&mut app);
     app.service_button(Button::Confirm); // Yes
     assert_eq!(app.services.confession_line(), Some(100));

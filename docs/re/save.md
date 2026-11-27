@@ -607,6 +607,15 @@ selector — the inverse of `dq9_core::field::saved_state` — and the live map,
 party the rest; `base` is the state loaded from the input slot, which lends its placement and
 the opaque bytes above.
 
+**What the written state excludes.** A save has no block for the party's live field
+companions (`PartyField`: the followers' positions and trails, `0x020391ac`'s chain): the
+`Warp` block carries the leader's pose only, and `Party::from_slot` always restores an empty
+field. `App::save_state` therefore clears that field, as it already clears the placement a
+normal save does not carry, so the state it hands back is what the file holds and a reload
+equals it field for field (`a_real_save_confessed_over_changes_only_the_slot_it_updates`,
+`a_real_rom_headless_run_writes_a_save_that_reloads_equal`). The live application party keeps
+its companions: only the state built for the write drops them.
+
 **The CLI.** `dq9-app --save <in.sav> --save-out <out.sav>` (with `--headless-steps`,
 `--auto`, `--replay`, `--walk`, `--play-record` or the window) writes at the end of the run:
 the input's normal-write target is updated (`Save::prepare_normal_write`: the adventure log,

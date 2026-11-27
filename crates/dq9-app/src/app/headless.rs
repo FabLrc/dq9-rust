@@ -52,7 +52,11 @@ impl App {
     /// party, with the input save's own state as the base (its opaque block bytes). The
     /// placement is cleared to [`Placement::MapStart`]: a normal save carries no pose, so a
     /// state read from a suspend slot must not write its `Warp` block into a slot whose
-    /// reader never takes one (`docs/re/save.md` § "Position on resume").
+    /// reader never takes one (`docs/re/save.md` § "Position on resume"). The live field
+    /// companions ([`dq9_core::party::PartyField`]: their positions and trails) are cleared
+    /// too: no save carries them, so [`dq9_core::state::GameState::from_slot`] always
+    /// restores an empty field, and a state handed back as "what was written" must not claim
+    /// them.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn save_state(&self) -> anyhow::Result<(GameState, usize)> {
         use anyhow::Context as _;
@@ -73,6 +77,7 @@ impl App {
         let mut state =
             GameState::from_play(&self.state, &base, map, self.day, self.party.clone())?;
         state.placement = Placement::MapStart;
+        state.party.field = dq9_core::party::PartyField::default();
         Ok((state, index))
     }
 
@@ -1047,7 +1052,8 @@ mod tests {
     }
 
     /// A real save, a real map and a played run: the written file reloads to the very state
-    /// the run held (map, story, party with its derived HP/MP, gold, clock, flags).
+    /// the run held — every field the save carries — and the run's live field companions, which
+    /// no save stores, do not survive the reload.
     #[test]
     fn a_real_rom_headless_run_writes_a_save_that_reloads_equal() {
         let (Some(rom), Some(path)) = (testrom::load(), std::env::var_os("DQ9_SAVE")) else {
@@ -1065,6 +1071,13 @@ mod tests {
         // A normal save restores a member at full HP: the current value is not stored.
         app.party.members[0].hp = app.party.members[0].max_hp;
         let (map, _, _, _) = app.walk_pose().expect("the save's map is loaded");
+        // The run holds live field companions (`PartyField`, their positions and trails); the
+        // format has no block for them, so this is the part of the run the reload must drop —
+        // and the full equality below is what shows nothing else did.
+        assert!(
+            !app.party.field.is_empty(),
+            "the played run holds live companions"
+        );
         let out = temp_path("rom");
         let _ = std::fs::remove_file(&out);
         let written = app.write_save_out(&out).unwrap();
