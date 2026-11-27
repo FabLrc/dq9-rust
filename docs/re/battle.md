@@ -347,10 +347,18 @@ d2 = d1 + (1 + (float)(dealerLevel / 10)) × level    ; CalculateTensionBonus, 0
 - **The flat bonus is the dealer's level's**, not the target's: a whole-number division, so
   dealer levels 10 to 19 all give 2. A party member's level is the table at `+0x16c` indexed by
   the live vocation (`0x021e6d0c`); a monster's is `mon_data` `+0x0A` bits 0–6 through
-  `func_ov000_02159dbc`. The port reads `Fighter::level`, filled from the name record by
-  `BattleSetup` for a monster; **`Character::fighter` does not fill it yet**, so a party fighter
-  the app builds carries 0 and its flat bonus is the level alone (**[unknown]**, a `party.rs`
-  hook that is outside this batch).
+  `func_ov000_02159dbc`. The port reads `Fighter::level`: `BattleSetup` fills a monster's from
+  the name record, and **`Character::fighter` fills a party fighter's from the member's live
+  level** — the record's `+0x16c` entry for the current vocation at `+0x950`, the same value
+  the save's thirteen level bytes hold (`PartyMember_LoadRecord`, `docs/re/party.md`), read
+  since `v4-party-level`. `the_flat_bonus_reads_the_party_level_the_record_carries` pins the
+  table's whole-number division at levels 1, 19, 20 and 30 through that construction path;
+  `party.rs::a_party_fighter_carries_its_level` pins the value and that another vocation's
+  level does not answer; `battle_rom.rs::the_demo_save_party_levels_reach_the_fighters` reads
+  the demo save's four members (**91, 78, 81, 81** on `build/sav/demo.sav`) through the same
+  path. The table read on the ROM and the constructor diff are
+  `build/evidence/v4-party-level/tension-table.txt` (`fe39fe866f0f`) and
+  `constructor.diff` (`00b68c8321ba`); the runs are `tests.log` (`abaf199900fc`).
 - **Against a metal body the flat bonus is skipped** (`0x021e6cf8`), and after the metal body's
   1-or-2 the multiplier is applied a **second** time, without the bonus (`0x021e79d0`). A
   **critical** blow that works on metal has the head's multiply **undone** first (`0x021e6d1c`,

@@ -1539,6 +1539,32 @@ fn tension_multiplies_the_damage_and_adds_a_flat_bonus_by_side() {
     }
 }
 
+/// The party's level reaches the flat bonus through the construction path the app uses:
+/// `Character::fighter` fills `Fighter::level` from the member's live vocation level
+/// (`0x021e6d0c`), and `CalculateTensionBonus` (`0x02074774`) divides it by ten — level 1 adds
+/// the tension alone, level 19 adds twice it, level 20 to 29 three times, level 30 four times.
+#[test]
+fn the_flat_bonus_reads_the_party_level_the_record_carries() {
+    use crate::party::Character;
+    use dq9_formats::battle::equipment::BattleParams;
+    use dq9_formats::item::ItemStats;
+
+    let items = ItemStats::from_members(&[]).unwrap();
+    let params = BattleParams::default();
+    let action = tensioned_action(100);
+    for (level, per_tension) in [(1u8, 1.0f32), (19, 2.0), (20, 3.0), (30, 4.0)] {
+        let mut character = Character::hero();
+        character.levels[usize::from(character.vocation)] = level;
+        let mut actor = character.fighter(&items, &params);
+        assert_eq!(actor.level, i32::from(level));
+        actor.tension_level = 2;
+        let outcome =
+            resolve_action(&mut Random::new(3), &actor, &action, &[monster()], 0).unwrap();
+        let expected = (100.0f32 * 2.5 + per_tension * 2.0) as i32;
+        assert_eq!(outcome.targets[0].amount, expected, "level {level}");
+    }
+}
+
 /// The spend: an action carrying `+0x10` bit 13 reports it, whatever its outcome, and once the
 /// caller has cleared the level the next action is not multiplied (`0x021ed48c`). A hit, a miss
 /// and a dodge all spend it.

@@ -14,11 +14,13 @@ use dq9_core::battle::{
 };
 use dq9_core::party::Character;
 use dq9_core::scenario;
+use dq9_core::state::GameState;
 use dq9_formats::Gpc2;
 use dq9_formats::battle::encounter;
 use dq9_formats::battle::equipment::BattleParams;
 use dq9_formats::battle::monster::{BattleData, Names};
 use dq9_formats::item::ItemStats;
+use dq9_formats::save::Save;
 use nds_rom::Rom;
 
 fn member<'a>(rom: &Rom<'a>, path: &str, name: &str) -> Cow<'a, [u8]> {
@@ -895,6 +897,43 @@ fn the_tension_table_is_the_roms() {
     let monster = [word(1), word(3), word(5), word(7), word(9)];
     assert_eq!(party, [1.0, 1.5, 2.5, 4.0, 6.0]);
     assert_eq!(monster, [1.0, 1.3, 2.0, 3.0, 4.5]);
+}
+
+/// The demo save's members keep their record's level once a fighter is built from them: the
+/// tension flat bonus reads it (`0x021e6d0c`, the record's `+0x16c` by the live vocation at
+/// `+0x950`), so the divisor is the save's level, not 0. Needs `DQ9_SAVE` (a DS save).
+#[test]
+fn the_demo_save_party_levels_reach_the_fighters() {
+    let Some(bytes) = testrom::load() else { return };
+    let Some(save_bytes) = std::env::var_os("DQ9_SAVE").map(|p| std::fs::read(p).unwrap()) else {
+        eprintln!("skipped: no DQ9_SAVE");
+        return;
+    };
+    let rom = Rom::parse(bytes).unwrap();
+    let save = Save::parse(&save_bytes).unwrap();
+    let state = GameState::from_save(&save).unwrap();
+    let params = BattleParams::parse(rom.file_by_path("data/prm/itembtlprm.nat").unwrap()).unwrap();
+    let items = ItemStats::from_members(&[]).unwrap();
+    let levels: Vec<i32> = state
+        .party
+        .members
+        .iter()
+        .map(|member| {
+            let fighter = member.fighter(&items, &params);
+            assert_eq!(
+                fighter.level,
+                i32::from(member.level()),
+                "a fighter carries its member's live level"
+            );
+            fighter.level
+        })
+        .collect();
+    assert!(!levels.is_empty(), "the demo save holds a party");
+    assert!(
+        levels.iter().all(|&level| level > 1),
+        "the demo's members are levelled: {levels:?}"
+    );
+    eprintln!("demo save levels: {levels:?}");
 }
 
 /// The six kind-15 records of the EU action tables and the rise their `+0x30` carries

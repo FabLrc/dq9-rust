@@ -136,9 +136,9 @@ pub struct Fighter {
     /// The dealer's level, read by the tension flat bonus
     /// ([`CalculateTensionBonus`](super::resolve)): a party member's in their current vocation
     /// (the table at `+0x16c` indexed by `+0x950`, `0x021e6d0c`) or a monster's (`mon_data`
-    /// `+0x0A` bits 0–6 through `func_ov000_02159dbc`). `Character::fighter` does not fill it
-    /// yet, so a party fighter built there keeps 0 and its flat bonus is the level alone
-    /// (**[unknown]**, below, "Tension"); a monster's is the name record's level.
+    /// `+0x0A` bits 0–6 through `func_ov000_02159dbc`). `Character::fighter` fills a party
+    /// fighter's from the member's live level (the save's level byte), and `BattleSetup` a
+    /// monster's from its name record (`docs/re/battle.md`, "Tension").
     pub level: i32,
     /// The element of the weapon a party member wields (0: none; looked up from the weapon's
     /// kind by `CalculateFinalDamage`, `ov_024::021e6a90`). An elemental weapon (1 to 7) on an

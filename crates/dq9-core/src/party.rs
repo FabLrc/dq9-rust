@@ -482,6 +482,10 @@ impl Character {
         fighter.hp = i32::from(self.hp);
         fighter.max_hp = i32::from(self.max_hp);
         fighter.mp = i32::from(self.mp);
+        // The tension flat bonus's dealer level (`0x021e6d0c`): the live record's level table at
+        // `+0x16c`, indexed by the current vocation at `+0x950`. The save's thirteen level bytes
+        // are that table's low bytes (`PartyMember_LoadRecord`), so the value is the save's.
+        fighter.level = i32::from(self.level());
         let mut attack = i32::from(self.stats.strength);
         let mut defence = i32::from(self.stats.resilience);
         let mut agility = i32::from(self.stats.agility);
@@ -1452,6 +1456,27 @@ mod tests {
         assert_eq!(fighter.resistances[7], 100);
         assert_eq!(fighter.weapon_element, 0);
         assert_eq!(fighter.crit_accessory_bonus, 0.0);
+    }
+
+    /// `Character::fighter` carries the member's live level (`0x021e6d0c` reads the record's
+    /// table at `+0x16c` by the current vocation at `+0x950`), the value the tension flat bonus
+    /// divides by ten; another vocation's level does not answer.
+    #[test]
+    fn a_party_fighter_carries_its_level() {
+        let mut hero = Character::hero();
+        assert_eq!(hero.level(), 1);
+        let low = hero.fighter(&equipment_stats(), &battle_params());
+        assert_eq!(low.level, 1);
+
+        hero.levels[usize::from(hero.vocation)] = 30;
+        let high = hero.fighter(&equipment_stats(), &battle_params());
+        assert_eq!(high.level, 30);
+
+        // A level in a vocation the member is not in does not answer: the live one does.
+        hero.levels[0] = 47;
+        assert_eq!(hero.fighter(&equipment_stats(), &battle_params()).level, 30);
+        hero.vocation = 0;
+        assert_eq!(hero.fighter(&equipment_stats(), &battle_params()).level, 47);
     }
 
     #[test]
