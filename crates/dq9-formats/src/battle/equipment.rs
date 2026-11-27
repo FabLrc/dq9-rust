@@ -1,4 +1,4 @@
-//! Equipment battle parameters: `data/prm/itembtlprm.nat`. A `u32` count in its low 20 bits,
+//! Equipment battle parameters: `data/prm/itembtlprm.nat`. A `u32` count in its low 12 bits,
 //! then one 44-byte record per item, in order of the item's id. Layout and evidence in
 //! `docs/re/battle-data.md`; wiki *Equipment Battle Parameters*.
 //!
@@ -12,8 +12,11 @@ use nds_rom::{Error, Result};
 
 /// 44-byte records.
 const RECORD_SIZE: usize = 44;
-/// The count is held in the head word's low 20 bits (`func_0209a088` masks it so).
-const COUNT_MASK: u32 = 0x000f_ffff;
+/// The count is held in the head word's low 12 bits. `func_0209a088` (EU `0x0209a098`) masks
+/// it with `lsl r1,r1,#0x14` / `lsr r1,r1,#0x14` (`0x0209a0c0`), and its binary search
+/// `func_0209a004` (EU `0x0209a014`) repeats the pair at `0x0209a038`; everything above bit 11
+/// is ignored.
+const COUNT_MASK: u32 = 0x0000_0fff;
 
 /// One equipment battle parameter record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +157,24 @@ mod tests {
         data.extend_from_slice(&[0; RECORD_SIZE]);
         let table = BattleParams::parse(&data).unwrap();
         assert_eq!(table.items[0].weapon_element(), 8);
+    }
+
+    /// The head word's bits 12–31 are ignored: `func_0209a088` clears them with the `lsl`/`lsr`
+    /// pair, so a neighbour count up there must not change how many records are read. The old
+    /// `0x000f_ffff` mask read this head as 913,410 records and rejected the file.
+    #[test]
+    fn count_ignores_bits_above_twelve() {
+        let head: u32 = 0xabcd_f000 | 2;
+        let mut data = head.to_le_bytes().to_vec();
+        data.extend_from_slice(&record(20918));
+        data.extend_from_slice(&record(20919));
+        let table = BattleParams::parse(&data).unwrap();
+        assert_eq!(table.items.len(), 2);
+        assert_eq!(table.items[0].id, 20918);
+        assert_eq!(table.items[1].id, 20919);
+        // The masked count still decides the length: one record short stays an error.
+        data.truncate(data.len() - RECORD_SIZE);
+        assert!(BattleParams::parse(&data).is_err());
     }
 
     #[test]

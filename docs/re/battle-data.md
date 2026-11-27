@@ -235,8 +235,20 @@ capture predates the fix and has not been replayed since.
 
 ## Equipment battle parameters — `itembtlprm.nat`
 
-A `u32` count in its **low 20 bits** — 1,423 (`func_0209a088` masks it so) — then 44-byte
-records; `4 + 1,423 × 44 = 62,616`, the file's size. Records are sorted by the `s16` item id
+A `u32` head word whose **low 12 bits** hold the record count, then 44-byte records;
+`func_0209a088` (EU `0x0209a098`) masks it with `lsl r1,r1,#0x14` (`0x0209a0c0`, `01 1a a0 e1`)
+then `lsr r1,r1,#0x14` (`0x0209a0c4`, `21 1a a0 e1`), and its binary search `func_0209a004`
+(EU `0x0209a014`) repeats the pair at `0x0209a038`/`0x0209a03c`. Bits 12–31 are ignored: the
+head word of this ROM's file is `0x0000_058F`, so 1,423 records and
+`4 + 1,423 × 44 = 62,616`, the file's size. The count cannot exceed **4,095**: bits 12–31 are
+masked away, so a file claiming more reads as its low 12 bits, and the widest table this layout
+can describe is 180,184 bytes. The later `lsr` of bit 31 in `func_0209a088` is not part of the
+count: when the count is positive the function sets bit 31 on its view word and on the file's
+word, a "table open" marker.
+
+Only the equipment path uses that accessor pair: `calls.txt` lists one caller for each,
+`func_ov017_021b3780` (`0x021b3780`, the worn-item copy into the character's `+0x2F4`), and the
+stride is fixed at `0x2C` = 44 there. Records are sorted by the `s16` item id
 at `+0x28`, strictly ascending from 994 to 22,290; `+0x2A` is 0.
 
 - `+0x00`: flags. Bit 16 an experience bonus; bits 23–25 the weapon's element (1–7 stand for
