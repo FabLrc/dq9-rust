@@ -34,10 +34,15 @@ ranking, with one addition: a slot must also pass the three checksums, because
 `Save_LoadSlot` (`0x020aaf94`) rejects it otherwise.
 
 **The menu consumer is [unknown].** The function that reads the entry code and builds the
-title menu is not in the decompilation corpus; nothing says which rows the menu shows when the
-code is 0 *and* slot 0 holds a log (the two possible entries), nor their order. The port has
-one Continue row and ranks the suspend save above the normal log, as the check does, and does
-not model the quick save's separate entry or the corrupted-log refusals (codes 4, 6, 7).
+title menu is not in the decompilation corpus. **Observed on the DS** (`v3-suspend-ds`, melonDS,
+a written suspend slot 1 *and* a valid log on slot 0): the title announces the log and offers
+**one row, “Load quick save data.”, plus Cancel** — no Continue row although slot 0 is valid;
+choosing it resumes at the warp. The code consumer stays [unknown], but the code-0 menu is
+observed. After the load, a suspend-only cartridge has slot 1's header cleared, while a
+normal+suspend one gets slot 1 overwritten by slot 0's image (“Creating backup.”). The port has
+one Continue row (it resumes the ranked slot, suspend first) and a New Game row; it clears the
+loaded suspend log and does not model the backup write or the corrupted-log refusals (codes 4,
+6, 7).
 
 ## What each entry loads
 

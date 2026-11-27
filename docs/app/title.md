@@ -89,10 +89,12 @@ normal when no suspend, nothing when both are empty, a stale checksum not ranked
 
 ## Limits
 
-- The menu consumer of `ov_004::0216dad0`'s entry codes is **[unknown]**; the two rows and
-  their order are the port's decision (`re/title.md`).
-- The quick save's own separate title entry, the corrupted-log refusals (codes 4, 6, 7) and
-  the adventure-log display (party, play time) are not modelled.
+- The menu consumer of `ov_004::0216dad0`'s entry codes is **[unknown]**; the DS observation
+  (`v3-suspend-ds`) is one row, **Load quick save data.**, plus Cancel for a suspend save, where
+  the port shows Continue (which resumes that slot) and New Game.
+- The quick save's separate entry is folded into Continue; the corrupted-log refusals (codes 4,
+  6, 7), the post-load backup write and the adventure-log display (party, play time) are not
+  modelled.
 - The title's graphics, sound and the DS START button are not modelled: the title appears
   directly, without the original's "press START" frame.
 - The Web build keeps its page flows; it has no title screen.
