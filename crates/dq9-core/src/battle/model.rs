@@ -102,7 +102,7 @@ pub struct Fighter {
     /// Guard level, 0 to 3 (`[status + 0x138] + 0x21`): the party's Defend command sets 1
     /// (`func_ov024_021e57c0`), the round's end clears it (`func_ov000_0215e6e8`). An action
     /// carrying `+0x10` bit 4 is multiplied by `[1.0, 0.5, 0.1, 0.0][level]` in the final damage
-    /// (`0x020e88c0`). Refused above 3 ([`Unsupported::Guard`]).
+    /// (`0x020e88c0` in USA, `0x020e88d0` in EU). Refused above 3 ([`Unsupported::Guard`]).
     pub guard_level: u8,
     /// Dazzled: status `+0x14` bit 6 (`func_02088854`). A dazzled striker throws a die of eight
     /// on an action carrying `+0x10` bit 3 and misses on 0 to 4 (`func_ov000_02156648`).
@@ -120,7 +120,13 @@ pub struct Fighter {
     pub accuracy_die_trait: bool,
     /// A party member's weapon strikes more than one (two bits at `+0x2F4` of the worn
     /// equipment, USA reading). The plain Attack then rolls its critical once for the whole
-    /// action and divides its rate by the hits: refused ([`Unsupported::MultiHitWeapon`]).
+    /// action and divides its rate by the hits: refused ([`Unsupported::MultiHitWeapon`]). It is
+    /// also what arms the several-target falloff on actions 1 and 2: `ResolveAction`
+    /// (`0x021ec644`–`0x021ec730`) reads the weapon record's `+0x00`, leaves the factor on when
+    /// bit 1 is set, and otherwise keeps it only when bit 0 is set; a monster never gets it.
+    /// These are the two bits whose reach mapping `ov_024.c` 26333–26345 reads (bit 1 → reach 3,
+    /// bit 0 → reach 4, neither → 2), i.e. bit 0 | bit 1. `party.rs` does not read them yet (it
+    /// leaves this false), so a party Attack that resolves never weakens today.
     pub weapon_strikes_several: bool,
     /// The worn weapon's "+1 against metal": `func_02085128` tests bit 4 of the `itembtlprm`
     /// record `func_ov017_021b3780` copies into the character object (its `+0x150` word, the
@@ -305,13 +311,18 @@ pub struct Action {
     /// `+0x10` bit 3: spoilt by a status on the attacker. While dazzled, a die of eight misses on
     /// 0 to 4 (`func_ov000_02156648`, `0x02156a90`).
     pub spoilt: bool,
-    /// `+0x10` bit 4: the defender's guard level halves it (the table `0x020e88c0`).
+    /// `+0x10` bit 4: the defender's guard level halves it (the table `0x020e88c0` in USA,
+    /// `0x020e88d0` in EU).
     pub halved_by_defending: bool,
     /// `+0x30`: the levels the action moves a stat by, held to two either way (kinds 3, 4 and 5).
     pub stat_step: i16,
-    /// `+0x10` bit 17: strikes several, weakening as it goes (1.0, 0.8, 0.6, …). The plain Attack
-    /// carries it. Against one target the factor is the table's first, 1.0 (**[hypothesis]**);
-    /// against several it is refused.
+    /// `+0x10` bit 17: strikes several, weakening as it goes. The action's targets are
+    /// multiplied by the rank table `0x020e88e0` in the order of the resolution
+    /// (`ResolveAction`, `ov_024::021eb5d0` `0x021ec6ec`): 1.0, 0.8, 0.6, 0.4, 0.2, the index
+    /// held to the table's fifth entry. The twelve records that carry it are actions 1, 2, 86,
+    /// 87, 91, 94, 113, 121, 123, 126, 223 and 224 of the EU tables; on 1 and 2 the factor is
+    /// armed only through the attacker's weapon (see [`Fighter::weapon_strikes_several`]) and
+    /// never for a monster. `docs/re/battle.md`, "The several-target falloff".
     pub multi_target_falloff: bool,
     /// `+0x10` bit 9 (`0x200`): for a blow (no range record) `GetAttackBaseDamage` reads the
     /// **buffed** attack (`+0x8`, `UpdateCombatantAttack`) rather than the base word (`+0x134`
@@ -405,8 +416,6 @@ pub enum Unsupported {
     Rider(u8),
     /// An accuracy that scales.
     AccuracyScaling,
-    /// An action that strikes several with the falloff table, at several targets.
-    MultiTargetFalloff,
     /// A party attacker's elemental weapon.
     WeaponElement,
     /// The trait behind the accuracy die of four.
@@ -457,7 +466,6 @@ impl fmt::Display for Unsupported {
             Self::DamageHandler(h) => write!(f, "damage handler {h} is not modelled"),
             Self::Rider(r) => write!(f, "rider effect {r} is not modelled"),
             Self::AccuracyScaling => write!(f, "a scaling accuracy is not modelled"),
-            Self::MultiTargetFalloff => write!(f, "the multi-target falloff is not modelled"),
             Self::WeaponElement => write!(f, "a weapon's element is not modelled"),
             Self::AccuracyTrait => write!(f, "the accuracy die of four is not modelled"),
             Self::MultiHitWeapon => {
@@ -518,9 +526,6 @@ pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result
     }
     if action.scales_accuracy && actor.side != Side::Monster {
         return Err(Unsupported::AccuracyScaling);
-    }
-    if action.multi_target_falloff && targets.len() > 1 {
-        return Err(Unsupported::MultiTargetFalloff);
     }
     if action.weapon_element && actor.side == Side::Party && (1..=7).contains(&actor.weapon_element)
     {

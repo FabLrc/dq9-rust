@@ -9,8 +9,9 @@
 //! 2. per target: `NextRandomMax(100)` (the die, never read here), the critical roll if it was
 //!    not rolled once, the evasion roll if the action can be dodged, the block roll if it can be
 //!    blocked **and the blow was not dodged**, the accuracy roll (always), then, if it landed,
-//!    the amount (`GetAttackBaseDamage`; even for a blow already dodged or blocked), the final
-//!    damage (`CalculateFinalDamage`, `ov_024::021e6a90`: a critical's draw, a coin) and, for a
+//!    the amount (`GetAttackBaseDamage`; even for a blow already dodged or blocked), the
+//!    several-target falloff of the rank (no draw), the final damage
+//!    (`CalculateFinalDamage`, `ov_024::021e6a90`: a critical's draw, a coin) and, for a
 //!    blow that deals damage and carries the wake bit, the wake roll.
 //!
 //! What follows a blow in the game and is **not** modelled: a monster's provocation draws
@@ -36,12 +37,22 @@ const METAL_ZEROING_EXEMPT: [u16; 2] = [0x205, 0x82];
 /// The multipliers of the combo table (`0x021fe778`), indexed by the counter held to 3.
 const COMBO_TABLE: [f32; 4] = [1.0, 1.2, 1.5, 2.0];
 
-/// The multipliers of the guard level (`0x020e88c0`): the party's Defend sets 1, the round's end
-/// clears it. Applied to an action carrying `+0x10` bit 4, before the coin.
+/// The multipliers of the guard level (`0x020e88c0` in USA, `0x020e88d0` in EU; read from the EU
+/// ARM9): the party's Defend sets 1, the round's end clears it. Applied to an action carrying
+/// `+0x10` bit 4, before the coin.
 const GUARD_MULTIPLIERS: [f32; 4] = [1.0, 0.5, 0.1, 0.0];
 
 /// The accuracy a non-scaling action stands at: it lands on every draw.
 const STANDING_ACCURACY: i32 = 100;
+
+/// The several-target falloff (`0x020e88e0`, read from the ROM's ARM9): the multiplier of the
+/// action's targets by rank, the rank being the target's index in the resolution loop. The index
+/// is held to the table's five entries (`func_02074948`, EU `0x02074958`: `cmp`/`movlt 0`/
+/// `cmp r0, #4`/`movgt 4`/`ldr r0, [r1, r0, lsl #2]`), so a sixth target and the rest keep 0.2.
+const FALLOFF_TABLE: [f32; 5] = [1.0, 0.8, 0.6, 0.4, 0.2];
+
+/// The number of targets whose rank has its own entry: past it the last multiplier stays.
+const FALLOFF_RANKS: usize = FALLOFF_TABLE.len();
 
 /// What happened to one target.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,6 +137,28 @@ fn roll_evasion(rng: &mut Counted<'_>, target: &Fighter) -> bool {
 /// `RollBlock` (`ov_000::02156e30`): `(float)NextRandomMax(100) < rate`, the rate not truncated.
 fn roll_block(rng: &mut Counted<'_>, target: &Fighter) -> bool {
     (rng.next_max(100) as f32) < target.block_rate
+}
+
+/// `func_02074948` (EU `0x02074958`, table `0x020e88e0`): the rank's multiplier, the rank held
+/// to the table's five entries.
+fn falloff_factor(rank: usize) -> f32 {
+    FALLOFF_TABLE[rank.min(FALLOFF_RANKS - 1)]
+}
+
+/// Whether `ResolveAction` applies the rank factor for `actor` and `action`
+/// (`0x021ec644`–`0x021ec730`): always for an action carrying `+0x10` bit 17, except the two plain
+/// Attack records (1 and 2), whose factor only a party member's weapon arms — the weapon record's
+/// `+0x00`, the factor kept when bit 1 is set and otherwise only when bit 0 is set, and never for
+/// a monster. The same block multiplies action `0x79` by a further 0.8, which this resolver never
+/// reaches (it refuses `0x79`).
+fn falloff_applies(actor: &Fighter, action: &Action) -> bool {
+    if !action.multi_target_falloff {
+        return false;
+    }
+    if matches!(action.number, 1 | 2) {
+        return actor.side == Side::Party && actor.weapon_strikes_several;
+    }
+    true
 }
 
 /// `RollAccuracy` (`ov_000::02156648`): a metal body is missed outright by an action that does not
@@ -309,7 +342,7 @@ pub(crate) fn resolve_action_with_attack(
         .critical_is_shared()
         .then(|| roll_critical(&mut rng, actor, action));
     let mut outcomes = Vec::with_capacity(targets.len());
-    for target in targets {
+    for (rank, target) in targets.iter().enumerate() {
         // The die kept at `[battle + 0x8e6e]`; only a status not modelled reads it.
         rng.next_max(100);
         let critical = match shared {
@@ -342,6 +375,15 @@ pub(crate) fn resolve_action_with_attack(
                 action,
                 &mut rng,
             );
+            // The several-target falloff (`0x021ec6ec`): the base amount as `GetAttackBaseDamage`
+            // and the damage handler left it, `_fflt`/`_fmul`/`_ffix`-ed — truncated — before
+            // `CalculateFinalDamage`, so before the critical, the resistance, the family bonus,
+            // the guard, the coin, the combo and the cap.
+            let base = if falloff_applies(actor, action) {
+                (base as f32 * falloff_factor(rank)) as i32
+            } else {
+                base
+            };
             amount = final_amount(&mut rng, &strike, base, critical, dodged || blocked, needle);
             if action.wakes_target && action.kind == 1 && amount > 0 {
                 // The wake roll (`func_ov000_02157288`, `0x02157340`): drawn even when nothing

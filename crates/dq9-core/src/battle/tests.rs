@@ -752,20 +752,19 @@ fn unsupported_rules_are_refused_before_any_draw() {
     );
     // An action that carries the bit but a weapon with no element is resolved.
     resolve_action(&mut Random::new(1), &party(), &weapon, &[monster()], 0).unwrap();
+    // An action with the falloff bit resolves against several targets (`docs/re/battle.md`,
+    // "The several-target falloff"; the ranks are pinned by the dedicated tests below).
     let mut falloff = blow();
     falloff.multi_target_falloff = true;
     resolve_action(&mut Random::new(1), &party(), &falloff, &[monster()], 0).unwrap();
-    assert_eq!(
-        resolve_action(
-            &mut Random::new(1),
-            &party(),
-            &falloff,
-            &[monster(), monster()],
-            0
-        )
-        .unwrap_err(),
-        Unsupported::MultiTargetFalloff
-    );
+    resolve_action(
+        &mut Random::new(1),
+        &party(),
+        &falloff,
+        &[monster(), monster()],
+        0,
+    )
+    .unwrap();
     let mut die = blow();
     die.trait_accuracy_die = true;
     let mut trained = party();
@@ -1220,5 +1219,131 @@ fn the_attack_level_does_not_feed_the_criticals_own_attack_term() {
         amount(&plain, 125),
         amount(&plain, 150),
         "an ordinary blow does read the buffed attack"
+    );
+}
+
+/// A group action of the twelve records carrying `+0x10` bit 17 (`94`, Party Pooper, EU tables)
+/// whose amount is `amount` for every target: no spread, no critical, no dodge or block,
+/// element 0. The falloff tests vary only the target list and the target's own factors.
+fn weakening(amount: u16) -> Action {
+    let mut a = flat(amount);
+    a.number = 94;
+    a.reach = Reach::Group;
+    a.multi_target_falloff = true;
+    a
+}
+
+/// The amounts of one action's targets, in the order they were given.
+fn amounts(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Vec<i32> {
+    resolve_action(&mut Random::new(3), actor, action, targets, 0)
+        .unwrap()
+        .targets
+        .iter()
+        .map(|target| target.amount)
+        .collect()
+}
+
+/// `ResolveAction` (`0x021ec6ec`, table `0x020e88e0`): each target is multiplied by the rank's
+/// entry, the rank being its **index in the resolution loop**, not its stats or its distance.
+/// The target with the highest guard comes first, so a factor read from anything but the list's
+/// order would not produce this sequence.
+#[test]
+fn the_falloff_follows_the_target_lists_order() {
+    let mut action = weakening(100);
+    action.halved_by_defending = true;
+    let guarded = |level: u8| {
+        let mut f = monster();
+        f.guard_level = level;
+        f
+    };
+    let targets = [guarded(2), guarded(0), guarded(1)];
+    // Rank 0 keeps 1.0 (100 × 0.1), rank 1 takes 0.8 (100 × 0.5), rank 2 0.6 (100 × 0.1).
+    assert_eq!(amounts(&party(), &action, &targets), [10, 80, 30]);
+}
+
+/// The table's entries by rank: 1.0, 0.8 and 0.6 for three targets; 1.0 alone for one, so a
+/// single target is **not** weakened (the table starts at 1.0: the open point is settled).
+#[test]
+fn two_and_three_targets_take_one_four_fifths_and_three_fifths() {
+    let action = weakening(100);
+    assert_eq!(amounts(&party(), &action, &[monster()]), [100]);
+    assert_eq!(
+        amounts(&party(), &action, &[monster(), monster()]),
+        [100, 80]
+    );
+    assert_eq!(
+        amounts(&party(), &action, &[monster(), monster(), monster()]),
+        [100, 80, 60]
+    );
+}
+
+/// The rank is held to the table's five entries (`func_02074948` clamps its index to 4): a sixth
+/// target and every one after it keep ×0.2.
+#[test]
+fn the_rank_holds_at_the_tables_fifth_entry() {
+    let targets = vec![monster(); 7];
+    assert_eq!(
+        amounts(&party(), &weakening(100), &targets),
+        [100, 80, 60, 40, 20, 20, 20]
+    );
+}
+
+/// The factor is applied to the base amount and **truncated there** (`_fflt`/`_fmul`/`_ffix` at
+/// `0x021ec6ec`), before `CalculateFinalDamage`: 21 × 0.8 is 16.8, read as 16; 27 × 0.8 is 21.6,
+/// read as 21, and the resistance's 0.75 then takes it to 15.75 → 15 — where a factor applied
+/// after the resistance would give 27 × 0.75 = 20.25 → 20, × 0.8 = 16.
+#[test]
+fn the_rank_factor_truncates_the_base_before_the_final_damage() {
+    assert_eq!(
+        amounts(&party(), &weakening(21), &[monster(), monster()]),
+        [21, 16]
+    );
+    let mut halved = Vec::new();
+    let mut action = weakening(27);
+    action.element = 8;
+    let mut weak = monster();
+    weak.resistances[7] = 75;
+    assert_eq!(amounts(&party(), &action, &[weak.clone(), weak]), {
+        halved.extend([20, 15]);
+        halved
+    });
+}
+
+/// The two plain Attack records (1 and 2) are armed by the attacker's weapon, not by the action
+/// alone: a party member whose weapon is no group weapon keeps every target's full amount, a
+/// monster never weakens, and the Attack variants 223 and 224 always do — they are not in the
+/// gate's `1 | 2` test.
+#[test]
+fn the_plain_attack_takes_its_falloff_from_the_weapon() {
+    let mut party_attack = weakening(100);
+    party_attack.number = 1;
+    assert_eq!(
+        amounts(&party(), &party_attack, &[monster(), monster()]),
+        [100, 100]
+    );
+
+    // The Attack that is not number 1 (2) reaches the gate; with the group weapon bit it weakens
+    // (a weapon with bit 1 set keeps the factor too, which the kernel does not model).
+    let mut weapon_attack = weakening(100);
+    weapon_attack.number = 2;
+    let mut armed = party();
+    armed.weapon_strikes_several = true;
+    assert_eq!(
+        amounts(&armed, &weapon_attack, &[monster(), monster()]),
+        [100, 80]
+    );
+
+    let mut monster_actor = Fighter::new(Side::Monster);
+    monster_actor.attack = 100;
+    assert_eq!(
+        amounts(&monster_actor, &party_attack, &[monster(), monster()]),
+        [100, 100]
+    );
+
+    let mut variant = weakening(100);
+    variant.number = 223;
+    assert_eq!(
+        amounts(&party(), &variant, &[monster(), monster()]),
+        [100, 80]
     );
 }

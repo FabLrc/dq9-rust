@@ -1353,3 +1353,106 @@ fn a_dazzled_needle_bearer_auto_hits_before_the_die_of_eight() {
     }
     assert!(misses > 0, "five faces of eight miss: {misses} of 64");
 }
+
+/// The twelve records of the EU action tables that carry `+0x10` bit 17 — and no other record of
+/// the 681 — and the rank factor they get (`docs/re/battle.md`, "The several-target falloff";
+/// the encyclopedia's B11). The page's "12 actions only" is thereby a fact: the four Attack
+/// records (1, 2, 223, 224) plus Lashings of Love, Hit the Hay, Serpent's Bite, Party Pooper,
+/// Axes of Evil, Crosscutter Throw, Ooze Bruiser and Metalicker. The four spells of the oracle's
+/// 306 vectors (Crack, Crackle, Woosh, Heal) carry neither the bit, and the Attack vectors pass
+/// one target, so the vectors cannot move.
+#[test]
+fn the_twelve_records_carry_the_falloff_and_no_others_do() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let mut weakening: Vec<u16> = (0..0x600u16)
+        .filter_map(|number| tables.actions.skill(number))
+        .filter(|skill| skill.action.as_ref().is_ok_and(|a| a.multi_target_falloff))
+        .map(|skill| skill.number)
+        .collect();
+    weakening.sort_unstable();
+    assert_eq!(
+        weakening,
+        [1, 2, 86, 87, 91, 94, 113, 121, 123, 126, 223, 224]
+    );
+    for number in [12u16, 16, 18, 30] {
+        let action = tables.actions.skill(number).unwrap().action.unwrap();
+        assert!(!action.multi_target_falloff, "action {number}");
+    }
+
+    // Party Pooper (94, one of the twelve; handler 0, rider 0) against three monsters: the first
+    // target takes exactly the single-target amount of the same seed (rank 0 keeps the table's
+    // 1.0), and the next two are four fifths and three fifths of their own bases.
+    let action = tables.actions.skill(94).unwrap().action.unwrap();
+    let mut actor = Fighter::new(Side::Party);
+    actor.attack = 400;
+    actor.deftness = 0;
+    let mut target = Fighter::new(Side::Monster);
+    target.hp = 1000;
+    target.max_hp = 1000;
+    let one = resolve_action(
+        &mut Random::new(5),
+        &actor,
+        &action,
+        std::slice::from_ref(&target),
+        0,
+    )
+    .unwrap();
+    let three = resolve_action(
+        &mut Random::new(5),
+        &actor,
+        &action,
+        &[target.clone(), target.clone(), target],
+        0,
+    )
+    .unwrap();
+    assert_eq!(one.targets[0].landed, three.targets[0].landed);
+    assert_eq!(three.targets[0].amount, one.targets[0].amount);
+    // The physical base is 200 ± its sixteenth ±1, read as 186..=213; the rank's factor
+    // truncates it to 148..=170 and 111..=127 — three disjoint bands, so the list order is
+    // pinned despite the amount's own draws.
+    let amounts: Vec<i32> = three.targets.iter().map(|t| t.amount).collect();
+    assert!((186..=213).contains(&amounts[0]), "{amounts:?}");
+    assert!((148..=170).contains(&amounts[1]), "{amounts:?}");
+    assert!((111..=127).contains(&amounts[2]), "{amounts:?}");
+}
+
+/// The battle's flow resolves a group action that carries `+0x10` bit 17: Party Pooper (94) on a
+/// group of three slimes goes through the round's targeting (`Target::Monster(0)` widened by the
+/// action's Group reach) and `Battle::step_combo` (the record has no combo bit), and the three
+/// amounts fall in the rank bands around 1.0, 0.8 and 0.6 of a 100 base.
+#[test]
+fn the_flow_resolves_a_weakening_group_action_on_three_monsters() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    let mut strong = hero();
+    strong.fighter.attack = 200;
+    let mut world = Random::new(11);
+    let setup = BattleSetup::encounter(&tables, &[(1, 3)], &mut world).unwrap();
+    let mut battle = Battle::new(setup, vec![strong], Surprise::None, 0x3000).unwrap();
+    let command = Command::Act {
+        skill: tables.actions.skill(94).unwrap(),
+        target: Target::Monster(0),
+    };
+    let report = battle.round(&[command], &mut world).unwrap();
+    let amounts: Vec<i32> = report
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::Acted {
+                who: Who::Party(0),
+                action: 94,
+                outcomes,
+            } => Some(outcomes.iter().map(|(_, o)| o.amount).collect()),
+            _ => None,
+        })
+        .expect("the hero's Party Pooper resolves in the first round");
+    assert_eq!(amounts.len(), 3, "{amounts:?}");
+    assert!((94..=106).contains(&amounts[0]), "{amounts:?}");
+    assert!((75..=84).contains(&amounts[1]), "{amounts:?}");
+    assert!((56..=63).contains(&amounts[2]), "{amounts:?}");
+}

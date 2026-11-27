@@ -30,7 +30,10 @@ page's list — `ov_024::021e6a90` truncates once and clamps `+0x1C` bits 0–13
 already read. The coup-de-grâce thresholds, the enrage triggers (`ov_024::021eb08c`) and the
 companion tactics are **not implemented** (refused or absent), so nothing diverges silently; the
 metal rules **agree** and are modelled (`v4-metal-rules`, below, "The metal body"), and so does
-the family bonus, modelled by `v4-family-bonus` (below, "The weapon's killer bonus"). The rules
+the family bonus, modelled by `v4-family-bonus` (below, "The weapon's killer bonus"); the
+several-target falloff **agrees** on the rank rule and the twelve records, but the page's order
+is not the code's — the factor multiplies the base amount before `CalculateFinalDamage`
+(`v4-multitarget-falloff`, below, "The several-target falloff"). The rules
 the audit found **differing** are now modelled: the two buff wear-off
 chance arrays — `ov_000::0215858c` reads one for dazzle (`0x02158d6c`) and one for defence and
 agility (`0x02158d68`, four bytes earlier), indexed by the decremented count (`j4-audit-fixes`,
@@ -48,10 +51,11 @@ damage and healing spells of chapter 2 (kind 1 and kind 2), the attack level of 
 (kind 3), the stat changes of Buff and Accelerate (kinds 4 and 5), Dazzle (kind 19), Weird Dance's MP damage (kind 57), a call for
 backup (kind 12), a kind-0 action and the monsters' Flee `0xE1`. The accuracy roll models an
 action whose accuracy stands at 100 and a monster's scaling accuracy with the dazzle die of
-eight, the guard level and the dazzle flag. Everything else is **refused before any draw** with
-`Unsupported`: damage handlers 1..66, riders, a party member's scaling accuracy, tension, a guard
-level above 3, a trait `0x11d` critical, an elemental weapon, a weapon that strikes several, the
-multi-target falloff against several targets, the accuracy die of four, and the actions the code
+eight, the guard level and the dazzle flag, and the twelve several-target records lose damage by
+the target's rank (below, "The several-target falloff"). Everything else is **refused before any
+draw** with `Unsupported`: damage handlers 1..66, riders, a party member's scaling accuracy,
+tension, a guard level above 3, a trait `0x11d` critical, an elemental weapon, a weapon that
+strikes several, the accuracy die of four, and the actions the code
 singles out by number (`0x1B`, `0x48`, `0x70`, `0xAF`, `0x79`, `0x395`, `0x1FF`, `0x200`, `0x20B`,
 `0x20C`). A metal body is not refused any more: its rules are below, and the four actions they
 single out (`0x40`, `0x7E`, `0x82`, `0x205`) are now refused by the handler or the rider they
@@ -112,7 +116,8 @@ is "a scripted battle" (the wiki reads the setup's `+0x0C` ≠ −1); the kernel
 2. **Per target**: `NextRandomMax(100)` (the die, kept at `[battle + 0x8e6e]`, never read here);
    the critical roll if it was not rolled once; the evasion roll if `+0x10` bit 5; the block roll
    if bit 6 **and the blow was not dodged**; the accuracy roll always; then, if it landed, the
-   amount (`GetAttackBaseDamage`, also for a dodged or blocked blow), `CalculateFinalDamage`
+   amount (`GetAttackBaseDamage`, also for a dodged or blocked blow), the several-target falloff
+   of the target's rank (no draw), `CalculateFinalDamage`
    (critical's draw, coin), and for a kind-1 blow that dealt damage with `+0x10` bit 11 the wake
    roll `NextRandomMax(100)`.
 
@@ -125,6 +130,7 @@ is "a scripted battle" (the wiki reads the setup's `+0x0C` ≠ −1); the kernel
 | block | `ov_000::02156e30`: `(float)NextRandomMax(100) < rate`, rate **not** truncated | `roll_block` |
 | accuracy | `ov_000::02156648`: draws `NextRandomMax(100)` before anything is compared; for the actions modelled accuracy stands at 100 | `STANDING_ACCURACY` |
 | amount | `GetAttackBaseDamage` `ov_024::021e7bc0` | `damage::base_amount` |
+| several targets | `func_02074948` (EU `0x02074958`, table `0x020e88e0`), called from `ResolveAction` `0x021ec6ec` | `resolve::falloff_factor` |
 | final | `CalculateFinalDamage` `ov_024::021e6a90` | `resolve::final_amount` |
 
 Evasion and block rates, resistances and the party's rates are **inputs** (`Fighter`): how a
@@ -143,6 +149,90 @@ party member's come from equipment, and a monster's from its record grade (`0, 2
   draw (1 draw); party without a scaling number: one draw between the least and the most, then
   the spread's (2 draws). **[hypothesis]**: where the truncations fall for the 2-draw arm. The
   oracle does not exercise it (Heal's mending is below `lo`).
+
+### The several-target falloff (`ResolveAction`, `0x021ec6ec`; batch `v4-multitarget-falloff`)
+
+An action carrying `+0x10` bit 17 (`Action::multi_target_falloff`, `actdt` `weakens`) loses damage
+by the target's **rank**: `×1, ×0.8, ×0.6, ×0.4, ×0.2`.
+
+- **The twelve records** (EU `actdt_a_en.nat` / `actdt_b_en.nat`, counted by
+  `tests/battle_rom.rs::the_twelve_records_carry_the_falloff_and_no_others_do` over both tables
+  and by `build/evidence/v4-multitarget-falloff/twelve.txt` over the extracted members):
+  **1, 2, 223, 224** (the four `Attack` records — the group/all weapon's), **86** Lashings of
+  Love, **87** Hit the Hay, **91** Serpent's Bite, **94** Party Pooper, **113** Axes of Evil,
+  **121** Crosscutter Throw, **123** Ooze Bruiser and **126** Metalicker. No other record of the
+  681 carries the bit; the encyclopedia's "12 actions only" is thereby a **fact**. The four spells
+  of the oracle's 306 vectors (Crack, Crackle, Woosh, Heal) do not carry it, and the Attack
+  vectors pass one target, so the vectors cannot move (`actions_match_battle_emulator` still
+  green).
+- **The rank** is the target's index in `ResolveAction`'s own loop (`0x021ebe30` sets the
+  counter to 0, `0x021ebe88` is the loop head, `0x021ed0f8` the only write, `add r7, r7, #1`,
+  `0x021ed108` the test): `iVar29`, the counter over the settled target list (`local_1c4`), whose
+  index is read for the falloff as `lsl/asr #24` — `(char)rank`. Every in-body exit reaches the
+  increment, so a skipped target still advances the rank; the first target is rank 0. It is
+  **not** the target's index in the battle (that value is read separately and passed to
+  `CalculateFinalDamage`), its distance, or its agility; the order is the caller's settled target
+  list. A rank of 128 or more would sign-wrap and clamp to 1.0, which the target count's byte
+  makes unreachable.
+- **The table and its cap.** `func_02074948` (EU `0x02074958`, USA `0x02074948`) is
+  `if (rank < 0) rank = 0; if (rank > 4) rank = 4; return table[rank];`, the table
+  `0x020e88e0` = `1.0, 0.8, 0.6, 0.4, 0.2` as `f32` (read from `arm9.bin`; the disassembly of the
+  clamp is `cmp r0,#0 / movlt r0,#0 / cmp r0,#4 / movgt r0,#4 / ldr r0,[r1,r0,lsl #2]`). A sixth
+  target and every later one keep **0.2** (`resolve::FALLOFF_TABLE`, `falloff_factor`).
+- **The gate** (`0x021ec644`–`0x021ec730`). The block is entered when
+  `action + 0x10 & 0x20000` is set. For the two plain Attack records **1 and 2** only
+  (`0x021ec658`–`0x021ec66c`), it is then narrowed to a **party** attacker — the test is the
+  attacker **index** `0 <= local_206 <= 3`, and a monster gets `false` (`0x021ec6d0`). The worn
+  weapon's `itembtlprm` `+0x00` (the record `func_ov017_021b3780` copies to the character's
+  `+0x2F4`, the first slot being the weapon) keeps the factor on when **bit 1** is set, and
+  otherwise keeps it only when **bit 0** is set (`0x021ec6b0`–`0x021ec6c8`, i.e. bit 0 | bit 1;
+  the same two bits map to the weapon's reach 4 and 3 at `ov_024.c` 26333–26345). Those are the
+  bits `Fighter::weapon_strikes_several` stands for, which `validate` already refuses on action 1
+  (`Unsupported::MultiHitWeapon`) — but `party.rs` does not read them yet (it leaves the field
+  false), so a party Attack that resolves never weakens today. Actions **223 and 224** are not in
+  the gate's `1 | 2` test and always fall off.
+- **The application point.** It multiplies `local_284` — the base amount after
+  `GetAttackBaseDamage` and the damage handler (`func_ov024_021da55c`) — **before**
+  `CalculateFinalDamage`: `local_284 = _ffix(_fmul(_fflt(local_284), factor))`. So it precedes
+  the critical, the resistance, the weapon's family bonus, the guard, the coin, the metal rules,
+  the combo and the cap; the page's list puts it seventh, but that is the order of the factors,
+  not of the code. The product goes through **one truncation** there (`_ffix`, `0x021ec704`, a
+  truncation toward zero), and the value reaches `CalculateFinalDamage` as
+  `(uint)local_284 & 0xffff`. Two refinements: action `0x79` (121) takes a further `×0.8`
+  (`_fmul` of `0x3f4ccccd`) inside the same block at `0x021ec70c`–`0x021ec738`, so its amount is
+  `trunc(trunc(base·rank)·0.8)` — the kernel refuses `0x79` (`Unsupported::ActionNumber`), so the
+  model does not carry it; and the `0x70`/`0x48` clamp sits between the handler and the factor on
+  those records, which the kernel refuses too.
+- **The second application site.** `func_ov024_021fb490` (`0x021fb740`–`0x021fb764`, the
+  effect/display builder) applies the same table on a **float** (`_fmul` only, no `_ffix`, no
+  16-bit mask), gated by `+0x10` bit 17 and `reach != 2`, and its counter increments **only when
+  it applies**. It queues per-target records; it changes no HP and is not modelled.
+- **Rounding**: `21 × 0.8 = 16.8 → 16`; `27 × 0.8 = 21.6 → 21`, then a resistance of 0.75 gives
+  `15.75 → 15` (a factor applied after the resistance would give 16). No draw.
+- **The combo actions.** The four Attack records (1, 2, 223, 224) also chain a combo (`+0x2C` bit
+  27), and the battle's flow refuses a chaining action against several targets
+  (`Battle::step_combo`, `Unsupported::ComboMultiTarget`: the kernel carries one combo counter per
+  action). That refusal is kept; the other eight records do not chain and resolve through the
+  flow. The kernel resolves all twelve.
+
+Tests: `battle/tests.rs` `the_falloff_follows_the_target_lists_order` (guard levels 2, 0, 1 in
+that list order → 10, 80, 30), `two_and_three_targets_take_one_four_fifths_and_three_fifths`,
+`the_rank_holds_at_the_tables_fifth_entry` (seven targets → `100 80 60 40 20 20 20`),
+`the_rank_factor_truncates_the_base_before_the_final_damage`,
+`the_plain_attack_takes_its_falloff_from_the_weapon` (1 keeps 100/100, 2 with the weapon bit
+100/80, a monster's 1 keeps 100/100, 223 weakens), and the real-ROM test above, which resolves
+Party Pooper (94) against three monsters: rank 0's amount equals the single-target amount of the
+same seed, the next two fall in the 148–170 and 111–127 bands around 0.8 and 0.6 of the
+186–213 base. `the_flow_resolves_a_weakening_group_action_on_three_monsters` runs the same record
+through `Battle::round` against a group of three slimes and reads the three amounts in 94–106,
+75–84 and 56–63 around a 100 base. Evidence: `build/evidence/v4-multitarget-falloff/`.
+
+**The chapter-2 route cannot move.** Its ways are actions 1, 9, 41, 45, 59, 225, 236, 243, 323,
+344, 364, 366 and 546 (`chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve`,
+`chapter-two-coverage.log`); the only one of the twelve is 1, whose party use is disarmed by the
+hero's weapon (no `weapon_strikes_several`) and whose monster use is excluded outright — and the
+pilot fights with one hero, so no action has a second target. Parity stays 2/2
+(`parity.log`).
 
 ### Final damage (`ov_024::021e6a90`), EU decompilation read
 
@@ -836,7 +926,7 @@ Read in the European decompilation; all are `func_ov024_…` in overlay 24.
 `Command::Defend` sets the member's guard level to 1 at the command phase
 (`func_ov024_021e57c0`, reached through the action's sub-effect table `0x021ff3f8`, entry 2;
 action 3 "Defend", kind 0, reach 1); `func_ov000_0215e6e8` clears it for everyone at the round's
-end. `CalculateFinalDamage` applies `[1.0, 0.5, 0.1, 0.0][level]` (table `0x020e88c0`) to an
+end. `CalculateFinalDamage` applies `[1.0, 0.5, 0.1, 0.0][level]` (table `0x020e88c0` in USA, `0x020e88d0` in EU) to an
 action carrying `+0x10` bit 4 — the plain Attack, Frizz and Crack among 243 of the 681 — **before**
 the 0-or-1 coin, whoever struck. No link between the guard level and the monsters' pick weights
 was found: the weighted pick (`func_ov000_02154f30`) halves a member's weight under status
@@ -1078,8 +1168,6 @@ most eight, so a ninth is unmodelled.
   (`0x021ed48c`–`0x021ed564` tension spend). `ActionOutcome::generator_state` is exact up to the
   wake roll of the last target, not beyond; the oracle's `special charge` and `rage` draws are the
   oracle's modelling of those and are not compared.
-- **[hypothesis]** the multi-target falloff of the plain Attack against **one** target is 1.0
-  (its table starts at 1.0); not exercised by a multi-target oracle.
 - **[hypothesis]** the group spells' per-target draws (die, accuracy, amount per target, one
   critical for the action): from the wiki's reading and unit tests; BattleEmulator is one-on-one
   and cannot check it.
