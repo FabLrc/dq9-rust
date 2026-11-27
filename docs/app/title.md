@@ -24,7 +24,7 @@ page's `?newgame=`, save picking and pilot paths do not show it.
 | Row | When | What it does |
 |---|---|---|
 | **Continue your adventure** | a container has a slot `Save::title_slot` ranks (a suspend save, else a normal log on slot 0, checksums valid) | resumes that slot through `App::begin` |
-| **Create a new adventure log** | always | the current new-game path (`App::start_new_game`, default hero) |
+| **Create a new adventure log** | always | the character-creation screen (`App::show_creation`), then the new game |
 
 The container is `--save`'s file, re-read from disk when the title is shown (so a quick save
 written during the session is seen), else the bytes the app started with. `--suspend-out`
@@ -41,8 +41,12 @@ suspend save first ([`re/title.md`](../re/title.md), § "The slot check"). `app/
 replaced through a temporary file and a rename (`Save_WriteHeaderA`, `0x020aba6c`), as the
 `--save` boot's `consume_suspend_log` does.
 
-**Create a new adventure log** runs `start_new_game` unchanged (story 1.1.1, the default
-hero, the opening map `S14M05`, then the prologue). Character creation is not replayed.
+**Create a new adventure log** opens the character-creation screen (`app/character.rs`,
+[`character-creation.md`](character-creation.md)): the hero's name and sex, then
+`App::start_created_game` (story 1.1.1, the created hero, the opening map `S14M05`, then the
+prologue). `options.new_game` is set only on confirm, so the field does not start while the
+name is typed. `--new-game` keeps the default hero and skips the screen, which is the path the
+route and the pilots take.
 
 ## Returns to the title
 
@@ -59,11 +63,12 @@ hero, the opening map `S14M05`, then the prologue). Character creation is not re
 
 Up/down (arrows or `W`/`S`) move the cursor, `Enter`/`Space`/`Z` choose a row, a tap on a row
 chooses it (`App::tap` maps the window point to the 256×192 screen the title draws on),
-`M` mutes and `R` cycles the layout. `Escape` closes the native window, as on the field.
+`M` mutes and `R` cycles the layout. `Escape` closes the native window, as on the field. The
+creation screen's own keys are in [`character-creation.md`](character-creation.md).
 
 The frame is `Panel` filling the window and the port's quads on the screen the field would use
-(`App::draw_title`): a plain background, the heading "Dragon Quest IX", the rows with the
-cursor highlighted and an "Enter: choose" hint. No scene or renderer is needed, so the app
+(`App::draw_placeholder`, the title's quads from `App::title_quads`): a plain background, the
+heading "Dragon Quest IX", the rows with the cursor highlighted and an "Enter: choose" hint. No scene or renderer is needed, so the app
 boots without a map. The original's title art is **not decoded**: this is the port's own
 placeholder, not a reproduction of the DS graphics.
 
@@ -72,7 +77,7 @@ placeholder, not a reproduction of the DS graphics.
 `app/title/tests.rs` (real ROM, `DQ9_SAVE` for the save paths):
 
 - an interactive start with no option shows the title, a headless one does not;
-- title → New Game runs `start_new_game` and loads the opening map;
+- title → New Game opens the creation screen, and its confirm loads the opening map;
 - title → Continue resumes the ranked suspend slot (its warp's map and party) and deletes the
   log from the container, while the normal log keeps the boot order (`resume_slot` = slot 0);
 - a Quick Save's 4702 returns to the title, which then offers Continue;

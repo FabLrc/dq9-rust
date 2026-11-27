@@ -469,14 +469,86 @@ displacement (`movement.md` § "Stairs and the run cycle"). `walk` stays availab
 
 ### Default appearance (new game)
 
-`HeroLook::new_game`: male, face 9024, hair 9006 (male presets from
-`charapreset.bin`), skin tone 3, Celestrian outfit from the start of Angel Falls **[hypothesis]**:
-celestial costume 13007, celestial stockings 16215, celestial shoes 17120 and halo 12805 (character
-creation is in overlay 9: the real hero is not modelled). With `--save`:
-the hero of the current slot (first character of the party). Tone 3 is the tone the cartridge's
-face palette is painted for (§ "Skin, eyes and brows"), but that palette is one shade off the
-generated row and the body/arm palettes are painted, so applying the rule changes those
-pixels relative to a capture taken before it.
+`HeroLook::new_game` / `HeroLook::for_sex` (the creation screen's starting point): male, face
+9024, hair 9006 (male presets from `charapreset.bin`), skin tone 3, Celestrian outfit from the
+start of Angel Falls **[hypothesis]**: celestial costume 13007, celestial stockings 16215,
+celestial shoes 17120 and halo 12805. With `--save`: the hero of the current slot (first
+character of the party). Tone 3 is the tone the cartridge's face palette is painted for
+(§ "Skin, eyes and brows"), but that palette is one shade off the generated row and the
+body/arm palettes are painted, so applying the rule changes those pixels relative to a capture
+taken before it. The sex-dependent values come from the creation table below.
+
+### Character creation (overlay 9)
+
+The title's **Create a new adventure log** runs overlay `ov_009`, not the field: the overlay's
+allocator is `ov_009::021842a0`, its reset/initialiser `ov_009::0218454c`, and the state machine
+that builds the preview `ov_009::02185634`. The screens are pages of one editor (`+0xc58` is
+the page, `+0xc59` its step); page 1 is the name entry (`ov_009::02186e00`, the text-entry
+widget of `ov_003::0215f000`) and page 1 of the menu writes the **sex** (`+0xda3`,
+`ov_009::0218742c` case 1). The pages and the byte each edits:
+
+| Page (`+0xc58`) | Function | Field | Saved as |
+|---|---|---|---|
+| 0 | `ov_009::02186e00` | name, `+0xdb0 + sex × 4` buffer | glyph indices, `Character+0x140` / 320 |
+| 1 | `ov_009::0218742c` case 1 | sex, `+0xda3` (0 man, 1 woman) | `Character+0x174` / 372, bit 0 |
+| 2 | case 2 | face offset preset, `+0xda4` | not stored (preview sprite offset, `ov_009::02188bf8`) |
+| 3 | case 3 | hair style, `+0xdac` | `+0x166` / 358 (item 9000 + preset) |
+| 4 | case 4 | hair colour, `+0xdae` | `+0x175` / 373 low nibble |
+| 5 | case 5 | face, `+0xda6` | `+0x164` / 356 (item 9020 + preset) |
+| 6 | case 6 | skin tone, `+0xdaa` | `+0x174` bits 1–3 |
+| 7 | case 7 | eye colour, `+0xda8` | `+0x174` bits 4–7 |
+
+**Name.** The entry widget is sized to **eight glyphs**: `*(entry + 0x14) = 8` in
+`ov_009::02186e00`, the capacity `ov_003_0215ec90` counts when it appends a glyph and returns
+"full" (`3`) on the eighth. The buffer is 0x48 bytes of text (`+8`, `+0x10` = 0x48). The glyph
+found for a key is `Font_FindGlyph` (`ov_003::0215ec90`) in the **message font**: the keyboard
+is the `me` font's own table (`fi_me.bin`), whose first glyphs are the special keys
+`< >` (index 0, the space), `//` (1), `/` (2), `,` (3), `'` (4), `<capslock>` (5), `<shift>`
+(6), `<back>` (7), then digits `0`–`9` (8–17), `A`–`Z` (18–43), `a`–`z` (44–69) and the
+punctuation and accented letters (`docs/re/font.md`). The save stores **one glyph index per
+character** at `+0x140`: `NAME_LEN` = 10 bytes, zero-terminated and zero-padded; the demo save
+holds "Adenine" as `12 2f 30 39 34 39 30`
+(`build/evidence/v3-character-creation/glyph-roundtrip.txt`). The font's space is glyph 0 (its
+string is the markup `< >`), which is also the save field's zero terminator: a stored space would
+truncate the name, so the port offers none (the original's key layout with a space is
+**[unknown]**).
+
+**Empty name.** `case 10` (the entry widget's OK key) calls `ov_009::02189a4c`, which returns
+immediately while the buffer's first byte is zero; the accepted flag `0xd9c & 0x400000` is never
+set, so the page does not confirm. The empty name is therefore refused (the port enforces the
+same rule).
+
+**Sex and its defaults.** `ov_009::02185634` writes the per-sex defaults at
+`0x021858e0`–`0x0218591c` (overlay `ov_009` loads at `0x021842a0`; file offsets
+`0x1640`–`0x167c`): the bytes `+0xda4`–`+0xdaf` hold one value per sex (`+0xda3` indexes them
+two at a time). The preset indices go through `ov_009::02188b14`'s tables:
+
+| Field | Man (index 0) | Woman (index 1) | Resolved |
+|---|---|---|---|
+| face preset `+0xda6` | 0 → `local_18[0] = 4` | 0 → `1` | face item 9024 / 9021 |
+| hair preset `+0xdac` | 0 → `local_18[0] = 0` | 0 → `6` | hair item 9000 / 9006 |
+| eye colour `+0xda8` | 0 | 5 | `+0x174` bits 4–7 |
+| skin tone `+0xdaa` | 3 | 3 | `+0x174` bits 1–3 |
+| hair colour `+0xdae` | 0 | 3 | `+0x175` low nibble |
+| face offset `+0xda4` | 2 | 2 | preview only |
+
+The shared 10-byte preset table `ov_009::02188b14` copies is at `0x0218a9bc` and holds
+`00 01 02 03 04 05 06 07 08 09` (preset *n* → item `9000 + n`). The male face table overrides
+its first five entries with `[4, 0, 1, 2, 3]`; the woman's face override is `[1, 0]` (the other
+slots keep the shared table); the hair table is the shared one for a man and
+`[6, 0, 1, 2, 3, 4, 5]` for a woman. So the creation defaults are **hair 9000 for a man and
+9006 for a woman** (item 9006's female model is `p_h180`). `HeroLook::new_game` (the
+`--new-game` default, from `charapreset.bin`) uses hair 9006 for a man: the preset file's first
+male entry and overlay 9's default are not the same value. The `0xd95` mode flag
+(`ov_009::0218454c`'s third argument) sets both faces to preset 1, the woman's hair to preset 1,
+her eye colour to 0 and her hair colour to 0, and hides some pages: **what chooses it** (the
+chapter, or creating a party member rather than the hero) is **[unknown]**.
+
+**[unknown]** — `ov_009::02188bf8`'s per-sex offset table at `0x02188c28`, the meaning of the
+`+0xda4` face-offset page, the word list `ov_009::02189a4c` loads from two files (the name
+filter), and the exact key layout of the keyboard PAK (`+0xc4`).
+
+The port's screen and limits: [`app/character-creation.md`](../app/character-creation.md).
 
 ### Not done
 

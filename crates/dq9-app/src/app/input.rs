@@ -155,6 +155,11 @@ impl App {
         }
         self.log_key(code, true);
         #[cfg(not(target_arch = "wasm32"))]
+        if self.creation.is_some() {
+            // The creation screen takes every key, the name's letters included.
+            return self.creation_key(code);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         if self.title.is_some() {
             // The title takes every key: it steps nothing else.
             return self.title_key(code);

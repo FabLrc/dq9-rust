@@ -274,10 +274,21 @@ impl App {
         if !self.session_renders() {
             return;
         }
-        // The title draws its own frame: no scene, no renderer.
+        // The title and the creation screen draw their own frame: no scene, no renderer.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.creation.is_some() {
+            let quads = self
+                .talk
+                .with_ui(|atlas, font| self.creation_quads(atlas, font));
+            self.draw_placeholder(quads, "creation");
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         if self.title.is_some() {
-            self.draw_title();
+            let quads = self
+                .talk
+                .with_ui(|atlas, font| self.title_quads(atlas, font));
+            self.draw_placeholder(quads, "title");
             return;
         }
         if self.battle().is_some() {
@@ -345,16 +356,12 @@ impl App {
         self.present_frame(&camera, swapped, true);
     }
 
-    /// Presents one frame of the title: the placeholder panel fills the window and the port's
-    /// rows are drawn on the screen the field would use. No scene or renderer is involved, so
-    /// the app can boot without a map (`docs/app/title.md`).
+    /// Presents one frame of a screen that is only the port's own quads (the title, the
+    /// creation screen): the placeholder panel fills the window and the quads are drawn on
+    /// the screen the field would use. No scene or renderer is involved, so the app can boot
+    /// without a map (`docs/app/title.md`, `docs/app/character-creation.md`).
     #[cfg(not(target_arch = "wasm32"))]
-    fn draw_title(&mut self) {
-        // The quads borrow the message window's font and atlas, and `self`: take them before
-        // the GPU fields are borrowed mutably.
-        let quads = self
-            .talk
-            .with_ui(|atlas, font| self.title_quads(atlas, font));
+    fn draw_placeholder(&mut self, quads: Option<Vec<Quad>>, label: &'static str) {
         let Some(gpu) = &mut self.gpu else {
             return;
         };
@@ -375,9 +382,7 @@ impl App {
             screens::screens(self.options.layout, w, h).field_for(self.presentation.screens, false);
         let mut encoder = gpu
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("title"),
-            });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
         let panel = self
             .presentation
             .panel

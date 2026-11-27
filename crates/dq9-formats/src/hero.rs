@@ -52,7 +52,9 @@ fn worn(id: u16, first: u16) -> Option<u16> {
 impl HeroLook {
     /// The hero a new game starts with: a man (face 9024, hair 9006: the male presets of
     /// `charapreset.bin`) in the Celestrian outfit of the opening, **[hypothesis]**: celestial
-    /// suit, stockings and shoes, and the halo (items 13007, 16215, 17120, 12805).
+    /// suit, stockings and shoes, and the halo (items 13007, 16215, 17120, 12805). The
+    /// creation screen's own male default is hair 9000 (`HeroLook::for_sex`): the preset file's
+    /// first male entry and overlay 9's default are not the same value.
     pub fn new_game() -> Self {
         Self {
             sex: Sex::Man,
@@ -61,6 +63,34 @@ impl HeroLook {
             hair_color: 0,
             skin_tone: 3,
             eye_color: 0,
+            build: (0x1000, 0x1000),
+            armour: Some(13007),
+            legwear: Some(16215),
+            gloves: None,
+            footwear: Some(17120),
+            headgear: Some(12805),
+        }
+    }
+
+    /// The appearance the creation screen starts from for `sex`: the per-sex defaults of
+    /// `ov_009::02185634` (`+0xda4`–`+0xdaf`, one value per sex at `+0xda3`) resolved through
+    /// `ov_009::02188b14`'s preset tables (`docs/re/characters.md` § "Character creation").
+    /// Both sexes share skin tone 3 and the opening outfit. A man takes face 9024, hair 9000
+    /// (the shared table `0…9` at `0x0218a9bc`, preset 0), eye colour 0 and hair colour 0; a
+    /// woman takes face 9021, hair 9006 (her override `[6, 0, 1, 2, 3, 4, 5]`), eye colour 5
+    /// and hair colour 3.
+    pub fn for_sex(sex: Sex) -> Self {
+        let (face_item, hair_item, eye_color, hair_color) = match sex {
+            Sex::Man => (9024, 9000, 0, 0),
+            Sex::Woman => (9021, 9006, 5, 3),
+        };
+        Self {
+            sex,
+            face_item,
+            hair_item,
+            hair_color,
+            skin_tone: 3,
+            eye_color,
             build: (0x1000, 0x1000),
             armour: Some(13007),
             legwear: Some(16215),

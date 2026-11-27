@@ -75,6 +75,8 @@ mod options;
 pub use self::options::Options;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use self::options::story_of;
+#[cfg(not(target_arch = "wasm32"))]
+mod character;
 mod recording;
 mod roaming;
 mod script;
@@ -156,6 +158,9 @@ pub struct App {
     /// See [`title::Title`].
     #[cfg(not(target_arch = "wasm32"))]
     title: Option<title::Title>,
+    /// See [`character::Creation`].
+    #[cfg(not(target_arch = "wasm32"))]
+    creation: Option<character::Creation>,
     /// A Quick Save's 4702 notice returns to the title once it closes (`App::after_service`).
     #[cfg(not(target_arch = "wasm32"))]
     title_pending: bool,
@@ -288,6 +293,8 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             title: None,
             #[cfg(not(target_arch = "wasm32"))]
+            creation: None,
+            #[cfg(not(target_arch = "wasm32"))]
             title_pending: false,
             services: Services::default(),
             containers: Containers::default(),
@@ -336,6 +343,7 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.title = None;
+            self.creation = None;
             self.title_pending = false;
         }
     }
@@ -447,9 +455,10 @@ impl App {
         // replay install their recorder right after the app is built and keep today's field
         // start, so the title gives way before the first step.
         #[cfg(not(target_arch = "wasm32"))]
-        if self.title.is_some() {
+        if self.title.is_some() || self.creation.is_some() {
             if self.recording.recorder.is_some() || self.recording.replay.is_some() {
                 self.title = None;
+                self.creation = None;
                 self.begin_from_options();
             } else {
                 self.last = Instant::now();

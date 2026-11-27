@@ -6,8 +6,21 @@ use dq9_core::scenario;
 use dq9_core::state::GameState;
 use dq9_core::trigger::Member;
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::character::Creation;
 use super::{App, status};
 use crate::lighting;
+use crate::talk::HeroIdentity;
+use dq9_formats::hero::Sex;
+
+/// The hero the creation screen chose, as the new-game path applies it: the save's glyph
+/// indices, the look the scene assembles and the sex (`HeroIdentity`).
+#[derive(Clone)]
+struct CreatedHero {
+    name: [u8; dq9_formats::save::NAME_LEN],
+    look: dq9_formats::hero::HeroLook,
+    sex: Sex,
+}
 
 /// Map the original loads after character creation and before the first scene: `S14M05`
 /// (id 6405, "Starflight Express / For Events"). Its load raises the S14 "map visited" flag
@@ -52,6 +65,13 @@ impl App {
     /// default hero), then the first scene of story stage 1.1 (`stage_opening`, `ev21500`),
     /// which loads its own map; what follows is chained by the triggers.
     pub(super) fn start_new_game(&mut self) {
+        self.start_new_game_with(None);
+    }
+
+    /// [`App::start_new_game`] with the hero the creation screen chose: the look, the party
+    /// record and the message identity are in place **before** the opening map builds the
+    /// hero's rig, so the first frame of the prologue already shows the created character.
+    fn start_new_game_with(&mut self, created: Option<&CreatedHero>) {
         // A battle preview gives way to the new game.
         self.encounter.battle = None;
         self.combat.fight = None;
@@ -95,7 +115,7 @@ impl App {
         self.time = self.day.phase().index();
         // The hero as the conditions read him: alive, level 1 Guardian, in the opening outfit
         // (0x32/0x52 compare the worn items; the slots of the items are a **[hypothesis]**).
-        let look = dq9_formats::hero::HeroLook::new_game();
+        let look = created.map_or_else(dq9_formats::hero::HeroLook::new_game, |h| h.look.clone());
         let mut hero = Member {
             hp: 1,
             levels: [1; dq9_core::trigger::VOCATIONS],
@@ -124,8 +144,23 @@ impl App {
         {
             self.state.obtain(i32::from(item), 1);
         }
-        self.look = dq9_formats::hero::HeroLook::new_game();
+        self.look = look.clone();
         self.reset_session();
+        // The created hero reaches the party record (the save write's source, `+0x140` and
+        // `+0x174` bit 0) and the message identity after the reset, and before `load_map`
+        // builds the rig from `self.look`.
+        if let Some(created) = created {
+            let name = created.name;
+            if let Some(hero) = self.party.members.first_mut() {
+                hero.name = name;
+                hero.sex = created.sex;
+                hero.look = look;
+            }
+            self.talk.set_identity(Some(HeroIdentity {
+                name,
+                male: created.sex == Sex::Man,
+            }));
+        }
         self.journal = Default::default();
         self.tick = 0;
         self.journal.note_progress(0, &self.state);
@@ -143,6 +178,30 @@ impl App {
         self.events.queue(opening);
         // The page's pilot session (`?pilot=1`) takes the new game from its first scene.
         self.start_session();
+    }
+
+    /// A new game from the creation screen: the new game with the created hero in the three
+    /// places that consume him — the message identity (`HeroIdentity`, decoded from the save's
+    /// glyph indices), the look the scene assembles (`HeroLook::for_sex`), and the party
+    /// record the save write serialises (`Character::name` at `+0x140` and the `+0x174` bit 0,
+    /// through `GameState::write_into`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn start_created_game(&mut self, creation: Creation) {
+        let look = creation.look();
+        let sex = creation.sex();
+        let created = CreatedHero {
+            name: creation.saved_name(),
+            look: look.clone(),
+            sex,
+        };
+        self.start_new_game_with(Some(&created));
+        status(&format!(
+            "new game: the created hero \"{}\" ({:?}), look face {} hair {}",
+            String::from_utf8_lossy(&self.talk.hero_name()),
+            sex,
+            look.face_item,
+            look.hair_item
+        ));
     }
 
     /// The wake-up after a wipe-out (`func_ov017_0219bfb4`, mode 2): `chur_messet.bin` gives

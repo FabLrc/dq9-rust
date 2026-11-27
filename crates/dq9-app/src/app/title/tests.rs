@@ -75,9 +75,10 @@ fn the_interactive_start_boots_on_the_title_and_a_headless_one_does_not() {
     assert_eq!(cursor(&app), 0);
 }
 
-/// Title → New Game: the current new-game path (the default hero, the opening map).
+/// Title → New Game: the character-creation screen (`app/character.rs`) comes first; the
+/// opening map only loads once its name is confirmed.
 #[test]
-fn new_game_leaves_the_title_through_the_new_game_path() {
+fn new_game_opens_character_creation_before_the_field() {
     let Some(rom) = testrom::load() else {
         eprintln!("skipping: DQ9_ROM missing");
         return;
@@ -87,13 +88,59 @@ fn new_game_leaves_the_title_through_the_new_game_path() {
     app.show_title();
     assert_eq!(rows(&app), [Row::NewGame]);
     assert!(!app.title_key(KeyCode::Enter), "Enter does not close");
-    assert!(app.title.is_none(), "the title gave way to the field");
+    assert!(
+        app.title.is_none(),
+        "the title gave way to the creation screen"
+    );
+    assert!(app.creation.is_some(), "the creation screen is shown");
+    assert!(!app.options.new_game, "the new game starts on confirm only");
+
+    type_name(&mut app, "adenine");
+    assert!(!app.creation_key(KeyCode::Enter), "Enter does not close");
+    assert!(app.creation.is_none(), "the creation screen gave way");
     assert!(app.options.new_game, "the new-game path ran");
     assert_eq!(
         app.current.as_ref().map(|(entry, _)| entry.id),
         Some(6405),
         "the new game loads the opening map (S14M05)"
     );
+    assert_eq!(app.talk.hero_name(), b"adenine");
+}
+
+/// Types `text` as the creation screen's keys (lower-case letters only).
+fn type_name(app: &mut App, text: &str) {
+    for byte in text.bytes() {
+        let code = match byte {
+            b'a' => KeyCode::KeyA,
+            b'b' => KeyCode::KeyB,
+            b'c' => KeyCode::KeyC,
+            b'd' => KeyCode::KeyD,
+            b'e' => KeyCode::KeyE,
+            b'f' => KeyCode::KeyF,
+            b'g' => KeyCode::KeyG,
+            b'h' => KeyCode::KeyH,
+            b'i' => KeyCode::KeyI,
+            b'j' => KeyCode::KeyJ,
+            b'k' => KeyCode::KeyK,
+            b'l' => KeyCode::KeyL,
+            b'm' => KeyCode::KeyM,
+            b'n' => KeyCode::KeyN,
+            b'o' => KeyCode::KeyO,
+            b'p' => KeyCode::KeyP,
+            b'q' => KeyCode::KeyQ,
+            b'r' => KeyCode::KeyR,
+            b's' => KeyCode::KeyS,
+            b't' => KeyCode::KeyT,
+            b'u' => KeyCode::KeyU,
+            b'v' => KeyCode::KeyV,
+            b'w' => KeyCode::KeyW,
+            b'x' => KeyCode::KeyX,
+            b'y' => KeyCode::KeyY,
+            b'z' => KeyCode::KeyZ,
+            _ => panic!("test name has an unmapped character: {byte}"),
+        };
+        app.creation_key(code);
+    }
 }
 
 /// Title → Continue: the slot `Save::title_slot` ranks (the suspend save), the warp's map,

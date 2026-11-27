@@ -239,16 +239,16 @@ impl App {
         }
     }
 
-    /// New Game: the current new-game path (default hero until character creation lands).
+    /// New Game: the character-creation screen (`App::show_creation`). The new game itself
+    /// only starts once its name and sex are confirmed, so `options.new_game` stays false
+    /// until then; `--new-game` keeps the default hero and skips the screen.
     fn title_new_game(&mut self) {
         self.title = None;
-        self.options.new_game = true;
         self.options.save = None;
         self.options.map = None;
         self.options.event = None;
         self.options.battle = None;
-        self.session_over = false;
-        self.start_new_game();
+        self.show_creation();
     }
 
     /// Clears the previous session's leftovers before a title start: the encounter and fight
