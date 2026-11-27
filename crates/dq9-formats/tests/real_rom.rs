@@ -930,3 +930,46 @@ fn hero_parts_resolve() {
     assert_eq!(outfit.arms_texture.as_deref(), Some("p_a007"));
     assert_eq!(outfit.feet_texture.as_deref(), Some("p_r120"));
 }
+
+/// The item tables' name pool: the eight metal and needle weapons decode to their names
+/// (`docs/re/item.md` § "The names block"), and the independent `itemname` table agrees.
+#[test]
+fn item_names_resolve_from_the_name_pool() {
+    use dq9_formats::battle::text::ItemNames;
+    use dq9_formats::item::ItemTable;
+
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+
+    let archive = Gpc2::parse(rom.file_by_path("data/prm/itemdt_w.gp2").unwrap()).unwrap();
+    let member = archive
+        .member(archive.find("itemdt_w_en.nat").unwrap())
+        .unwrap();
+    let mut table = ItemTable::default();
+    table.add_member(&member).unwrap();
+    table.add_names_member(&member).unwrap();
+
+    let named = [
+        (20021u16, "metal slime sword"),
+        (20022, "liquid metal sword"),
+        (20023, "metal king sword"),
+        (20119, "attribeauty"),
+        (20517, "metal slime spear"),
+        (20518, "liquid metal spear"),
+        (20519, "metal king spear"),
+        (19057, "poison needle"),
+    ];
+    for (id, name) in named {
+        assert_eq!(table.name(id), Some(name), "item {id}");
+    }
+
+    let names = Gpc2::parse(rom.file_by_path("data/prm/itemname.gp2").unwrap()).unwrap();
+    let member = names
+        .member(names.find("itemname_en.nat").unwrap())
+        .unwrap();
+    let names = ItemNames::parse(&member).unwrap();
+    for (id, name) in named {
+        let record = names.find(id).unwrap_or_else(|| panic!("itemname {id}"));
+        assert_eq!(std::str::from_utf8(record.name).unwrap(), name, "item {id}");
+    }
+}

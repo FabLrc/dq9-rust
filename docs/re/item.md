@@ -10,9 +10,11 @@ first player control states.
 ## Table
 
 The member starts with a **12-byte** header — `u16` record count, `u16`
-flags (0x8000), two unused `u32` — followed by `count` **32-byte** records.
-Tables of an equipment category continue after the records with a stats table
-and a names block (not read here). The nine categories, by file letter:
+flags (bit 15 set: an equipment member with its stats table, the low 15 bits count the
+stats entries; the tools carry `0x8000`), `u32` `+0x04` unused, `u32` `+0x08` the name
+pool's byte length — followed by `count` **32-byte** records. Tables of an equipment
+category continue after the records with a stats table and a names block (below).
+The nine categories, by file letter:
 
 | letter | category | records (EN) | ids | compendium |
 |---|---|---:|---|---|
@@ -31,6 +33,7 @@ A record:
 | offset | type | meaning |
 |---:|---|---|
 | `+0x00` | `u32` | **stats-table index** (`0..count−1`, each used once; `0xffffffff` on the tools, which have no stats table) |
+| `+0x04` | `u32` | **name offset**, from the start of the name pool; `0xffffffff` = no name (`func_020de574`) |
 | `+0x08` | `u32` | category (low nibble = equipment class) |
 | `+0x0c` | `u32` | bits 12–22: **compendium index**; low nibble: sort position |
 | `+0x14` | `u16` | **field action** number (`252` = none; INFERRED, the wiki's *Items*, "The two actions") |
@@ -62,8 +65,9 @@ battle list, the consumer that never removes it and the prayer ring's 25 % break
 An equipment member continues after its records with **one 32-byte stats entry per
 record**, indexed by the record's `+0x00` word. Measured on the European tables: 268
 weapons, 183 armour and 52 accessories, the indexes dense and unique; the stats table
-ends where the names block starts (weapons `+0x430c`, armour `+0x2dcc`, accessories
-`+0xd0c`). The tools' records hold `0xffffffff` and the member has no stats table.
+ends where the 0x58-byte name-block header starts (weapons `+0x430c`, armour `+0x2dcc`,
+accessories `+0xd0c`), and the name pool follows it. The tools' records hold
+`0xffffffff` and the member has no stats table.
 `dq9_formats::item::ItemStats` reads it (`add_member`, `get`).
 
 Three words hold the battle numbers `func_02083e28` adds to the level table's
@@ -86,6 +90,82 @@ agility ring 20, meteorite bracer 100, utility belt 25 deftness, brainy bracer 8
 sorcerer's ring 15 magical might. Attack, defence, deftness, agility and might are
 INFERRED from those descriptions and the guide; the three rate fields are read in the
 code. No established field carries magical mending.
+
+### The names block
+
+Implementation: `crates/dq9-formats/src/item.rs` (`ItemTable::add_names_member`,
+`ItemTable::name`). Encoding: the game's **markup text**, one NUL-terminated ASCII string per
+record — the same bytes `itemname_<language>.nat` holds (`<1>` is the possessive `'s`,
+`<'e>`/`` <`e> `` the accented letters of the font's glyph table, [`font.md`](font.md)); not
+Shift-JIS, not a fixed-stride array of glyph codes. No second decoder is needed: a string is
+returned as-is and the text pipeline maps it to glyphs.
+
+**How it was found.** The item menu loads the weapons member (`data/prm/itemdt_w.gp2`,
+member `itemdt_w_<LG>.nat`; `func_ov000_0217d87c`, xref of both path strings) and parses it
+with `func_020de6c8` (`0x020de6d8`) → `func_020de714` (`0x020de724`), which reads the 12-byte
+head and computes two bases:
+
+```c
+memcpy(head, member, 0xc);
+*(head + 0xc) = member + 0xc;                 // records
+iVar1 = func_020de7a4(head);
+*(head + 0x10) = member + iVar1 + 0xc;        // name pool
+```
+
+`func_020de7a4` (`0x020de7b4`) is the layout:
+
+```c
+uVar1 = head[1];                              // +0x02 flags
+if ((short)uVar1 < 0) iVar2 = 0x58;           // bit 15: equipment
+return iVar2 + (uVar1 & 0x7fff) * 0x20 + *head * 0x20;
+```
+
+so the pool starts at `12 + count×0x20 + stats entries×0x20 + 0x58` (0x58 only when bit
+15 is set). The head's `+0x08` word (low 31 bits) is the pool's byte length:
+`func_020de888` (`0x020de898`) allocates and copies exactly that many bytes from the pool
+base into a separate buffer. The per-record name offset is then resolved by the callback
+`func_020de574` (`0x020de584`) that `func_020de6c8` runs over every record (`func_020de7d0`):
+
+```c
+iVar1 = *(int *)(record + 4);
+if (iVar1 != -1 && *(int *)(head + 0x10) != 0)
+    iVar1 = *(int *)(head + 0x10) + iVar1;    // pool base + offset
+else
+    iVar1 = 0;
+*(int *)(record + 4) = iVar1;                 // now a char *
+```
+
+**The 0x58-byte block** is skipped by both readers; its content is observed but its purpose is
+**[unknown]**. It holds the record count (`268` at `+0x00` of the weapons' block) and one or
+two **partitions of the name indices into group sizes** that sum to the count — for the
+weapons, 12 groups of 30, 24, 21, 24, 22, 22, 23, 25, 19, 19, 20, 19 names, which are the
+weapon families in compendium order (sword, lance, knife, staff, whip, club, claws, fan, axe,
+hammer, boomerang, bow); for the tools, two groups of 146 and 88 and seven of 46, 9, 3, 65,
+85, 0, 26. The pool itself is in **compendium order** (the weapons open with the copper
+sword, compendium 1), while the records are in id order; the record's `+0x04` offset, not the
+position, selects the string.
+
+**Checks on the European ROM** (`build/evidence/v4-item-names/names-check.txt`,
+`190849f11f35`; block dump `weapons-names-block.txt`, `33e7c5c51c9b`; reader
+`reader.txt`, `25c8bb1a891b`): all 45 members (nine categories × five languages) declare a
+pool that ends their file exactly, and all 5,890 records carry an offset inside it to a
+printable NUL-terminated string (only three Spanish armour pairs share one string:
+13018/13627, 13201/13303, 13502/13605); `itemname_<language>.nat` names the same ids
+identically. The eight weapons that `v4-metal-equipment` opened:
+
+| id | name (EN) | compendium | itembtlprm `+0x00` bit |
+|---:|---|---:|---:|
+| 20021 | metal slime sword | 22 | 4 |
+| 20022 | liquid metal sword | 23 | 4 |
+| 20023 | metal king sword | 24 | 4 |
+| 20119 | attribeauty | 187 | 4 |
+| 20517 | metal slime spear | 48 | 4 |
+| 20518 | liquid metal spear | 49 | 4 |
+| 20519 | metal king spear | 50 | 4 |
+| 19057 | poison needle | 61 | 10 |
+
+`crates/dq9-formats/tests/real_rom.rs::item_names_resolve_from_the_name_pool` pins the eight
+against the item table and against `ItemNames` (`itemname_en.nat`).
 
 ## The weapon words (`itembtlprm` `+0x00`)
 

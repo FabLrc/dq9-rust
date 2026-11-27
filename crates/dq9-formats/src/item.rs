@@ -28,6 +28,21 @@
 //! The values are INFERRED from the item descriptions and the guide except the three rate
 //! fields, which the code reads; `docs/re/item.md` has the checks. The other fields of the
 //! entry are not established and are not exposed.
+//!
+//! The member ends with the **name pool**: NUL-terminated byte strings in the game's markup
+//! encoding (`<1>` for the possessive `'s`, `<'e>` for an accented letter — the same bytes
+//! `itemname_<language>.nat` holds), not Shift-JIS nor a fixed-stride glyph array. Each record
+//! carries the string's offset from the pool in its `+0x04` word (`func_020de574`,
+//! `0x020de584`, adds the pool base to it), `0xFFFFFFFF` when the record has no name.
+//!
+//! `func_020de714` (`0x020de724`) parses the head and computes the pool base:
+//! `12 + records + stats + [0x58 if head flags bit 15]`, where the head's `+0x02` word has bit
+//! 15 set for an equipment member (and the low 15 bits hold the stats entry count), and
+//! `func_020de7a4` (`0x020de7b4`) adds the fixed 0x58-byte block. The head's `+0x08` word
+//! (low 31 bits) is the pool's byte length (`func_020de888`, `0x020de898`, copies exactly that
+//! many bytes). The 0x58-byte block is read by nothing in this path: it holds the record count
+//! and one or two partitions of the name indices into group sizes (weapon families for `w`);
+//! its purpose is **[unknown]** and the reader skips it.
 
 use std::collections::BTreeMap;
 
@@ -45,11 +60,26 @@ const RECORDS_START: usize = 12;
 const ID_OFFSET: usize = 0x18;
 /// Word holding the compendium index in bits 12..22.
 const COMPENDIUM_OFFSET: usize = 0xc;
+/// Word holding the name pool offset (`0xFFFFFFFF` when the record has no name).
+const NAME_OFFSET: usize = 4;
+/// Head word holding the record count and the name pool's length at `+0x08`.
+const POOL_LENGTH_OFFSET: usize = 8;
+/// Head word at `+0x02`: bit 15 marks an equipment member (with its stats table) and the low
+/// 15 bits count its stats entries (`func_020de7a4`, `0x020de7b4`).
+const FLAGS_OFFSET: usize = 2;
+const HAS_STATS: u16 = 0x8000;
+const STATS_COUNT: u16 = 0x7fff;
+/// Fixed block between the stats table and the name pool of an equipment member
+/// (`func_020de7a4` adds it whenever bit 15 is set).
+const NAMES_HEADER_SIZE: usize = 0x58;
+/// Name word of a record without a name (`func_020de574` tests `-1`).
+const NO_NAME: u32 = 0xffff_ffff;
 
-/// Item id → compendium index, merged from the category tables.
+/// Item id → compendium index and name, merged from the category tables.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ItemTable {
     entries: BTreeMap<u16, u16>,
+    names: BTreeMap<u16, String>,
 }
 
 impl ItemTable {
@@ -89,6 +119,81 @@ impl ItemTable {
     /// is not in the tables.
     pub fn compendium(&self, id: u16) -> Option<u16> {
         self.entries.get(&id).copied()
+    }
+
+    /// Parses the name pool of one category member and merges its names.
+    ///
+    /// The pool's base is `12 + records + stats entries + 0x58` for an equipment member and
+    /// `12 + records + stats entries` otherwise (`func_020de714`/`func_020de7a4`,
+    /// `0x020de724`/`0x020de7b4`); each record's `+0x04` word is the string's offset from it.
+    ///
+    /// # Errors
+    /// [`nds_rom::Error`] when the member is too short for its head, records, stats table or
+    /// name block, the declared pool runs past the member, a name offset is past the pool, a
+    /// string is unterminated, or it is not UTF-8 (`itemname_<language>.nat` yields the same
+    /// ASCII markup).
+    pub fn add_names_member(&mut self, data: &[u8]) -> Result<()> {
+        let count = usize::from(u16_at(data, 0)?);
+        let flags = u16_at(data, FLAGS_OFFSET)?;
+        let entries = usize::from(flags & STATS_COUNT);
+        let records_end = RECORDS_START
+            .checked_add(count * RECORD_SIZE)
+            .ok_or(Error::Malformed("item table name count"))?;
+        if records_end > data.len() {
+            return Err(Error::Malformed("item table shorter than its records"));
+        }
+        let pool_start = records_end
+            .checked_add(entries * RECORD_SIZE)
+            .and_then(|offset| {
+                let header = if flags & HAS_STATS != 0 {
+                    NAMES_HEADER_SIZE
+                } else {
+                    0
+                };
+                offset.checked_add(header)
+            })
+            .ok_or(Error::Malformed("item table names block"))?;
+        let pool_len = (u32_at(data, POOL_LENGTH_OFFSET)? & 0x7fff_ffff) as usize;
+        if pool_len == 0 {
+            return Err(Error::Malformed("item table has no names block"));
+        }
+        let pool_end = pool_start
+            .checked_add(pool_len)
+            .filter(|&end| end <= data.len())
+            .ok_or(Error::Malformed("item table names block truncated"))?;
+        let pool = &data[pool_start..pool_end];
+        for index in 0..count {
+            let at = RECORDS_START + index * RECORD_SIZE;
+            let id = i16::from_le_bytes([data[at + ID_OFFSET], data[at + ID_OFFSET + 1]]);
+            if id <= 0 {
+                return Err(Error::Malformed("item table id not positive"));
+            }
+            let offset = u32_at(data, at + NAME_OFFSET)?;
+            if offset == NO_NAME {
+                continue;
+            }
+            let start = usize::try_from(offset)
+                .ok()
+                .filter(|&start| start < pool.len())
+                .ok_or(Error::Malformed("item name offset past the pool"))?;
+            let len = pool[start..]
+                .iter()
+                .position(|&b| b == 0)
+                .ok_or(Error::Malformed("item name not terminated"))?;
+            let name = std::str::from_utf8(&pool[start..start + len])
+                .map_err(|_| Error::Malformed("item name is not UTF-8"))?;
+            // Categories have disjoint id ranges; a repeated id keeps the first record.
+            self.names
+                .entry(id as u16)
+                .or_insert_with(|| name.to_owned());
+        }
+        Ok(())
+    }
+
+    /// The name of `id`, in the game's markup encoding (`<1>` is the possessive `'s`);
+    /// `None` when the item is not in the tables or its record has no name.
+    pub fn name(&self, id: u16) -> Option<&str> {
+        self.names.get(&id).map(String::as_str)
     }
 
     /// Number of items known.
@@ -321,5 +426,98 @@ mod tests {
     fn a_member_without_its_stats_table_is_an_error() {
         let data = member(&[(22000, 945)]);
         assert!(ItemStats::default().add_member(&data).is_err());
+    }
+
+    /// A named member: `(id, name)` records whose `+0x04` words index the pool in order, then
+    /// (for an equipment member) a zeroed stats table and the 0x58-byte block, then the
+    /// NUL-terminated pool.
+    fn named_member(items: &[(u16, &str)], equipment: bool) -> Vec<u8> {
+        let count = items.len();
+        let mut pool = Vec::new();
+        let mut offsets = Vec::new();
+        for &(_, name) in items {
+            offsets.push(pool.len() as u32);
+            pool.extend_from_slice(name.as_bytes());
+            pool.push(0);
+        }
+        let records = RECORDS_START + count * RECORD_SIZE;
+        let stats = if equipment { count * RECORD_SIZE } else { 0 };
+        let header = if equipment { NAMES_HEADER_SIZE } else { 0 };
+        let pool_start = records + stats + header;
+        let mut data = vec![0u8; pool_start + pool.len()];
+        data[..2].copy_from_slice(&(count as u16).to_le_bytes());
+        let flags = if equipment {
+            HAS_STATS | count as u16
+        } else {
+            0
+        };
+        data[FLAGS_OFFSET..FLAGS_OFFSET + 2].copy_from_slice(&flags.to_le_bytes());
+        data[POOL_LENGTH_OFFSET..POOL_LENGTH_OFFSET + 4]
+            .copy_from_slice(&(pool.len() as u32).to_le_bytes());
+        for (index, &(id, _)) in items.iter().enumerate() {
+            let at = RECORDS_START + index * RECORD_SIZE;
+            data[at + ID_OFFSET..at + ID_OFFSET + 2].copy_from_slice(&id.to_le_bytes());
+            data[at + NAME_OFFSET..at + NAME_OFFSET + 4]
+                .copy_from_slice(&offsets[index].to_le_bytes());
+        }
+        data[pool_start..].copy_from_slice(&pool);
+        data
+    }
+
+    #[test]
+    fn names_resolve_through_the_records_pool_offsets() {
+        // Each record's +0x04 offset, not its position, selects the pool string.
+        let data = named_member(&[(20004, "copper sword"), (19057, "poison needle")], true);
+        let mut table = ItemTable::from_members(&[&data]).unwrap();
+        table.add_names_member(&data).unwrap();
+        assert_eq!(table.name(20004), Some("copper sword"));
+        assert_eq!(table.name(19057), Some("poison needle"));
+        assert_eq!(table.name(20005), None);
+        assert_eq!(table.compendium(20004), Some(0));
+    }
+
+    #[test]
+    fn a_member_without_stats_starts_its_pool_right_after_the_records() {
+        // Head bit 15 clear: no stats table and no 0x58-byte block.
+        let data = named_member(&[(22000, "medicinal herb")], false);
+        let mut table = ItemTable::default();
+        table.add_names_member(&data).unwrap();
+        assert_eq!(table.name(22000), Some("medicinal herb"));
+    }
+
+    #[test]
+    fn a_name_offset_past_the_pool_is_an_error() {
+        let mut data = named_member(&[(20004, "copper sword")], true);
+        let at = RECORDS_START + NAME_OFFSET;
+        data[at..at + 4].copy_from_slice(&99u32.to_le_bytes());
+        assert!(ItemTable::default().add_names_member(&data).is_err());
+    }
+
+    #[test]
+    fn a_member_without_its_names_block_is_an_error() {
+        // A bare record table: no pool length, so the block is absent.
+        let data = member(&[(22000, 945)]);
+        assert!(ItemTable::default().add_names_member(&data).is_err());
+    }
+
+    #[test]
+    fn a_truncated_names_pool_is_an_error() {
+        let mut data = named_member(&[(20004, "copper sword")], true);
+        data.truncate(data.len() - 1);
+        assert!(ItemTable::default().add_names_member(&data).is_err());
+        let mut data = named_member(&[(20004, "copper sword")], true);
+        let pool_start = data.len() - "copper sword\0".len();
+        data[pool_start..].fill(b'x');
+        assert!(ItemTable::default().add_names_member(&data).is_err());
+    }
+
+    #[test]
+    fn a_record_without_a_name_is_skipped() {
+        let mut data = named_member(&[(20004, "copper sword")], true);
+        let at = RECORDS_START + NAME_OFFSET;
+        data[at..at + 4].copy_from_slice(&NO_NAME.to_le_bytes());
+        let mut table = ItemTable::default();
+        table.add_names_member(&data).unwrap();
+        assert_eq!(table.name(20004), None);
     }
 }
