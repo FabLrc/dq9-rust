@@ -13,10 +13,14 @@
 //!   headgear, weapon, shield, accessory);
 //! - fourteen 10-bit stat fields at `+0x14C`: fields 0 to 6 are the base attributes
 //!   (strength, resilience, agility, deftness, charm, magical mending, magical might),
-//!   fields 7 and 8 the maximum HP and MP, the remaining five are not established. Fields 7
-//!   and 8 are what `Save_UnpackMain` (`0x020a95b4`) and `func_02082d7c` write into the
-//!   party member's HP and MP (`melonds::copies::member_fields`, `+0x1c`/`+0x1e`): the game
-//!   restores a character at full HP and MP.
+//!   fields 7 and 8 the **current** HP and MP and fields 9 and 10 the **maximum** HP and
+//!   MP (`func_020830cc` writes both pairs from the member object's `+0x1c`/`+0x1e` and
+//!   `+0x6c`/`+0x6e`; `Save_UnpackMain` (`0x020a95b4`) and `func_02082d7c` read only 7 and 8
+//!   back into the member's HP and MP (`melonds::copies::member_fields`, `+0x1c`/`+0x1e`).
+//!   A save therefore restores a wounded character **wounded**, at the record's own value,
+//!   while the load recomputes the attributes and the maxima from the level file, the seeds
+//!   and the equipment (`func_02082fc4`, `func_02083e28`). Fields 0 to 6 and 9 to 10 are the
+//!   writer's cache, never its input.
 //!
 //! A new game's hero is the record character creation writes (`ov_009` `0x0218636c` and the
 //! `u16` list at `0x0218ab78`): the Minstrel's vocation (6), level 1 in every vocation, no
@@ -285,7 +289,8 @@ pub struct Character {
     pub levels: [u8; VOCATION_COUNT],
     /// Experience in every vocation (`+0x1C`).
     pub experience: [u32; VOCATION_COUNT],
-    /// Current HP and MP, restored at their maximum (see the module note).
+    /// Current HP and MP, as the save carries them (`+0x14c` fields 7 and 8): the load
+    /// restores the saved value, wounded included, not the maximum.
     pub hp: u16,
     pub max_hp: u16,
     pub mp: u16,
@@ -310,11 +315,17 @@ pub struct Character {
 }
 
 impl Character {
-    /// Converts a save record and the held items of its party slot.
+    /// Converts a save record and the held items of its party slot. The stat block's fields 7
+    /// and 8 are the saved current HP and MP (`PartyMember_LoadRecord`, `0x02082d7c`), 9 and
+    /// 10 the maxima `func_020830cc` cached from the member's `+0x6c`/`+0x6e`. A maximum of 0
+    /// (a new game's hero before the level tables) leaves [`Character::apply_level_tables`]
+    /// to fill both the maximum and the current value.
     pub fn from_record(record: &SaveCharacter<'_>, held: [u16; HELD_ITEMS]) -> Self {
         let bytes = record.bytes();
-        let max_hp = stat_field(bytes, 7);
-        let max_mp = stat_field(bytes, 8);
+        let hp = stat_field(bytes, 7);
+        let max_hp = stat_field(bytes, 9);
+        let mp = stat_field(bytes, 8);
+        let max_mp = stat_field(bytes, 10);
         let mut equipment = Equipment::default();
         for slot in EquipSlot::ALL {
             equipment.set(slot, worn(record.equipment(slot)));
@@ -333,9 +344,9 @@ impl Character {
             vocation: record.vocation(),
             levels: core::array::from_fn(|v| record.level(v).unwrap_or(0)),
             experience: core::array::from_fn(|v| record.experience(v).unwrap_or(0)),
-            hp: max_hp,
+            hp,
             max_hp,
-            mp: max_mp,
+            mp,
             max_mp,
             stats: BaseStats::default(),
             equipment,
@@ -421,7 +432,9 @@ impl Character {
     /// Fills the values the game computes from the level table: the base attributes at the
     /// current vocation and level, and, for a character that has none yet (a new game's
     /// hero), the maximum and current HP and MP. A character restored from a save keeps the
-    /// record's maxima, which include seeds and equipment, as the load itself writes them.
+    /// record's own current HP and MP and its cached maxima (`+0x14c` fields 7 to 10); the
+    /// original recomputes the maxima the same way at load (`func_02082fc4`) and a fallen
+    /// member stays at 0 rather than standing back up.
     pub fn apply_level_tables(&mut self, tables: &LevelTables) {
         let Some(stat) = tables.stat(self.vocation, self.level()) else {
             return;
@@ -429,15 +442,15 @@ impl Character {
         self.stats = BaseStats::from_level(stat);
         if self.max_hp == 0 {
             self.max_hp = stat.max_hp;
+            if self.hp == 0 {
+                self.hp = self.max_hp;
+            }
         }
         if self.max_mp == 0 {
             self.max_mp = stat.max_mp;
-        }
-        if self.hp == 0 {
-            self.hp = self.max_hp;
-        }
-        if self.mp == 0 {
-            self.mp = self.max_mp;
+            if self.mp == 0 {
+                self.mp = self.max_mp;
+            }
         }
     }
 
@@ -1160,9 +1173,12 @@ mod tests {
             bytes[at + 352..at + 354].copy_from_slice(&13007u16.to_le_bytes());
             bytes[at + 366..at + 368].copy_from_slice(&20004u16.to_le_bytes());
             bytes[at + 372] = 1; // a woman
-            // +0x14C: word 2 fields 7 and 8 are the maximum HP and MP.
+            // +0x14C: word 2 fields 7 and 8 are the current HP and MP (30/12), word 3
+            // fields 9 and 10 the maxima (40/20) — `func_020830cc`'s layout.
             let word = (30u32 << 10) | (12u32 << 20);
             bytes[at + 0x154..at + 0x158].copy_from_slice(&word.to_le_bytes());
+            let word = 40u32 | (20u32 << 10);
+            bytes[at + 0x158..at + 0x15c].copy_from_slice(&word.to_le_bytes());
         }
 
         let mut bytes = blank_save();
@@ -1225,9 +1241,8 @@ mod tests {
         assert_eq!(hero.equipment.head, None);
         assert_eq!(hero.held_items[0], Some(22159));
         assert_eq!(hero.held_items[1], None);
-        assert_eq!(hero.max_hp, 30);
-        assert_eq!(hero.max_mp, 12);
         assert_eq!((hero.hp, hero.mp), (30, 12));
+        assert_eq!((hero.max_hp, hero.max_mp), (40, 20));
         assert_eq!(party.members[1].vocation, 1);
         assert_eq!(party.gold, 1234);
         assert_eq!(party.bag.capacity(), 3);
@@ -1245,6 +1260,32 @@ mod tests {
         }
         // A party restored from a save places no companion until its map loads.
         assert!(party.field.is_empty());
+    }
+
+    #[test]
+    fn a_wounded_record_reloads_wounded_and_keeps_its_maxima() {
+        let save = party_save();
+        let mut party = Party::from_slot(&save.slot(0).unwrap()).unwrap();
+        let hero = &party.members[0];
+        assert_eq!((hero.hp, hero.max_hp), (30, 40));
+        assert_eq!((hero.mp, hero.max_mp), (12, 20));
+        // The level tables supply the attributes and would supply the maxima of a character
+        // that has none; a restored character keeps both its own maxima and its current
+        // value (`func_02082fc4` recomputes only the maxima).
+        let tables = synthetic_tables(&level_file());
+        party.apply_level_tables(&tables);
+        let hero = &party.members[0];
+        assert_ne!(
+            hero.stats,
+            BaseStats::default(),
+            "the level fixed the tables"
+        );
+        assert_eq!((hero.hp, hero.max_hp), (30, 40));
+        assert_eq!((hero.mp, hero.max_mp), (12, 20));
+        // A fallen member stays down: its maximum is established, so nothing fills its HP.
+        party.members[0].hp = 0;
+        party.apply_level_tables(&tables);
+        assert_eq!(party.members[0].hp, 0);
     }
 
     #[test]

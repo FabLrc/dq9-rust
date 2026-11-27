@@ -406,7 +406,7 @@ list of record indices: it is the member object id for each position.
 | `+0x13e` bits 0-2 | `+0x18` bits 0-2 (set, never cleared) | [unknown] |
 | `+0x13f` bits 3-7 | `+0x94c` | [unknown] (5 in the demo) |
 | `+0x140` (name) | `+0x3c`, text (glyph indices converted by `func_02042774`) | name |
-| `+0x154` (u32) | `+0x1c` = bits 10..19, `+0x1e` = bits 20..29 | [unknown] |
+| `+0x154` (u32) | `+0x1c` = bits 10..19, `+0x1e` = bits 20..29 | **current HP and MP** (stat-block fields 7 and 8); the maxima `+0x6c`/`+0x6e` are not read from the record — `func_02082fc4` recomputes them (§ "Fields typed by `dq9_formats::save`") |
 | `+0x160` (0x1c) | `+0x488` | equipment and appearance |
 | `+0x17c` (0xc0) | `+0x4a4` | [unknown] |
 
@@ -468,6 +468,19 @@ character = index in the glyph table of the `me` font** (`font.md`), terminated 
 `+368`, accessory `+370`, face `+356`, hairstyle `+358`, skin/eyes/gender `+372`, hair
 `+373`, body shape `+376`/`+378`.
 
+The **stat block** at `+0x14c` (`Character::stat_field`) is five words of three 10-bit
+fields: 0 to 6 the base attributes, **7 and 8 the current HP and MP**, **9 and 10 the
+maximum HP and MP**. `func_020830cc` (`0x020830dc`, called by `Save_Serialize` for each
+active member) fills them from the member object — the packed attributes at `+0x00`/`+0x04`/
+`+0x08`, the current HP/MP at `+0x1c`/`+0x1e` and the maxima at `+0x6c`/`+0x6e` — and
+`PartyMember_LoadRecord` (`0x02082d7c`) reads back only 7 and 8, into the member's
+`+0x1c`/`+0x1e`; the attributes and the maxima are recomputed at load by `func_02082fc4`
+(`0x02082fd4`: level file, seeds, `func_02083e28` for the worn items), so fields 0–6 and
+9–10 are the **writer's cache**, never its input. Evidence: `build/sav/demo.sav` holds
+481/693 HP for the hero and `build/melonds/dq9.ml1`, the state resumed from that save (same
+gold, 38,754), holds the same 481 current and 693 maximum — the load does not heal
+(`build/evidence/v3-base-attributes/demo-vs-melonds.txt`).
+
 ## Writing (`SlotMut`, `dq9re save --set`)
 
 Every field the readers above expose has a setter that writes through the **same constant**
@@ -487,11 +500,19 @@ contract is stated on `seal` and checked by `a_write_without_a_seal_reports_a_ba
 | party | `set_standby_count`, `set_party_count`, `set_party_order`, `set_held_item`, `set_held_items` |
 | money and counters | `set_gold_on_hand`, `set_gold_in_bank`, `set_mini_medals`, `set_visited_locations`, `set_special_guests`, `set_party_tricks`, `set_unlocked_vocations` |
 | character | `character_mut(i)` → `set_name_raw`, `set_vocation`, `set_level`, `set_revocations`, `set_experience`, `set_seed`, `set_unallocated_skill_points`, `set_proficiency_flags`, `set_equipment`, `set_face` / `set_face_item`, `set_hair_style` / `set_hair_item`, `set_gender`, `set_skin_color`, `set_eye_color`, `set_hair_color`, `set_body` |
+| character health | `set_hp`, `set_mp` (current, fields 7 and 8), `set_max_hp`, `set_max_mp` (fields 9 and 10), `stat_field(f)` to read any of the fourteen |
 
 Not writable: the version string at `slot+24` (a format marker — the game rejects `save011`
-in `Save_ReadHeaderA`, so a wrong value makes the slot unreadable) and HP/MP, which the
-readers above do not expose: the record holds the per-vocation **seeds** (max HP/MP among
-them, `set_seed`), the current values live in `GameState`.
+in `Save_ReadHeaderA`, so a wrong value makes the slot unreadable).
+
+**The base attributes (fields 0 to 6)** have no setter because the port cannot compute what
+the original writes there: `func_020830cc` copies the live member's attributes, which
+`func_02083e28` sums from the level row, the seed words (`+0x850`), the skill panels and the
+worn items. The port derives the level row only (§ "Fields typed by `dq9_formats::save`";
+[`party.md`](party.md) § "Computed values"), so writing its value would replace the game's
+total with a smaller one. They are kept byte for byte, and nothing the port reads changes:
+neither the original's load nor the port's reads them back. **[limit]** the port's own
+`Character::stats` is the level row, not the original's total.
 
 **The mirror copy.** `Save_WriteStep` state 2 rewrites the **same image at `0x8010`** after a
 normal save (§ "Role of the two slots and write protocol"), so the game leaves two identical
@@ -553,20 +574,30 @@ save test runs when `DQ9_SAVE` names one).
 | quest nibbles (`set_quest`, 204) | event block `+0x2cc`, `0x66` | the event block's quest quartets |
 | current track (`set_current_track`) | event block `+0x332` | the event block's selector |
 | party count (`set_party_count`) | 7577 | `party.members.len()` (at most 4) |
-| members (`character_mut`): name glyphs, sex, face, hair, hair colour, skin tone, eye colour and body (`set_face_item`/`set_hair_item`/`set_hair_color`/`set_skin_color`/`set_eye_color`/`set_body`), vocation, 13 levels, 13 experiences, equipment, skill points, skill panel bytes, maximum HP and MP (`set_max_hp`/`set_max_mp`, 10-bit fields 7 and 8 of `+0x14c`) | records `136 + 572 n` | `party.members`, records `standby_count + i` |
+| members (`character_mut`): name glyphs, sex, face, hair, hair colour, skin tone, eye colour and body (`set_face_item`/`set_hair_item`/`set_hair_color`/`set_skin_color`/`set_eye_color`/`set_body`), vocation, 13 levels, 13 experiences, equipment, skill points, skill panel bytes, current HP and MP and their maxima (`set_hp`/`set_mp`/`set_max_hp`/`set_max_mp`, 10-bit fields 7/8 and 9/10 of `+0x14c`) | records `136 + 572 n` | `party.members`, records `standby_count + i` |
 | held items (`set_held_items`) | `7578 + 18 i` | `member.held_items` |
 | bag (`set_bag`: capacity, ids, quantities) | `7652`, `0x1d4` bytes | `party.bag` |
 | gold (`set_gold_on_hand`) | 11448 | `party.gold` |
 
-The maxima are stored by the format: `Save_UnpackMain` copies `+0x14c` fields 7 and 8 into
-the member's HP and MP, so a load restores the member **at full** HP and MP. The record's
-**current** HP/MP are not saved. The base attributes (fields 0 to 6) are not written either:
-the record holds the values **with the worn equipment's modifiers** (`func_02083e28`, e.g. the
-demo's Sage 91 has 246 strength for a table value of 186), while the state's copy
-(`apply_level_tables`) is the level table's base only, so writing it would corrupt a valid
-record — the file keeps what it has, and a level gained in the port leaves those fields one
-level behind **[limit]**. A maximum of 0 in the state means "not established yet" (a new
-game's hero before the tables) and keeps the record's own value instead of zeroing it.
+The **current** HP and MP are saved: `func_020830cc` writes the member's `+0x1c`/`+0x1e`
+into `+0x14c` fields 7 and 8 and the maxima (`+0x6c`/`+0x6e`) into fields 9 and 10, and
+`PartyMember_LoadRecord` (`0x02082d7c`) copies 7 and 8 back into `+0x1c`/`+0x1e`, so a load
+restores the saved value — a wounded member stays wounded, and no heal happens on a load
+(the level file only fixes the maxima, `func_02082fc4`). `write_into` writes the four fields
+from `member.hp`/`mp`/`max_hp`/`max_mp`, so a round trip reproduces the record. A maximum of
+0 in the state means "not established yet" (a new game's hero before the tables): the
+record's own value and the current value beside it are then kept rather than zeroed.
+
+The base attributes (fields 0 to 6) are **not** written: the record holds the values **with
+the seeds and the worn equipment's modifiers** (`func_02083e28`, e.g. the demo's Sage 91 has
+246 strength for a table value of 186), while the state's copy (`apply_level_tables`) is the
+level row only, so writing it would replace the game's total with a smaller one. The original
+writes that cache on every save and its **load** never reads it back (§ "Fields typed by
+`dq9_formats::save`") — it recomputes the same total — so leaving the cache alone changes no
+value either side reads; it only shows to the save editor, where the fields stay one level
+behind when the port grants a level **[limit]**. The port's own `Character::stats` is the
+level row, not the original's seed-and-equipment total (a separate, pre-existing limit of
+`party.md`).
 
 Kept **byte for byte**, because the state does not carry them: the standby count and the
 party order (member object ids, not record indices), the per-vocation **seeds** (`+0x58`),

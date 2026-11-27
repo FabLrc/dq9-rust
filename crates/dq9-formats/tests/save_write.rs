@@ -149,6 +149,12 @@ fn dump(slot: &Slot<'_>) -> BTreeMap<String, String> {
         put(key("eye_color"), c.eye_color().to_string());
         put(key("hair_color"), c.hair_color().to_string());
         put(key("body"), format!("{:?}", c.body()));
+        for field in 0..14 {
+            put(
+                key(&format!("stat.{field}")),
+                c.stat_field(field).unwrap().to_string(),
+            );
+        }
         for slot in EquipSlot::ALL {
             put(
                 key(&format!("equipment.{slot:?}")),
@@ -566,6 +572,38 @@ fn ops() -> Vec<Op> {
             synthetic: true,
         },
         Op {
+            name: "character.hp",
+            keys: &["character.3.stat.7"],
+            apply: Box::new(|s| s.character_mut(3).map(|mut c| c.set_hp(321))),
+            read: Box::new(|s| s.character(3).unwrap().stat_field(7).unwrap().to_string()),
+            expected: "321",
+            synthetic: true,
+        },
+        Op {
+            name: "character.mp",
+            keys: &["character.3.stat.8"],
+            apply: Box::new(|s| s.character_mut(3).map(|mut c| c.set_mp(150))),
+            read: Box::new(|s| s.character(3).unwrap().stat_field(8).unwrap().to_string()),
+            expected: "150",
+            synthetic: true,
+        },
+        Op {
+            name: "character.max_hp",
+            keys: &["character.3.stat.9"],
+            apply: Box::new(|s| s.character_mut(3).map(|mut c| c.set_max_hp(693))),
+            read: Box::new(|s| s.character(3).unwrap().stat_field(9).unwrap().to_string()),
+            expected: "693",
+            synthetic: true,
+        },
+        Op {
+            name: "character.max_mp",
+            keys: &["character.3.stat.10"],
+            apply: Box::new(|s| s.character_mut(3).map(|mut c| c.set_max_mp(1023))),
+            read: Box::new(|s| s.character(3).unwrap().stat_field(10).unwrap().to_string()),
+            expected: "1023",
+            synthetic: true,
+        },
+        Op {
             name: "character.equipment",
             keys: &["character.3.equipment.Head"],
             apply: Box::new(|s| {
@@ -814,4 +852,38 @@ fn a_real_saves_no_op_edit_is_byte_identical() {
     // The mirror rule holds on the demo: copying slot 0 into slot 1 changes no byte.
     assert!(save.mirror_normal_slot());
     assert_eq!(save.as_bytes(), &bytes[..]);
+}
+
+/// The four live fields of the stat block: 7 and 8 the current HP and MP, 9 and 10 the
+/// maxima, ten bits each, three to a word (`func_020830cc` writes the member object's
+/// `+0x1c`/`+0x1e` and `+0x6c`/`+0x6e` there; `Save_UnpackMain`'s `PartyMember_LoadRecord`
+/// reads 7 and 8 back).
+#[test]
+fn the_hp_and_mp_fields_sit_where_the_writer_puts_them() {
+    let mut save = Save::parse(&image(false)).unwrap();
+    {
+        let mut slot = save.slot_mut(0).unwrap();
+        {
+            let mut c = slot.character_mut(3).unwrap();
+            c.set_hp(0x2ab);
+            c.set_mp(0x155);
+            c.set_max_hp(0x3ff);
+            c.set_max_mp(0x001);
+        }
+        slot.seal();
+    }
+    let bytes = save.as_bytes().to_vec();
+    let save = Save::parse(&bytes).unwrap();
+    let c = save.slot(0).unwrap().character(3).unwrap();
+    assert_eq!(c.stat_field(7), Some(0x2ab), "current HP");
+    assert_eq!(c.stat_field(8), Some(0x155), "current MP");
+    assert_eq!(c.stat_field(9), Some(0x3ff), "maximum HP");
+    assert_eq!(c.stat_field(10), Some(0x001), "maximum MP");
+    // The record's own bytes: word 2 (`+0x154`) low field is 6, then HP and MP; word 3
+    // (`+0x158`) holds the maxima first.
+    let word = u32::from_le_bytes(c.bytes()[0x154..0x158].try_into().unwrap());
+    assert_eq!(word, 0x2ab << 10 | 0x155 << 20);
+    let word = u32::from_le_bytes(c.bytes()[0x158..0x15c].try_into().unwrap());
+    assert_eq!(word, 0x3ff | 0x001 << 10);
+    assert_eq!(c.stat_field(14), None, "the block holds fourteen fields");
 }

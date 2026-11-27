@@ -1347,9 +1347,13 @@ fn save_with_abilities(vocation: u8, level: u8, mp: u16, panels: &[u16]) -> Vec<
     let at = 136;
     bytes[at + 2 + usize::from(vocation)] = level;
     bytes[at + 80] = vocation;
-    // `+0x154`: word 2 holds the maximum HP in fields 7 and the maximum MP in fields 8.
+    // `+0x154`: word 2 fields 7 and 8 are the current HP and MP (full here); word 3
+    // (`+0x158`) fields 9 and 10 are the maxima, which is what the load reads as such
+    // (`func_020830cc` writes both pairs, `PartyMember_LoadRecord` reads 7 and 8).
     let word = (30u32 << 10) | (u32::from(mp) << 20);
     bytes[at + 0x154..at + 0x158].copy_from_slice(&word.to_le_bytes());
+    let word = 30u32 | (u32::from(mp) << 10);
+    bytes[at + 0x158..at + 0x15c].copy_from_slice(&word.to_le_bytes());
     for &panel in panels {
         let panel = usize::from(panel);
         bytes[at + 0x11A + panel / 8] |= 1 << (panel % 8);

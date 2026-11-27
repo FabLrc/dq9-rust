@@ -94,8 +94,9 @@ pose, so that log resumes at the map's start point, as the original's does. The 
 goes through a temp file and a rename, and the option refuses to run without an input save or
 with an output naming the input. `--save` is only written by the game's own edits, the Quick
 Save and the deletion of a resumed log
-(above). What the state does not model (the record's base attributes, current HP/MP, the opaque
-blocks) stays byte for byte; the written container is one melonDS loads and continues from
+(above). What the state does not model (the record's base attributes, the opaque blocks) stays
+byte for byte — the current HP and MP and their maxima **are** written (`+0x14c` fields 7 to
+10); the written container is one melonDS loads and continues from
 (`re/save.md`, § "Writing a session"; evidence `build/evidence/v3-save-bind/`).
 
 `--suspend-out <file>` (needs `--save <file>`) names the destination of the field menu's **Misc.

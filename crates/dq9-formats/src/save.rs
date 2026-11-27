@@ -114,12 +114,16 @@ const BAG: usize = 7652;
 const BAG_SIZE: usize = 0x1d4;
 const BAG_HEADER: usize = 12;
 
-/// The record's derived stat block (`+0x14c`): fourteen 10-bit fields, three per word, of
-/// which 7 and 8 are the maximum HP and MP `PartyMember_LoadRecord` writes into the member
-/// (`dq9_core::party`). The base attributes are fields 0 to 6.
+/// The record's stat block (`+0x14c`): fourteen 10-bit fields, three per word. Fields 0 to 6
+/// are the base attributes, 7 and 8 the current HP and MP and 9 and 10 the maximum HP and MP
+/// (`func_020830cc` writes them from the member object, `PartyMember_LoadRecord` reads only
+/// 7 and 8 back — see `docs/re/save.md` § "Writing").
 const STAT_BLOCK: usize = 0x14c;
-const MAX_HP_FIELD: usize = 7;
-const MAX_MP_FIELD: usize = 8;
+const STAT_FIELDS: usize = 14;
+const HP_FIELD: usize = 7;
+const MP_FIELD: usize = 8;
+const MAX_HP_FIELD: usize = 9;
+const MAX_MP_FIELD: usize = 10;
 
 /// Value of an empty item word.
 pub const NO_ITEM: u16 = 0xffff;
@@ -852,6 +856,17 @@ impl<'a> Character<'a> {
     pub fn body(&self) -> (u16, u16) {
         (u16_at(self.0, BODY), u16_at(self.0, BODY + 2))
     }
+
+    /// One of the fourteen 10-bit fields of the stat block at `+0x14c`: 0 to 6 the base
+    /// attributes, 7 and 8 the current HP and MP, 9 and 10 the maximum HP and MP
+    /// (`func_020830cc`'s writes, `PartyMember_LoadRecord`'s reads of 7 and 8).
+    pub fn stat_field(&self, field: usize) -> Option<u16> {
+        if field >= STAT_FIELDS {
+            return None;
+        }
+        let word = u32_at(self.0, STAT_BLOCK + 4 * (field / 3));
+        Some(((word >> (10 * (field % 3))) & 0x3ff) as u16)
+    }
 }
 
 /// Editing view of one slot. Each setter leaves checksums stale until [`SlotMut::seal`].
@@ -1288,13 +1303,26 @@ impl CharacterMut<'_> {
         self.range(SKILL_POINTS, 2)
     }
 
-    /// Maximum HP: 10-bit field 7 of the stat block at `+0x14c`, the value
-    /// `Save_UnpackMain` writes into the member's HP (`dq9_core::party`'s `stat_field`).
+    /// Current HP: 10-bit field 7 of the stat block at `+0x14c`, the value
+    /// `PartyMember_LoadRecord` (`0x02082d7c`) writes into the member's HP (`+0x1c`).
+    /// `func_020830cc` takes it from there, so a save keeps a wounded character wounded.
+    pub fn set_hp(&mut self, hp: u16) -> Range<usize> {
+        self.set_stat_field(HP_FIELD, hp)
+    }
+
+    /// Current MP: field 8, read back the same way.
+    pub fn set_mp(&mut self, mp: u16) -> Range<usize> {
+        self.set_stat_field(MP_FIELD, mp)
+    }
+
+    /// Maximum HP: field 9, written from the member's `+0x6c` (`func_020830cc`). The load
+    /// recomputes it from the level table, seeds and equipment (`func_02082fc4`) and does not
+    /// read this field, which stays a cache.
     pub fn set_max_hp(&mut self, hp: u16) -> Range<usize> {
         self.set_stat_field(MAX_HP_FIELD, hp)
     }
 
-    /// Maximum MP: field 8 of the same block.
+    /// Maximum MP: field 10, the member's `+0x6e`.
     pub fn set_max_mp(&mut self, mp: u16) -> Range<usize> {
         self.set_stat_field(MAX_MP_FIELD, mp)
     }

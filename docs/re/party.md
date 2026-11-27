@@ -63,7 +63,7 @@ not are decoded by `Party`/`Character`.
 | experience per vocation | `+0x1C`, 13 × u32 | yes | `+0x138`, 13 × u32 | same |
 | skill-point pool | `+0xF4` (u16) | yes | `+0x564` | same |
 | equipment and look | `+0x160`, 0x1C bytes | yes | `+0x488` | same; ten `s16` in the order torso, legwear, **face, hair**, arms, footwear, headgear, weapon, shield, accessory |
-| base stats/maxima | `+0x14C`, 5 words | yes | `+0x00…+0x14`, `+0x1c`, `+0x1e`, `+0x6c`, `+0x6e` | `func_020830cc` packs them; see below |
+| base stats, HP/MP, maxima | `+0x14C`, 5 words | yes | `+0x00…+0x14`, `+0x1c`, `+0x1e`, `+0x6c`, `+0x6e` | `func_020830cc` packs them; see below |
 | held items (per party slot) | — | `7578 + 18 i`, 8 × u16 | `+0x454` | `Save_UnpackMain`, `0x020a95b4` |
 | bag | — | `Main+0x1d5c`, 0x1D4 bytes | `GameState+0x2a04` | `Save_UnpackMain`; layout below |
 | gold on hand | — | `11448` | `GameState+0x3970` | `Save_UnpackMain` |
@@ -75,26 +75,35 @@ game assigns, not record indices, and the model does not need them.
 **The stat block (`+0x14C`)** is five words, fourteen 10-bit fields, three to a word
 (`(bits 0-9, 10-19, 20-29)`). Fields 0 to 6 are the base attributes in the live object's order
 (strength, resilience, agility, deftness, charm, magical mending, magical might), fields 7 and
-8 are the maximum HP and MP, and fields 9 to 13 are **unknown**. The record keeps the values
-after equipment modifiers have been added (`func_02083e28` sums each worn piece and clamps to
-999); whether seeds also enter this block is **[hypothesis]** (the demo's Sage has none). On
-the demo's Sage 91, strength is 246 against the level table's 186 and magical mending 556
-against 192: the model's `Character::stats` is the level table's **base** value (no equipment,
-no seeds), and the equipment bonuses wait for `itembtlprm` (next wave).
+8 the **current** HP and MP and fields 9 and 10 the **maximum** HP and MP; fields 11 to 13
+are **unknown**. The writer is `func_020830cc` (`0x020830dc`, `Save_Serialize` calls it for
+each active member): fields 0 to 6 come from the member's packed attributes at `+0x00`/`+0x04`/
+`+0x08`, 7 and 8 from `+0x1c`/`+0x1e`, 9 and 10 from `+0x6c`/`+0x6e`. The record keeps the
+attributes after seeds and equipment modifiers have been added (`func_02083e28` sums each
+worn piece and clamps to 999). On the demo's Sage 91, strength is 246 against the level
+table's 186 and magical mending 556 against 192: the model's `Character::stats` is the level
+table's **base** value (no equipment, no seeds), and the equipment bonuses wait for
+`itembtlprm` (next wave). That is why `GameState::write_into` leaves fields 0 to 6 byte for
+byte: their correct value is not computable in the port (`docs/re/save.md` § "Writing").
 
 **HP and MP on load.** `Save_UnpackMain`/`func_02082d7c` write the record's fields 7 and 8
-(maximum HP and MP) into the member object's `+0x1c` and `+0x1e`
-(`melonds::copies::member_fields`, checked on the demo). Those are the fields the game reads
-as the character's current HP and MP: the status block pointed to by `GameObject+0x130` has
-current HP at `+4` (= member `+0x1c`) and current MP at `+6` (= `+0x1e`); the maxima sit at
-member `+0x6c`/`+0x6e` (block `+0x30` of `GameObject+0x134`). So a save restores every
-character **at full HP and MP**, and `Character::from_record` does the same. [hypothesis: the
-load does not keep wounded values, which the file format cannot carry.]
+into the member object's `+0x1c` and `+0x1e` (`melonds::copies::member_fields`, checked on the
+demo): those are the current HP and MP — the status block pointed to by `GameObject+0x130`
+has current HP at `+4` (= member `+0x1c`) and current MP at `+6` (= member `+0x1e`), while the
+maxima sit at member `+0x6c`/`+0x6e` and are **not** read from the record: `func_02082fc4`
+(`0x02082fd4`, called first by `PartyMember_LoadRecord`) recomputes them from the level file,
+the seeds and the worn items. So a save restores a character at the value it was saved with —
+**wounded included** — and `Character::from_record` reads hp = field 7, mp = field 8,
+max_hp = field 9, max_mp = field 10. Proof on the demo: the hero's record holds 481/693 HP
+and `build/melonds/dq9.ml1`, the state resumed from that save (same gold, 38,754), holds
+`+0x1c` = 481 and `+0x6c` = 693; three of the four members are wounded
+(`build/evidence/v3-base-attributes/demo-vs-melonds.txt`).
 
 **Computed values.** `Party::apply_level_tables` fills `Character::stats` from the level table
 at the current vocation and level. It also fills a new-game hero's maxima and current HP/MP
-(the character has none yet); a restored character keeps the record's maxima, which include
-seeds and equipment exactly as the load writes them.
+(the character has none yet); a restored character keeps the record's current value and its
+cached maxima, exactly as the load reads them, and a fallen member (0 HP with a maximum) is
+not stood back up by the tables.
 
 ## The party in a checkpoint (`dq9re state --json`)
 

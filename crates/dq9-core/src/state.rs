@@ -443,13 +443,15 @@ impl GameState {
     ///
     /// Not written, because the state does not carry them: the standby count and the party
     /// order (member object ids, not record indices), the per-vocation seeds (`+0x58`), the
-    /// record's `+0x14c` base attributes (fields 0 to 6, a level-table cache the state leaves
-    /// empty on a load — fields 7/8, the maxima, **are** written), the bank, medals, visited
-    /// places, special guests, party tricks, unlocked vocations, the version string, and every
-    /// block the reader leaves opaque (`Block`'s content beyond the fields above, the 12 bytes
-    /// at `+0x2c0` of the event block). An empty equipment, held-item or bag place keeps the
-    /// word it had when that word was empty too (`0` or [`NO_ITEM`]), so a write of unchanged
-    /// state changes no byte.
+    /// record's `+0x14c` base attributes (fields 0 to 6 — the original writes them as a cache
+    /// of the live attributes **after** seeds and equipment, which the state does not model,
+    /// and its load recomputes them anyway), the bank, medals, visited places, special guests,
+    /// party tricks, unlocked vocations, the version string, and every block the reader leaves
+    /// opaque (`Block`'s content beyond the fields above, the 12 bytes at `+0x2c0` of the
+    /// event block). The stat block's current HP and MP (fields 7/8) and maxima (9/10)
+    /// **are** written. An empty equipment, held-item or bag place keeps the word it had when
+    /// that word was empty too (`0` or [`NO_ITEM`]), so a write of unchanged state changes no
+    /// byte.
     pub fn write_into(&self, slot: &mut SlotMut<'_>) -> Result<Vec<Range<usize>>, StateError> {
         let mut ranges = Vec::new();
         ranges.push(slot.set_area(self.map));
@@ -585,14 +587,19 @@ impl GameState {
                 }
                 ranges.push(saved.set_unallocated_skill_points(member.skill_points));
                 ranges.push(saved.set_proficiency_flags(&member.skill_panels));
-                // The record stores the derived maxima (`+0x14c` fields 7/8), which the load
-                // writes into the member's HP and MP. A zero in the state means "not
-                // established yet" (a new game's hero before the level tables): the record's
-                // own value is then kept rather than zeroed.
+                // The record carries the member's current HP and MP (fields 7/8 of
+                // `+0x14c`) and its maxima (fields 9/10): `func_020830cc` writes
+                // `+0x1c`/`+0x1e` and `+0x6c`/`+0x6e` there, and `PartyMember_LoadRecord`
+                // reads 7 and 8 back, so a wounded member reloads wounded. A zero maximum
+                // means "not established yet" (a new game's hero before the level tables):
+                // the record's own value is then kept rather than zeroed, and so is the
+                // current value it belongs to.
                 if member.max_hp != 0 {
+                    ranges.push(saved.set_hp(member.hp));
                     ranges.push(saved.set_max_hp(member.max_hp));
                 }
                 if member.max_mp != 0 {
+                    ranges.push(saved.set_mp(member.mp));
                     ranges.push(saved.set_max_mp(member.max_mp));
                 }
             }
@@ -884,8 +891,9 @@ mod tests {
         }
         let mut bytes = save.as_bytes().to_vec();
         // The per-vocation seeds (`+0x58`) and the base attributes (`+0x14c` fields 0 to 6)
-        // have no writer: a pattern there proves the binding leaves them alone (fields 7/8,
-        // the maxima, do round-trip and are written from the member's values).
+        // have no writer: a pattern there proves the binding leaves them alone. Fields 7 to
+        // 10 (current HP and MP, maxima) and 11 to 13 do round-trip as the record's own
+        // values, so the pattern must come back byte for byte.
         for (i, byte) in bytes[136 + 0x58..136 + 0x94].iter_mut().enumerate() {
             *byte = (i as u8).wrapping_mul(7) | 1;
         }
@@ -1354,6 +1362,56 @@ mod tests {
             slot.seal();
         }
         assert_eq!(index, 0, "the fixture is a normal save in slot 0");
+        rewritten.mirror_normal_slot();
+        assert_eq!(rewritten.as_bytes(), &bytes[..]);
+    }
+
+    /// The demo save's party is wounded (the hero 481 of 693 HP). The record's stat block
+    /// carries the current HP and MP (fields 7/8) and the maxima (9/10) — `func_020830cc`
+    /// writes the member's `+0x1c`/`+0x1e` and `+0x6c`/`+0x6e` there, `PartyMember_LoadRecord`
+    /// reads 7 and 8 back — so the load keeps the saved value, and the write puts it back:
+    /// nothing heals on a round trip. A port that read the maxima from 7/8 would load 481/481.
+    #[test]
+    fn a_real_saves_wounded_party_reloads_wounded() {
+        let Some(path) = std::env::var_os("DQ9_SAVE") else {
+            eprintln!("skipped: no DQ9_SAVE");
+            return;
+        };
+        let bytes = std::fs::read(path).unwrap();
+        let save = Save::parse(&bytes).unwrap();
+        let index = save.current_slot().unwrap();
+        let state = GameState::from_save(&save).unwrap();
+        let slot = save.slot(index).unwrap();
+        let standby = usize::from(slot.standby_count());
+        for (i, member) in state.party.members.iter().enumerate() {
+            let record = slot.character(standby + i).unwrap();
+            assert_eq!(member.hp, record.stat_field(7).unwrap(), "member {i}: HP");
+            assert_eq!(member.mp, record.stat_field(8).unwrap(), "member {i}: MP");
+            assert_eq!(
+                member.max_hp,
+                record.stat_field(9).unwrap(),
+                "member {i}: max HP"
+            );
+            assert_eq!(
+                member.max_mp,
+                record.stat_field(10).unwrap(),
+                "member {i}: max MP"
+            );
+        }
+        let wounded = state
+            .party
+            .members
+            .iter()
+            .filter(|member| member.hp < member.max_hp)
+            .count();
+        assert!(wounded > 0, "the fixture's party is wounded");
+        // The binding writes those four fields back: the record is reproduced exactly.
+        let mut rewritten = Save::parse(&bytes).unwrap();
+        {
+            let mut slot = rewritten.slot_mut(index).unwrap();
+            state.write_into(&mut slot).unwrap();
+            slot.seal();
+        }
         rewritten.mirror_normal_slot();
         assert_eq!(rewritten.as_bytes(), &bytes[..]);
     }
