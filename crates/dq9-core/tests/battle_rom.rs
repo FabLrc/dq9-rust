@@ -812,6 +812,15 @@ fn chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve() {
         );
     }
 
+    // No chapter 2 way is kind 3: neither Oomph nor Blunt reaches the route, so the attack
+    // buff's multiplier cannot move a checkpoint.
+    for (action, (skill, who, _)) in &by_action {
+        assert_ne!(
+            skill.kind, 3,
+            "action {action} of {who:?} is kind 3 (the attack buff)"
+        );
+    }
+
     // Every way of the chapter 2 list is resolved by the kernel and its handler is modelled.
     for plain in [1u16, 2] {
         if let Some((_, _, verdicts)) = by_action.get(&plain) {
@@ -829,6 +838,34 @@ fn chapter_two_coverage_lists_what_the_kernel_and_the_ai_resolve() {
         );
     }
     let _ = Unsupported::Defend;
+}
+
+/// The ROM's attack-buff records and the gate on the blow: kind 3's sign is the `+0x30` short
+/// (Oomph +2, Blunt −2, one kind for both), and the plain Attack carries `+0x10` bit 9, which is
+/// what makes `GetAttackBaseDamage` (`ov_024::021e7bc0`) read the buffed `+0x8`.
+#[test]
+fn the_attack_buff_records_carry_the_sign_and_the_blow_its_bit() {
+    let Some(bytes) = testrom::load() else { return };
+    let rom = Rom::parse(bytes).unwrap();
+    let data = Data::load(&rom);
+    let tables = data.tables();
+    for (number, step) in [(49u16, 2i16), (50, -2), (159, -1), (196, 1)] {
+        let skill = tables
+            .actions
+            .skill(number)
+            .unwrap_or_else(|| panic!("action {number}"));
+        let action = skill.action.as_ref().unwrap();
+        assert_eq!(skill.kind, 3, "action {number}");
+        assert_eq!(action.stat_step, step, "action {number}'s +0x30");
+        assert!(!action.attack_buff_applies, "action {number} is no blow");
+    }
+    let attack = tables.actions.skill(1).unwrap();
+    let action = attack.action.as_ref().unwrap();
+    assert_eq!(attack.kind, 1);
+    assert!(
+        action.attack_buff_applies,
+        "the plain Attack reads the buffed attack"
+    );
 }
 
 /// The scope of the grudge rule and of enrage, counted on the ROM's 438 records: `+0x10` bit 26

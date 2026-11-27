@@ -44,8 +44,8 @@ Enrage itself is read but not modelled, and no chapter-2 fight carries a trigger
 ## Scope of the kernel
 
 One action, of a party member or a monster, on any number of targets: the plain Attack, the
-damage and healing spells of chapter 2 (kind 1 and kind 2), the stat changes of Buff and
-Accelerate (kinds 4 and 5), Dazzle (kind 19), Weird Dance's MP damage (kind 57), a call for
+damage and healing spells of chapter 2 (kind 1 and kind 2), the attack level of Oomph and Blunt
+(kind 3), the stat changes of Buff and Accelerate (kinds 4 and 5), Dazzle (kind 19), Weird Dance's MP damage (kind 57), a call for
 backup (kind 12), a kind-0 action and the monsters' Flee `0xE1`. The accuracy roll models an
 action whose accuracy stands at 100 and a monster's scaling accuracy with the dazzle die of
 eight, the guard level and the dazzle flag. Everything else is **refused before any draw** with
@@ -712,7 +712,10 @@ or 1 and a way rule the model has. Action by action, the kernel's verdict and th
 (`chapter_two_ways_play_to_the_end_over_twenty_seeds`), every chapter 2 monster that holds Flee
 (`fleeing_monsters_leave_over_twenty_seeds`), and checks that Buff moved the defence level,
 Accelerate the agility level and Dazzle the party's status. The party's Defend and an item are
-checked by `defend_guards_for_the_round_and_an_item_is_reported`.
+checked by `defend_guards_for_the_round_and_an_item_is_reported`. The coverage test also asserts
+that **no** action of the table is kind 3 and that the ROM's kind 3 records carry the sign in
+`+0x30` (`the_attack_buff_records_carry_the_sign_and_the_blow_its_bit`): the attack buff cannot
+reach a checkpoint or an oracle vector.
 
 ## The chapter 2 actions
 
@@ -726,6 +729,7 @@ these handlers draws.
 | 0 | `0x021da670` | nothing; for action `0xE1` (and `0x395`) it removes the combatant (below) |
 | 1 | `0x021da9e0` | damage, riders (as before) |
 | 2 | `0x021db3a4` | a heal (as before) |
+| 3 | `0x021db5ec` | attack level `+0x30` held to ±2 (`func_0208776c`/`func_020877c0`, count 5 at `+0x6e`) |
 | 4 | `0x021db7c0` | defence level `+0x30` held to ±2 (`func_020878b4`, count 6 at `+0x6f`) |
 | 5 | `0x021db994` | agility level `+0x30` held to ±2 (`func_020879a8`, count 6 at `+0x70`) |
 | 12 | `0x021dc2a0` | a call for backup: adds monsters (`func_0x02161380`), no HP change |
@@ -739,14 +743,51 @@ the status HP to 0 and `func_02088f68`. A fled monster is therefore gone for `Ch
 (`func_ov000_02157d3c`), worth no experience or drop (only `func_ov000_02155184` pays, and the
 victory collects `kills`), and the battle is won when none is left. `Battle::has_fled` reports it.
 
+**Oomph and Blunt (attack, kind 3).** Read on the European ROM
+(`build/evidence/v4-attack-buff/attack-buff.txt`, `00c59e07ff6a`): the handler `0x021db5ec` takes
+`+0x30` (Oomph 49 `+2`, Blunt 50 `−2`, Weakening Wave 159 `−1`, Double Up 173 `+2`, Gritty Ditty
+196 `+1`, Air Pollution 559 `−1`), holds it to ±2 and calls the movable test `func_0208776c`
+(entry `0x0208777c`; refuses a level already at the bound) then the write `func_020877c0` (entry
+`0x020877d0`, the Ghidra name is a `0x10` below it: `clamp(level + step, −2, 2)` at `+0x58` bits
+0–2, a count of **5** at `+0x6e`, the second count `+0x91` cleared, `+0x14` bit 10 `0x400`; a
+level of 0 goes through `func_02087838`, entry `0x02087848`). The sign is therefore the action's
+own `+0x30`, and one kind covers up and down. `UpdateCombatantAttack` (`ov_000::02155a50`)
+recomputes from the **base** attack each time (never from the already-buffed word, so levels do
+not compound) and stores `+0x8` = `(u16)((float)base × CalculateAttackBuffMultiplier(level))`,
+truncated by `_ffixu`; the 16-bit store happens **before** the comparison with 999 (party) or
+65535 (monsters), so only a product above 65535 could wrap instead of meeting the cap. The
+multiplier (`CalculateAttackBuffMultiplier`, `0x020745fc`) is `1.0 + 0.25 × level` **both ways**
+— 1.25 and 1.5 up, 0.75 and 0.5 down, so the second level is 1.5, not 1.5625 (defence's and
+agility's neighbours are the ones with a sign arm).
+
+The buff reaches a **range-0 blow** only through `+0x10` bit 9: `GetAttackBaseDamage`
+(`ov_024::021e7bc0`) reads the base word (`+0x134` `+0x34`) unless that bit is set, where it reads
+`+0x8`; an action with a range record takes neither word (its amounts come from `actdamage`). The
+plain Attack carries the bit; 37 of the 141 blow records do not. The order for a blow is therefore
+stat first, then `RoundUp` of `attack × 1.0f` (the `ResolveAction` context's `+0x1c` float, not
+the record's `+0x1C`, which is the max-damage cap), `CalculatePhysicalDamage`
+(`(attack − defence/2)/2`), and only afterwards the critical, the resistance, the weapon's element
+and family, the guard, the needle, the metal rules and the combo — the buff never touches those
+later steps. The critical's own term is the exception it does not reach either: the original reads
+the **base** attack there (`0x021e6e2c`, for the plain Attack and `0xDB`/`0x1F9`) and takes the
+greater of it × `between(0.95, 1.05)` and 1.2 × the buffed damage. The attack wears off on the
+**same** table and rolls as defence and agility (`0x02182ad4` through `0x02158d68`, the `+0x91`
+block of `func_ov000_0215858c`, which runs before `+0x92` and `+0x93`); its count runs down like
+theirs (`func_ov000_021599f4`'s pair table `0x02182efc` gives 4 at `+0x91`). No chapter 2 way is
+kind 3 (`tests/battle_rom.rs`'s coverage test), so the route and the 306 oracle vectors cannot
+move.
+
 **Buff and Accelerate.** `+0x30` is 1 on both (action records 41 and 45). `func_02087860` /
 `func_02087954` refuse a level already at the action's bound, else `func_020878b4` /
 `func_020879a8` store `clamp(level + step, −2, 2)`, a count of 6, and the flag `+0x14` `0x800` /
 `0x1000`; a level of 0 clears it. The multipliers are
 `CalculateDefenseBuffMultiplier`/`…Agility` (Unlicense decompilation): `1 + 0.5 × level` up,
-`0.5` at −1 and `0.25` at −2; `RoundUp` then gives the number the resolver reads
-(`UpdateCombatantDefence`, `…Agility`), and initiative scores the buffed agility. The counts run
-down per action (below).
+`0.5` at −1 and `0.25` at −2; `UpdateCombatantDefence`/`…Agility` (read at `0x02155af4` and
+`0x02155b98`) store `(u16)_ffixu(base × multiplier)`, truncated like the attack's, and initiative
+scores the buffed agility. **[open, `v4-attack-buff`]** the model's `round_up` on those two stats
+rounds a `.5` up where the ROM's `_ffixu` truncates; whether a chapter 2 value reaches a `.5`
+product is not measured here (it can move a route checkpoint, and the oracle replay is
+status-free), so aligning it is left to its own batch. The counts run down per action (below).
 
 **Dazzle.** `func_02088854` sets `+0x14` bit 6, a count of 4 at `+0x5f` and clears the second
 count `+0x82`; the handler stores `+0x30` at `+0x22` bits 6–8, a cosmetic sort. While the flag is
@@ -921,8 +962,9 @@ scaling accuracy (a stat-scaled or drawn value) stays `Unsupported::AccuracyScal
 ### Statuses' run-down
 
 `func_ov000_021599f4` takes one off every count held on each of its holder's passes; at 0 the
-second count starts at four, a literal of that function (`mov r1, #4`) for defence, agility and
-dazzle. The wear-off `func_ov000_0215858c` runs just before it on the same pass: after the tick's
+second count is the pair table's value for that status (`0x02182efc`, 4 for attack, defence,
+agility and dazzle; the `mov r1, #4` literal belongs to the function's first, three-status loop).
+The wear-off `func_ov000_0215858c` runs just before it on the same pass: after the tick's
 mandatory `NextRandomMax(100)`, each status whose second count is running takes one off it, draws
 `NextRandomMax(100)` and is cleared where the chance by the **decremented** count is above the
 draw. Two tables, each four floats, reached through a pointer and indexed 0 to 3 (the first of
@@ -930,20 +972,23 @@ the four rolls reads index 3, the last index 0):
 
 | statuses | pointer | table | rolls |
 |---|---|---|---|
-| defence, agility | `0x02158d68` | `0x02182ad4` | 62.5 %, 75 %, 87.5 %, 100 % |
+| attack, defence, agility | `0x02158d68` | `0x02182ad4` | 62.5 %, 75 %, 87.5 %, 100 % |
 | dazzle | `0x02158d6c` | `0x02182bd4` | 37.5 %, 62.5 %, 87.5 %, 100 % |
 
 Both tables read on the European ROM (`build/evidence/j4-audit-fixes/rom-wear-off-tables.txt`,
 `cdc2df1cee2d`): the pointer array sits in overlay 000's image, the floats in its data, and the
-disassembly's `ldr r2, [pc, #…]` operands name the two pointers. Dazzle's values are the page's
-38/63/88/100 once rounded, so the two sources agree. A defence level therefore holds six of its
-holder's passes; the model's counts and second counts are in `Status` (`WEAR_OFF_CHANCE` and
-`DAZZLE_WEAR_OFF_CHANCE`); the regression test is
-`wear_off_rolls_by_the_decremented_count_and_dazzle_has_its_own_table`.
+disassembly's `ldr r2, [pc, #…]` operands name the two pointers. The tick's blocks run in the
+order `+0x8e`, `+0x9e`, `+0x8f`, `+0x90`, `+0x91` (attack), `+0x92` (defence), `+0x93` (agility).
+Dazzle's values are the page's 38/63/88/100 once rounded, so the two sources agree. A defence or
+agility level therefore holds six of its holder's passes, an attack five (its write sets 5 at
+`+0x6e`); the model's counts and second counts are in `Status` (`WEAR_OFF_CHANCE` and
+`DAZZLE_WEAR_OFF_CHANCE`); the regression tests are
+`wear_off_rolls_by_the_decremented_count_and_dazzle_has_its_own_table` and
+`the_attack_level_wears_off_on_its_twins_rolls`.
 
 **Correction, 2026-11-17** (EU decompilation of `0x0215858c`,
 `build/evidence/j4-encyclopedia-audit/ghidra-status-tick.txt`, `8078738699e2`): the routine reads
-**two** chance arrays, `0x02158d68` for defence and agility and `0x02158d6c` (four bytes later) for
+**two** chance arrays, `0x02158d68` for attack, defence and agility and `0x02158d6c` (four bytes later) for
 dazzle, and it decrements the second count *before* indexing it. With a second count of 4 the four
 rolls are therefore `T[3]`, `T[2]`, `T[1]`, `T[0]` — `0.625, 0.75, 0.875, 1.0` if `T` is read
 ascending by remaining count (the page's 63/75/88/100), and dazzle's own array gives
@@ -1049,9 +1094,11 @@ most eight, so a ninth is unmodelled.
   round begins (the wiki's reading of the command), but the command code was not read.
 - **[hypothesis]** a call for backup's new HP is drawn from the world's generator by
   `func_02089630`; the call into it was not read, only the handler's `func_0x02161380`.
-- **[hypothesis]** the wear-off second count starts at 4 for defence, agility and dazzle; the
-  value is a literal of `func_ov000_021599f4` (`mov r1, #4`) and the fields it writes were not
-  traced further.
+- **fact**: the wear-off second count starts at 4 for attack, defence, agility and dazzle. It is
+  `func_ov000_021599f4`'s pair table `0x02182efc`, whose entries at offsets `+0x12` to `+0x15`
+  read `(0x12, 4)`, `(0x13, 4)`, `(0x14, 4)`, `(0x15, 4)`
+  (`build/evidence/v4-attack-buff/attack-buff.txt`); the `mov r1, #4` literal is the function's
+  first, three-status loop.
 - **[hypothesis]** a scaling accuracy's critical does not land outright: `RollAccuracy` returns 1
   before the multiplier when the target's resistance is above 0 and the cast was a critical
   (`0x02156a90`'s neighbourhood), which the model does not carry (a Dazzle critical would land

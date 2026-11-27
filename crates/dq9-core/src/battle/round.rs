@@ -34,7 +34,7 @@ use std::fmt;
 use super::end::{BattleResult, Kind};
 use super::model::{Fighter, Side, Unsupported};
 use super::random::Random;
-use super::resolve::{TargetOutcome, resolve_action};
+use super::resolve::{TargetOutcome, resolve_action_with_attack};
 use super::setup::{BattleSetup, MAX_GROUPS, Monster, SetupError, Skill};
 use crate::party::PARTY_MAX;
 
@@ -242,6 +242,13 @@ enum Plan {
 /// passes the status still holds, a second count the wear-off rolls once it has run out.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Status {
+    /// Attack level, `+0x58` bits 0–2, and its counts `+0x6e` and `+0x91` (Oomph, Blunt,
+    /// contenders' Weakening Wave, Double Up and Gritty Ditty).
+    pub attack_level: i8,
+    /// Passes the attack level still holds (`+0x6e`, five at the write, `func_020877c0`).
+    pub attack_count: u8,
+    /// Wear-off rolls left at attack (`+0x91`).
+    pub attack_second: u8,
     /// Defence level, `+0x58` bits 3–5, and its counts `+0x6f` and `+0x92` (Buff, Sap, Kasap).
     pub defence_level: i8,
     /// Passes the defence level still holds (`+0x6f`).
@@ -264,6 +271,14 @@ pub struct Status {
 }
 
 impl Status {
+    /// The attack multiplier of a level (`CalculateAttackBuffMultiplier`, `0x020745fc`):
+    /// `1.0 + 0.25 × level`, linear both ways — 1.25 and 1.5 up, 0.75 and 0.5 down. The routine
+    /// has no arm by the sign (`_fmul(0x3e800000 = 0.25)` then `_fadd(1.0)`), unlike defence and
+    /// agility's, which is why the second level is 1.5 and not 1.5625.
+    fn attack_multiplier(&self) -> f32 {
+        1.0f32 + 0.25f32 * f32::from(self.attack_level)
+    }
+
     /// The defence multiplier of a level (`CalculateDefenseBuffMultiplier`): 1 + 0.5 a level up,
     /// 0.5 at −1 and 0.25 at −2.
     fn defence_multiplier(&self) -> f32 {
@@ -297,6 +312,17 @@ const DAZZLE_WEAR_OFF_CHANCE: [f32; 4] = [1.0, 0.875, 0.625, 0.375];
 /// four rolls reads index 3 and the last index 0.
 fn wear_off_chance(table: [f32; 4], second: u8) -> f32 {
     table[usize::from(second).min(table.len() - 1)]
+}
+
+/// The attack `GetAttackBaseDamage` reads for an action carrying `+0x10` bit 9, as
+/// `UpdateCombatantAttack` stores it (`ov_000::02155a50`): `(u32)(base × multiplier)`, truncated
+/// by `_ffixu` (`0x0200c630`, no rounding), stored as a `u16` and compared with the party's 999
+/// (`iRam02155af0`) or a monster's 65535 (`iRam02155aec`). The 16-bit store happens first, so a
+/// product above 65535 would wrap rather than meet the cap.
+fn buffed_attack(base: i32, multiplier: f32, side: Side) -> i32 {
+    let cap = if side == Side::Party { 999 } else { 65535 };
+    let stored = (base as f32 * multiplier) as u32 & 0xffff;
+    (stored as i32).min(cap)
 }
 
 #[derive(Clone, Debug)]
@@ -494,7 +520,8 @@ impl Battle {
 
     /// The numbers the resolver reads for `who`: its base numbers with the defence and agility
     /// levels applied and `RoundUp`-ed (`UpdateCombatantDefence`, `…Agility`), its guard level
-    /// and its dazzle.
+    /// and its dazzle. The attack level is **not** applied here: `GetAttackBaseDamage` reads it
+    /// only for an action carrying `+0x10` bit 9, which [`Battle::resolve`] handles.
     fn fighter_snapshot(&self, who: Who) -> Fighter {
         let mut fighter = self.fighter(who).clone();
         let status = self.status(who);
@@ -976,9 +1003,29 @@ impl Battle {
     ) -> Result<(), BattleError> {
         let action = skill.action.clone().map_err(BattleError::from)?;
         let actor = self.fighter_snapshot(who);
+        // `GetAttackBaseDamage` (`ov_024::021e7bc0`) reads the base attack (`+0x134` `+0x34`)
+        // unless the action carries `+0x10` bit 9 (`0x200`); then it reads the buffed word
+        // `+0x8` `UpdateCombatantAttack` (`ov_000::02155a50`) wrote from the attack level. The
+        // buff therefore multiplies the stat *before* the physical damage, the weapon's
+        // element and family, the guard, the combo and the critical's `1.2 × damage`; the
+        // critical's own attack term still reads the base word.
+        let amount_attack = action.attack_buff_applies.then(|| {
+            buffed_attack(
+                actor.attack,
+                self.status(who).attack_multiplier(),
+                actor.side,
+            )
+        });
         let victims: Vec<Fighter> = targets.iter().map(|&w| self.fighter_snapshot(w)).collect();
         let combo = self.step_combo(who, &action, &targets, turn)?;
-        let outcome = resolve_action(&mut self.rng, &actor, &action, &victims, combo)?;
+        let outcome = resolve_action_with_attack(
+            &mut self.rng,
+            &actor,
+            &action,
+            &victims,
+            combo,
+            amount_attack,
+        )?;
         let mut outcomes = Vec::new();
         for (&victim, o) in targets.iter().zip(&outcome.targets) {
             let before = self.fighter(victim).hp;
@@ -1054,9 +1101,10 @@ impl Battle {
         Ok(())
     }
 
-    /// The kind handlers of the chapter 2 actions, once one target's pass is settled: 4 defence
-    /// (`func_ov024_021db7c0`), 5 agility (`021db994`), 19 dazzle (`021dd534`), 12 a call for
-    /// backup (`021dc2a0`). No draw of their own (`docs/re/battle.md`).
+    /// The kind handlers of the chapter 2 actions, once one target's pass is settled: 3 attack
+    /// (`func_ov024_021db5ec`), 4 defence (`func_ov024_021db7c0`), 5 agility (`021db994`), 19
+    /// dazzle (`021dd534`), 12 a call for backup (`021dc2a0`). No draw of their own
+    /// (`docs/re/battle.md`).
     fn apply_kind(
         &mut self,
         victim: Who,
@@ -1071,6 +1119,29 @@ impl Battle {
         let step = action.stat_step.clamp(-2, 2) as i8;
         let standing = self.alive(victim);
         match action.kind {
+            3 if standing => {
+                // `func_0208776c` refuses a level already at the action's bound; `func_020877c0`
+                // stores `clamp(level + step, -2, 2)`, a count of **5** at `+0x6e`, clears the
+                // second count and sets `+0x14` bit 10 (0x400); a level of 0 clears it through
+                // `func_02087838`. The sign comes from the action's `+0x30` short, so one kind
+                // holds Oomph and Blunt alike.
+                let status = self.status_mut(victim);
+                let movable = if step < 0 {
+                    status.attack_level > -2
+                } else {
+                    status.attack_level < 2
+                };
+                if movable {
+                    status.attack_level = (status.attack_level + step).clamp(-2, 2);
+                    if status.attack_level == 0 {
+                        status.attack_count = 0;
+                        status.attack_second = 0;
+                    } else {
+                        status.attack_count = 5;
+                        status.attack_second = 0;
+                    }
+                }
+            }
             4 if standing => {
                 let status = self.status_mut(victim);
                 // `func_02087860`: nothing moves a level already at the action's bound.
@@ -1178,6 +1249,11 @@ impl Battle {
         }
         for (second, level, count) in [
             (
+                &mut status.attack_second,
+                &mut status.attack_level,
+                &mut status.attack_count,
+            ),
+            (
                 &mut status.defence_second,
                 &mut status.defence_level,
                 &mut status.defence_count,
@@ -1202,10 +1278,13 @@ impl Battle {
     }
 
     /// `func_ov000_021599f4`: a pass off every count the holder holds; at 0 the second count
-    /// starts at four, a literal of that function (`mov r1, #4`) for defence, agility and dazzle.
-    fn decrement_status(&mut self, who: Who) {
+    /// starts at four, from that function's pair table `0x02182efc` (the entries at count
+    /// offsets `+0x12` to `+0x15` hold 4) — the literal `mov r1, #4` belongs to its first,
+    /// three-status loop.
+    pub(super) fn decrement_status(&mut self, who: Who) {
         let status = self.status_mut(who);
         for (count, second) in [
+            (&mut status.attack_count, &mut status.attack_second),
             (&mut status.defence_count, &mut status.defence_second),
             (&mut status.agility_count, &mut status.agility_second),
         ] {

@@ -202,6 +202,7 @@ fn skill(r: &ActionRecord<'_>, ranges: &Ranges) -> Skill {
         a.halved_by_defending = r.halved_by_defending;
         a.stat_step = r.stat_change;
         a.multi_target_falloff = r.weakens;
+        a.attack_buff_applies = r.word_10 >> 9 & 1 != 0;
         a.weapon_element = r.weapon_element;
         a.trait_accuracy_die = r.party_trait;
         a.works_on_metal = r.works_on_metal;

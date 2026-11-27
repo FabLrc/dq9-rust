@@ -2,7 +2,10 @@
 //! draws for several targets (which BattleEmulator, one target at a time, cannot check), the
 //! refusals and the rules that no oracle vector exercises.
 
+use std::collections::BTreeMap;
+
 use super::damage::{calculate_crit_rate, calculate_physical_damage, critical_threshold};
+use super::resolve::resolve_action_with_attack;
 use super::*;
 
 fn party() -> Fighter {
@@ -954,4 +957,268 @@ fn weird_dance_takes_mp_and_the_flight_action_removes_its_monster() {
     .unwrap();
     assert!(outcome.targets[0].fled, "the monster left");
     assert_eq!(outcome.targets[0].hp_after, 0);
+}
+
+/// The plain Attack as the ROM's action 1 carries it: `+0x10` bit 9, the attack buff's gate.
+fn buffed_blow() -> Action {
+    let mut a = Action::new(1, 1, Amount::Blow { multiplier: 1.0 });
+    a.reach = Reach::Attack;
+    a.element = 8;
+    a.landing_element = 8;
+    a.attack_buff_applies = true;
+    a
+}
+
+/// A self-buff of the attack level: Oomph's kind 3 with the step the action's `+0x30` holds.
+fn attack_buff(step: i16) -> Skill {
+    let mut a = Action::new(49, 3, Amount::Blow { multiplier: 1.0 });
+    a.reach = Reach::One;
+    a.stat_step = step;
+    let mut skill = Skill::from_action(a);
+    skill.aims = 2;
+    skill
+}
+
+fn attack_buff_monster() -> Monster {
+    let mut f = Fighter::new(Side::Monster);
+    f.hp = 5000;
+    f.max_hp = 5000;
+    f.attack = 10;
+    f.defence = 40;
+    f.agility = 5;
+    Monster {
+        number: 1,
+        table_hp: 5000,
+        group: 0,
+        fighter: f,
+        ways: [1; 6],
+        selector: 0,
+        ai_mode: 1,
+        extra_class: 0,
+        once_mask: 0,
+        remembers: false,
+        experience: 2,
+        gold: 4,
+        drops: [0, 0],
+        drop_steps: [0, 0],
+    }
+}
+
+/// A battle whose hero has `attack`, with the plain Attack in the monster's ways.
+fn attack_buff_battle(attack: i32) -> Battle {
+    let mut f = Fighter::new(Side::Party);
+    f.hp = 1000;
+    f.max_hp = 1000;
+    f.mp = 10;
+    f.attack = attack;
+    f.defence = 0;
+    f.agility = 10;
+    f.evasion_rate = 2.0;
+    let mut skills = BTreeMap::new();
+    skills.insert(1, Skill::from_action(buffed_blow()));
+    let setup = BattleSetup {
+        monsters: vec![attack_buff_monster()],
+        skills,
+        set_battle: false,
+    };
+    Battle::new(
+        setup,
+        vec![PartyMember::new(f)],
+        Surprise::None,
+        0x1234_5678_9abc_def0,
+    )
+    .unwrap()
+}
+
+/// The hero's blow amount in one round of a battle at `attack` with `level` already applied.
+fn blow_amount(attack: i32, level: i8) -> i32 {
+    let mut b = attack_buff_battle(attack);
+    b.party_status[0].attack_level = level;
+    let command = Command::Act {
+        skill: Skill::from_action(buffed_blow()),
+        target: Target::Monster(0),
+    };
+    let report = b.round(&[command], &mut Random::new(7)).unwrap();
+    report
+        .events
+        .iter()
+        .find_map(|e| match e {
+            Event::Acted { who, outcomes, .. } if *who == Who::Party(0) => {
+                Some(outcomes[0].1.amount)
+            }
+            _ => None,
+        })
+        .expect("the hero acted")
+}
+
+/// `CalculateAttackBuffMultiplier` (`0x020745fc`) is `1 + 0.25 × level`, and
+/// `UpdateCombatantAttack` (`0x02155a50`) truncates its product (`_ffixu`) and holds a party
+/// member under 999. A level therefore scales a physical blow by 1.25 and 1.5 up, 0.75 and 0.5
+/// down — 128.75 is 128, 154.5 is 154, and 700 × 1.5 is the cap.
+#[test]
+fn the_attack_level_multiplies_a_physical_blow_and_truncates() {
+    for (level, base, effective) in [
+        (0i8, 103i32, 103i32),
+        (1, 103, 128),
+        (2, 103, 154),
+        (1, 800, 999),
+        (2, 700, 999),
+        (-1, 103, 77),
+        (-2, 103, 51),
+    ] {
+        assert_eq!(
+            blow_amount(base, level),
+            blow_amount(effective, 0),
+            "level {level} on an attack of {base} is {effective}"
+        );
+    }
+}
+
+/// A kind 3 action writes the attack level (`func_0208776c` / `func_020877c0`): the step's sign
+/// chooses up or down, a second application moves it again, the level is held to ±2 and every
+/// write restarts a count of **five** at `+0x6e` (`mov r1, #5`, not defence's six).
+#[test]
+fn a_kind_three_action_moves_the_attack_level_by_its_step() {
+    let mut b = attack_buff_battle(100);
+    let up = Command::Act {
+        skill: attack_buff(1),
+        target: Target::Party(0),
+    };
+    b.round(std::slice::from_ref(&up), &mut Random::new(1))
+        .unwrap();
+    let status = b.status(Who::Party(0));
+    // The write sets five and the same action's pass takes one off (`func_ov000_021599f4`).
+    assert_eq!(
+        (
+            status.attack_level,
+            status.attack_count,
+            status.attack_second
+        ),
+        (1, 4, 0)
+    );
+    b.round(std::slice::from_ref(&up), &mut Random::new(2))
+        .unwrap();
+    let status = b.status(Who::Party(0));
+    assert_eq!((status.attack_level, status.attack_count), (2, 4));
+    b.round(&[up], &mut Random::new(3)).unwrap();
+    let status = b.status(Who::Party(0));
+    assert_eq!(
+        (status.attack_level, status.attack_count),
+        (2, 3),
+        "held to two; the refused write leaves the count running"
+    );
+
+    // Blunt's step is the same kind with a negative `+0x30`: −2 from 0 reaches −2.
+    let mut b = attack_buff_battle(100);
+    let down = Command::Act {
+        skill: attack_buff(-2),
+        target: Target::Party(0),
+    };
+    b.round(&[down], &mut Random::new(1)).unwrap();
+    let status = b.status(Who::Party(0));
+    assert_eq!((status.attack_level, status.attack_count), (-2, 4));
+}
+
+/// A generator whose next `NextRandomMax(100)` is exactly `draw`.
+fn generator_drawing(draw: i32) -> Random {
+    (0u64..)
+        .map(Random::new)
+        .find(|r| {
+            let mut r = r.clone();
+            r.next_max(100) == draw
+        })
+        .expect("a seed for every draw")
+}
+
+fn tick_attack(status: Status, draw: i32) -> Status {
+    let mut b = attack_buff_battle(100);
+    b.party_status[0] = status;
+    b.rng = generator_drawing(draw);
+    b.tick_status(Who::Party(0));
+    *b.status(Who::Party(0))
+}
+
+/// The attack level wears off on the same table and rolls as defence and agility
+/// (`0x02182ad4` through `0x02158d68`, `func_ov000_0215858c`'s `+0x91` block): the first of the
+/// four rolls reads index 3 and clears on 62.5 %, the last always.
+#[test]
+fn the_attack_level_wears_off_on_its_twins_rolls() {
+    let holding = |second: u8| Status {
+        attack_level: 1,
+        attack_count: 5,
+        attack_second: second,
+        ..Status::default()
+    };
+    let cleared = tick_attack(holding(4), 62);
+    assert_eq!(
+        (
+            cleared.attack_level,
+            cleared.attack_second,
+            cleared.attack_count
+        ),
+        (0, 0, 0)
+    );
+    let held = tick_attack(holding(4), 63);
+    assert_eq!((held.attack_level, held.attack_second), (1, 3));
+    assert_eq!(tick_attack(holding(3), 74).attack_level, 0);
+    assert_eq!(tick_attack(holding(3), 75).attack_second, 2);
+    assert_eq!(tick_attack(holding(2), 87).attack_level, 0);
+    assert_eq!(tick_attack(holding(2), 88).attack_second, 1);
+    assert_eq!(tick_attack(holding(1), 99).attack_level, 0);
+}
+
+/// The count of the attack write runs down over the holder's passes and hands over to the
+/// four wear-off rolls at 0 (`func_ov000_021599f4`, the pair table `0x02182efc` at `+0x12`)
+/// without touching defence or agility.
+#[test]
+fn the_attack_count_runs_down_before_its_second_count() {
+    let mut b = attack_buff_battle(100);
+    b.party_status[0].attack_level = 1;
+    b.party_status[0].attack_count = 1;
+    b.party_status[0].attack_second = 0;
+    b.decrement_status(Who::Party(0));
+    let status = b.status(Who::Party(0));
+    assert_eq!((status.attack_count, status.attack_second), (0, 4));
+    assert_eq!(
+        (status.defence_count, status.agility_count),
+        (0, 0),
+        "the twins keep their own counts"
+    );
+}
+
+/// The critical's own term is the **base** attack: the original reads `+0x134` `+0x34` there
+/// (`0x021e6e2c`) whatever the attack level, while the buffed word feeds the blow. Two different
+/// buffed attacks therefore leave a critical's amount alone, but not an ordinary blow's.
+#[test]
+fn the_attack_level_does_not_feed_the_criticals_own_attack_term() {
+    let mut critical = blow();
+    critical.always_critical = true;
+    let actor = party();
+    let target = monster();
+    let amount = |action: &Action, attack: i32| {
+        resolve_action_with_attack(
+            &mut Random::new(9),
+            &actor,
+            action,
+            std::slice::from_ref(&target),
+            0,
+            Some(attack),
+        )
+        .unwrap()
+        .targets[0]
+            .amount
+    };
+    assert_eq!(
+        amount(&critical, 125),
+        amount(&critical, 150),
+        "the critical reads the base attack, not the buffed one"
+    );
+    let mut plain = critical.clone();
+    plain.always_critical = false;
+    plain.critical_percent = 0;
+    assert_ne!(
+        amount(&plain, 125),
+        amount(&plain, 150),
+        "an ordinary blow does read the buffed attack"
+    );
 }

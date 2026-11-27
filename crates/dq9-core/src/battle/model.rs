@@ -35,8 +35,10 @@ pub fn grade_rate(grade: u8) -> Option<f32> {
 }
 
 /// A fighter's battle numbers, as the resolver reads them. All of them are the numbers **at the
-/// time of the action**: buffs already applied and `RoundUp`-ed (`docs/re/battle.md`), no
-/// status modelled (a status refuses the action upstream or is not represented here).
+/// time of the action**: defence and agility buffs already applied and `RoundUp`-ed; the attack
+/// level is not applied here but chosen by [`Battle::resolve`](super::round::Battle) per the
+/// action's `+0x10` bit 9 (`docs/re/battle.md`). No other status modelled (a status refuses the
+/// action upstream or is not represented here).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fighter {
     /// Party or monster.
@@ -262,7 +264,8 @@ pub struct Action {
     pub mp_cost: u8,
     /// `+0x17` high nibble.
     pub reach: Reach,
-    /// `+0x18` bits 5–11: the kind. 1 deals damage, 2 heals; the others are refused.
+    /// `+0x18` bits 5–11: the kind. 1 deals damage, 2 heals, 3 moves the attack level; the
+    /// others are refused unless modelled.
     pub kind: u8,
     /// `+0x08` bits 22–26: the element of what it deals; the target's resistance multiplies it.
     pub element: u8,
@@ -310,6 +313,12 @@ pub struct Action {
     /// carries it. Against one target the factor is the table's first, 1.0 (**[hypothesis]**);
     /// against several it is refused.
     pub multi_target_falloff: bool,
+    /// `+0x10` bit 9 (`0x200`): for a blow (no range record) `GetAttackBaseDamage` reads the
+    /// **buffed** attack (`+0x8`, `UpdateCombatantAttack`) rather than the base word (`+0x134`
+    /// `+0x34`); its range-record arm reads neither. The plain Attack carries the bit; 37 of the
+    /// 141 blow records do not, so the attack level reaches a blow only through it. The
+    /// critical's own attack term stays the base word whatever the bit.
+    pub attack_buff_applies: bool,
     /// `+0x10` bit 18: an elemental weapon of a party attacker multiplies the damage by the
     /// target's resistance to its element (the plain Attack carries it), and an action carrying it
     /// auto-hits for a party attacker whose weapon has the needle bit — before the dazzle's die of
@@ -357,6 +366,7 @@ impl Action {
             halved_by_defending: false,
             stat_step: 0,
             multi_target_falloff: false,
+            attack_buff_applies: false,
             weapon_element: false,
             trait_accuracy_die: false,
             works_on_metal: false,
@@ -486,8 +496,8 @@ const SPECIAL_ACTIONS: [u16; 10] = [
 ];
 
 /// The kinds the resolver and the battle apply: 0 nothing (and the monsters' flight), 1 damage,
-/// 2 heal, 4 defence, 5 agility, 12 a call for backup, 19 dazzle, 57 damage to MP.
-const MODELLED_KINDS: [u8; 8] = [0, 1, 2, 4, 5, 12, 19, 57];
+/// 2 heal, 3 attack level, 4 defence, 5 agility, 12 a call for backup, 19 dazzle, 57 damage to MP.
+const MODELLED_KINDS: [u8; 9] = [0, 1, 2, 3, 4, 5, 12, 19, 57];
 
 /// Checks everything the resolver cannot answer, before any draw.
 pub fn validate(actor: &Fighter, action: &Action, targets: &[Fighter]) -> Result<(), Unsupported> {

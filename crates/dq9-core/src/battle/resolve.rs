@@ -279,7 +279,31 @@ pub fn resolve_action(
     targets: &[Fighter],
     combo_count: u8,
 ) -> Result<ActionOutcome, Unsupported> {
+    resolve_action_with_attack(rng, actor, action, targets, combo_count, None)
+}
+
+/// [`resolve_action`] with the attack `GetAttackBaseDamage` (`ov_024::021e7bc0`) reads for the
+/// blow: `amount_attack` is the buffed word `+0x8` when the action carries `+0x10` bit 9, and
+/// `None` reads the actor's own word (the base attack). The critical's own term keeps
+/// `actor.attack`: the original reads the base word `+0x134` `+0x34` there whatever the buff
+/// (`0x021e6e2c`'s `sVar2 = *(short *)(… + 0x134) + 0x34`).
+pub(crate) fn resolve_action_with_attack(
+    rng: &mut Random,
+    actor: &Fighter,
+    action: &Action,
+    targets: &[Fighter],
+    combo_count: u8,
+    amount_attack: Option<i32>,
+) -> Result<ActionOutcome, Unsupported> {
     validate(actor, action, targets)?;
+    // One copy per action, never per target; the plain path shares the actor itself.
+    let amount_actor = amount_attack
+        .filter(|&attack| attack != actor.attack)
+        .map(|attack| {
+            let mut fighter = actor.clone();
+            fighter.attack = attack;
+            fighter
+        });
     let mut rng = Counted { rng, draws: 0 };
     let shared = action
         .critical_is_shared()
@@ -312,7 +336,12 @@ pub fn resolve_action(
             };
             // Every kind computes its amount in the game: the kind handler is handed it and
             // ignores it where the kind changes no number (`docs/re/battle.md`).
-            let base = base_amount(actor, target, action, &mut rng);
+            let base = base_amount(
+                amount_actor.as_ref().unwrap_or(actor),
+                target,
+                action,
+                &mut rng,
+            );
             amount = final_amount(&mut rng, &strike, base, critical, dodged || blocked, needle);
             if action.wakes_target && action.kind == 1 && amount > 0 {
                 // The wake roll (`func_ov000_02157288`, `0x02157340`): drawn even when nothing
@@ -335,7 +364,7 @@ pub fn resolve_action(
             // Weird Dance (`func_ov024_021e0bf4`): the amount is taken from MP, held under what
             // the target has.
             57 => (target.hp, amount.max(0).min(target.mp.max(0))),
-            // Kinds 0, 4, 5, 12 and 19 change no HP or MP here.
+            // Kinds 0, 3, 4, 5, 12 and 19 change no HP or MP here.
             _ => (target.hp, 0),
         };
         outcomes.push(TargetOutcome {
