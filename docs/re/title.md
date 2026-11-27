@@ -40,9 +40,11 @@ a written suspend slot 1 *and* a valid log on slot 0): the title announces the l
 choosing it resumes at the warp. The code consumer stays [unknown], but the code-0 menu is
 observed. After the load, a suspend-only cartridge has slot 1's header cleared, while a
 normal+suspend one gets slot 1 overwritten by slot 0's image (“Creating backup.”). The port has
-one Continue row (it resumes the ranked slot, suspend first) and a New Game row; it clears the
-loaded suspend log and does not model the backup write or the corrupted-log refusals (codes 4,
-6, 7).
+one Continue row (it resumes the ranked slot, suspend first) and a New Game row; its resume writes
+the DS's post-load image through `Save::finish_suspend_resume` — slot 0's log mirrored into slot 1
+when one exists, else slot 1's header A cleared — byte-identical to the DS on both container kinds
+(`v3-suspend-backup`). The corrupted-log refusals (codes 4, 6, 7) and the DS's story-word refresh
+from the backed-up log (19.2.1 where the port keeps 19.3.1) are not modelled.
 
 ## What each entry loads
 

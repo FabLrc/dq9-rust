@@ -37,9 +37,12 @@ use `Save::resume_slot` (normal log first, the `--save` boot path), while the ti
 suspend save first ([`re/title.md`](../re/title.md), § "The slot check"). `app/title.rs`'s
 `start_from_container` builds the same `load::Start` `load::start` would — `GameState::from_slot`
 (the suspend slot's warp map), `Party::from_slot`, the hero's look and message identity — and
-`App::begin` loads it. After a suspend resume, slot 1's header A is emptied and the container
-replaced through a temporary file and a rename (`Save_WriteHeaderA`, `0x020aba6c`), as the
-`--save` boot's `consume_suspend_log` does.
+`App::begin` loads it. After a suspend resume, `Save::finish_suspend_resume` writes the DS's
+post-load image and the container is replaced through a temporary file and a rename: a valid normal
+log on slot 0 is mirrored into slot 1 (`0x6fe4` bytes from `0x10`, overwriting the quick save's own
+Warp), else slot 1's header A is emptied (`Save_WriteHeaderA`, `0x020aba6c`). Both are byte-identical
+to the DS's own output (`v3-suspend-backup`); the `--save` boot's `consume_suspend_log` uses the
+same rule.
 
 **Create a new adventure log** opens the character-creation screen (`app/character.rs`,
 [`character-creation.md`](character-creation.md)): the hero's name and sex, then
@@ -93,8 +96,8 @@ normal when no suspend, nothing when both are empty, a stale checksum not ranked
   (`v3-suspend-ds`) is one row, **Load quick save data.**, plus Cancel for a suspend save, where
   the port shows Continue (which resumes that slot) and New Game.
 - The quick save's separate entry is folded into Continue; the corrupted-log refusals (codes 4,
-  6, 7), the post-load backup write and the adventure-log display (party, play time) are not
-  modelled.
+  6, 7), the DS's story-word refresh from the backed-up log and the adventure-log display (party,
+  play time) are not modelled.
 - The title's graphics, sound and the DS START button are not modelled: the title appears
   directly, without the original's "press START" frame.
 - The Web build keeps its page flows; it has no title screen.
