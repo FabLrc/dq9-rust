@@ -483,20 +483,65 @@ taken before it. The sex-dependent values come from the creation table below.
 The title's **Create a new adventure log** runs overlay `ov_009`, not the field: the overlay's
 allocator is `ov_009::021842a0`, its reset/initialiser `ov_009::0218454c`, and the state machine
 that builds the preview `ov_009::02185634`. The screens are pages of one editor (`+0xc58` is
-the page, `+0xc59` its step); page 1 is the name entry (`ov_009::02186e00`, the text-entry
-widget of `ov_003::0215f000`) and page 1 of the menu writes the **sex** (`+0xda3`,
-`ov_009::0218742c` case 1). The pages and the byte each edits:
+the page, `+0xc59` its step); page 0 is the name entry (`ov_009::02186e00`, the text-entry
+widget of `ov_003::0215f000`) and page 1 writes the **sex** (`+0xda3`,
+`ov_009::0218742c` case 1). The pages, the option count each list offers
+(`func_ov009_02188c2c` passes it to the widget: 10, 10, 10, 8, 8) and the byte each edits:
 
-| Page (`+0xc58`) | Function | Field | Saved as |
-|---|---|---|---|
-| 0 | `ov_009::02186e00` | name, `+0xdb0 + sex × 4` buffer | glyph indices, `Character+0x140` / 320 |
-| 1 | `ov_009::0218742c` case 1 | sex, `+0xda3` (0 man, 1 woman) | `Character+0x174` / 372, bit 0 |
-| 2 | case 2 | face offset preset, `+0xda4` | not stored (preview sprite offset, `ov_009::02188bf8`) |
-| 3 | case 3 | hair style, `+0xdac` | `+0x166` / 358 (item 9000 + preset) |
-| 4 | case 4 | hair colour, `+0xdae` | `+0x175` / 373 low nibble |
-| 5 | case 5 | face, `+0xda6` | `+0x164` / 356 (item 9020 + preset) |
-| 6 | case 6 | skin tone, `+0xdaa` | `+0x174` bits 1–3 |
-| 7 | case 7 | eye colour, `+0xda8` | `+0x174` bits 4–7 |
+| Page (`+0xc58`) | Function | Options | Field | Saved as |
+|---|---|---|---|---|
+| 0 | `ov_009::02186e00` | — (8 glyphs) | name, `+0xdb0 + sex × 4` buffer | glyph indices, `Character+0x140` / 320 |
+| 1 | `ov_009::0218742c` case 1 | 2 | sex, `+0xda3` (0 man, 1 woman) | `Character+0x174` / 372, bit 0 |
+| 2 | case 2 | 5 | face offset preset, `+0xda4` | not stored (preview sprite offset, `ov_009::02188bf8`); meaning **[unknown]** |
+| 3 | `ov_009::021868c4` | 10 | hair style, `+0xdac` | `+0x166` / 358 (item 9000 + preset) |
+| 4 | `ov_009::021869d8` | 10 | hair colour, `+0xdae` | `+0x175` / 373 low nibble |
+| 5 | `ov_009::021866f0` | 10 | face, `+0xda6` | `+0x164` / 356 (item 9020 + preset) |
+| 6 | `ov_009::02186aec` | 8 | skin tone, `+0xdaa` | `+0x174` bits 1–3 |
+| 7 | `ov_009::02186c00` | 8 | eye colour, `+0xda8` | `+0x174` bits 4–7 |
+| 8 | `ov_009::02187b34` | — | 3D preview page (rotation, camera) | nothing |
+| 0xc | `ov_009::021883cc` | — | the editor ends, the accepted flag is set | — |
+
+**How a page works.** Every option page is the same three steps (`ov_009::02188c2c` builds the
+list, `ov_009::02188d9c` places it, `ov_009::02188e70`/`ov_009::02188944` repaint the preview
+model). The list widget (`0xbec`) holds the page's options; up/down move the selection and the
+model is repainted on each change (`func_ov009_02188ee8` sets `0xd9c` bit `0x10` and calls
+`func_ov009_02188944`), so the preview is live. The page's accepted button (A, key mask `1`)
+returns `-2` and the page advances (3 → 4 → 5 → 6 → 7 → 8), B (mask `2`) returns `-3` and goes
+back; the page tabs jump with `100 + page` when the page was already reached (`+0xda0 + sex`).
+The face-offset page 2 sits between the sex and the hair in that order, but only moves the
+preview sprite (`ov_009::02188bf8`) and stores nothing the save keeps.
+
+**The option tables.** `ov_009::02188b14` copies a ten-entry shared table — ten bytes `00..09`
+at `0x0218a9bc` (overlay file `0x671c`) — then overwrites a per-sex prefix: type 5 (face)
+`[4, 0, 1, 2, 3]` for a man and `[1, 0]` for a woman, type 3 (hair) `[6, 0, 1, 2, 3, 4, 5]` for
+a woman (a man keeps the shared table). The value names item `9020 + value` (face) or
+`9000 + value` (hair), so the ten options are:
+
+| Page | Man | Woman |
+|---|---|---|
+| face items | 9024, 9020, 9021, 9022, 9023, 9025, 9026, 9027, 9028, 9029 | 9021, 9020, 9022, 9023, 9024, 9025, 9026, 9027, 9028, 9029 |
+| hair items | 9000 … 9009 | 9006, 9000, 9001, 9002, 9003, 9004, 9005, 9007, 9008, 9009 |
+
+The hair colour, skin tone and eye colour lists index the `palette.bin` rows directly: ten
+brows rows, eight skin rows and eight eye rows (§ "Skin, eyes and brows"), which is why their
+lists are 10, 8 and 8 long. Every one of these options exists on the cartridge
+(`every_creation_option_resolves_on_the_cartridge`: all ten face and hair presets of both
+sexes resolve to `chara_pc.gp2` parts).
+
+**The per-sex columns.** `+0xda3` selects one of two columns (`+0xda4`/`+0xda5`,
+`+0xda6`/`+0xda7`, …, `+0xdae`/`+0xdaf`: face offset, face preset, eye colour, skin tone, hair
+preset, hair colour). `ov_009::02185634` seeds both columns at start: face offset 2, face
+preset 0, hair preset 0 and hair colour 0 for both sexes, skin tone 3 for both, eye colour 0
+for a man and 5 for a woman; the bytes are at overlay file `0x1640`–`0x167c`. Changing the sex
+page only switches the column (`ov_009::02188ee8` case 1) and repaints the model from it, so a
+sex you have not edited shows its own defaults and edits stay with their sex. The `0xd95`
+mode flag (`ov_009::0218454c`'s third argument) then forces face preset 1 for both, the
+woman's hair preset 1, her eye colour 0 and her hair colour 0; **what chooses it** is
+**[unknown]**.
+
+Evidence: `build/evidence/v3-character-appearance/creation-tables.txt` (the bytes above,
+dumped from `build/rom/overlays/ov_009.bin`) and `ov009-creation-pages.c` (the three
+functions).
 
 **Name.** The entry widget is sized to **eight glyphs**: `*(entry + 0x14) = 8` in
 `ov_009::02186e00`, the capacity `ov_003_0215ec90` counts when it appends a glyph and returns
@@ -518,31 +563,12 @@ immediately while the buffer's first byte is zero; the accepted flag `0xd9c & 0x
 set, so the page does not confirm. The empty name is therefore refused (the port enforces the
 same rule).
 
-**Sex and its defaults.** `ov_009::02185634` writes the per-sex defaults at
-`0x021858e0`–`0x0218591c` (overlay `ov_009` loads at `0x021842a0`; file offsets
-`0x1640`–`0x167c`): the bytes `+0xda4`–`+0xdaf` hold one value per sex (`+0xda3` indexes them
-two at a time). The preset indices go through `ov_009::02188b14`'s tables:
-
-| Field | Man (index 0) | Woman (index 1) | Resolved |
-|---|---|---|---|
-| face preset `+0xda6` | 0 → `local_18[0] = 4` | 0 → `1` | face item 9024 / 9021 |
-| hair preset `+0xdac` | 0 → `local_18[0] = 0` | 0 → `6` | hair item 9000 / 9006 |
-| eye colour `+0xda8` | 0 | 5 | `+0x174` bits 4–7 |
-| skin tone `+0xdaa` | 3 | 3 | `+0x174` bits 1–3 |
-| hair colour `+0xdae` | 0 | 3 | `+0x175` low nibble |
-| face offset `+0xda4` | 2 | 2 | preview only |
-
-The shared 10-byte preset table `ov_009::02188b14` copies is at `0x0218a9bc` and holds
-`00 01 02 03 04 05 06 07 08 09` (preset *n* → item `9000 + n`). The male face table overrides
-its first five entries with `[4, 0, 1, 2, 3]`; the woman's face override is `[1, 0]` (the other
-slots keep the shared table); the hair table is the shared one for a man and
-`[6, 0, 1, 2, 3, 4, 5]` for a woman. So the creation defaults are **hair 9000 for a man and
-9006 for a woman** (item 9006's female model is `p_h180`). `HeroLook::new_game` (the
-`--new-game` default, from `charapreset.bin`) uses hair 9006 for a man: the preset file's first
-male entry and overlay 9's default are not the same value. The `0xd95` mode flag
-(`ov_009::0218454c`'s third argument) sets both faces to preset 1, the woman's hair to preset 1,
-her eye colour to 0 and her hair colour to 0, and hides some pages: **what chooses it** (the
-chapter, or creating a party member rather than the hero) is **[unknown]**.
+**The creation defaults and their names.** With both columns seeded as above, the creation's
+defaults are **hair 9000 for a man and 9006 for a woman** (item 9006's female model is
+`p_h180`), face 9024 / 9021. `HeroLook::new_game` (the `--new-game` default, from
+`charapreset.bin`) uses hair 9006 for a man: the preset file's first male entry and overlay 9's
+default are not the same value. What triggers the `0xd95` mode flag (the chapter, or creating a
+party member rather than the hero) is **[unknown]**.
 
 **[unknown]** — `ov_009::02188bf8`'s per-sex offset table at `0x02188c28`, the meaning of the
 `+0xda4` face-offset page, the word list `ov_009::02189a4c` loads from two files (the name

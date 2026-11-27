@@ -21,6 +21,17 @@ pub enum Sex {
     Woman,
 }
 
+impl Sex {
+    /// The column `ov_009::02185634` keeps this sex's creation choices in (`+0xda3` indexes the
+    /// per-sex bytes `+0xda4`..`+0xdaf` two at a time): 0 a man, 1 a woman.
+    pub fn index(self) -> usize {
+        match self {
+            Self::Man => 0,
+            Self::Woman => 1,
+        }
+    }
+}
+
 /// What a character wears and looks like, as the save keeps it (`Character` bytes
 /// `+352..+373`, `docs/re/save.md`). Items are item ids; `None` is an empty slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,17 +91,14 @@ impl HeroLook {
     /// woman takes face 9021, hair 9006 (her override `[6, 0, 1, 2, 3, 4, 5]`), eye colour 5
     /// and hair colour 3.
     pub fn for_sex(sex: Sex) -> Self {
-        let (face_item, hair_item, eye_color, hair_color) = match sex {
-            Sex::Man => (9024, 9000, 0, 0),
-            Sex::Woman => (9021, 9006, 5, 3),
-        };
+        let defaults = CreationAppearance::default_for(sex);
         Self {
             sex,
-            face_item,
-            hair_item,
-            hair_color,
-            skin_tone: 3,
-            eye_color,
+            face_item: face_item(sex, defaults.face),
+            hair_item: hair_item(sex, defaults.hair),
+            hair_color: defaults.hair_color,
+            skin_tone: defaults.skin_tone,
+            eye_color: defaults.eye_color,
             build: (0x1000, 0x1000),
             armour: Some(13007),
             legwear: Some(16215),
@@ -118,6 +126,192 @@ impl HeroLook {
             gloves: slot(EquipSlot::Arms, 15000),
             footwear: slot(EquipSlot::Feet, 17000),
             headgear: slot(EquipSlot::Head, 12000),
+        }
+    }
+}
+
+/// One appearance page of the creation screen, in the order of the original's pages 3–7
+/// (`ov_009`: hair, hair colour, face, skin tone, eye colour).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Part {
+    /// Page 3 (`ov_009::021868c4`, `+0xdac`): hair style, ten presets → items 9000–9009.
+    Hair,
+    /// Page 4 (`ov_009::021869d8`, `+0xdae`): hair colour, ten rows of the brows table.
+    HairColour,
+    /// Page 5 (`ov_009::021866f0`, `+0xda6`): face, ten presets → items 9020–9029.
+    Face,
+    /// Page 6 (`ov_009::02186aec`, `+0xdaa`): skin tone, eight tones.
+    SkinTone,
+    /// Page 7 (`ov_009::02186c00`, `+0xda8`): eye colour, eight colours.
+    EyeColour,
+}
+
+impl Part {
+    /// The appearance pages in the original's order.
+    pub const ALL: [Part; 5] = [
+        Part::Hair,
+        Part::HairColour,
+        Part::Face,
+        Part::SkinTone,
+        Part::EyeColour,
+    ];
+
+    /// How many options the page's list offers: the length `func_ov009_02188c2c` passes to the
+    /// list widget (10 for hair, hair colour and face, 8 for skin tone and eye colour). The
+    /// brows table holds ten rows and the skin and eye tables eight, so every option has its
+    /// row.
+    pub fn options(self) -> u8 {
+        match self {
+            Self::Hair => HAIR_OPTIONS,
+            Self::HairColour => HAIR_COLOUR_OPTIONS,
+            Self::Face => FACE_OPTIONS,
+            Self::SkinTone => SKIN_TONE_OPTIONS,
+            Self::EyeColour => EYE_COLOUR_OPTIONS,
+        }
+    }
+
+    /// The page's label on the port's screen.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hair => "Hair",
+            Self::HairColour => "Hair colour",
+            Self::Face => "Face",
+            Self::SkinTone => "Skin tone",
+            Self::EyeColour => "Eyes",
+        }
+    }
+}
+
+/// Option counts of the appearance pages (`func_ov009_02188c2c`'s list lengths).
+pub const FACE_OPTIONS: u8 = 10;
+pub const HAIR_OPTIONS: u8 = 10;
+pub const HAIR_COLOUR_OPTIONS: u8 = 10;
+pub const SKIN_TONE_OPTIONS: u8 = 8;
+pub const EYE_COLOUR_OPTIONS: u8 = 8;
+
+/// The shared preset table `ov_009::02188b14` copies before applying its per-sex overrides:
+/// ten bytes at `0x0218a9bc` (overlay 9, file offset `0x671c`) holding `00..09`, so preset *n*
+/// names item `9000 + n`.
+const SHARED_PRESETS: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+/// The male face override (`ov_009::02188b14`, type 5 with `+0xda3` = 0): the first five
+/// entries become `[4, 0, 1, 2, 3]`; slots 5–9 keep the shared table.
+const MAN_FACE_PRESETS: [u8; 5] = [4, 0, 1, 2, 3];
+/// The female face override (type 5, `+0xda3` = 1): the first two entries become `[1, 0]`.
+const WOMAN_FACE_PRESETS: [u8; 2] = [1, 0];
+/// The female hair override (type 3, `+0xda3` = 1): the first seven entries become
+/// `[6, 0, 1, 2, 3, 4, 5]`; slots 7–9 keep the shared table.
+const WOMAN_HAIR_PRESETS: [u8; 7] = [6, 0, 1, 2, 3, 4, 5];
+
+/// The defaults `ov_009::02185634` writes into the per-sex bytes `+0xda4`..`+0xdaf` (overlay
+/// 9, file offsets `0x1640`–`0x167c`): face preset 0, hair preset 0 and hair colour 0 for both
+/// sexes, eye colour 0 for a man and 5 for a woman, skin tone 3 for both.
+const DEFAULT_FACE: u8 = 0;
+const DEFAULT_HAIR: u8 = 0;
+const DEFAULT_SKIN_TONE: u8 = 3;
+const DEFAULT_EYE_COLOUR: [u8; 2] = [0, 5];
+const DEFAULT_HAIR_COLOUR: [u8; 2] = [0, 3];
+
+/// `overrides` (a prefix of the per-sex table) over [`SHARED_PRESETS`], entry `preset`.
+fn preset_value(overrides: &[u8], preset: u8) -> u8 {
+    let i = usize::from(preset);
+    overrides
+        .get(i)
+        .or_else(|| SHARED_PRESETS.get(i))
+        .copied()
+        .unwrap_or(0)
+}
+
+/// The face item preset `preset` of `sex` names (`ov_009::02188b14` type 5): the resolved
+/// table value plus 9020.
+pub fn face_item(sex: Sex, preset: u8) -> u16 {
+    let overrides: &[u8] = match sex {
+        Sex::Man => &MAN_FACE_PRESETS,
+        Sex::Woman => &WOMAN_FACE_PRESETS,
+    };
+    9020 + u16::from(preset_value(overrides, preset))
+}
+
+/// The hair item preset `preset` of `sex` names (`ov_009::02188b14` type 3): the resolved
+/// table value plus 9000.
+pub fn hair_item(sex: Sex, preset: u8) -> u16 {
+    let overrides: &[u8] = match sex {
+        Sex::Man => &[],
+        Sex::Woman => &WOMAN_HAIR_PRESETS,
+    };
+    9000 + u16::from(preset_value(overrides, preset))
+}
+
+/// The appearance pages' choices for one sex, as overlay 9 keeps them: one column per sex
+/// (`+0xda3` selects it), face and hair preset indices, hair colour, skin tone and eye colour.
+/// [`HeroLook::for_sex`] is the default of the two columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreationAppearance {
+    /// Face preset index 0..=`FACE_OPTIONS - 1` (page 5, `+0xda6`).
+    pub face: u8,
+    /// Hair preset index 0..=`HAIR_OPTIONS - 1` (page 3, `+0xdac`).
+    pub hair: u8,
+    /// Hair colour 0..=`HAIR_COLOUR_OPTIONS - 1` (page 4, `+0xdae`).
+    pub hair_color: u8,
+    /// Skin tone 0..=`SKIN_TONE_OPTIONS - 1` (page 6, `+0xdaa`).
+    pub skin_tone: u8,
+    /// Eye colour 0..=`EYE_COLOUR_OPTIONS - 1` (page 7, `+0xda8`).
+    pub eye_color: u8,
+}
+
+impl CreationAppearance {
+    /// The defaults `ov_009::02185634` seeds both columns with (before the `0xd95` mode-1
+    /// overrides, which are not modelled).
+    pub fn default_for(sex: Sex) -> Self {
+        Self {
+            face: DEFAULT_FACE,
+            hair: DEFAULT_HAIR,
+            hair_color: DEFAULT_HAIR_COLOUR[sex.index()],
+            skin_tone: DEFAULT_SKIN_TONE,
+            eye_color: DEFAULT_EYE_COLOUR[sex.index()],
+        }
+    }
+
+    /// The value the page `part` shows.
+    pub fn get(&self, part: Part) -> u8 {
+        match part {
+            Part::Hair => self.hair,
+            Part::HairColour => self.hair_color,
+            Part::Face => self.face,
+            Part::SkinTone => self.skin_tone,
+            Part::EyeColour => self.eye_color,
+        }
+    }
+
+    /// Stores `value`, clamped to the page's option count (the list widget never leaves its
+    /// range).
+    pub fn set(&mut self, part: Part, value: u8) {
+        let clamped = value.min(part.options().saturating_sub(1));
+        match part {
+            Part::Hair => self.hair = clamped,
+            Part::HairColour => self.hair_color = clamped,
+            Part::Face => self.face = clamped,
+            Part::SkinTone => self.skin_tone = clamped,
+            Part::EyeColour => self.eye_color = clamped,
+        }
+    }
+
+    /// Moves the page's selection by `delta`, clamped to its first and last option.
+    pub fn step(&mut self, part: Part, delta: i32) {
+        let value = i32::from(self.get(part)) + delta;
+        let last = i32::from(part.options().saturating_sub(1));
+        self.set(part, value.clamp(0, last) as u8);
+    }
+
+    /// The look these choices give `sex`: the appearance fields over the sex's creation
+    /// defaults (the opening outfit, body build and sex).
+    pub fn to_look(&self, sex: Sex) -> HeroLook {
+        HeroLook {
+            face_item: face_item(sex, self.face),
+            hair_item: hair_item(sex, self.hair),
+            hair_color: self.hair_color,
+            skin_tone: self.skin_tone,
+            eye_color: self.eye_color,
+            ..HeroLook::for_sex(sex)
         }
     }
 }
@@ -756,5 +950,141 @@ mod tests {
             .filter(|&k| palette.color(8 + k) == colours.skin_eight[3][k])
             .count();
         assert_eq!(same, 7, "tone 3's eight shades on the cartridge");
+    }
+
+    /// The creation tables as overlay 9 applies them: the shared `00..09` with the per-sex
+    /// prefixes of `ov_009::02188b14`, and the option counts `func_ov009_02188c2c` passes to
+    /// each page's list.
+    #[test]
+    fn the_creation_presets_resolve_as_overlay_nine_does() {
+        let faces = |sex: Sex| {
+            (0..FACE_OPTIONS)
+                .map(|p| face_item(sex, p))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            faces(Sex::Man),
+            [9024, 9020, 9021, 9022, 9023, 9025, 9026, 9027, 9028, 9029],
+            "the male face prefix [4, 0, 1, 2, 3] over the shared table"
+        );
+        assert_eq!(
+            faces(Sex::Woman),
+            [9021, 9020, 9022, 9023, 9024, 9025, 9026, 9027, 9028, 9029],
+            "the female face prefix [1, 0]"
+        );
+        let hairs = |sex: Sex| {
+            (0..HAIR_OPTIONS)
+                .map(|p| hair_item(sex, p))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            hairs(Sex::Man),
+            (9000..9010).collect::<Vec<_>>(),
+            "the shared table for a man"
+        );
+        assert_eq!(
+            hairs(Sex::Woman),
+            [9006, 9000, 9001, 9002, 9003, 9004, 9005, 9007, 9008, 9009],
+            "the female hair prefix [6, 0, 1, 2, 3, 4, 5], slots 7–9 shared"
+        );
+        assert_eq!(Part::ALL.len(), 5, "the five appearance pages");
+        assert_eq!(
+            Part::ALL,
+            [
+                Part::Hair,
+                Part::HairColour,
+                Part::Face,
+                Part::SkinTone,
+                Part::EyeColour
+            ],
+            "the original's page order"
+        );
+        assert_eq!(Part::Hair.options(), 10);
+        assert_eq!(Part::HairColour.options(), 10);
+        assert_eq!(Part::Face.options(), 10);
+        assert_eq!(Part::SkinTone.options(), 8);
+        assert_eq!(Part::EyeColour.options(), 8);
+    }
+
+    /// A page's selection stays inside its list: clamping at both ends, and `set` never stores
+    /// an option the page does not have.
+    #[test]
+    fn the_options_clamp_to_their_page() {
+        let mut appearance = CreationAppearance::default_for(Sex::Man);
+        appearance.step(Part::Hair, -1);
+        assert_eq!(appearance.hair, 0, "no option before the first");
+        for _ in 0..HAIR_OPTIONS + 5 {
+            appearance.step(Part::Hair, 1);
+        }
+        assert_eq!(appearance.hair, HAIR_OPTIONS - 1, "no option past the last");
+        appearance.set(Part::EyeColour, 200);
+        assert_eq!(appearance.eye_color, EYE_COLOUR_OPTIONS - 1);
+        appearance.set(Part::SkinTone, 5);
+        appearance.step(Part::SkinTone, -9);
+        assert_eq!(appearance.skin_tone, 0);
+        appearance.set(Part::HairColour, 7);
+        assert_eq!(appearance.get(Part::HairColour), 7);
+    }
+
+    /// The columns' defaults are exactly the sex's creation look (`HeroLook::for_sex`): the two
+    /// ways of naming them cannot drift.
+    #[test]
+    fn the_defaults_are_the_sexes_creation_look() {
+        for sex in [Sex::Man, Sex::Woman] {
+            assert_eq!(
+                CreationAppearance::default_for(sex).to_look(sex),
+                HeroLook::for_sex(sex)
+            );
+        }
+        assert_eq!(HeroLook::for_sex(Sex::Man).face_item, 9024);
+        assert_eq!(HeroLook::for_sex(Sex::Woman).hair_item, 9006);
+        assert_eq!(HeroLook::for_sex(Sex::Woman).eye_color, 5);
+        assert_eq!(HeroLook::for_sex(Sex::Woman).hair_color, 3);
+    }
+
+    /// Every option of every page exists on the cartridge: all ten face and ten hair presets
+    /// of both sexes resolve to `chara_pc.gp2` parts, and `palette.bin` has one row per hair
+    /// colour, skin tone and eye colour option.
+    #[test]
+    fn every_creation_option_resolves_on_the_cartridge() {
+        let Some(bytes) = testrom::load() else { return };
+        let rom = nds_rom::Rom::parse(bytes).unwrap();
+        let defs = crate::map::rom_file(&rom, "data/prm/itemdt_def.gp2").expect("itemdt_def");
+        let defs = crate::Gpc2::parse(defs).unwrap();
+        let member = defs.find("itemdt_def.nat").expect("itemdt_def.nat");
+        let member = defs.member(member).unwrap();
+        let models = ItemModels::parse(&member).unwrap();
+        let pc = crate::map::rom_file(&rom, "data/pack_lv5/chara_pc.gp2").expect("chara_pc");
+        let pc = crate::Gpc2::parse(pc).unwrap();
+        let has = |name: &str| pc.find(name).is_some();
+        for sex in [Sex::Man, Sex::Woman] {
+            for preset in 0..FACE_OPTIONS {
+                let mut look = HeroLook::for_sex(sex);
+                look.face_item = face_item(sex, preset);
+                let expected = models
+                    .model(look.face_item, sex)
+                    .map(|(_, number)| format!("p_f{number:03}"));
+                let outfit = Outfit::resolve(&look, &models, has);
+                assert_eq!(
+                    outfit.face, expected,
+                    "{sex:?} face preset {preset} ({})",
+                    look.face_item
+                );
+            }
+            for preset in 0..HAIR_OPTIONS {
+                let mut look = HeroLook::for_sex(sex);
+                look.hair_item = hair_item(sex, preset);
+                let outfit = Outfit::resolve(&look, &models, has);
+                let hair = outfit.hair.unwrap_or_else(|| {
+                    panic!("{sex:?} hair preset {preset} ({}) resolves", look.hair_item)
+                });
+                assert!(has(&format!("{}.nsbtx", hair.texture)), "{}", hair.texture);
+            }
+        }
+        let colours = crate::map::rom_file(&rom, "data/chara/palette.bin").expect("palette.bin");
+        let colours = CharacterColours::parse(colours).unwrap();
+        assert_eq!(colours.brows.len(), usize::from(HAIR_COLOUR_OPTIONS));
+        assert_eq!(colours.skin_eight.len(), usize::from(SKIN_TONE_OPTIONS));
+        assert_eq!(colours.eyes.len(), usize::from(EYE_COLOUR_OPTIONS));
     }
 }

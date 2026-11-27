@@ -182,9 +182,10 @@ impl App {
 
     /// A new game from the creation screen: the new game with the created hero in the three
     /// places that consume him — the message identity (`HeroIdentity`, decoded from the save's
-    /// glyph indices), the look the scene assembles (`HeroLook::for_sex`), and the party
-    /// record the save write serialises (`Character::name` at `+0x140` and the `+0x174` bit 0,
-    /// through `GameState::write_into`).
+    /// glyph indices), the look the scene assembles (`Creation::look`: the sex's defaults
+    /// under the pages' face, hair, hair colour, skin tone and eye colour choices), and the
+    /// party record the save write serialises (`Character::name` at `+0x140` and the `+0x174`
+    /// bit 0, through `GameState::write_into`).
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn start_created_game(&mut self, creation: Creation) {
         let look = creation.look();
@@ -196,11 +197,15 @@ impl App {
         };
         self.start_new_game_with(Some(&created));
         status(&format!(
-            "new game: the created hero \"{}\" ({:?}), look face {} hair {}",
+            "new game: the created hero \"{}\" ({:?}), look face {} hair {} (colour {}, tone {}, \
+             eyes {})",
             String::from_utf8_lossy(&self.talk.hero_name()),
             sex,
             look.face_item,
-            look.hair_item
+            look.hair_item,
+            look.hair_color,
+            look.skin_tone,
+            look.eye_color
         ));
     }
 
